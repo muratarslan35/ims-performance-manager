@@ -1,15 +1,30 @@
-
 {% extends "base.html" %}
 
 {% block content %}
 
-<div class="container mt-4">
+<div class="container-fluid mt-4">
 
-<h2 class="mb-4">
+<div class="d-flex justify-content-between align-items-center mb-4">
 
-Hedef Yönetimi
+<h2>🎯 Hedef Yönetimi</h2>
 
-</h2>
+<a href="#" class="btn btn-success">
+
+📥 Excel'den Hedef Yükle
+
+</a>
+
+</div>
+
+<div class="card shadow-sm mb-4">
+
+<div class="card-header">
+
+Yeni Hedef Ekle
+
+</div>
+
+<div class="card-body">
 
 <form
 action="{{ url_for('targets.add') }}"
@@ -18,47 +33,59 @@ class="row g-3">
 
 <div class="col-md-2">
 
+<label class="form-label">
+
+Yıl
+
+</label>
+
 <input
+type="number"
 class="form-control"
 name="year"
-placeholder="Yıl"
 required>
 
 </div>
 
 <div class="col-md-2">
 
-<input
-class="form-control"
-name="month"
-placeholder="Ay"
-required>
+<label class="form-label">
 
-</div>
+Ay
 
-<div class="col-md-2">
+</label>
 
 <select
 class="form-select"
-name="quarter">
+name="month"
+required>
 
-<option>Q1</option>
+{% for i in range(1,13) %}
 
-<option>Q2</option>
+<option value="{{ i }}">
 
-<option>Q3</option>
+{{ i }}
 
-<option>Q4</option>
+</option>
+
+{% endfor %}
 
 </select>
 
 </div>
 
-<div class="col-md-3">
+<div class="col-md-4">
+
+<label class="form-label">
+
+Temsilci
+
+</label>
 
 <select
 class="form-select"
-name="representative">
+name="representative"
+required>
 
 {% for rep in representatives %}
 
@@ -74,11 +101,18 @@ name="representative">
 
 </div>
 
-<div class="col-md-3">
+<div class="col-md-4">
+
+<label class="form-label">
+
+Ürün
+
+</label>
 
 <select
 class="form-select"
-name="product">
+name="product"
+required>
 
 {% for product in products %}
 
@@ -96,23 +130,37 @@ name="product">
 
 <div class="col-md-3">
 
+<label class="form-label">
+
+Kutu Hedefi
+
+</label>
+
 <input
+type="number"
+step="0.01"
 class="form-control"
-name="unit_target"
-placeholder="Kutu Hedefi">
+name="unit_target">
 
 </div>
 
 <div class="col-md-3">
 
+<label class="form-label">
+
+TL Hedefi
+
+</label>
+
 <input
+type="number"
+step="0.01"
 class="form-control"
-name="tl_target"
-placeholder="TL Hedefi">
+name="tl_target">
 
 </div>
 
-<div class="col-md-3">
+<div class="col-md-3 d-flex align-items-end">
 
 <button
 class="btn btn-primary w-100">
@@ -125,11 +173,23 @@ Kaydet
 
 </form>
 
-<hr>
+</div>
 
-<table class="table table-hover">
+</div>
 
-<thead>
+<div class="card shadow-sm">
+
+<div class="card-header">
+
+Kayıtlı Hedefler
+
+</div>
+
+<div class="card-body">
+
+<table class="table table-hover table-bordered align-middle">
+
+<thead class="table-light">
 
 <tr>
 
@@ -143,9 +203,13 @@ Kaydet
 
 <th>Ürün</th>
 
-<th>Kutu</th>
+<th>Kutu Hedefi</th>
 
-<th>TL</th>
+<th>TL Hedefi</th>
+
+<th>Realizasyon</th>
+
+<th>Prim</th>
 
 </tr>
 
@@ -167,9 +231,29 @@ Kaydet
 
 <td>{{ item.product.product_name }}</td>
 
-<td>{{ item.unit_target }}</td>
+<td>{{ "{:,.0f}".format(item.unit_target) }}</td>
 
-<td>{{ item.tl_target }}</td>
+<td>{{ "{:,.2f}".format(item.tl_target) }} ₺</td>
+
+<td>
+
+<span class="badge bg-info">
+
+{{ "%.1f"|format(item.realization_percent) }} %
+
+</span>
+
+</td>
+
+<td>
+
+<span class="badge bg-success">
+
+{{ "%.1f"|format(item.prime_percent) }} %
+
+</span>
+
+</td>
 
 </tr>
 
@@ -178,6 +262,10 @@ Kaydet
 </tbody>
 
 </table>
+
+</div>
+
+</div>
 
 </div>
 
