@@ -9,30 +9,80 @@ class IMSReader:
 
         self.excel = pd.ExcelFile(path)
 
+        self.sheet_names = self.excel.sheet_names
+
+
     def get_sheet_names(self):
 
-        return self.excel.sheet_names
+        return self.sheet_names
 
-    def read_sheet(self, sheet):
+
+    def read_sheet(self, sheet_name):
 
         return pd.read_excel(
 
             self.path,
 
-            sheet_name=sheet
+            sheet_name=sheet_name
 
         )
 
+
     def read_all(self):
 
-        data = {}
+        sheets = {}
 
-        for sheet in self.get_sheet_names():
+        for sheet in self.sheet_names:
 
-            data[sheet] = self.read_sheet(
+            sheets[sheet] = self.read_sheet(
 
                 sheet
 
             )
 
-        return data
+        return sheets
+
+
+    def detect_sheet_type(self, sheet_name):
+
+        name = sheet_name.upper()
+
+        if "KUTU" in name:
+            return "UNIT"
+
+        if "TTS" in name:
+            return "TL"
+
+        if "BRICK" in name:
+            return "BRICK"
+
+        if "PAZAR" in name:
+            return "MARKET"
+
+        if "REKABET" in name:
+            return "COMPETITOR"
+
+        return "UNKNOWN"
+
+
+    def get_sheet_information(self):
+
+        info = []
+
+        for sheet in self.sheet_names:
+
+            info.append({
+
+                "sheet_name": sheet,
+
+                "sheet_type": self.detect_sheet_type(sheet),
+
+                "row_count": len(
+
+                    self.read_sheet(sheet)
+
+                )
+
+            })
+
+        return info
