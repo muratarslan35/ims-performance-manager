@@ -1,7 +1,184 @@
+
 {% extends "base.html" %}
 
 {% block content %}
 
-<h2>Targets</h2>
+<div class="container mt-4">
+
+<h2 class="mb-4">
+
+Hedef Yönetimi
+
+</h2>
+
+<form
+action="{{ url_for('targets.add') }}"
+method="POST"
+class="row g-3">
+
+<div class="col-md-2">
+
+<input
+class="form-control"
+name="year"
+placeholder="Yıl"
+required>
+
+</div>
+
+<div class="col-md-2">
+
+<input
+class="form-control"
+name="month"
+placeholder="Ay"
+required>
+
+</div>
+
+<div class="col-md-2">
+
+<select
+class="form-select"
+name="quarter">
+
+<option>Q1</option>
+
+<option>Q2</option>
+
+<option>Q3</option>
+
+<option>Q4</option>
+
+</select>
+
+</div>
+
+<div class="col-md-3">
+
+<select
+class="form-select"
+name="representative">
+
+{% for rep in representatives %}
+
+<option value="{{ rep.id }}">
+
+{{ rep.rep_name }}
+
+</option>
+
+{% endfor %}
+
+</select>
+
+</div>
+
+<div class="col-md-3">
+
+<select
+class="form-select"
+name="product">
+
+{% for product in products %}
+
+<option value="{{ product.id }}">
+
+{{ product.product_name }}
+
+</option>
+
+{% endfor %}
+
+</select>
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="unit_target"
+placeholder="Kutu Hedefi">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="tl_target"
+placeholder="TL Hedefi">
+
+</div>
+
+<div class="col-md-3">
+
+<button
+class="btn btn-primary w-100">
+
+Kaydet
+
+</button>
+
+</div>
+
+</form>
+
+<hr>
+
+<table class="table table-hover">
+
+<thead>
+
+<tr>
+
+<th>Yıl</th>
+
+<th>Ay</th>
+
+<th>Q</th>
+
+<th>Temsilci</th>
+
+<th>Ürün</th>
+
+<th>Kutu</th>
+
+<th>TL</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% for item in targets %}
+
+<tr>
+
+<td>{{ item.year }}</td>
+
+<td>{{ item.month }}</td>
+
+<td>{{ item.quarter }}</td>
+
+<td>{{ item.representative.rep_name }}</td>
+
+<td>{{ item.product.product_name }}</td>
+
+<td>{{ item.unit_target }}</td>
+
+<td>{{ item.tl_target }}</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
 
 {% endblock %}
