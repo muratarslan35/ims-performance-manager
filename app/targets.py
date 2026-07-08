@@ -19,21 +19,43 @@ targets_bp = Blueprint(
 )
 
 
+def calculate_quarter(month):
+
+    month = int(month)
+
+    if month <= 3:
+        return "Q1"
+
+    if month <= 6:
+        return "Q2"
+
+    if month <= 9:
+        return "Q3"
+
+    return "Q4"
+
+
 @targets_bp.route("/")
 @login_required
 def index():
 
     targets = Target.query.order_by(
         Target.year.desc(),
-        Target.month.desc()
+        Target.month.desc(),
+        Target.id.desc()
     ).all()
 
-    representatives = Representative.query.order_by(
+    representatives = Representative.query.filter_by(
+        active=True
+    ).order_by(
         Representative.rep_name
     ).all()
 
-    products = Product.query.order_by(
-        Product.product_name
+    products = Product.query.filter_by(
+        is_active=True
+    ).order_by(
+        Product.display_order.asc(),
+        Product.product_name.asc()
     ).all()
 
     return render_template(
@@ -48,21 +70,68 @@ def index():
 @login_required
 def add():
 
+    year = int(request.form["year"])
+
+    month = int(request.form["month"])
+
+    representative_id = int(
+        request.form["representative"]
+    )
+
+    product_id = int(
+        request.form["product"]
+    )
+
+    quarter = calculate_quarter(month)
+
+    exists = Target.query.filter_by(
+
+        year=year,
+
+        month=month,
+
+        representative_id=representative_id,
+
+        product_id=product_id
+
+    ).first()
+
+    if exists:
+
+        flash(
+            "Bu hedef daha önce eklenmiş.",
+            "warning"
+        )
+
+        return redirect(
+            url_for("targets.index")
+        )
+
     target = Target(
 
-        year=request.form["year"],
+        year=year,
 
-        month=request.form["month"],
+        month=month,
 
-        quarter=request.form["quarter"],
+        quarter=quarter,
 
-        representative_id=request.form["representative"],
+        representative_id=representative_id,
 
-        product_id=request.form["product"],
+        product_id=product_id,
 
-        unit_target=request.form["unit_target"],
+        unit_target=float(
+            request.form.get(
+                "unit_target",
+                0
+            )
+        ),
 
-        tl_target=request.form["tl_target"]
+        tl_target=float(
+            request.form.get(
+                "tl_target",
+                0
+            )
+        )
 
     )
 
@@ -71,11 +140,8 @@ def add():
     db.session.commit()
 
     flash(
-
         "Hedef başarıyla kaydedildi.",
-
         "success"
-
     )
 
     return redirect(
