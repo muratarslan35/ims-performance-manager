@@ -1,14 +1,12 @@
 from app.extensions import db
 
-from app.models import (
-    IMSUpload,
-    IMSRawData,
-    IMSSummary,
-    Product,
-    Representative
-)
-
 from app.ims_reader import IMSReader
+from app.parser import IMSParser
+
+from app.models import (
+    IMSRawData,
+    IMSSummary
+)
 
 
 class IMSImporter:
@@ -21,28 +19,47 @@ class IMSImporter:
 
         self.reader = IMSReader(path)
 
+        self.parser = IMSParser()
+
+
     def run(self):
 
         sheets = self.reader.read_all()
 
         for sheet_name, dataframe in sheets.items():
 
-            self.import_sheet(
+            records = self.parser.parse_sheet(
+
                 sheet_name,
+
                 dataframe
+
+            )
+
+            self.import_records(
+
+                sheet_name,
+
+                records
+
             )
 
         self.create_summary()
 
         db.session.commit()
 
-    def import_sheet(
+
+    def import_records(
+
         self,
+
         sheet_name,
-        dataframe
+
+        records
+
     ):
 
-        for _, row in dataframe.iterrows():
+        for record in records:
 
             raw = IMSRawData(
 
@@ -50,31 +67,26 @@ class IMSImporter:
 
                 sheet_name=sheet_name,
 
-                representative="",
+                representative=record["representative"],
 
-                manager="",
+                product=record["product"],
 
-                product="",
+                competitor=record["competitor"],
 
-                competitor="",
+                brick=record["brick"],
 
-                brick="",
+                unit=record["unit"],
 
-                market="",
+                tl=record["tl"],
 
-                unit=0,
+                market_share=record["market_share"],
 
-                tl=0,
-
-                market_share=0,
-
-                raw_json=row.to_json(
-                    force_ascii=False
-                )
+                raw_json=str(record["raw"])
 
             )
 
             db.session.add(raw)
+
 
     def create_summary(self):
 
