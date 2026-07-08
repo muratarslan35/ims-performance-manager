@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from flask import Blueprint
 from flask import flash
 from flask import redirect
@@ -7,15 +5,18 @@ from flask import render_template
 from flask import request
 from flask import url_for
 
+from flask_login import current_user
 from flask_login import login_required
 
 from werkzeug.utils import secure_filename
 
 from config import Config
 
+from app.extensions import db
+from app.ims_importer import IMSImporter
 from app.ims_reader import IMSReader
 from app.models import IMSUpload
-from app.extensions import db
+
 
 ims_bp = Blueprint(
     "ims",
@@ -55,24 +56,36 @@ def upload():
             url_for("ims.index")
         )
 
-    filename = secure_filename(file.filename)
+    filename = secure_filename(
+        file.filename
+    )
 
     upload_path = (
         Config.UPLOAD_FOLDER /
         filename
     )
 
-    file.save(upload_path)
-
     try:
 
-        reader = IMSReader(upload_path)
+        file.save(upload_path)
+
+        reader = IMSReader(
+            upload_path
+        )
 
         sheet_list = reader.get_sheet_names()
 
         upload = IMSUpload(
 
-            file_name=filename
+            file_name=filename,
+
+            sheet_count=len(
+                sheet_list
+            ),
+
+            status="İşleniyor",
+
+            uploaded_by=current_user.full_name
 
         )
 
@@ -80,17 +93,23 @@ def upload():
 
         db.session.commit()
 
-        print("\n========== IMS ==========")
+        importer = IMSImporter(
 
-        for sheet in sheet_list:
+            upload.id,
 
-            print(sheet)
+            upload_path
 
-        print("=========================\n")
+        )
+
+        importer.run()
+
+        upload.status = "Tamamlandı"
+
+        db.session.commit()
 
         flash(
 
-            f"{filename} başarıyla yüklendi. ({len(sheet_list)} çalışma sayfası bulundu)",
+            f"{filename} başarıyla işlendi. {len(sheet_list)} çalışma sayfası bulundu.",
 
             "success"
 
@@ -98,9 +117,23 @@ def upload():
 
     except Exception as error:
 
+        db.session.rollback()
+
+        try:
+
+            if "upload" in locals():
+
+                upload.status = "Hata"
+
+                db.session.commit()
+
+        except Exception:
+
+            db.session.rollback()
+
         flash(
 
-            f"Hata : {error}",
+            f"IMS içe aktarılırken hata oluştu: {error}",
 
             "danger"
 
