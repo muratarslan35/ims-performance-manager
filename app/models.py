@@ -791,3 +791,88 @@ class RepresentativeAlias(db.Model):
     def __repr__(self):
 
         return f"<RepresentativeAlias {self.alias_name}>"
+
+class RecoverySummary(db.Model):
+
+    __tablename__ = "recovery_summary"
+
+    id = db.Column(
+        db.Integer,
+        primary_key=True
+    )
+
+    representative_id = db.Column(
+        db.Integer,
+        db.ForeignKey("representatives.id")
+    )
+
+    product_id = db.Column(
+        db.Integer,
+        db.ForeignKey("products.id")
+    )
+
+    year = db.Column(db.Integer)
+
+    quarter = db.Column(db.Integer)
+
+    remaining_box = db.Column(
+        db.Float,
+        default=0
+    )
+
+    remaining_tl = db.Column(
+        db.Float,
+        default=0
+    )
+
+    carry_box = db.Column(
+        db.Float,
+        default=0
+    )
+
+    carry_tl = db.Column(
+        db.Float,
+        default=0
+    )
+
+    daily_need = db.Column(
+        db.Float,
+        default=0
+    )
+
+    projected_box = db.Column(
+        db.Float,
+        default=0
+    )
+
+    projected_percent = db.Column(
+        db.Float,
+        default=0
+    )
+
+    risk_score = db.Column(
+        db.Integer,
+        default=0
+    )
+
+    status = db.Column(
+        db.String(30),
+        default="Takip"
+    )
+
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow
+    )
+
+    representative = db.relationship(
+        "Representative"
+    )
+
+    product = db.relationship(
+        "Product"
+    )
+
+    def __repr__(self):
+
+        return f"<RecoverySummary {self.id}>"
