@@ -1,29 +1,25 @@
-import os
+from pathlib import Path
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+BASE_DIR = Path(__file__).resolve().parent
+
 
 class Config:
 
-    SECRET_KEY = os.environ.get(
-        "SECRET_KEY",
-        "ipm-secret-key"
-    )
+    SECRET_KEY = "CHANGE_THIS_SECRET_KEY"
 
-    SQLALCHEMY_DATABASE_URI = \
-        "sqlite:///" + os.path.join(
-            BASE_DIR,
-            "instance",
-            "ipm.db"
-        )
+    SQLALCHEMY_DATABASE_URI = (
+        "sqlite:///" +
+        str(BASE_DIR / "instance" / "ipm.db")
+    )
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    UPLOAD_FOLDER = os.path.join(
-        BASE_DIR,
-        "uploads"
-    )
+    UPLOAD_FOLDER = BASE_DIR / "uploads"
 
-    REPORT_FOLDER = os.path.join(
-        BASE_DIR,
-        "reports"
-    )
+    REPORT_FOLDER = BASE_DIR / "reports"
+
+    BACKUP_FOLDER = BASE_DIR / "backups"
+
+    LOG_FOLDER = BASE_DIR / "logs"
+
+    MAX_CONTENT_LENGTH = 100 * 1024 * 1024
