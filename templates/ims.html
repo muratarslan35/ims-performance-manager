@@ -2,27 +2,62 @@
 
 {% block content %}
 
-<div class="container mt-4">
+<div class="page-header">
 
-<h2>
+<div class="container-xl">
 
-IMS Merkezi
+<div class="row align-items-center">
+
+<div class="col">
+
+<h2 class="page-title">
+
+📥 IMS Merkezi
 
 </h2>
 
-<hr>
+<div class="text-secondary">
 
-<div class="card p-4">
+IMS dosyalarını yükleyin ve analiz sürecini başlatın.
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="page-body">
+
+<div class="container-xl">
+
+<div class="row">
+
+<div class="col-lg-7">
+
+<div class="card">
+
+<div class="card-header">
+
+<h3 class="card-title">
+
+IMS Excel Yükleme
+
+</h3>
+
+</div>
+
+<div class="card-body">
 
 <form
-
 method="POST"
-
 action="{{ url_for('ims.upload') }}"
-
 enctype="multipart/form-data">
 
-<div class="mb-3">
+<div class="mb-4">
 
 <label class="form-label">
 
@@ -31,28 +66,281 @@ IMS Excel Dosyası
 </label>
 
 <input
-
 type="file"
-
 class="form-control"
-
 name="file"
-
-accept=".xlsx"
-
+accept=".xlsx,.xls"
 required>
+
+<div class="form-hint">
+
+Desteklenen formatlar :
+XLSX / XLS
+
+</div>
 
 </div>
 
 <button
-
 class="btn btn-success">
 
-Dosyayı Yükle
+<i class="bi bi-upload"></i>
+
+IMS Dosyasını Yükle
 
 </button>
 
 </form>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-lg-5">
+
+<div class="card">
+
+<div class="card-header">
+
+Son IMS
+
+</div>
+
+<div class="card-body">
+
+{% if uploads %}
+
+<div class="mb-3">
+
+<strong>
+
+Dosya
+
+</strong>
+
+<br>
+
+{{ uploads[0].file_name }}
+
+</div>
+
+<div class="mb-3">
+
+<strong>
+
+Yüklenme Tarihi
+
+</strong>
+
+<br>
+
+{{ uploads[0].uploaded_at.strftime("%d.%m.%Y %H:%M") }}
+
+</div>
+
+<div>
+
+<span class="badge bg-success">
+
+{{ uploads[0].status }}
+
+</span>
+
+</div>
+
+{% else %}
+
+<div class="alert alert-warning mb-0">
+
+Henüz IMS dosyası yüklenmedi.
+
+</div>
+
+{% endif %}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="row mt-4">
+
+<div class="col-lg-12">
+
+<div class="card">
+
+<div class="card-header">
+
+Yükleme Geçmişi
+
+</div>
+
+<div class="table-responsive">
+
+<table class="table table-hover">
+
+<thead>
+
+<tr>
+
+<th>#</th>
+
+<th>Dosya</th>
+
+<th>Yıl</th>
+
+<th>Ay</th>
+
+<th>Çeyrek</th>
+
+<th>Sayfa</th>
+
+<th>Durum</th>
+
+<th>Tarih</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% for item in uploads %}
+
+<tr>
+
+<td>{{ item.id }}</td>
+
+<td>{{ item.file_name }}</td>
+
+<td>{{ item.year or "-" }}</td>
+
+<td>{{ item.month or "-" }}</td>
+
+<td>{{ item.quarter or "-" }}</td>
+
+<td>{{ item.sheet_count }}</td>
+
+<td>
+
+<span class="badge bg-success">
+
+{{ item.status }}
+
+</span>
+
+</td>
+
+<td>
+
+{{ item.uploaded_at.strftime("%d.%m.%Y") }}
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="row mt-4">
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body text-center">
+
+<h3>0</h3>
+
+<div class="text-secondary">
+
+Temsilci
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body text-center">
+
+<h3>0</h3>
+
+<div class="text-secondary">
+
+Ürün
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body text-center">
+
+<h3>0</h3>
+
+<div class="text-secondary">
+
+Rakip Ürün
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body text-center">
+
+<h3>0</h3>
+
+<div class="text-secondary">
+
+Çalışma Sayfası
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
 
 </div>
 
