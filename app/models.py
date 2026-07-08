@@ -81,23 +81,33 @@ class Target(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
 
-    year = db.Column(db.Integer)
+    year = db.Column(db.Integer, nullable=False)
 
-    month = db.Column(db.Integer)
+    month = db.Column(db.Integer, nullable=False)
+
+    quarter = db.Column(db.String(5))
 
     representative_id = db.Column(
         db.Integer,
-        db.ForeignKey("representatives.id")
+        db.ForeignKey("representatives.id"),
+        nullable=False
     )
 
     product_id = db.Column(
         db.Integer,
-        db.ForeignKey("products.id")
+        db.ForeignKey("products.id"),
+        nullable=False
     )
 
-    unit_target = db.Column(db.Float)
+    unit_target = db.Column(db.Float, default=0)
 
-    tl_target = db.Column(db.Float)
+    tl_target = db.Column(db.Float, default=0)
+
+    unit_realization = db.Column(db.Float, default=0)
+
+    tl_realization = db.Column(db.Float, default=0)
+
+    realization_percent = db.Column(db.Float, default=0)
 
     representative = db.relationship("Representative")
 
