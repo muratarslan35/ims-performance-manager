@@ -2,11 +2,9 @@ from app.extensions import db
 
 from app.ims_reader import IMSReader
 from app.parser import IMSParser
+from app.summary_engine import SummaryEngine
 
-from app.models import (
-    IMSRawData,
-    IMSSummary
-)
+from app.models import IMSRawData
 
 
 class IMSImporter:
@@ -20,7 +18,6 @@ class IMSImporter:
         self.reader = IMSReader(path)
 
         self.parser = IMSParser()
-
 
     def run(self):
 
@@ -44,10 +41,13 @@ class IMSImporter:
 
             )
 
-        self.create_summary()
-
         db.session.commit()
 
+        SummaryEngine(
+
+            self.upload_id
+
+        ).run()
 
     def import_records(
 
@@ -67,27 +67,52 @@ class IMSImporter:
 
                 sheet_name=sheet_name,
 
-                representative=record["representative"],
+                representative=record.get(
+                    "representative"
+                ),
 
-                product=record["product"],
+                product=record.get(
+                    "product"
+                ),
 
-                competitor=record["competitor"],
+                competitor=record.get(
+                    "competitor"
+                ),
 
-                brick=record["brick"],
+                brick=record.get(
+                    "brick"
+                ),
 
-                unit=record["unit"],
+                unit=record.get(
+                    "unit",
+                    0
+                ),
 
-                tl=record["tl"],
+                tl=record.get(
+                    "tl",
+                    0
+                ),
 
-                market_share=record["market_share"],
+                market_share=record.get(
+                    "market_share",
+                    0
+                ),
 
-                raw_json=str(record["raw"])
+                raw_json=str(
+                    record.get(
+                        "raw",
+                        {}
+                    )
+                )
 
             )
 
             db.session.add(raw)
 
-
     def create_summary(self):
 
-        pass
+        SummaryEngine(
+
+            self.upload_id
+
+        ).run()
