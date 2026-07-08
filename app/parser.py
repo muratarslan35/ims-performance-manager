@@ -1,6 +1,5 @@
-import pandas as pd
-
 from app.mapping import IMSMapper
+from app.sheet_analyzer import SheetAnalyzer
 
 
 class IMSParser:
@@ -19,11 +18,23 @@ class IMSParser:
 
     ):
 
+        analyzer = SheetAnalyzer(
+            dataframe
+        )
+
+        columns = analyzer.analyze()
+
         records = []
 
         for _, row in dataframe.iterrows():
 
-            record = self.parse_row(row)
+            record = self.parse_row(
+
+                row,
+
+                columns
+
+            )
 
             if record:
 
@@ -31,7 +42,15 @@ class IMSParser:
 
         return records
 
-    def parse_row(self, row):
+    def parse_row(
+
+        self,
+
+        row,
+
+        columns
+
+    ):
 
         text = " ".join(
 
@@ -63,23 +82,38 @@ class IMSParser:
 
             "competitor":
 
-                self.find_competitor(row),
+                self.find_competitor(
+                    row,
+                    columns
+                ),
 
             "unit":
 
-                self.find_unit(row),
+                self.find_unit(
+                    row,
+                    columns
+                ),
 
             "tl":
 
-                self.find_tl(row),
+                self.find_tl(
+                    row,
+                    columns
+                ),
 
             "market_share":
 
-                self.find_market_share(row),
+                self.find_market_share(
+                    row,
+                    columns
+                ),
 
             "brick":
 
-                self.find_brick(row),
+                self.find_brick(
+                    row,
+                    columns
+                ),
 
             "raw":
 
@@ -87,30 +121,102 @@ class IMSParser:
 
         }
 
-    def find_competitor(self, row):
+    def find_competitor(
+
+        self,
+
+        row,
+
+        columns
+
+    ):
 
         return None
 
-    def find_unit(self, row):
+    def find_unit(
 
-        for value in row.values:
+        self,
 
-            number = self.mapper.find_number(value)
+        row,
 
-            if number > 0:
+        columns
 
-                return number
+    ):
+
+        column = columns.get(
+            "unit_column"
+        )
+
+        if column and column in row.index:
+
+            return self.mapper.find_number(
+                row[column]
+            )
 
         return 0
 
-    def find_tl(self, row):
+    def find_tl(
+
+        self,
+
+        row,
+
+        columns
+
+    ):
+
+        column = columns.get(
+            "tl_column"
+        )
+
+        if column and column in row.index:
+
+            return self.mapper.find_number(
+                row[column]
+            )
 
         return 0
 
-    def find_market_share(self, row):
+    def find_market_share(
+
+        self,
+
+        row,
+
+        columns
+
+    ):
+
+        column = columns.get(
+            "market_share_column"
+        )
+
+        if column and column in row.index:
+
+            return self.mapper.find_number(
+                row[column]
+            )
 
         return 0
 
-    def find_brick(self, row):
+    def find_brick(
+
+        self,
+
+        row,
+
+        columns
+
+    ):
+
+        column = columns.get(
+            "brick_column"
+        )
+
+        if column and column in row.index:
+
+            return self.mapper.clean_text(
+                row[column]
+            )
 
         return None
