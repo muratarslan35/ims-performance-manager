@@ -1,223 +1,269 @@
 <aside class="navbar navbar-vertical navbar-expand-lg navbar-dark">
 
-<div class="container-fluid">
+    <div class="container-fluid">
 
-<h1 class="navbar-brand navbar-brand-autodark py-3">
+        <h1 class="navbar-brand navbar-brand-autodark py-3">
 
-<i class="bi bi-activity"></i>
+            <i class="bi bi-activity"></i>
 
-<span class="ms-2">
+            <span class="ms-2">
 
-IMS Performans
+                IPM v1.0
 
-</span>
+            </span>
 
-</h1>
+        </h1>
 
-<div class="navbar-nav">
+        <div class="text-secondary text-center mb-4">
 
-<div class="nav-item">
+            IMS Performans Yönetim Sistemi
 
-<a
-class="nav-link"
-href="{{ url_for('main.dashboard') }}">
+        </div>
 
-<span class="nav-link-icon">
+        <div class="navbar-nav">
 
-<i class="bi bi-speedometer2"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('dashboard.index') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Kontrol Paneli
+                        <i class="bi bi-speedometer2"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Kontrol Paneli
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('ims.index') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-file-earmark-excel"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('ims.index') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-IMS Merkezi
+                        <i class="bi bi-file-earmark-excel"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        IMS Merkezi
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('products.index') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-capsule"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('representatives.index') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Ürün Yönetimi
+                        <i class="bi bi-people-fill"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Temsilci Yönetimi
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('targets.index') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-bullseye"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('products.index') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Hedef Yönetimi
+                        <i class="bi bi-capsule"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Ürün Yönetimi
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="#">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-people"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('targets.index') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Temsilciler
+                        <i class="bi bi-bullseye"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Hedef Yönetimi
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('main.prime') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-cash-stack"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('main.prime') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Prim Motoru
+                        <i class="bi bi-cash-stack"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Prim Motoru
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('main.reports') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-bar-chart"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('main.reports') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Raporlar
+                        <i class="bi bi-graph-up-arrow"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Raporlar
 
-<div class="nav-item">
+                    </span>
 
-<a
-class="nav-link"
-href="{{ url_for('main.settings') }}">
+                </a>
 
-<span class="nav-link-icon">
+            </div>
 
-<i class="bi bi-gear"></i>
+            <div class="nav-item">
 
-</span>
+                <a
+                    class="nav-link"
+                    href="{{ url_for('main.settings') }}">
 
-<span class="nav-link-title">
+                    <span class="nav-link-icon">
 
-Ayarlar
+                        <i class="bi bi-gear-fill"></i>
 
-</span>
+                    </span>
 
-</a>
+                    <span class="nav-link-title">
 
-</div>
+                        Ayarlar
 
-<hr>
+                    </span>
 
-<div class="nav-item">
+                </a>
 
-<a
-class="nav-link text-danger"
-href="{{ url_for('auth.logout') }}">
+            </div>
 
-<span class="nav-link-icon">
+            <hr>
 
-<i class="bi bi-box-arrow-right"></i>
+            <div class="nav-item">
 
-</span>
+                <div class="px-3 py-2">
 
-<span class="nav-link-title">
+                    <small class="text-secondary">
 
-Çıkış Yap
+                        Giriş Yapan
 
-</span>
+                    </small>
 
-</a>
+                    <div class="text-white fw-bold">
 
-</div>
+                        {{ current_user.full_name }}
 
-</div>
+                    </div>
 
-</div>
+                    <small class="text-secondary">
+
+                        {{ current_user.role }}
+
+                    </small>
+
+                </div>
+
+            </div>
+
+            <div class="nav-item">
+
+                <a
+                    class="nav-link text-danger"
+                    href="{{ url_for('auth.logout') }}">
+
+                    <span class="nav-link-icon">
+
+                        <i class="bi bi-box-arrow-right"></i>
+
+                    </span>
+
+                    <span class="nav-link-title">
+
+                        Güvenli Çıkış
+
+                    </span>
+
+                </a>
+
+            </div>
+
+        </div>
+
+        <div class="mt-auto text-center py-4">
+
+            <small class="text-secondary">
+
+                IPM v1.0
+
+                <br>
+
+                © 2026
+
+            </small>
+
+        </div>
+
+    </div>
 
 </aside>
