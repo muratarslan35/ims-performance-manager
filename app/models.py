@@ -181,33 +181,9 @@ class Product(db.Model):
         default=0
     )
 
-    is_prime_product = db.Column(
-        db.Boolean,
-        default=False
-    )
-
-    required_percent = db.Column(
-        db.Integer,
-        default=90
-    )
-
-    include_total_tl = db.Column(
-        db.Boolean,
-        default=True
-    )
-
     display_order = db.Column(
         db.Integer,
         default=0
-    )
-
-    valid_from = db.Column(
-        db.Date,
-        default=date.today
-    )
-
-    valid_to = db.Column(
-        db.Date
     )
 
     is_active = db.Column(
