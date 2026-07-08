@@ -57,9 +57,7 @@ def upload():
             url_for("ims.index")
         )
 
-    filename = secure_filename(
-        file.filename
-    )
+    filename = secure_filename(file.filename)
 
     path = os.path.join(
         Config.UPLOAD_FOLDER,
@@ -68,10 +66,33 @@ def upload():
 
     file.save(path)
 
-    flash(
-        "IMS dosyası başarıyla yüklendi.",
-        "success"
-    )
+    # IMS dosyasını oku
+    try:
+
+        reader = IMSReader(path)
+
+        sheet_list = reader.get_sheet_names()
+
+        print("\n===== IMS SAYFALARI =====")
+
+        for sheet in sheet_list:
+            print(sheet)
+
+        print("=========================\n")
+
+        flash(
+            f"IMS dosyası başarıyla yüklendi. {len(sheet_list)} çalışma sayfası bulundu.",
+            "success"
+        )
+
+    except Exception as e:
+
+        print(e)
+
+        flash(
+            f"IMS okunurken hata oluştu : {e}",
+            "danger"
+        )
 
     return redirect(
         url_for("ims.index")
