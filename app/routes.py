@@ -1,5 +1,6 @@
 from flask import Blueprint
 from flask import render_template
+from flask_login import login_required
 
 main_bp = Blueprint(
     "main",
@@ -7,12 +8,8 @@ main_bp = Blueprint(
 )
 
 
-@main_bp.route("/")
-def login():
-    return render_template("login.html")
-
-
 @main_bp.route("/dashboard")
+@login_required
 def dashboard():
     return render_template("dashboard.html")
 
