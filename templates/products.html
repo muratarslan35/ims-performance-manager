@@ -2,6 +2,166 @@
 
 {% block content %}
 
-<h2>Products</h2>
+<div class="container mt-4">
+
+<h2 class="mb-4">
+
+Products
+
+</h2>
+
+<form
+
+action="{{ url_for('products.add') }}"
+
+method="POST"
+
+class="row g-3 mb-4">
+
+<div class="col-md-4">
+
+<input
+
+name="product_name"
+
+class="form-control"
+
+placeholder="Product Name"
+
+required>
+
+</div>
+
+<div class="col-md-3">
+
+<input
+
+name="category"
+
+class="form-control"
+
+placeholder="Category">
+
+</div>
+
+<div class="col-md-2">
+
+<div class="form-check mt-2">
+
+<input
+
+class="form-check-input"
+
+type="checkbox"
+
+name="prime"
+
+id="prime">
+
+<label
+
+class="form-check-label"
+
+for="prime">
+
+Prime
+
+</label>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<button
+
+class="btn btn-primary w-100">
+
+Add Product
+
+</button>
+
+</div>
+
+</form>
+
+<table class="table table-striped">
+
+<thead>
+
+<tr>
+
+<th>ID</th>
+
+<th>Product</th>
+
+<th>Category</th>
+
+<th>Prime</th>
+
+<th></th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% for product in products %}
+
+<tr>
+
+<td>{{ product.id }}</td>
+
+<td>{{ product.product_name }}</td>
+
+<td>{{ product.category }}</td>
+
+<td>
+
+{% if product.prime_product %}
+
+<span class="badge bg-success">
+
+YES
+
+</span>
+
+{% else %}
+
+<span class="badge bg-secondary">
+
+NO
+
+</span>
+
+{% endif %}
+
+</td>
+
+<td>
+
+<a
+
+href="{{ url_for('products.delete',id=product.id) }}"
+
+class="btn btn-danger btn-sm">
+
+Delete
+
+</a>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
 
 {% endblock %}
