@@ -1,17 +1,21 @@
+from pathlib import Path
+
 from flask import Blueprint
+from flask import flash
+from flask import redirect
 from flask import render_template
 from flask import request
-from flask import redirect
 from flask import url_for
-from flask import flash
+
 from flask_login import login_required
 
 from werkzeug.utils import secure_filename
 
-import os
-
 from config import Config
+
 from app.ims_reader import IMSReader
+from app.models import IMSUpload
+from app.extensions import db
 
 ims_bp = Blueprint(
     "ims",
@@ -24,8 +28,13 @@ ims_bp = Blueprint(
 @login_required
 def index():
 
+    uploads = IMSUpload.query.order_by(
+        IMSUpload.uploaded_at.desc()
+    ).all()
+
     return render_template(
-        "ims.html"
+        "ims.html",
+        uploads=uploads
     )
 
 
@@ -33,24 +42,13 @@ def index():
 @login_required
 def upload():
 
-    if "file" not in request.files:
+    file = request.files.get("file")
+
+    if file is None or file.filename == "":
 
         flash(
-            "Dosya seçilmedi.",
-            "danger"
-        )
-
-        return redirect(
-            url_for("ims.index")
-        )
-
-    file = request.files["file"]
-
-    if file.filename == "":
-
-        flash(
-            "Dosya seçilmedi.",
-            "danger"
+            "Lütfen bir IMS dosyası seçiniz.",
+            "warning"
         )
 
         return redirect(
@@ -59,39 +57,53 @@ def upload():
 
     filename = secure_filename(file.filename)
 
-    path = os.path.join(
-        Config.UPLOAD_FOLDER,
+    upload_path = (
+        Config.UPLOAD_FOLDER /
         filename
     )
 
-    file.save(path)
+    file.save(upload_path)
 
-    # IMS dosyasını oku
     try:
 
-        reader = IMSReader(path)
+        reader = IMSReader(upload_path)
 
         sheet_list = reader.get_sheet_names()
 
-        print("\n===== IMS SAYFALARI =====")
+        upload = IMSUpload(
+
+            file_name=filename
+
+        )
+
+        db.session.add(upload)
+
+        db.session.commit()
+
+        print("\n========== IMS ==========")
 
         for sheet in sheet_list:
+
             print(sheet)
 
         print("=========================\n")
 
         flash(
-            f"IMS dosyası başarıyla yüklendi. {len(sheet_list)} çalışma sayfası bulundu.",
+
+            f"{filename} başarıyla yüklendi. ({len(sheet_list)} çalışma sayfası bulundu)",
+
             "success"
+
         )
 
-    except Exception as e:
-
-        print(e)
+    except Exception as error:
 
         flash(
-            f"IMS okunurken hata oluştu : {e}",
+
+            f"Hata : {error}",
+
             "danger"
+
         )
 
     return redirect(
