@@ -1,37 +1,97 @@
+from datetime import date
+
 from app.models import (
+    IMSSummary,
+    PrimeRule,
     Product,
-    Target,
     Setting,
-    IMSSummary
+    Target
 )
 
 
 class PrimeEngine:
 
     def __init__(
+
         self,
+
         representative_id,
+
         year,
+
         month
+
     ):
 
         self.rep_id = representative_id
+
         self.year = year
+
         self.month = month
+
+        self.today = date.today()
 
         self.settings = self.load_settings()
 
+        self.rules = self.load_rules()
+
     def load_settings(self):
 
-        data = {}
+        settings = {}
 
-        settings = Setting.query.all()
+        for item in Setting.query.all():
 
-        for item in settings:
+            settings[item.setting_key] = item.setting_value
 
-            data[item.setting_key] = item.setting_value
+        return settings
 
-        return data
+    def load_rules(self):
+
+        query = PrimeRule.query.filter_by(
+
+            active=True
+
+        )
+
+        rules = []
+
+        for rule in query.all():
+
+            if (
+
+                rule.valid_from
+
+                and
+
+                rule.valid_from > self.today
+
+            ):
+
+                continue
+
+            if (
+
+                rule.valid_to
+
+                and
+
+                rule.valid_to < self.today
+
+            ):
+
+                continue
+
+            rules.append(rule)
+
+        rules.sort(
+
+            key=lambda x: x.product.display_order
+
+            if x.product else 999
+
+        )
+
+        return rules
 
     def calculate_product(
 
@@ -65,15 +125,25 @@ class PrimeEngine:
 
         ).first()
 
+        target_unit = 0
+
         target_tl = 0
+
+        realization_unit = 0
+
         realization_tl = 0
+
         percent = 0
 
         if target:
 
+            target_unit = target.unit_target
+
             target_tl = target.tl_target
 
         if summary:
+
+            realization_unit = summary.unit
 
             realization_tl = summary.tl
 
@@ -89,9 +159,13 @@ class PrimeEngine:
 
         return {
 
-            "target": target_tl,
+            "target_unit": target_unit,
 
-            "realization": realization_tl,
+            "target_tl": target_tl,
+
+            "realization_unit": realization_unit,
+
+            "realization_tl": realization_tl,
 
             "percent": round(
 
@@ -103,6 +177,34 @@ class PrimeEngine:
 
         }
 
+    def get_setting(
+
+        self,
+
+        key,
+
+        default=0
+
+    ):
+
+        try:
+
+            return float(
+
+                self.settings.get(
+
+                    key,
+
+                    default
+
+                )
+
+            )
+
+        except Exception:
+
+            return default
+
     def calculate_main_prime(
 
         self,
@@ -111,63 +213,43 @@ class PrimeEngine:
 
     ):
 
-        minimum = float(
+        minimum = self.get_setting(
 
-            self.settings.get(
+            "MIN_PRIME_PERCENT",
 
-                "MIN_PRIME_PERCENT",
-
-                100
-
-            )
+            100
 
         )
 
-        maximum = float(
+        maximum = self.get_setting(
 
-            self.settings.get(
+            "MAX_PRIME_PERCENT",
 
-                "MAX_PRIME_PERCENT",
-
-                140
-
-            )
+            140
 
         )
 
-        base_prime = float(
+        base = self.get_setting(
 
-            self.settings.get(
+            "MAIN_PRIME",
 
-                "MAIN_PRIME",
-
-                50000
-
-            )
+            50000
 
         )
 
-        step = float(
+        step = self.get_setting(
 
-            self.settings.get(
+            "PRIME_STEP",
 
-                "PRIME_STEP",
-
-                5
-
-            )
+            5
 
         )
 
-        step_amount = float(
+        step_amount = self.get_setting(
 
-            self.settings.get(
+            "STEP_AMOUNT",
 
-                "STEP_AMOUNT",
-
-                2500
-
-            )
+            2500
 
         )
 
@@ -175,308 +257,30 @@ class PrimeEngine:
 
             return 0
 
-        if total_percent > maximum:
+        total_percent = min(
 
-            total_percent = maximum
+            total_percent,
 
-        extra = total_percent - minimum
-
-        level = int(
-
-            extra // step
+            maximum
 
         )
 
-        return base_prime + (
+        level = int(
+
+            (
+
+                total_percent -
+
+                minimum
+
+            ) // step
+
+        )
+
+        return base + (
 
             level *
 
             step_amount
-
-        )
-
-    def calculate_ciro_prime(
-
-        self,
-
-        total_percent
-
-    ):
-
-        if total_percent >= 100:
-
-            return float(
-
-                self.settings.get(
-
-                    "CIRO_PRIME",
-
-                    20000
-
-                )
-
-            )
-
-        return 0
-
-    def finalize(
-
-        self,
-
-        result
-
-    ):
-
-        if not result["success"]:
-
-            result["main_prime"] = 0
-
-            result["ciro_prime"] = 0
-
-            result["total_prime"] = 0
-
-            result["status"] = "Başarısız"
-
-            return result
-
-        result["main_prime"] = self.calculate_main_prime(
-
-            result["total_tl_percent"]
-
-        )
-
-        result["ciro_prime"] = self.calculate_ciro_prime(
-
-            result["total_tl_percent"]
-
-        )
-
-        result["total_prime"] = (
-
-            result["main_prime"]
-
-            +
-
-            result["ciro_prime"]
-
-        )
-
-        result["status"] = "Hak Kazandı"
-
-        return result
-
-    def calculate(
-
-        self
-
-    ):
-
-        result = {
-
-            "products": {},
-
-            "total_target": 0,
-
-            "total_realization": 0,
-
-            "total_tl_percent": 0,
-
-            "main_prime": 0,
-
-            "ciro_prime": 0,
-
-            "total_prime": 0,
-
-            "success": False,
-
-            "status": ""
-
-        }
-
-        products = Product.query.filter_by(
-
-            is_prime_product=True,
-
-            is_active=True
-
-        ).order_by(
-
-            Product.display_order.asc()
-
-        ).all()
-
-        success90 = 0
-
-        success75 = 0
-
-        total_target = 0
-
-        total_realization = 0
-
-        for product in products:
-
-            info = self.calculate_product(
-
-                product.id
-
-            )
-
-            result["products"][
-
-                product.product_name
-
-            ] = info
-
-            total_target += info["target"]
-
-            total_realization += info["realization"]
-
-            if info["percent"] >= 90:
-
-                success90 += 1
-
-            elif info["percent"] >= 75:
-
-                success75 += 1
-
-        result["total_target"] = round(
-
-            total_target,
-
-            2
-
-        )
-
-        result["total_realization"] = round(
-
-            total_realization,
-
-            2
-
-        )
-
-        if total_target > 0:
-
-            result["total_tl_percent"] = round(
-
-                (
-
-                    total_realization /
-
-                    total_target
-
-                ) * 100,
-
-                2
-
-            )
-
-        result["success"] = (
-
-            success90 >= 3
-
-            and
-
-            success75 >= 1
-
-            and
-
-            result["total_tl_percent"] >= float(
-
-                self.settings.get(
-
-                    "TARGET_100",
-
-                    100
-
-                )
-
-            )
-
-        )
-
-        result["rule_summary"] = {
-
-            "required_90": 3,
-
-            "current_90": success90,
-
-            "required_75": 1,
-
-            "current_75": success75,
-
-            "total_target": round(
-
-                total_target,
-
-                2
-
-            ),
-
-            "total_realization": round(
-
-                total_realization,
-
-                2
-
-            )
-
-        }
-
-        if result["success"]:
-
-            result["message"] = (
-
-                "Prim şartları sağlandı."
-
-            )
-
-        else:
-
-            reasons = []
-
-            if success90 < 3:
-
-                reasons.append(
-
-                    f"%90 üzeri ürün sayısı yetersiz ({success90}/3)"
-
-                )
-
-            if success75 < 1:
-
-                reasons.append(
-
-                    f"%75 üzeri ürün sayısı yetersiz ({success75}/1)"
-
-                )
-
-            if result["total_tl_percent"] < float(
-
-                self.settings.get(
-
-                    "TARGET_100",
-
-                    100
-
-                )
-
-            ):
-
-                reasons.append(
-
-                    "Toplam TL realizasyonu %100'ün altında"
-
-                )
-
-            result["message"] = " | ".join(
-
-                reasons
-
-            )
-
-        return self.finalize(
-
-            result
 
         )
