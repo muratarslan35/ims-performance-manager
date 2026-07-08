@@ -2,79 +2,182 @@
 
 {% block content %}
 
-<div class="container-fluid">
+<div class="page-header d-print-none">
 
-<div class="row">
+<div class="container-xl">
 
-<div class="col-2 sidebar">
+<div class="row align-items-center">
 
-<h4 class="mt-4 text-center">
+<div class="col">
 
-IPM
+<h2 class="page-title">
 
-</h4>
-
-<hr>
-
-<a href="#">Dashboard</a>
-
-<a href="#">IMS Center</a>
-
-<a href="#">Products</a>
-
-<a href="#">Targets</a>
-
-<a href="#">Prime</a>
-
-<a href="#">Reports</a>
-
-<a href="#">Settings</a>
-
-</div>
-
-<div class="col-10">
-
-<div class="p-4">
-
-<h2>
-
-Dashboard
+Kontrol Paneli
 
 </h2>
 
+<div class="text-secondary">
+
+IMS Performans Yönetim Sistemi
+
+</div>
+
+</div>
+
+<div class="col-auto">
+
+{% if last_upload %}
+
+<span class="badge bg-success">
+
+Son IMS :
+{{ last_upload.file_name }}
+
+</span>
+
+{% else %}
+
+<span class="badge bg-danger">
+
+IMS Yüklenmedi
+
+</span>
+
+{% endif %}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="page-body">
+
+<div class="container-xl">
+
+<div class="row row-deck row-cards">
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body">
+
+<div class="text-secondary">
+
+Toplam Ürün
+
+</div>
+
+<div class="display-6">
+
+{{ total_products }}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body">
+
+<div class="text-secondary">
+
+Temsilci
+
+</div>
+
+<div class="display-6">
+
+{{ total_representatives }}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card">
+
+<div class="card-body">
+
+<div class="text-secondary">
+
+Hedef Kaydı
+
+</div>
+
+<div class="display-6">
+
+{{ total_targets }}
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-md-3">
+
+<div class="card bg-blue text-white">
+
+<div class="card-body">
+
+<div>
+
+Tahmini Prim
+
+</div>
+
+<div class="display-6">
+
+50.000 ₺
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
 <div class="row mt-4">
 
-<div class="col-md-4">
+<div class="col-lg-8">
 
-<div class="card dashboard-card">
+<div class="card">
 
-<h5>Annual Revenue</h5>
+<div class="card-header">
 
-<h2>--</h2>
+<h3 class="card-title">
 
-</div>
+Aylık TL Performansı
 
-</div>
-
-<div class="col-md-4">
-
-<div class="card dashboard-card">
-
-<h5>Annual Units</h5>
-
-<h2>--</h2>
+</h3>
 
 </div>
 
-</div>
+<div class="card-body">
 
-<div class="col-md-4">
+<div id="monthlyRevenueChart"
 
-<div class="card dashboard-card">
-
-<h5>Main Bonus</h5>
-
-<h2>--</h2>
+style="height:350px;">
 
 </div>
 
@@ -84,10 +187,304 @@ Dashboard
 
 </div>
 
+<div class="col-lg-4">
+
+<div class="card">
+
+<div class="card-header">
+
+<h3 class="card-title">
+
+Q Durumu
+
+</h3>
+
+</div>
+
+<div class="card-body">
+
+<div class="progress progress-lg">
+
+<div
+class="progress-bar bg-success"
+style="width:68%">
+
+68%
+
+</div>
+
+</div>
+
+<br>
+
+<div>
+
+Q2 Hedefi
+
+</div>
+
+<h2>
+
+%68
+
+</h2>
+
+</div>
+
 </div>
 
 </div>
 
 </div>
+
+<div class="row mt-4">
+
+<div class="col-lg-6">
+
+<div class="card">
+
+<div class="card-header">
+
+En Başarılı Ürünler
+
+</div>
+
+<div class="table-responsive">
+
+<table class="table table-vcenter">
+
+<thead>
+
+<tr>
+
+<th>Ürün</th>
+
+<th>Realizasyon</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+<tr>
+
+<td>Travazol</td>
+
+<td>
+
+<span class="badge bg-success">
+
+112%
+
+</span>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td>Monurol</td>
+
+<td>
+
+<span class="badge bg-success">
+
+103%
+
+</span>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td>Mixovul</td>
+
+<td>
+
+<span class="badge bg-warning">
+
+91%
+
+</span>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td>Acnemix</td>
+
+<td>
+
+<span class="badge bg-danger">
+
+74%
+
+</span>
+
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="col-lg-6">
+
+<div class="card">
+
+<div class="card-header">
+
+Son IMS Yüklemeleri
+
+</div>
+
+<div class="table-responsive">
+
+<table class="table">
+
+<thead>
+
+<tr>
+
+<th>Dosya</th>
+
+<th>Tarih</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% if last_upload %}
+
+<tr>
+
+<td>
+
+{{ last_upload.file_name }}
+
+</td>
+
+<td>
+
+{{ last_upload.uploaded_at.strftime("%d.%m.%Y") }}
+
+</td>
+
+</tr>
+
+{% else %}
+
+<tr>
+
+<td colspan="2">
+
+Henüz IMS yüklenmedi.
+
+</td>
+
+</tr>
+
+{% endif %}
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+document.addEventListener("DOMContentLoaded",function(){
+
+new ApexCharts(
+
+document.querySelector("#monthlyRevenueChart"),
+
+{
+
+chart:{
+
+type:"line",
+
+height:350
+
+},
+
+series:[
+
+{
+
+name:"TL",
+
+data:[0,0,0,0,0,0,0,0,0,0,0,0]
+
+}
+
+],
+
+xaxis:{
+
+categories:[
+
+"Ocak",
+
+"Şubat",
+
+"Mart",
+
+"Nisan",
+
+"Mayıs",
+
+"Haziran",
+
+"Temmuz",
+
+"Ağustos",
+
+"Eylül",
+
+"Ekim",
+
+"Kasım",
+
+"Aralık"
+
+]
+
+}
+
+}
+
+).render();
+
+});
+
+</script>
 
 {% endblock %}
