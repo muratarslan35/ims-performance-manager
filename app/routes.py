@@ -1,44 +1,60 @@
 from flask import Blueprint
 from flask import render_template
+
+from flask_login import current_user
 from flask_login import login_required
 
 main_bp = Blueprint(
     "main",
-    __name__,
+    __name__
 )
+
+
+@main_bp.route("/")
+@login_required
+def home():
+
+    return render_template(
+        "dashboard.html",
+        user=current_user
+    )
 
 
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template("dashboard.html")
 
-
-@main_bp.route("/products")
-def products():
-    return render_template("products.html")
-
-
-@main_bp.route("/targets")
-def targets():
-    return render_template("targets.html")
-
-
-@main_bp.route("/ims")
-def ims():
-    return render_template("ims.html")
+    return render_template(
+        "dashboard.html",
+        user=current_user
+    )
 
 
 @main_bp.route("/prime")
+@login_required
 def prime():
-    return render_template("prime.html")
+
+    return render_template(
+        "prime.html",
+        user=current_user
+    )
 
 
 @main_bp.route("/reports")
+@login_required
 def reports():
-    return render_template("reports.html")
+
+    return render_template(
+        "reports.html",
+        user=current_user
+    )
 
 
 @main_bp.route("/settings")
+@login_required
 def settings():
-    return render_template("settings.html")
+
+    return render_template(
+        "settings.html",
+        user=current_user
+    )
