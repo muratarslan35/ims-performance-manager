@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="container-fluid">
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+
+<h2>
+
+👤 Temsilci Yönetimi
+
+</h2>
+
+<button
+class="btn btn-success">
+
+📥 Excel'den Aktar
+
+</button>
+
+</div>
+
+<div class="card shadow-sm mb-4">
+
+<div class="card-header">
+
+Yeni Temsilci
+
+</div>
+
+<div class="card-body">
+
+<form
+action="{{ url_for('representatives.add') }}"
+method="POST"
+class="row g-3">
+
+<div class="col-md-2">
+
+<input
+class="form-control"
+name="rep_code"
+placeholder="Temsilci Kodu">
+
+</div>
+
+<div class="col-md-2">
+
+<input
+class="form-control"
+name="ims_code"
+placeholder="IMS Kodu">
+
+</div>
+
+<div class="col-md-2">
+
+<input
+class="form-control"
+name="sap_code"
+placeholder="SAP Kodu">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="rep_name"
+placeholder="Ad Soyad"
+required>
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="manager"
+placeholder="Bölge Müdürü">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="region"
+placeholder="Bölge">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="city"
+placeholder="İl">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="district"
+placeholder="İlçe">
+
+</div>
+
+<div class="col-md-3">
+
+<input
+class="form-control"
+name="team"
+placeholder="Takım">
+
+</div>
+
+<div class="col-md-2 d-grid">
+
+<button
+class="btn btn-primary">
+
+Kaydet
+
+</button>
+
+</div>
+
+</form>
+
+</div>
+
+</div>
+
+<div class="card shadow-sm">
+
+<div class="card-header">
+
+Temsilci Listesi
+
+</div>
+
+<div class="card-body">
+
+<div class="table-responsive">
+
+<table class="table table-hover align-middle">
+
+<thead>
+
+<tr>
+
+<th>ID</th>
+
+<th>Kod</th>
+
+<th>IMS</th>
+
+<th>SAP</th>
+
+<th>Ad Soyad</th>
+
+<th>Bölge Müdürü</th>
+
+<th>Bölge</th>
+
+<th>İl</th>
+
+<th>Takım</th>
+
+<th>Durum</th>
+
+<th>İşlem</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{% for rep in representatives %}
+
+<tr>
+
+<td>{{ rep.id }}</td>
+
+<td>{{ rep.rep_code }}</td>
+
+<td>{{ rep.ims_code }}</td>
+
+<td>{{ rep.sap_code }}</td>
+
+<td>{{ rep.rep_name }}</td>
+
+<td>{{ rep.manager }}</td>
+
+<td>{{ rep.region }}</td>
+
+<td>{{ rep.city }}</td>
+
+<td>{{ rep.team }}</td>
+
+<td>
+
+{% if rep.active %}
+
+<span class="badge bg-success">
+
+🟢 Aktif
+
+</span>
+
+{% else %}
+
+<span class="badge bg-danger">
+
+🔴 Pasif
+
+</span>
+
+{% endif %}
+
+</td>
+
+<td>
+
+<a
+href="{{ url_for('representatives.status', id=rep.id) }}"
+class="btn btn-sm btn-outline-primary">
+
+{% if rep.active %}
+
+Pasif Yap
+
+{% else %}
+
+Aktif Yap
+
+{% endif %}
+
+</a>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+{% endblock %}
