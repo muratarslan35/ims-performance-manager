@@ -1,16 +1,13 @@
 import pandas as pd
 
-from app.models import Product
-from app.models import Representative
+from app.mapping import IMSMapper
 
 
 class IMSParser:
 
     def __init__(self):
 
-        self.products = Product.query.all()
-
-        self.representatives = Representative.query.all()
+        self.mapper = IMSMapper()
 
     def parse_sheet(
 
@@ -36,73 +33,73 @@ class IMSParser:
 
     def parse_row(self, row):
 
-        representative = self.find_representative(row)
+        text = " ".join(
 
-        product = self.find_product(row)
+            map(str, row.values)
+
+        )
+
+        representative = self.mapper.map_representative(
+            text
+        )
+
+        product = self.mapper.map_product(
+            text
+        )
 
         return {
 
-            "representative": representative,
+            "representative":
 
-            "product": product,
+                representative.rep_name
 
-            "competitor": self.find_competitor(row),
+                if representative else None,
 
-            "unit": self.find_unit(row),
+            "product":
 
-            "tl": self.find_tl(row),
+                product.product_name
 
-            "market_share": self.find_market_share(row),
+                if product else None,
 
-            "brick": self.find_brick(row),
+            "competitor":
 
-            "raw": row.to_dict()
+                self.find_competitor(row),
+
+            "unit":
+
+                self.find_unit(row),
+
+            "tl":
+
+                self.find_tl(row),
+
+            "market_share":
+
+                self.find_market_share(row),
+
+            "brick":
+
+                self.find_brick(row),
+
+            "raw":
+
+                row.to_dict()
 
         }
-
-    def find_representative(self, row):
-
-        text = " ".join(
-
-            map(str, row.values)
-
-        ).upper()
-
-        for rep in self.representatives:
-
-            if rep.rep_name.upper() in text:
-
-                return rep.rep_name
-
-        return None
-
-    def find_product(self, row):
-
-        text = " ".join(
-
-            map(str, row.values)
-
-        ).upper()
-
-        for product in self.products:
-
-            if product.product_name.upper() in text:
-
-                return product.product_name
-
-            if product.ims_name:
-
-                if product.ims_name.upper() in text:
-
-                    return product.product_name
-
-        return None
 
     def find_competitor(self, row):
 
         return None
 
     def find_unit(self, row):
+
+        for value in row.values:
+
+            number = self.mapper.find_number(value)
+
+            if number > 0:
+
+                return number
 
         return 0
 
