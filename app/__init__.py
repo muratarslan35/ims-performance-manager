@@ -6,13 +6,18 @@ from app.extensions import db, migrate, login_manager
 import app.login_manager
 
 from app.database import initialize_database
+from app.auth import auth_bp
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
 def register_blueprints(app):
+
     from app.routes import main_bp
 
     app.register_blueprint(main_bp)
+
+    app.register_blueprint(auth_bp)
 
 
 def register_extensions(app):
