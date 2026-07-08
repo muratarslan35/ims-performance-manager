@@ -1,3 +1,4 @@
+from datetime import date
 from datetime import datetime
 
 from flask_login import UserMixin
@@ -97,15 +98,15 @@ class Representative(db.Model):
         db.String(100)
     )
 
+    territory = db.Column(
+        db.String(100)
+    )
+
     manager = db.Column(
         db.String(120)
     )
 
     team = db.Column(
-        db.String(100)
-    )
-
-    territory = db.Column(
         db.String(100)
     )
 
@@ -185,9 +186,28 @@ class Product(db.Model):
         default=False
     )
 
+    required_percent = db.Column(
+        db.Integer,
+        default=90
+    )
+
+    include_total_tl = db.Column(
+        db.Boolean,
+        default=True
+    )
+
     display_order = db.Column(
         db.Integer,
         default=0
+    )
+
+    valid_from = db.Column(
+        db.Date,
+        default=date.today
+    )
+
+    valid_to = db.Column(
+        db.Date
     )
 
     is_active = db.Column(
@@ -365,7 +385,8 @@ class IMSRawData(db.Model):
         db.Integer,
         db.ForeignKey(
             "ims_uploads.id"
-        )
+        ),
+        nullable=False
     )
 
     sheet_name = db.Column(
@@ -429,9 +450,19 @@ class IMSRawData(db.Model):
         db.Text
     )
 
-    upload = db.relationship(
-        "IMSUpload"
+    created_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow
     )
+
+    upload = db.relationship(
+        "IMSUpload",
+        backref="raw_records"
+    )
+
+    def __repr__(self):
+
+        return f"<IMSRawData {self.product}>"
 
 
 class IMSSummary(db.Model):
@@ -447,21 +478,24 @@ class IMSSummary(db.Model):
         db.Integer,
         db.ForeignKey(
             "ims_uploads.id"
-        )
+        ),
+        nullable=False
     )
 
     representative_id = db.Column(
         db.Integer,
         db.ForeignKey(
             "representatives.id"
-        )
+        ),
+        nullable=False
     )
 
     product_id = db.Column(
         db.Integer,
         db.ForeignKey(
             "products.id"
-        )
+        ),
+        nullable=False
     )
 
     year = db.Column(
@@ -526,8 +560,14 @@ class IMSSummary(db.Model):
         default="Hazır"
     )
 
+    created_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow
+    )
+
     upload = db.relationship(
-        "IMSUpload"
+        "IMSUpload",
+        backref="summaries"
     )
 
     representative = db.relationship(
@@ -537,6 +577,10 @@ class IMSSummary(db.Model):
     product = db.relationship(
         "Product"
     )
+
+    def __repr__(self):
+
+        return f"<IMSSummary {self.id}>"
 
 class Setting(db.Model):
 
@@ -554,7 +598,8 @@ class Setting(db.Model):
     )
 
     setting_value = db.Column(
-        db.String(255)
+        db.String(255),
+        nullable=False
     )
 
     description = db.Column(
@@ -640,12 +685,75 @@ class ProductAlias(db.Model):
     )
 
     product = db.relationship(
-        "Product"
+        "Product",
+        backref="aliases"
     )
 
     def __repr__(self):
 
         return f"<ProductAlias {self.alias_name}>"
+
+
+class PrimeRule(db.Model):
+
+    __tablename__ = "prime_rules"
+
+    id = db.Column(
+        db.Integer,
+        primary_key=True
+    )
+
+    product_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "products.id"
+        ),
+        nullable=False
+    )
+
+    required_percent = db.Column(
+        db.Integer,
+        nullable=False,
+        default=90
+    )
+
+    include_in_prime = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    include_in_total_tl = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    active = db.Column(
+        db.Boolean,
+        default=True
+    )
+
+    valid_from = db.Column(
+        db.Date,
+        default=date.today
+    )
+
+    valid_to = db.Column(
+        db.Date
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow
+    )
+
+    product = db.relationship(
+        "Product",
+        backref="prime_rules"
+    )
+
+    def __repr__(self):
+
+        return f"<PrimeRule {self.product.product_name if self.product else self.product_id}>"
 
 
 class RepresentativeAlias(db.Model):
@@ -676,7 +784,8 @@ class RepresentativeAlias(db.Model):
     )
 
     representative = db.relationship(
-        "Representative"
+        "Representative",
+        backref="aliases"
     )
 
     def __repr__(self):
