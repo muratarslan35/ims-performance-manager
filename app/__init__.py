@@ -4,6 +4,8 @@ from pathlib import Path
 from config import Config
 from app.extensions import db, migrate, login_manager
 import app.login_manager
+
+from app.database import initialize_database
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -32,8 +34,10 @@ def create_directories(app):
 
 
 def create_database(app):
+
     with app.app_context():
-        db.create_all()
+
+        initialize_database()
 
 
 def create_app():
