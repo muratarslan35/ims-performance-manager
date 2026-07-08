@@ -1,0 +1,223 @@
+<aside class="navbar navbar-vertical navbar-expand-lg navbar-dark">
+
+<div class="container-fluid">
+
+<h1 class="navbar-brand navbar-brand-autodark py-3">
+
+<i class="bi bi-activity"></i>
+
+<span class="ms-2">
+
+IMS Performans
+
+</span>
+
+</h1>
+
+<div class="navbar-nav">
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('main.dashboard') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-speedometer2"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Kontrol Paneli
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('ims.index') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-file-earmark-excel"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+IMS Merkezi
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('products.index') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-capsule"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Ürün Yönetimi
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('targets.index') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-bullseye"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Hedef Yönetimi
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="#">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-people"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Temsilciler
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('main.prime') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-cash-stack"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Prim Motoru
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('main.reports') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-bar-chart"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Raporlar
+
+</span>
+
+</a>
+
+</div>
+
+<div class="nav-item">
+
+<a
+class="nav-link"
+href="{{ url_for('main.settings') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-gear"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Ayarlar
+
+</span>
+
+</a>
+
+</div>
+
+<hr>
+
+<div class="nav-item">
+
+<a
+class="nav-link text-danger"
+href="{{ url_for('auth.logout') }}">
+
+<span class="nav-link-icon">
+
+<i class="bi bi-box-arrow-right"></i>
+
+</span>
+
+<span class="nav-link-title">
+
+Çıkış Yap
+
+</span>
+
+</a>
+
+</div>
+
+</div>
+
+</div>
+
+</aside>
