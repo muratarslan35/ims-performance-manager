@@ -17,6 +17,7 @@ from app.products import products_bp
 from app.targets import targets_bp
 from app.ims import ims_bp
 from app.dashboard import dashboard_bp
+from app.representatives import representatives_bp
 
 def register_extensions(app):
 
@@ -40,6 +41,8 @@ def register_blueprints(app):
     app.register_blueprint(ims_bp)
 
     app.register_blueprint(dashboard_bp)
+
+    app.register_blueprint(representatives_bp)
 
 
 def create_directories(app):
