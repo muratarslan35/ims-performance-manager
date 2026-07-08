@@ -1,14 +1,14 @@
 from flask import Blueprint
+from flask import flash
+from flask import redirect
 from flask import render_template
 from flask import request
-from flask import redirect
 from flask import url_for
-from flask import flash
 
+from flask_login import current_user
+from flask_login import login_required
 from flask_login import login_user
 from flask_login import logout_user
-from flask_login import login_required
-from flask_login import current_user
 
 from werkzeug.security import check_password_hash
 
@@ -24,32 +24,85 @@ auth_bp = Blueprint(
 def login():
 
     if current_user.is_authenticated:
-        return redirect(url_for("main.dashboard"))
+        return redirect(
+            url_for("main.dashboard")
+        )
 
     if request.method == "POST":
 
-        email = request.form.get("email")
+        email = request.form.get(
+            "email",
+            ""
+        ).strip().lower()
 
-        password = request.form.get("password")
+        password = request.form.get(
+            "password",
+            ""
+        )
+
+        if not email or not password:
+
+            flash(
+                "E-posta ve şifre zorunludur.",
+                "warning"
+            )
+
+            return render_template(
+                "login.html"
+            )
 
         user = User.query.filter_by(
             email=email
         ).first()
 
-        if user and check_password_hash(
+        if user is None:
+
+            flash(
+                "Kullanıcı bulunamadı.",
+                "danger"
+            )
+
+            return render_template(
+                "login.html"
+            )
+
+        if not user.active:
+
+            flash(
+                "Kullanıcı pasif durumda.",
+                "danger"
+            )
+
+            return render_template(
+                "login.html"
+            )
+
+        if not check_password_hash(
             user.password,
             password
         ):
 
-            login_user(user)
-
-            return redirect(
-                url_for("main.dashboard")
+            flash(
+                "Şifre hatalı.",
+                "danger"
             )
 
+            return render_template(
+                "login.html"
+            )
+
+        login_user(
+            user,
+            remember=True
+        )
+
         flash(
-            "Invalid email or password.",
-            "danger"
+            f"Hoş geldiniz {user.full_name}",
+            "success"
+        )
+
+        return redirect(
+            url_for("main.dashboard")
         )
 
     return render_template(
@@ -62,6 +115,11 @@ def login():
 def logout():
 
     logout_user()
+
+    flash(
+        "Başarıyla çıkış yapıldı.",
+        "success"
+    )
 
     return redirect(
         url_for("auth.login")
