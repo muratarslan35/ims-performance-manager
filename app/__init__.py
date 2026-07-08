@@ -3,7 +3,7 @@ from pathlib import Path
 
 from config import Config
 from app.extensions import db, migrate, login_manager
-
+import app.login_manager
 BASE_DIR = Path(__file__).resolve().parent
 
 
