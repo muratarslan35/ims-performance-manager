@@ -7,7 +7,7 @@ import app.login_manager
 
 from app.database import initialize_database
 from app.auth import auth_bp
-
+from app.products import products_bp
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -18,6 +18,8 @@ def register_blueprints(app):
     app.register_blueprint(main_bp)
 
     app.register_blueprint(auth_bp)
+
+    app.register_blueprint(products_bp)
 
 
 def register_extensions(app):
