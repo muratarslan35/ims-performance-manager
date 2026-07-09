@@ -24,7 +24,9 @@ class QuarterEngine:
 
         year,
 
-        quarter
+        quarter,
+
+        overrides=None
 
     ):
 
@@ -35,6 +37,8 @@ class QuarterEngine:
         self.quarter = quarter
 
         self.months = self.QUARTERS[quarter]
+
+        self.overrides = overrides or {}
 
     def calculate_product(
 
@@ -81,37 +85,78 @@ class QuarterEngine:
             ).first()
 
             t_unit = 0
+
             t_tl = 0
+
             r_unit = 0
+
             r_tl = 0
 
             if target:
 
                 t_unit = target.unit_target
+
                 t_tl = target.tl_target
 
             if summary:
 
                 r_unit = summary.unit
+
                 r_tl = summary.tl
 
+            override = self.overrides.get(
+
+                product_id
+
+            )
+
+            if override:
+
+                r_unit = override.get(
+
+                    "unit",
+
+                    r_unit
+
+                )
+
+                r_tl = override.get(
+
+                    "tl",
+
+                    r_tl
+
+                )
+
             target_unit += t_unit
+
             target_tl += t_tl
 
             realization_unit += r_unit
+
             realization_tl += r_tl
 
-            monthly.append({
+            monthly.append(
 
-                "month": month,
+                {
 
-                "target_unit": t_unit,
+                    "month": month,
 
-                "realization_unit": r_unit,
+                    "target_unit": t_unit,
 
-                "difference": r_unit - t_unit
+                    "realization_unit": r_unit,
 
-            })
+                    "difference": (
+
+                        r_unit -
+
+                        t_unit
+
+                    )
+
+                }
+
+            )
 
         percent = 0
 
@@ -135,7 +180,13 @@ class QuarterEngine:
 
             "realization_tl": realization_tl,
 
-            "percent": round(percent,2),
+            "percent": round(
+
+                percent,
+
+                2
+
+            ),
 
             "monthly": monthly
 
@@ -159,19 +210,23 @@ class QuarterEngine:
 
             carry += monthly_diff
 
-            timeline.append({
+            timeline.append(
 
-                "month": month["month"],
+                {
 
-                "target": month["target_unit"],
+                    "month": month["month"],
 
-                "realization": month["realization_unit"],
+                    "target": month["target_unit"],
 
-                "monthly_difference": monthly_diff,
+                    "realization": month["realization_unit"],
 
-                "carry": carry
+                    "monthly_difference": monthly_diff,
 
-            })
+                    "carry": carry
+
+                }
+
+            )
 
         closed = carry >= 0
 
@@ -183,7 +238,11 @@ class QuarterEngine:
 
         else:
 
-            remaining = abs(carry)
+            remaining = abs(
+
+                carry
+
+            )
 
             surplus = 0
 
@@ -199,98 +258,6 @@ class QuarterEngine:
 
         }
 
-
-    def calculate(
-
-        self
-
-    ):
-
-        results = {}
-
-        total_target = 0
-
-        total_realization = 0
-
-        total_target_tl = 0
-
-        total_realization_tl = 0
-
-        for product in Product.query.filter_by(
-
-            is_active=True
-
-        ).order_by(
-
-            Product.display_order.asc()
-
-        ).all():
-
-            product_result = self.calculate_product(
-
-                product.id
-
-            )
-
-            analysis = self.analyze_product(
-
-                product_result
-
-            )
-
-            results[product.product_name] = {
-
-                **product_result,
-
-                **analysis
-
-            }
-
-            total_target += product_result["target_unit"]
-
-            total_realization += product_result["realization_unit"]
-
-            total_target_tl += product_result["target_tl"]
-
-            total_realization_tl += product_result["realization_tl"]
-
-        total_percent = 0
-
-        if total_target_tl > 0:
-
-            total_percent = round(
-
-                (
-
-                    total_realization_tl /
-
-                    total_target_tl
-
-                ) * 100,
-
-                2
-
-            )
-
-        return {
-
-            "products": results,
-
-            "quarter": self.quarter,
-
-            "year": self.year,
-
-            "target_unit": total_target,
-
-            "realization_unit": total_realization,
-
-            "target_tl": total_target_tl,
-
-            "realization_tl": total_realization_tl,
-
-            "total_percent": total_percent
-
-        }
 
     def get_product_status(
 
@@ -340,34 +307,37 @@ class QuarterEngine:
 
         for product_name, info in results.items():
 
-            dashboard.append({
+            dashboard.append(
 
-                "product": product_name,
+                {
 
-                "status": self.get_product_status(
+                    "product": product_name,
 
-                    info
+                    "status": self.get_product_status(
 
-                ),
+                        info
 
-                "quarter_percent": info["percent"],
+                    ),
 
-                "remaining_box": info["remaining"],
+                    "quarter_percent": info["percent"],
 
-                "surplus_box": info["surplus"],
+                    "remaining_box": info["remaining"],
 
-                "closed_month": self.get_close_month(
+                    "surplus_box": info["surplus"],
 
-                    info["timeline"]
+                    "closed_month": self.get_close_month(
 
-                ),
+                        info["timeline"]
 
-                "timeline": info["timeline"]
+                    ),
 
-            })
+                    "timeline": info["timeline"]
+
+                }
+
+            )
 
         return dashboard
-
 
     def calculate(
 
@@ -378,8 +348,11 @@ class QuarterEngine:
         results = {}
 
         total_target = 0
+
         total_realization = 0
+
         total_target_tl = 0
+
         total_realization_tl = 0
 
         for product in Product.query.filter_by(
@@ -413,9 +386,11 @@ class QuarterEngine:
             }
 
             total_target += product_result["target_unit"]
+
             total_realization += product_result["realization_unit"]
 
             total_target_tl += product_result["target_tl"]
+
             total_realization_tl += product_result["realization_tl"]
 
         total_percent = 0
@@ -446,15 +421,21 @@ class QuarterEngine:
 
             [
 
-                x
+                item
 
-                for x in dashboard
+                for item in dashboard
 
-                if x["status"] != "Eksik"
+                if item["status"] != "Eksik"
 
             ]
 
         )
+
+        failed = len(
+
+            dashboard
+
+        ) - completed
 
         return {
 
@@ -470,11 +451,7 @@ class QuarterEngine:
 
             "completed_products": completed,
 
-            "failed_products": len(
-
-                dashboard
-
-            ) - completed,
+            "failed_products": failed,
 
             "target_unit": round(
 
@@ -508,6 +485,16 @@ class QuarterEngine:
 
             ),
 
-            "total_percent": total_percent
+            "total_percent": total_percent,
+
+            "simulation": (
+
+                len(
+
+                    self.overrides
+
+                ) > 0
+
+            )
 
         }
