@@ -32,7 +32,9 @@ class RecoveryEngine:
 
         quarter,
 
-        today=None
+        today=None,
+
+        overrides=None
 
     ):
 
@@ -45,6 +47,8 @@ class RecoveryEngine:
         self.months = self.QUARTERS[quarter]
 
         self.today = today or date.today()
+
+        self.overrides = overrides or {}
 
     def get_month_data(
 
@@ -81,20 +85,48 @@ class RecoveryEngine:
         ).first()
 
         target_box = 0
+
         target_tl = 0
 
         realization_box = 0
+
         realization_tl = 0
 
         if target:
 
             target_box = target.unit_target
+
             target_tl = target.tl_target
 
         if summary:
 
             realization_box = summary.unit
+
             realization_tl = summary.tl
+
+        override = self.overrides.get(
+
+            product_id
+
+        )
+
+        if override:
+
+            realization_box = override.get(
+
+                "unit",
+
+                realization_box
+
+            )
+
+            realization_tl = override.get(
+
+                "tl",
+
+                realization_tl
+
+            )
 
         return {
 
@@ -122,33 +154,7 @@ class RecoveryEngine:
 
         }
 
-    def get_product_data(
-
-        self,
-
-        product_id
-
-    ):
-
-        months = []
-
-        for month in self.months:
-
-            months.append(
-
-                self.get_month_data(
-
-                    product_id,
-
-                    month
-
-                )
-
-            )
-
-        return months
-
-      def analyze_product(
+    def analyze_product(
 
         self,
 
@@ -169,9 +175,11 @@ class RecoveryEngine:
         timeline = []
 
         total_target_box = 0
+
         total_realization_box = 0
 
         total_target_tl = 0
+
         total_realization_tl = 0
 
         for item in months:
@@ -181,28 +189,34 @@ class RecoveryEngine:
             carry_tl += item["difference_tl"]
 
             total_target_box += item["target_box"]
+
             total_realization_box += item["realization_box"]
 
             total_target_tl += item["target_tl"]
+
             total_realization_tl += item["realization_tl"]
 
-            timeline.append({
+            timeline.append(
 
-                "month": item["month"],
+                {
 
-                "target_box": item["target_box"],
+                    "month": item["month"],
 
-                "realization_box": item["realization_box"],
+                    "target_box": item["target_box"],
 
-                "carry_box": carry_box,
+                    "realization_box": item["realization_box"],
 
-                "target_tl": item["target_tl"],
+                    "carry_box": carry_box,
 
-                "realization_tl": item["realization_tl"],
+                    "target_tl": item["target_tl"],
 
-                "carry_tl": carry_tl
+                    "realization_tl": item["realization_tl"],
 
-            })
+                    "carry_tl": carry_tl
+
+                }
+
+            )
 
         remaining_box = abs(
 
@@ -216,11 +230,11 @@ class RecoveryEngine:
 
         ) if carry_tl < 0 else 0
 
-        percent = 0
+        projected_percent = 0
 
         if total_target_tl > 0:
 
-            percent = round(
+            projected_percent = round(
 
                 (
 
@@ -278,7 +292,9 @@ class RecoveryEngine:
 
                 (
 
-                    x for x in months
+                    x
+
+                    for x in months
 
                     if x["month"] == current_month
 
@@ -342,9 +358,7 @@ class RecoveryEngine:
 
                 int(
 
-                    ratio *
-
-                    100
+                    ratio * 100
 
                 )
 
@@ -378,7 +392,7 @@ class RecoveryEngine:
 
             ),
 
-            "projected_percent": percent,
+            "projected_percent": projected_percent,
 
             "risk_score": risk_score,
 
@@ -401,6 +415,11 @@ class RecoveryEngine:
         result
 
     ):
+
+        # Simülasyon modunda veritabanına yazma
+        if self.overrides:
+
+            return
 
         summary = RecoverySummary.query.filter_by(
 
@@ -514,7 +533,11 @@ class RecoveryEngine:
         return result
 
 
-    def run(self):
+    def run(
+
+        self
+
+    ):
 
         dashboard = []
 
@@ -544,41 +567,48 @@ class RecoveryEngine:
 
             )
 
-            dashboard.append({
+            dashboard.append(
 
-                "product_id": product.id,
+                {
 
-                "product_name": product.product_name,
+                    "product_id": product.id,
 
-                "carry_box": result["carry_box"],
+                    "product_name": product.product_name,
 
-                "carry_tl": result["carry_tl"],
+                    "carry_box": result["carry_box"],
 
-                "remaining_box": result["remaining_box"],
+                    "carry_tl": result["carry_tl"],
 
-                "remaining_tl": result["remaining_tl"],
+                    "remaining_box": result["remaining_box"],
 
-                "daily_need": result["daily_need"],
+                    "remaining_tl": result["remaining_tl"],
 
-                "projected_box": result["projected_box"],
+                    "daily_need": result["daily_need"],
 
-                "projected_percent": result["projected_percent"],
+                    "projected_box": result["projected_box"],
 
-                "risk_score": result["risk_score"],
+                    "projected_percent": result["projected_percent"],
 
-                "status": (
+                    "risk_score": result["risk_score"],
 
-                    "Tamamlandı"
+                    "status": (
 
-                    if result["remaining_box"] == 0
+                        "Tamamlandı"
 
-                    else "Açık"
+                        if result["remaining_box"] == 0
 
-                )
+                        else "Açık"
 
-            })
+                    )
 
-        db.session.commit()
+                }
+
+            )
+
+        # Gerçek çalışma modunda kaydet
+        if not self.overrides:
+
+            db.session.commit()
 
         dashboard.sort(
 
