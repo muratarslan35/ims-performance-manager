@@ -3,7 +3,6 @@ from datetime import date
 from app.models import (
     IMSSummary,
     PrimeRule,
-    Product,
     Setting,
     Target
 )
@@ -19,7 +18,9 @@ class PrimeEngine:
 
         year,
 
-        month
+        month,
+
+        overrides=None
 
     ):
 
@@ -34,6 +35,8 @@ class PrimeEngine:
         self.settings = self.load_settings()
 
         self.rules = self.load_rules()
+
+        self.overrides = overrides or {}
 
     def load_settings(self):
 
@@ -146,6 +149,30 @@ class PrimeEngine:
             realization_unit = summary.unit
 
             realization_tl = summary.tl
+
+        override = self.overrides.get(
+
+            product_id
+
+        )
+
+        if override:
+
+            realization_unit = override.get(
+
+                "unit",
+
+                realization_unit
+
+            )
+
+            realization_tl = override.get(
+
+                "tl",
+
+                realization_tl
+
+            )
 
         if target_tl > 0:
 
@@ -341,7 +368,6 @@ class PrimeEngine:
 
         return 0
 
-
     def analyze_rules(
 
         self,
@@ -374,43 +400,55 @@ class PrimeEngine:
 
                 success = False
 
-                failed.append({
+                failed.append(
 
-                    "product": product.product_name,
+                    {
 
-                    "required": rule.required_percent,
+                        "product": product.product_name,
 
-                    "actual": 0
+                        "required": rule.required_percent,
 
-                })
+                        "actual": 0
+
+                    }
+
+                )
 
                 continue
 
             if info["percent"] >= rule.required_percent:
 
-                passed.append({
+                passed.append(
 
-                    "product": product.product_name,
+                    {
 
-                    "required": rule.required_percent,
+                        "product": product.product_name,
 
-                    "actual": info["percent"]
+                        "required": rule.required_percent,
 
-                })
+                        "actual": info["percent"]
+
+                    }
+
+                )
 
             else:
 
                 success = False
 
-                failed.append({
+                failed.append(
 
-                    "product": product.product_name,
+                    {
 
-                    "required": rule.required_percent,
+                        "product": product.product_name,
 
-                    "actual": info["percent"]
+                        "required": rule.required_percent,
 
-                })
+                        "actual": info["percent"]
+
+                    }
+
+                )
 
         return {
 
@@ -421,8 +459,6 @@ class PrimeEngine:
             "failed": failed
 
         }
-
-
     def finalize(
 
         self,
@@ -477,6 +513,12 @@ class PrimeEngine:
 
             result["success"] = True
 
+        result["simulation"] = (
+
+            len(self.overrides) > 0
+
+        )
+
         return result
 
     def calculate(
@@ -513,7 +555,9 @@ class PrimeEngine:
 
             "status": "",
 
-            "message": ""
+            "message": "",
+
+            "simulation": False
 
         }
 
@@ -629,11 +673,7 @@ class PrimeEngine:
 
         reasons = []
 
-        if len(
-
-            analyze["failed"]
-
-        ) > 0:
+        if analyze["failed"]:
 
             for item in analyze["failed"]:
 
@@ -665,23 +705,19 @@ class PrimeEngine:
 
             )
 
-        if len(
+        if reasons:
 
-            reasons
+            result["message"] = " | ".join(
 
-        ) == 0:
-
-            result["message"] = (
-
-                "Tüm prim koşulları sağlandı."
+                reasons
 
             )
 
         else:
 
-            result["message"] = " | ".join(
+            result["message"] = (
 
-                reasons
+                "Tüm prim koşulları sağlandı."
 
             )
 
