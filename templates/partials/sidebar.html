@@ -2,223 +2,37 @@
 
     <div class="container-fluid">
 
-        <h1 class="navbar-brand navbar-brand-autodark py-3">
+        <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#sidebar-menu">
 
-            <i class="bi bi-activity"></i>
+            <span class="navbar-toggler-icon"></span>
 
-            <span class="ms-2">
+        </button>
 
-                IPM v1.0
+        <div class="navbar-brand navbar-brand-autodark py-4">
 
-            </span>
+            <div class="d-flex align-items-center">
 
-        </h1>
+                <div class="avatar avatar-lg bg-primary text-white">
 
-        <div class="text-secondary text-center mb-4">
+                    <i class="bi bi-bar-chart-line-fill"></i>
 
-            IMS Performans Yönetim Sistemi
+                </div>
 
-        </div>
+                <div class="ms-3">
 
-        <div class="navbar-nav">
+                    <div class="fw-bold fs-4">
 
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('dashboard.index') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-speedometer2"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Kontrol Paneli
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('ims.index') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-file-earmark-excel"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        IMS Merkezi
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('representatives.index') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-people-fill"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Temsilci Yönetimi
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('products.index') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-capsule"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Ürün Yönetimi
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('targets.index') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-bullseye"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Hedef Yönetimi
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('main.prime') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-cash-stack"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Prim Motoru
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('main.reports') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-graph-up-arrow"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Raporlar
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <div class="nav-item">
-
-                <a
-                    class="nav-link"
-                    href="{{ url_for('main.settings') }}">
-
-                    <span class="nav-link-icon">
-
-                        <i class="bi bi-gear-fill"></i>
-
-                    </span>
-
-                    <span class="nav-link-title">
-
-                        Ayarlar
-
-                    </span>
-
-                </a>
-
-            </div>
-
-            <hr>
-
-            <div class="nav-item">
-
-                <div class="px-3 py-2">
-
-                    <small class="text-secondary">
-
-                        Giriş Yapan
-
-                    </small>
-
-                    <div class="text-white fw-bold">
-
-                        {{ current_user.full_name }}
+                        IPM
 
                     </div>
 
                     <small class="text-secondary">
 
-                        {{ current_user.role }}
+                        IMS Performance Manager
 
                     </small>
 
@@ -226,39 +40,350 @@
 
             </div>
 
-            <div class="nav-item">
+        </div>
 
-                <a
-                    class="nav-link text-danger"
-                    href="{{ url_for('auth.logout') }}">
+        <div
+            class="collapse navbar-collapse"
+            id="sidebar-menu">
 
-                    <span class="nav-link-icon">
+            <ul class="navbar-nav pt-lg-3">
 
-                        <i class="bi bi-box-arrow-right"></i>
+                <li class="nav-item">
 
-                    </span>
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('dashboard.index') }}">
 
-                    <span class="nav-link-title">
+                        <span class="nav-link-icon">
 
-                        Güvenli Çıkış
+                            <i class="bi bi-speedometer2"></i>
 
-                    </span>
+                        </span>
 
-                </a>
+                        <span class="nav-link-title">
 
-            </div>
+                            Dashboard
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('ims.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-file-earmark-arrow-up-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            IMS Yönetimi
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('simulation.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-calculator-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Prim Simülasyonu
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-header">
+
+                    Tanımlar
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('representatives.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-people-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Temsilciler
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('products.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-capsule-pill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Ürünler
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('targets.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-bullseye"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Hedefler
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-header">
+
+                    Analiz
+
+
+                        </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('main.prime') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-cash-stack"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Prim Yönetimi
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('main.quarter') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-calendar2-week-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Quarter Takibi
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('main.recovery') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-arrow-repeat"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Recovery
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('main.reports') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-bar-chart-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Raporlar
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-header">
+
+                    Sistem
+
+                </li>
+
+                <li class="nav-item">
+
+                    <a
+                        class="nav-link"
+                        href="{{ url_for('settings.index') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-gear-fill"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Ayarlar
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+                <li class="nav-item mt-3">
+
+                    <div class="card bg-dark-lt border-0">
+
+                        <div class="card-body">
+
+                            <div class="small text-secondary">
+
+                                Aktif Kullanıcı
+
+                            </div>
+
+                            <div class="fw-bold">
+
+                                {{ current_user.full_name }}
+
+                            </div>
+
+                            <div class="text-secondary">
+
+                                {{ current_user.role }}
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </li>
+
+                <li class="nav-item mt-2">
+
+                    <a
+                        class="nav-link text-danger"
+                        href="{{ url_for('auth.logout') }}">
+
+                        <span class="nav-link-icon">
+
+                            <i class="bi bi-box-arrow-right"></i>
+
+                        </span>
+
+                        <span class="nav-link-title">
+
+                            Güvenli Çıkış
+
+                        </span>
+
+                    </a>
+
+                </li>
+
+            </ul>
 
         </div>
 
-        <div class="mt-auto text-center py-4">
+        <div class="mt-auto py-4 text-center border-top">
+
+            <div class="fw-bold">
+
+                IPM v2.0
+
+            </div>
 
             <small class="text-secondary">
 
-                IPM v1.0
+                IMS Performance Manager
 
-                <br>
+            </small>
 
-                © 2026
+            <br>
+
+            <small class="text-secondary">
+
+                Bilim İlaç Prim Yönetim Sistemi
 
             </small>
 
