@@ -1,264 +1,919 @@
 {% extends "base.html" %}
 
+{% block title %}
+
+Temsilci Yönetimi
+
+{% endblock %}
+
+{% block page_title %}
+
+Temsilci Yönetimi
+
+{% endblock %}
+
 {% block content %}
 
-<div class="container-fluid">
+<div class="row row-cards mb-4">
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="col-xl-4">
 
-<h2>
+        <div class="card bg-primary-lt">
 
-👤 Temsilci Yönetimi
+            <div class="card-body text-center">
 
-</h2>
+                <div class="text-secondary">
 
-<button
-class="btn btn-success">
+                    Toplam Temsilci
 
-📥 Excel'den Aktar
+                </div>
 
-</button>
+                <div class="display-5 fw-bold">
 
-</div>
+                    {{ representatives|length }}
 
-<div class="card shadow-sm mb-4">
+                </div>
 
-<div class="card-header">
+            </div>
 
-Yeni Temsilci
+        </div>
 
-</div>
+    </div>
 
-<div class="card-body">
+    <div class="col-xl-4">
 
-<form
-action="{{ url_for('representatives.add') }}"
-method="POST"
-class="row g-3">
+        <div class="card bg-success-lt">
 
-<div class="col-md-2">
+            <div class="card-body text-center">
 
-<input
-class="form-control"
-name="rep_code"
-placeholder="Temsilci Kodu">
+                <div class="text-secondary">
 
-</div>
+                    Aktif Temsilci
 
-<div class="col-md-2">
+                </div>
 
-<input
-class="form-control"
-name="ims_code"
-placeholder="IMS Kodu">
+                <div class="display-5 fw-bold">
 
-</div>
+                    {{ representatives|selectattr('active')|list|length }}
 
-<div class="col-md-2">
+                </div>
 
-<input
-class="form-control"
-name="sap_code"
-placeholder="SAP Kodu">
+            </div>
 
-</div>
+        </div>
 
-<div class="col-md-3">
+    </div>
 
-<input
-class="form-control"
-name="rep_name"
-placeholder="Ad Soyad"
-required>
+    <div class="col-xl-4">
 
-</div>
+        <div class="card bg-danger-lt">
 
-<div class="col-md-3">
+            <div class="card-body text-center">
 
-<input
-class="form-control"
-name="manager"
-placeholder="Bölge Müdürü">
+                <div class="text-secondary">
 
-</div>
+                    Pasif Temsilci
 
-<div class="col-md-3">
+                </div>
 
-<input
-class="form-control"
-name="region"
-placeholder="Bölge">
+                <div class="display-5 fw-bold">
 
-</div>
+                    {{ representatives|rejectattr('active')|list|length }}
 
-<div class="col-md-3">
+                </div>
 
-<input
-class="form-control"
-name="city"
-placeholder="İl">
+            </div>
 
-</div>
+        </div>
 
-<div class="col-md-3">
-
-<input
-class="form-control"
-name="district"
-placeholder="İlçe">
-
-</div>
-
-<div class="col-md-3">
-
-<input
-class="form-control"
-name="team"
-placeholder="Takım">
-
-</div>
-
-<div class="col-md-2 d-grid">
-
-<button
-class="btn btn-primary">
-
-Kaydet
-
-</button>
-
-</div>
-
-</form>
-
-</div>
+    </div>
 
 </div>
 
 <div class="card shadow-sm">
 
-<div class="card-header">
+    <div class="card-header">
 
-Temsilci Listesi
+        <h3 class="card-title">
+
+            Yeni Temsilci
+
+        </h3>
+
+    </div>
+
+    <div class="card-body">
+
+        <form
+
+            method="POST"
+
+            action="{{ url_for('representatives.add') }}"
+
+        >
+
+            <div class="row">
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Rep Kodu
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="rep_code"
+
+                        required
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        IMS Kodu
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="ims_code"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        SAP Kodu
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="sap_code"
+
+                    >
+
+                </div>
+
+                <div class="col-md-6 mb-3">
+
+                    <label class="form-label">
+
+                        Temsilci Adı
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="rep_name"
+
+                        required
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        Bölge
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="region"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        İl
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="city"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        İlçe
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="district"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        Bölge Kodu
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="territory"
+
+                        placeholder="Örn: 901"
+
+                    >
+
+                </div>
+
+                <div class="col-md-4 mb-3">
+
+                    <label class="form-label">
+
+                        Bölge Müdürü
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="manager"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        Takım
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="team"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        E-Posta
+
+                    </label>
+
+                    <input
+
+                        type="email"
+
+                        class="form-control"
+
+                        name="email"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Telefon
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="phone"
+
+                    >
+
+                </div>
+
+                <div class="col-12 text-end">
+
+                    <button
+
+                        class="btn btn-primary"
+
+                        type="submit"
+
+                    >
+
+                        <i class="bi bi-person-plus-fill me-2"></i>
+
+                        Temsilci Kaydet
+
+                    </button>
+
+                </div>
+
+            </div>
+
+        </form>
+
+    </div>
 
 </div>
 
-<div class="card-body">
+<!-- PARÇA 1 BİTTİ -->
+<div class="card shadow-sm mt-4">
 
-<div class="table-responsive">
+    <div class="card-header">
 
-<table class="table table-hover align-middle">
+        <div class="d-flex justify-content-between align-items-center w-100">
 
-<thead>
+            <h3 class="card-title">
 
-<tr>
+                Temsilci Listesi
 
-<th>ID</th>
+            </h3>
 
-<th>Kod</th>
+            <div class="w-25">
 
-<th>IMS</th>
+                <input
 
-<th>SAP</th>
+                    type="search"
 
-<th>Ad Soyad</th>
+                    class="form-control"
 
-<th>Bölge Müdürü</th>
+                    placeholder="Temsilci ara..."
 
-<th>Bölge</th>
+                >
 
-<th>İl</th>
+            </div>
 
-<th>Takım</th>
+        </div>
 
-<th>Durum</th>
+    </div>
 
-<th>İşlem</th>
+    <div class="table-responsive">
 
-</tr>
+        <table class="table table-hover table-striped datatable align-middle">
 
-</thead>
+            <thead>
 
-<tbody>
+                <tr>
 
-{% for rep in representatives %}
+                    <th>Rep Kodu</th>
 
-<tr>
+                    <th>IMS</th>
 
-<td>{{ rep.id }}</td>
+                    <th>Ad Soyad</th>
 
-<td>{{ rep.rep_code }}</td>
+                    <th>Bölge</th>
 
-<td>{{ rep.ims_code }}</td>
+                    <th>İl</th>
 
-<td>{{ rep.sap_code }}</td>
+                    <th>Bölge No</th>
 
-<td>{{ rep.rep_name }}</td>
+                    <th>Müdür</th>
 
-<td>{{ rep.manager }}</td>
+                    <th>Takım</th>
 
-<td>{{ rep.region }}</td>
+                    <th>Durum</th>
 
-<td>{{ rep.city }}</td>
+                    <th class="text-center">
 
-<td>{{ rep.team }}</td>
+                        İşlemler
 
-<td>
+                    </th>
 
-{% if rep.active %}
+                </tr>
 
-<span class="badge bg-success">
+            </thead>
 
-🟢 Aktif
+            <tbody>
 
-</span>
+                {% for representative in representatives %}
 
-{% else %}
+                <tr>
 
-<span class="badge bg-danger">
+                    <td>
 
-🔴 Pasif
+                        {{ representative.rep_code }}
 
-</span>
+                    </td>
 
-{% endif %}
+                    <td>
 
-</td>
+                        {{ representative.ims_code }}
 
-<td>
+                    </td>
 
-<a
-href="{{ url_for('representatives.status', id=rep.id) }}"
-class="btn btn-sm btn-outline-primary">
+                    <td>
 
-{% if rep.active %}
+                        <strong>
 
-Pasif Yap
+                            {{ representative.rep_name }}
 
-{% else %}
+                        </strong>
 
-Aktif Yap
+                    </td>
 
-{% endif %}
+                    <td>
 
-</a>
+                        {{ representative.region }}
 
-</td>
+                    </td>
 
-</tr>
+                    <td>
+
+                        {{ representative.city }}
+
+                    </td>
+
+                    <td>
+
+                        {{ representative.territory }}
+
+                    </td>
+
+                    <td>
+
+                        {{ representative.manager }}
+
+                    </td>
+
+                    <td>
+
+                        {{ representative.team }}
+
+                    </td>
+
+                    <td>
+
+                        {% if representative.active %}
+
+                        <span class="badge bg-success">
+
+                            Aktif
+
+                        </span>
+
+                        {% else %}
+
+                        <span class="badge bg-danger">
+
+                            Pasif
+
+                        </span>
+
+                        {% endif %}
+
+                    </td>
+
+                    <td class="text-center">
+
+                        <div class="btn-group">
+
+                            <a
+
+                                href="{{ url_for('representatives.view', id=representative.id) }}"
+
+                                class="btn btn-sm btn-outline-info"
+
+                            >
+
+                                <i class="bi bi-eye"></i>
+
+                            </a>
+
+                            <button
+
+                                class="btn btn-sm btn-outline-warning"
+
+                                data-bs-toggle="modal"
+
+                                data-bs-target="#editRepresentative{{ representative.id }}"
+
+                            >
+
+                                <i class="bi bi-pencil"></i>
+
+                            </button>
+
+                            <a
+
+                                href="{{ url_for('representatives.status', id=representative.id) }}"
+
+                                class="btn btn-sm btn-outline-primary"
+
+                            >
+
+                                {% if representative.active %}
+
+                                <i class="bi bi-pause-circle"></i>
+
+                                {% else %}
+
+                                <i class="bi bi-play-circle"></i>
+
+                                {% endif %}
+
+                            </a>
+
+                        </div>
+
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 2 BİTTİ -->
+{% for representative in representatives %}
+
+<div
+
+    class="modal fade"
+
+    id="editRepresentative{{ representative.id }}"
+
+    tabindex="-1"
+
+>
+
+    <div class="modal-dialog modal-xl">
+
+        <div class="modal-content">
+
+            <form
+
+                method="POST"
+
+                action="{{ url_for('representatives.edit', id=representative.id) }}"
+
+            >
+
+                <div class="modal-header">
+
+                    <h3 class="modal-title">
+
+                        Temsilci Düzenle
+
+                    </h3>
+
+                    <button
+
+                        type="button"
+
+                        class="btn-close"
+
+                        data-bs-dismiss="modal"
+
+                    >
+
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <div class="row">
+
+                        <div class="col-md-2 mb-3">
+
+                            <label class="form-label">
+
+                                Rep Kodu
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="rep_code"
+
+                                value="{{ representative.rep_code }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-2 mb-3">
+
+                            <label class="form-label">
+
+                                IMS
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="ims_code"
+
+                                value="{{ representative.ims_code }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-2 mb-3">
+
+                            <label class="form-label">
+
+                                SAP
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="sap_code"
+
+                                value="{{ representative.sap_code }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+
+                            <label class="form-label">
+
+                                Ad Soyad
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="rep_name"
+
+                                value="{{ representative.rep_name }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                Bölge
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="region"
+
+                                value="{{ representative.region }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                İl
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="city"
+
+                                value="{{ representative.city }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                İlçe
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="district"
+
+                                value="{{ representative.district }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                Bölge No
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="territory"
+
+                                value="{{ representative.territory }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-4 mb-3">
+
+                            <label class="form-label">
+
+                                Bölge Müdürü
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="manager"
+
+                                value="{{ representative.manager }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                Takım
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="team"
+
+                                value="{{ representative.team }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-3 mb-3">
+
+                            <label class="form-label">
+
+                                E-Posta
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="email"
+
+                                value="{{ representative.email }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-2 mb-3">
+
+                            <label class="form-label">
+
+                                Telefon
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                name="phone"
+
+                                value="{{ representative.phone }}"
+
+                            >
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="modal-footer">
+
+                    <button
+
+                        type="button"
+
+                        class="btn btn-secondary"
+
+                        data-bs-dismiss="modal"
+
+                    >
+
+                        Vazgeç
+
+                    </button>
+
+                    <button
+
+                        type="submit"
+
+                        class="btn btn-primary"
+
+                    >
+
+                        Kaydet
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+</div>
 
 {% endfor %}
 
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-</div>
-
-</div>
-
 {% endblock %}
+
+<!-- PARÇA 3 BİTTİ -->
+
+<!-- DOSYA TAMAMLANDI -->
