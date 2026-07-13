@@ -10,9 +10,9 @@ from app.models import (
     Product
 )
 
-from app.engines.prime_engine import PrimeEngine
-from app.engines.quarter_engine import QuarterEngine
-from app.engines.recovery_engine import RecoveryEngine
+from app.services.simulation_service import (
+    SimulationService
+)
 
 
 simulation_bp = Blueprint(
@@ -24,6 +24,105 @@ simulation_bp = Blueprint(
     url_prefix="/simulation"
 
 )
+
+
+def build_overrides(
+
+    data
+
+):
+
+    overrides = {}
+
+    duplicates = []
+
+    seen = set()
+
+    for item in data.get(
+
+        "products",
+
+        []
+
+    ):
+
+        product_id = int(
+
+            item.get(
+
+                "product_id",
+
+                0
+
+            )
+
+        )
+
+        if product_id <= 0:
+
+            continue
+
+        if product_id in seen:
+
+            duplicates.append(
+
+                product_id
+
+            )
+
+            continue
+
+        seen.add(
+
+            product_id
+
+        )
+
+        unit = max(
+
+            0,
+
+            float(
+
+                item.get(
+
+                    "unit",
+
+                    0
+
+                )
+
+            )
+
+        )
+
+        tl = max(
+
+            0,
+
+            float(
+
+                item.get(
+
+                    "tl",
+
+                    0
+
+                )
+
+            )
+
+        )
+
+        overrides[product_id] = {
+
+            "unit": unit,
+
+            "tl": tl
+
+        }
+
+    return overrides, duplicates
 
 
 @simulation_bp.route(
@@ -159,93 +258,13 @@ def calculate():
 
             ), 400
 
-        quarter = (
+        overrides, duplicates = build_overrides(
 
-            (month - 1) // 3
-
-        ) + 1
-
-        overrides = {}
-
-        duplicate_products = set()
-
-        products = data.get(
-
-            "products",
-
-            []
+            data
 
         )
 
-        for item in products:
-
-            product_id = int(
-
-                item.get(
-
-                    "product_id",
-
-                    0
-
-                )
-
-            )
-
-            if product_id <= 0:
-
-                continue
-
-            if product_id in overrides:
-
-                duplicate_products.add(
-
-                    product_id
-
-                )
-
-                continue
-
-            unit = float(
-
-                item.get(
-
-                    "unit",
-
-                    0
-
-                )
-
-            )
-
-            tl = float(
-
-                item.get(
-
-                    "tl",
-
-                    0
-
-                )
-
-            )
-
-            if unit < 0:
-
-                unit = 0
-
-            if tl < 0:
-
-                tl = 0
-
-            overrides[product_id] = {
-
-                "unit": unit,
-
-                "tl": tl
-
-            }
-
-        if duplicate_products:
+        if duplicates:
 
             return jsonify(
 
@@ -259,219 +278,27 @@ def calculate():
 
                     "duplicates":
 
-                        list(
-
-                            duplicate_products
-
-                        )
+                        duplicates
 
                 }
 
             ), 400
 
-        prime = PrimeEngine(
+        service = SimulationService(
 
-            representative_id,
+            representative_id=representative_id,
 
-            year,
+            year=year,
 
-            month,
-
-            overrides=overrides
-
-        )
-
-        quarter_engine = QuarterEngine(
-
-            representative_id,
-
-            year,
-
-            quarter,
+            month=month,
 
             overrides=overrides
 
         )
-
-        recovery = RecoveryEngine(
-
-            representative_id,
-
-            year,
-
-            quarter,
-
-            overrides=overrides
-
-        )
-
-        prime_result = prime.calculate()
-
-        quarter_result = quarter_engine.calculate()
-
-        recovery_result = recovery.run()
-
-        risk_products = len(
-
-            [
-
-                item
-
-                for item in recovery_result
-
-                if item["status"] != "Tamamlandı"
-
-            ]
-
-        )
-
-        ai_messages = []
-
-        if prime_result["failed_products"]:
-
-            for item in prime_result["failed_products"]:
-
-                ai_messages.append(
-
-                    f'{item["product"]} ürünü %{item["required"]} hedefine ulaşamadı.'
-
-                )
-
-        if risk_products > 0:
-
-            ai_messages.append(
-
-                f"{risk_products} ürün için Q riski devam ediyor."
-
-            )
-
-        if prime_result["main_prime"] == 0:
-
-            ai_messages.append(
-
-                "Ana prim henüz oluşmadı."
-
-            )
-
-        if prime_result["ciro_prime"] == 0:
-
-            ai_messages.append(
-
-                "Ciro primi oluşmadı."
-
-            )
-
-        summary = {
-
-            "monthly_percent":
-
-                prime_result[
-
-                    "total_tl_percent"
-
-                ],
-
-            "quarter_percent":
-
-                quarter_result[
-
-                    "total_percent"
-
-                ],
-
-            "main_prime":
-
-                prime_result[
-
-                    "main_prime"
-
-                ],
-
-            "ciro_prime":
-
-                prime_result[
-
-                    "ciro_prime"
-
-                ],
-
-            "total_prime":
-
-                prime_result[
-
-                    "total_prime"
-
-                ],
-
-            "status":
-
-                prime_result[
-
-                    "status"
-
-                ],
-
-            "completed_products":
-
-                quarter_result[
-
-                    "completed_products"
-
-                ],
-
-            "failed_products":
-
-                quarter_result[
-
-                    "failed_products"
-
-                ],
-
-            "risk_products":
-
-                risk_products,
-
-            "simulation":
-
-                bool(
-
-                    overrides
-
-                ),
-
-            "quarter":
-
-                quarter,
-
-            "month":
-
-                month,
-
-            "year":
-
-                year,
-
-            "ai_messages":
-
-                ai_messages
-
-        }
 
         return jsonify(
 
-            {
-
-                "success": True,
-
-                "summary": summary,
-
-                "prime": prime_result,
-
-                "quarter": quarter_result,
-
-                "recovery": recovery_result
-
-            }
+            service.report()
 
         )
 
@@ -492,6 +319,7 @@ def calculate():
             }
 
         ), 500
+
 
 @simulation_bp.route(
 
@@ -594,9 +422,7 @@ def representative_info(
 
         }
 
-    )
-
-@simulation_bp.route(
+        @simulation_bp.route(
 
     "/health"
 
@@ -612,35 +438,9 @@ def health():
 
             "module": "Simulation",
 
-            "version": "1.1.0",
+            "service": SimulationService.health(),
 
-            "prime_engine": True,
-
-            "quarter_engine": True,
-
-            "recovery_engine": True,
-
-            "simulation_enabled": True,
-
-            "features": {
-
-                "override": True,
-
-                "monthly_prime": True,
-
-                "quarter_calculation": True,
-
-                "recovery": True,
-
-                "carry_over": True,
-
-                "risk_score": True,
-
-                "ai_messages": True,
-
-                "auto_quarter": True
-
-            }
+            "capabilities": SimulationService.capabilities()
 
         }
 
@@ -661,29 +461,29 @@ def validate():
 
     errors = []
 
-    if not data.get(
+    representative_id = int(
 
-        "representative_id"
+        data.get(
 
-    ):
+            "representative_id",
 
-        errors.append(
-
-            "Temsilci seçilmedi."
+            0
 
         )
 
-    if not data.get(
+    )
 
-        "year"
+    year = int(
 
-    ):
+        data.get(
 
-        errors.append(
+            "year",
 
-            "Yıl seçilmedi."
+            0
 
         )
+
+    )
 
     month = int(
 
@@ -697,6 +497,34 @@ def validate():
 
     )
 
+    if representative_id <= 0:
+
+        errors.append(
+
+            "Temsilci seçilmedi."
+
+        )
+
+    elif Representative.query.get(
+
+        representative_id
+
+    ) is None:
+
+        errors.append(
+
+            "Temsilci bulunamadı."
+
+        )
+
+    if year <= 0:
+
+        errors.append(
+
+            "Geçersiz yıl."
+
+        )
+
     if month < 1 or month > 12:
 
         errors.append(
@@ -705,79 +533,31 @@ def validate():
 
         )
 
-    seen = set()
+    overrides, duplicates = build_overrides(
 
-    for item in data.get(
+        data
 
-        "products",
+    )
 
-        []
+    if duplicates:
 
-    ):
+        errors.append(
 
-        pid = int(
-
-            item.get(
-
-                "product_id",
-
-                0
-
-            )
+            "Aynı ürün birden fazla gönderildi."
 
         )
 
-        if pid <= 0:
+    for product_id in overrides.keys():
 
-            continue
+        if Product.query.get(
 
-        if pid in seen:
+            product_id
 
-            errors.append(
-
-                f"Aynı ürün iki kez gönderildi ({pid})"
-
-            )
-
-        seen.add(
-
-            pid
-
-        )
-
-        if float(
-
-            item.get(
-
-                "unit",
-
-                0
-
-            )
-
-        ) < 0:
+        ) is None:
 
             errors.append(
 
-                f"Negatif kutu değeri ({pid})"
-
-            )
-
-        if float(
-
-            item.get(
-
-                "tl",
-
-                0
-
-            )
-
-        ) < 0:
-
-            errors.append(
-
-                f"Negatif TL değeri ({pid})"
+                f"Ürün bulunamadı ({product_id})"
 
             )
 
@@ -795,8 +575,18 @@ def validate():
 
             "errors":
 
-                errors
+                errors,
+
+            "override_count":
+
+                len(
+
+                    overrides
+
+                )
 
         }
+
+)
 
     )
