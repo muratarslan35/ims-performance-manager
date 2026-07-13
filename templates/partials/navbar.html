@@ -1,86 +1,232 @@
-<nav class="navbar navbar-expand-md d-none d-lg-flex d-print-none">
+<nav class="navbar navbar-expand-lg sticky-top d-print-none border-bottom bg-white shadow-sm">
 
-<div class="container-xl">
+    <div class="container-xl">
 
-<div class="navbar-nav flex-row order-md-last">
+        <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#sidebar-menu">
 
-<div class="nav-item dropdown">
+            <span class="navbar-toggler-icon"></span>
 
-<a
-href="#"
-class="nav-link d-flex lh-1 text-reset p-0"
-data-bs-toggle="dropdown">
+        </button>
 
-<span class="avatar avatar-sm">
+        <div class="navbar-nav me-3">
 
-<i class="bi bi-person-fill"></i>
+            <div class="nav-item">
 
-</span>
+                <span class="fw-bold fs-4">
 
-<div class="d-none d-xl-block ps-2">
+                    IMS Performance Manager
 
-<div>
+                </span>
 
-{{ current_user.full_name }}
+            </div>
 
-</div>
+        </div>
 
-<div class="mt-1 small text-secondary">
+        <form
+            class="d-none d-md-flex flex-fill mx-4">
 
-{{ current_user.role }}
+            <div class="input-icon w-100">
 
-</div>
+                <span class="input-icon-addon">
 
-</div>
+                    <i class="bi bi-search"></i>
 
-</a>
+                </span>
 
-<div class="dropdown-menu dropdown-menu-end dropdown-menu-arrow">
+                <input
 
-<a
-href="{{ url_for('main.settings') }}"
-class="dropdown-item">
+                    type="text"
 
-<i class="bi bi-gear me-2"></i>
+                    class="form-control"
 
-Ayarlar
+                    placeholder="Temsilci, ürün, IMS veya rapor ara..."
 
-</a>
+                >
 
-<a
-href="{{ url_for('auth.logout') }}"
-class="dropdown-item text-danger">
+            </div>
 
-<i class="bi bi-box-arrow-right me-2"></i>
+        </form>
 
-Çıkış Yap
+        <div class="navbar-nav flex-row align-items-center ms-auto">
 
-</a>
+            <div class="nav-item me-2">
 
-</div>
+                <button
+                    class="btn btn-icon btn-outline-secondary">
 
-</div>
+                    <i class="bi bi-moon-stars-fill"></i>
 
-</div>
+                </button>
 
-<div class="collapse navbar-collapse">
+            </div>
 
-<div class="navbar-nav">
+            <div class="nav-item me-2">
 
-<div class="nav-item">
+                <button
+                    class="btn btn-icon btn-outline-secondary position-relative">
 
-<h3 class="mb-0">
+                    <i class="bi bi-bell-fill"></i>
 
-IMS Performans Yönetim Sistemi
+                    <span class="badge bg-danger badge-notification">
 
-</h3>
+                        3
 
-</div>
+                    </span>
 
-</div>
+                </button>
 
-</div>
+            </div>
 
-</div>
+            <div class="nav-item me-3">
+
+                <div class="text-end">
+
+                    <div class="small text-secondary">
+
+                        Son IMS
+
+                    </div>
+
+                    <div class="fw-semibold">
+
+                        {{ latest_upload_date if latest_upload_date else "-" }}
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="nav-item dropdown">
+
+                              <a
+
+                    href="#"
+
+                    class="nav-link d-flex align-items-center"
+
+                    data-bs-toggle="dropdown"
+
+                >
+
+                    <span class="avatar avatar-md bg-primary text-white">
+
+                        <i class="bi bi-person-fill"></i>
+
+                    </span>
+
+                    <div class="d-none d-xl-block ms-3 text-start">
+
+                        <div class="fw-semibold">
+
+                            {{ current_user.full_name }}
+
+                        </div>
+
+                        <div class="small text-secondary">
+
+                            {{ current_user.role }}
+
+                        </div>
+
+                    </div>
+
+                </a>
+
+                <div class="dropdown-menu dropdown-menu-end shadow">
+
+                    <div class="dropdown-header">
+
+                        Hesabım
+
+                    </div>
+
+                    <div class="dropdown-item-text">
+
+                        <div class="fw-bold">
+
+                            {{ current_user.full_name }}
+
+                        </div>
+
+                        <small class="text-secondary">
+
+                            {{ current_user.role }}
+
+                        </small>
+
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+
+                    <a
+
+                        class="dropdown-item"
+
+                        href="{{ url_for('dashboard.index') }}"
+
+                    >
+
+                        <i class="bi bi-speedometer2 me-2"></i>
+
+                        Dashboard
+
+                    </a>
+
+                    <a
+
+                        class="dropdown-item"
+
+                        href="{{ url_for('settings.index') }}"
+
+                    >
+
+                        <i class="bi bi-gear-fill me-2"></i>
+
+                        Sistem Ayarları
+
+                    </a>
+
+                    <a
+
+                        class="dropdown-item"
+
+                        href="{{ url_for('simulation.index') }}"
+
+                    >
+
+                        <i class="bi bi-calculator-fill me-2"></i>
+
+                        Prim Simülasyonu
+
+                    </a>
+
+                    <div class="dropdown-divider"></div>
+
+                    <a
+
+                        class="dropdown-item text-danger"
+
+                        href="{{ url_for('auth.logout') }}"
+
+                    >
+
+                        <i class="bi bi-box-arrow-right me-2"></i>
+
+                        Güvenli Çıkış
+
+                    </a>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </nav>
