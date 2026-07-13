@@ -7,16 +7,28 @@
 <meta charset="UTF-8">
 
 <meta
+
     name="viewport"
-    content="width=device-width, initial-scale=1.0">
+
+    content="width=device-width, initial-scale=1.0"
+
+>
 
 <meta
+
     name="description"
-    content="IMS + Prim Yönetim Sistemi">
+
+    content="IMS Performans ve Prim Yönetim Sistemi"
+
+>
 
 <meta
+
     name="theme-color"
-    content="#1f2937">
+
+    content="#1f2937"
+
+>
 
 <title>
 
@@ -29,32 +41,52 @@ IMS Performans Yönetim Sistemi
 </title>
 
 <link
+
     href="https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/css/tabler.min.css"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 <link
+
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 <link
+
     href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.css"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 <link
+
     href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.7.2/css/all.min.css"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 <link
+
     href="https://cdn.datatables.net/2.3.2/css/dataTables.bootstrap5.min.css"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 <link
-    href="https://cdn.jsdelivr.net/npm/apexcharts/dist/apexcharts.css"
-    rel="stylesheet">
 
-<link
     href="{{ url_for('static', filename='css/style.css') }}"
-    rel="stylesheet">
+
+    rel="stylesheet"
+
+>
 
 {% block styles %}
 
@@ -116,13 +148,17 @@ IMS Performans Yönetim Sistemi
 
             <div class="container-xl">
 
-                {% with messages=get_flashed_messages(with_categories=true) %}
+                {% with messages = get_flashed_messages(with_categories=true) %}
 
                 {% if messages %}
 
                 {% for category,message in messages %}
 
-                <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm">
+                <div
+
+                    class="alert alert-{{ category }} alert-dismissible fade show shadow-sm"
+
+                >
 
                     <div class="d-flex align-items-center">
 
@@ -137,8 +173,14 @@ IMS Performans Yönetim Sistemi
                     </div>
 
                     <button
+
+                        type="button"
+
                         class="btn-close"
-                        data-bs-dismiss="alert">
+
+                        data-bs-dismiss="alert"
+
+                    >
 
                     </button>
 
@@ -164,33 +206,96 @@ IMS Performans Yönetim Sistemi
 
 </div>
 
-<script
-    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js">
+<!-- PARÇA 1 BİTTİ -->
+    <script
+
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js"
+
+>
+
 </script>
 
 <script
-    src="https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/js/tabler.min.js">
+
+    src="https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/js/tabler.min.js"
+
+>
+
 </script>
 
 <script
-    src="https://cdn.jsdelivr.net/npm/apexcharts">
+
+    src="https://cdn.jsdelivr.net/npm/apexcharts"
+
+>
+
 </script>
 
 <script
-    src="https://code.jquery.com/jquery-3.7.1.min.js">
+
+    src="https://code.jquery.com/jquery-3.7.1.min.js"
+
+>
+
 </script>
 
 <script
-    src="https://cdn.datatables.net/2.3.2/js/dataTables.min.js">
+
+    src="https://cdn.datatables.net/2.3.2/js/dataTables.min.js"
+
+>
+
 </script>
 
 <script
-    src="https://cdn.datatables.net/2.3.2/js/dataTables.bootstrap5.min.js">
+
+    src="https://cdn.datatables.net/2.3.2/js/dataTables.bootstrap5.min.js"
+
+>
+
 </script>
 
 <script
-    src="{{ url_for('static', filename='js/app.js') }}">
+
+    src="{{ url_for('static', filename='js/app.js') }}"
+
+>
+
 </script>
+
+<div
+
+    id="loadingOverlay"
+
+    class="loading-overlay"
+
+>
+
+    <div class="text-center">
+
+        <div
+
+            class="loading-spinner"
+
+        >
+
+        </div>
+
+        <div
+
+            id="loadingMessage"
+
+            class="fw-bold mt-3"
+
+        >
+
+            Yükleniyor...
+
+        </div>
+
+    </div>
+
+</div>
 
 <script>
 
@@ -198,19 +303,23 @@ document.addEventListener(
 
     "DOMContentLoaded",
 
-    function () {
+    function(){
 
-        document.querySelectorAll(
+        document
+
+        .querySelectorAll(
 
             ".datatable"
 
-        ).forEach(
+        )
 
-            function (
+        .forEach(
+
+            function(
 
                 table
 
-            ) {
+            ){
 
                 new DataTable(
 
@@ -218,17 +327,17 @@ document.addEventListener(
 
                     {
 
-                        pageLength: 25,
+                        pageLength:25,
 
-                        responsive: true,
+                        responsive:true,
 
-                        ordering: true,
+                        ordering:true,
 
-                        searching: true,
+                        searching:true,
 
-                        language: {
+                        language:{
 
-                            url: "https://cdn.datatables.net/plug-ins/2.3.2/i18n/tr.json"
+                            url:"https://cdn.datatables.net/plug-ins/2.3.2/i18n/tr.json"
 
                         }
 
@@ -246,120 +355,6 @@ document.addEventListener(
 
 </script>
 
-<script>
-
-function showLoading(
-
-    text = "Yükleniyor..."
-
-){
-
-    const loading = document.getElementById(
-
-        "loadingOverlay"
-
-    );
-
-    const message = document.getElementById(
-
-        "loadingMessage"
-
-    );
-
-    if(
-
-        message
-
-    ){
-
-        message.innerText = text;
-
-    }
-
-    if(
-
-        loading
-
-    ){
-
-        loading.classList.remove(
-
-            "d-none"
-
-        );
-
-    }
-
-}
-
-function hideLoading(){
-
-    const loading = document.getElementById(
-
-        "loadingOverlay"
-
-    );
-
-    if(
-
-        loading
-
-    ){
-
-        loading.classList.add(
-
-            "d-none"
-
-        );
-
-    }
-
-}
-
-</script>
-
-<div
-
-    id="loadingOverlay"
-
-    class="position-fixed top-0 start-0 w-100 h-100 bg-dark bg-opacity-50 d-none"
-
-    style="z-index:9999;"
-
->
-
-    <div class="d-flex justify-content-center align-items-center h-100">
-
-        <div class="card shadow-lg border-0">
-
-            <div class="card-body text-center p-5">
-
-                <div
-
-                    class="spinner-border text-primary mb-3"
-
-                    role="status">
-
-                </div>
-
-                <h5
-
-                    id="loadingMessage"
-
-                    class="mb-0">
-
-                    Yükleniyor...
-
-                </h5>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</div>
-
 {% block scripts %}
 
 {% endblock %}
@@ -367,3 +362,7 @@ function hideLoading(){
 </body>
 
 </html>
+
+<!-- PARÇA 2 BİTTİ -->
+
+<!-- DOSYA TAMAMLANDI -->
