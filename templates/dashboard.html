@@ -1,490 +1,1326 @@
 {% extends "base.html" %}
 
+{% block title %}
+
+Dashboard
+
+{% endblock %}
+
+{% block page_title %}
+
+Dashboard
+
+{% endblock %}
+
 {% block content %}
 
-<div class="page-header d-print-none">
+<div class="row row-cards mb-4">
 
-<div class="container-xl">
+    <div class="col-xl-2 col-md-4 col-sm-6">
 
-<div class="row align-items-center">
+        <div class="card dashboard-card border-0 shadow-sm">
 
-<div class="col">
+            <div class="card-body">
 
-<h2 class="page-title">
+                <div class="d-flex justify-content-between">
 
-Kontrol Paneli
+                    <div>
 
-</h2>
+                        <div class="text-secondary">
 
-<div class="text-secondary">
+                            Aktif Ürün
 
-IMS Performans Yönetim Sistemi
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_products }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-primary-lt">
+
+                        <i class="bi bi-capsule-pill fs-2 text-primary"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Temsilci
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_representatives }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-success-lt">
+
+                        <i class="bi bi-people-fill fs-2 text-success"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Hedef
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_targets }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-warning-lt">
+
+                        <i class="bi bi-bullseye fs-2 text-warning"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Ana Prim
+
+                        </div>
+
+                        <div class="display-6 fw-bold">
+
+                            50.000 ₺
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-blue-lt">
+
+                        <i class="bi bi-cash-stack fs-2 text-primary"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Quarter
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            Q2
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-purple-lt">
+
+                        <i class="bi bi-calendar-week fs-2 text-purple"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Son IMS
+
+                        </div>
+
+                        <div class="fw-bold">
+
+                            {% if last_upload %}
+
+                            Hazır
+
+                            {% else %}
+
+                            Yok
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-green-lt">
+
+                        <i class="bi bi-file-earmark-excel fs-2 text-success"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
+<div class="row">
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <div class="d-flex justify-content-between align-items-center w-100">
+
+                    <h3 class="card-title">
+
+                        IMS Performans Grafiği
+
+                    </h3>
+
+                    <select class="form-select w-auto">
+
+                        <option>
+
+                            Son 12 Ay
+
+                        </option>
+
+                        <option>
+
+                            Son 6 Ay
+
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+            <div class="card-body">
+
+                <div
+
+                    id="dashboardPerformanceChart"
+
+                    style="height:380px;"
+
+                >
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm h-100">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Hedef Özeti
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div id="goalChart">
+
+                </div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Ana Prim
+
+                    </span>
+
+                    <strong>
+
+                        50.000 ₺
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Ciro Primi
+
+                    </span>
+
+                    <strong>
+
+                        20.000 ₺
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Maksimum
+
+                    </span>
+
+                    <strong>
+
+                        %140
+
+                    </strong>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
 </div>
 
-<div class="col-auto">
+<!-- PARÇA 1 BİTTİ -->
+<div class="row mt-4">
 
-{% if last_upload %}
+    <div class="col-lg-7">
 
-<span class="badge bg-success">
+        <div class="card shadow-sm">
 
-Son IMS :
-{{ last_upload.file_name }}
+            <div class="card-header">
 
-</span>
+                <div class="d-flex justify-content-between align-items-center">
 
-{% else %}
+                    <h3 class="card-title">
 
-<span class="badge bg-danger">
+                        Ürün Performansı
 
-IMS Yüklenmedi
+                    </h3>
 
-</span>
+                    <span class="badge bg-primary">
 
-{% endif %}
+                        Canlı IMS
 
-</div>
+                    </span>
 
-</div>
+                </div>
 
-</div>
+            </div>
 
-</div>
+            <div class="table-responsive">
 
-<div class="page-body">
+                <table class="table table-hover table-striped align-middle">
 
-<div class="container-xl">
+                    <thead>
 
-<div class="row row-deck row-cards">
+                        <tr>
 
-<div class="col-md-3">
+                            <th>Ürün</th>
 
-<div class="card">
+                            <th>Gerçekleşme</th>
 
-<div class="card-body">
+                            <th>Hedef</th>
 
-<div class="text-secondary">
+                            <th>Durum</th>
 
-Toplam Ürün
+                        </tr>
 
-</div>
+                    </thead>
 
-<div class="display-6">
+                    <tbody>
 
-{{ total_products }}
+                        <tr>
 
-</div>
+                            <td>Travazol</td>
 
-</div>
+                            <td>%112</td>
 
-</div>
+                            <td>%90</td>
 
-</div>
+                            <td>
 
-<div class="col-md-3">
+                                <span class="badge bg-success">
 
-<div class="card">
+                                    Tamamlandı
 
-<div class="card-body">
+                                </span>
 
-<div class="text-secondary">
+                            </td>
 
-Temsilci
+                        </tr>
 
-</div>
+                        <tr>
 
-<div class="display-6">
+                            <td>Monurol</td>
 
-{{ total_representatives }}
+                            <td>%104</td>
 
-</div>
+                            <td>%90</td>
 
-</div>
+                            <td>
 
-</div>
+                                <span class="badge bg-success">
 
-</div>
+                                    Tamamlandı
 
-<div class="col-md-3">
+                                </span>
 
-<div class="card">
+                            </td>
 
-<div class="card-body">
+                        </tr>
 
-<div class="text-secondary">
+                        <tr>
 
-Hedef Kaydı
+                            <td>Mixovul</td>
 
-</div>
+                            <td>%89</td>
 
-<div class="display-6">
+                            <td>%90</td>
 
-{{ total_targets }}
+                            <td>
 
-</div>
+                                <span class="badge bg-warning">
 
-</div>
+                                    Kritik
 
-</div>
+                                </span>
 
-</div>
+                            </td>
 
-<div class="col-md-3">
+                        </tr>
 
-<div class="card bg-blue text-white">
+                        <tr>
 
-<div class="card-body">
+                            <td>Acnemix</td>
 
-<div>
+                            <td>%73</td>
 
-Tahmini Prim
+                            <td>%75</td>
 
-</div>
+                            <td>
 
-<div class="display-6">
+                                <span class="badge bg-danger">
 
-50.000 ₺
+                                    Riskli
 
-</div>
+                                </span>
 
-</div>
+                            </td>
 
-</div>
+                        </tr>
 
-</div>
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-5">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    AI Önerileri
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="alert alert-success">
+
+                    Travazol hedefini geçtiği için ana prime olumlu katkı sağlıyor.
+
+                </div>
+
+                <div class="alert alert-warning">
+
+                    Mixovul %90 hedefinin hemen altında.
+
+                </div>
+
+                <div class="alert alert-danger">
+
+                    Acnemix öncelikli aksiyon gerektiriyor.
+
+                </div>
+
+                <div class="alert alert-info mb-0">
+
+                    Quarter sonuna kadar mevcut performans korunursa ana prim oluşacaktır.
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
 <div class="row mt-4">
 
-<div class="col-lg-8">
+    <div class="col-lg-6">
 
-<div class="card">
+        <div class="card shadow-sm">
 
-<div class="card-header">
+            <div class="card-header">
 
-<h3 class="card-title">
+                <h3 class="card-title">
 
-Aylık TL Performansı
+                    Son IMS Yüklemeleri
 
-</h3>
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Dosya</th>
+
+                            <th>Durum</th>
+
+                            <th>Tarih</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {% if last_upload %}
+
+                        <tr>
+
+                            <td>
+
+                                {{ last_upload.file_name }}
+
+                            </td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    {{ last_upload.status }}
+
+                                </span>
+
+                            </td>
+
+                            <td>
+
+                                {{ last_upload.uploaded_at.strftime("%d.%m.%Y %H:%M") }}
+
+                            </td>
+
+                        </tr>
+
+                        {% else %}
+
+                        <tr>
+
+                            <td colspan="3">
+
+                                IMS kaydı bulunamadı.
+
+                            </td>
+
+                        </tr>
+
+                        {% endif %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Recovery Durumu
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="progress progress-lg mb-3">
+
+                    <div
+
+                        class="progress-bar bg-success"
+
+                        style="width:72%;"
+
+                    >
+
+                        %72
+
+                    </div>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-2">
+
+                    <span>
+
+                        Tamamlanan Ürün
+
+                    </span>
+
+                    <strong>
+
+                        3
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-2">
+
+                    <span>
+
+                        Riskli Ürün
+
+                    </span>
+
+                    <strong>
+
+                        1
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Quarter
+
+                    </span>
+
+                    <strong>
+
+                        Q2
+
+                    </strong>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
-<div class="card-body">
+<!-- PARÇA 2 BİTTİ -->
+<div class="row mt-4">
 
-<div id="monthlyRevenueChart"
+    <div class="col-lg-8">
 
-style="height:350px;">
+        <div class="card shadow-sm">
 
-</div>
+            <div class="card-header">
 
-</div>
+                <div class="d-flex justify-content-between align-items-center">
 
-</div>
+                    <h3 class="card-title">
 
-</div>
+                        Bölge Performansı
 
-<div class="col-lg-4">
+                    </h3>
 
-<div class="card">
+                    <span class="badge bg-success">
 
-<div class="card-header">
+                        Canlı
 
-<h3 class="card-title">
+                    </span>
 
-Q Durumu
+                </div>
 
-</h3>
+            </div>
 
-</div>
+            <div class="card-body">
 
-<div class="card-body">
+                <div
 
-<div class="progress progress-lg">
+                    id="regionPerformanceChart"
 
-<div
-class="progress-bar bg-success"
-style="width:68%">
+                    style="height:340px;"
 
-68%
+                >
 
-</div>
+                </div>
 
-</div>
+            </div>
 
-<br>
+        </div>
 
-<div>
+    </div>
 
-Q2 Hedefi
+    <div class="col-lg-4">
 
-</div>
+        <div class="card shadow-sm">
 
-<h2>
+            <div class="card-header">
 
-%68
+                <h3 class="card-title">
 
-</h2>
+                    Hızlı İşlemler
 
-</div>
+                </h3>
 
-</div>
+            </div>
 
-</div>
+            <div class="card-body d-grid gap-2">
+
+                <a
+
+                    href="{{ url_for('ims.index') }}"
+
+                    class="btn btn-primary"
+
+                >
+
+                    <i class="bi bi-upload me-2"></i>
+
+                    IMS Yükle
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('simulation.index') }}"
+
+                    class="btn btn-success"
+
+                >
+
+                    <i class="bi bi-calculator me-2"></i>
+
+                    Prim Simülasyonu
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('targets.index') }}"
+
+                    class="btn btn-warning"
+
+                >
+
+                    <i class="bi bi-bullseye me-2"></i>
+
+                    Hedef Yönetimi
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('products.index') }}"
+
+                    class="btn btn-info"
+
+                >
+
+                    <i class="bi bi-capsule me-2"></i>
+
+                    Ürün Yönetimi
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
 <div class="row mt-4">
 
-<div class="col-lg-6">
+    <div class="col-lg-4">
 
-<div class="card">
+        <div class="card shadow-sm">
 
-<div class="card-header">
+            <div class="card-header">
 
-En Başarılı Ürünler
+                <h3 class="card-title">
+
+                    Sistem Durumu
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        IMS
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Prim Motoru
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Quarter
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Recovery
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Son Aktiviteler
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Tarih</th>
+
+                            <th>İşlem</th>
+
+                            <th>Kullanıcı</th>
+
+                            <th>Durum</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+
+                            <td>09.07.2026</td>
+
+                            <td>IMS Dosyası Yüklendi</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    Başarılı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>09.07.2026</td>
+
+                            <td>Prim Simülasyonu</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-primary">
+
+                                    Tamamlandı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>08.07.2026</td>
+
+                            <td>Hedef Güncellemesi</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-warning">
+
+                                    Güncellendi
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
-<div class="table-responsive">
-
-<table class="table table-vcenter">
-
-<thead>
-
-<tr>
-
-<th>Ürün</th>
-
-<th>Realizasyon</th>
-
-</tr>
-
-</thead>
-
-<tbody>
-
-<tr>
-
-<td>Travazol</td>
-
-<td>
-
-<span class="badge bg-success">
-
-112%
-
-</span>
-
-</td>
-
-</tr>
-
-<tr>
-
-<td>Monurol</td>
-
-<td>
-
-<span class="badge bg-success">
-
-103%
-
-</span>
-
-</td>
-
-</tr>
-
-<tr>
-
-<td>Mixovul</td>
-
-<td>
-
-<span class="badge bg-warning">
-
-91%
-
-</span>
-
-</td>
-
-</tr>
-
-<tr>
-
-<td>Acnemix</td>
-
-<td>
-
-<span class="badge bg-danger">
-
-74%
-
-</span>
-
-</td>
-
-</tr>
-
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-</div>
-
-<div class="col-lg-6">
-
-<div class="card">
-
-<div class="card-header">
-
-Son IMS Yüklemeleri
-
-</div>
-
-<div class="table-responsive">
-
-<table class="table">
-
-<thead>
-
-<tr>
-
-<th>Dosya</th>
-
-<th>Tarih</th>
-
-</tr>
-
-</thead>
-
-<tbody>
-
-{% if last_upload %}
-
-<tr>
-
-<td>
-
-{{ last_upload.file_name }}
-
-</td>
-
-<td>
-
-{{ last_upload.uploaded_at.strftime("%d.%m.%Y") }}
-
-</td>
-
-</tr>
-
-{% else %}
-
-<tr>
-
-<td colspan="2">
-
-Henüz IMS yüklenmedi.
-
-</td>
-
-</tr>
-
-{% endif %}
-
-</tbody>
-
-</table>
-
-</div>
-
-</div>
-
-</div>
-
-</div>
-
-</div>
-
-</div>
+<!-- PARÇA 3 BİTTİ -->
+{% block scripts %}
 
 <script>
 
-document.addEventListener("DOMContentLoaded",function(){
+document.addEventListener(
 
-new ApexCharts(
+    "DOMContentLoaded",
 
-document.querySelector("#monthlyRevenueChart"),
+    function(){
 
-{
+        new ApexCharts(
 
-chart:{
+            document.querySelector(
 
-type:"line",
+                "#dashboardPerformanceChart"
 
-height:350
+            ),
 
-},
+            {
 
-series:[
+                chart:{
 
-{
+                    type:"area",
 
-name:"TL",
+                    height:380,
 
-data:[0,0,0,0,0,0,0,0,0,0,0,0]
+                    toolbar:{
 
-}
+                        show:false
 
-],
+                    }
 
-xaxis:{
+                },
 
-categories:[
+                series:[
 
-"Ocak",
+                    {
 
-"Şubat",
+                        name:"TL",
 
-"Mart",
+                        data:[
 
-"Nisan",
+                            42,
 
-"Mayıs",
+                            51,
 
-"Haziran",
+                            49,
 
-"Temmuz",
+                            58,
 
-"Ağustos",
+                            63,
 
-"Eylül",
+                            72,
 
-"Ekim",
+                            78,
 
-"Kasım",
+                            83,
 
-"Aralık"
+                            91,
 
-]
+                            95,
 
-}
+                            101,
 
-}
+                            110
 
-).render();
+                        ]
 
-});
+                    }
+
+                ],
+
+                xaxis:{
+
+                    categories:[
+
+                        "Oca",
+
+                        "Şub",
+
+                        "Mar",
+
+                        "Nis",
+
+                        "May",
+
+                        "Haz",
+
+                        "Tem",
+
+                        "Ağu",
+
+                        "Eyl",
+
+                        "Eki",
+
+                        "Kas",
+
+                        "Ara"
+
+                    ]
+
+                },
+
+                stroke:{
+
+                    curve:"smooth",
+
+                    width:3
+
+                },
+
+                dataLabels:{
+
+                    enabled:false
+
+                },
+
+                legend:{
+
+                    show:false
+
+                }
+
+            }
+
+        ).render();
+
+        new ApexCharts(
+
+            document.querySelector(
+
+                "#goalChart"
+
+            ),
+
+            {
+
+                chart:{
+
+                    type:"radialBar",
+
+                    height:300
+
+                },
+
+                series:[
+
+                    82
+
+                ],
+
+                labels:[
+
+                    "Toplam Hedef"
+
+                ]
+
+            }
+
+        ).render();
+
+        new ApexCharts(
+
+            document.querySelector(
+
+                "#regionPerformanceChart"
+
+            ),
+
+            {
+
+                chart:{
+
+                    type:"bar",
+
+                    height:340,
+
+                    toolbar:{
+
+                        show:false
+
+                    }
+
+                },
+
+                series:[
+
+                    {
+
+                        name:"Gerçekleşme",
+
+                        data:[
+
+                            94,
+
+                            88,
+
+                            102,
+
+                            97,
+
+                            110,
+
+                            91
+
+                        ]
+
+                    }
+
+                ],
+
+                xaxis:{
+
+                    categories:[
+
+                        "901",
+
+                        "902",
+
+                        "903",
+
+                        "904",
+
+                        "905",
+
+                        "906"
+
+                    ]
+
+                },
+
+                dataLabels:{
+
+                    enabled:false
+
+                }
+
+            }
+
+        ).render();
+
+    }
+
+);
 
 </script>
 
 {% endblock %}
+
+<!-- PARÇA 4 BİTTİ -->
+
+<!-- DOSYA TAMAMLANDI -->
