@@ -1,138 +1,515 @@
 from flask import Blueprint
+from flask import flash
+from flask import jsonify
+from flask import redirect
 from flask import render_template
 from flask import request
-from flask import redirect
 from flask import url_for
-from flask import flash
 
 from flask_login import login_required
 
 from app.extensions import db
 from app.models import Representative
 
+
 representatives_bp = Blueprint(
+
     "representatives",
+
     __name__,
+
     url_prefix="/representatives"
+
 )
 
 
-@representatives_bp.route("/")
+@representatives_bp.route(
+
+    "/"
+
+)
 @login_required
 def index():
 
     representatives = Representative.query.order_by(
+
         Representative.rep_name.asc()
+
     ).all()
 
     return render_template(
+
         "representatives.html",
+
         representatives=representatives
+
     )
 
 
-@representatives_bp.route("/add", methods=["POST"])
+@representatives_bp.route(
+
+    "/add",
+
+    methods=["POST"]
+
+)
 @login_required
 def add():
 
-    representative = Representative(
+    try:
 
-        rep_code=request.form.get("rep_code"),
+        representative = Representative(
 
-        ims_code=request.form.get("ims_code"),
+            rep_code=request.form.get(
 
-        sap_code=request.form.get("sap_code"),
+                "rep_code"
 
-        rep_name=request.form.get("rep_name"),
+            ).strip(),
 
-        region=request.form.get("region"),
+            ims_code=request.form.get(
 
-        city=request.form.get("city"),
+                "ims_code"
 
-        district=request.form.get("district"),
+            ).strip(),
 
-        manager=request.form.get("manager"),
+            sap_code=request.form.get(
 
-        team=request.form.get("team"),
+                "sap_code"
 
-        active=True
+            ).strip(),
 
-    )
+            rep_name=request.form.get(
 
-    db.session.add(representative)
+                "rep_name"
 
-    db.session.commit()
+            ).strip(),
 
-    flash(
-        "Temsilci başarıyla eklendi.",
-        "success"
-    )
+            region=request.form.get(
 
-    return redirect(
-        url_for("representatives.index")
-    )
+                "region"
 
+            ),
 
-@representatives_bp.route("/status/<int:id>")
-@login_required
-def status(id):
+            city=request.form.get(
 
-    representative = Representative.query.get_or_404(id)
+                "city"
 
-    representative.active = not representative.active
+            ),
 
-    db.session.commit()
+            district=request.form.get(
 
-    if representative.active:
+                "district"
+
+            ),
+
+            territory=request.form.get(
+
+                "territory"
+
+            ),
+
+            manager=request.form.get(
+
+                "manager"
+
+            ),
+
+            team=request.form.get(
+
+                "team"
+
+            ),
+
+            email=request.form.get(
+
+                "email"
+
+            ),
+
+            phone=request.form.get(
+
+                "phone"
+
+            ),
+
+            active=True
+
+        )
+
+        db.session.add(
+
+            representative
+
+        )
+
+        db.session.commit()
 
         flash(
-            "Temsilci aktif edildi.",
+
+            "Temsilci başarıyla eklendi.",
+
             "success"
+
         )
 
-    else:
+    except Exception as exc:
+
+        db.session.rollback()
 
         flash(
-            "Temsilci pasif edildi.",
-            "warning"
+
+            str(
+
+                exc
+
+            ),
+
+            "danger"
+
         )
 
     return redirect(
-        url_for("representatives.index")
+
+        url_for(
+
+            "representatives.index"
+
+        )
+
     )
 
 
-@representatives_bp.route("/edit/<int:id>", methods=["POST"])
+@representatives_bp.route(
+
+    "/edit/<int:id>",
+
+    methods=["POST"]
+
+)
 @login_required
-def edit(id):
+def edit(
 
-    representative = Representative.query.get_or_404(id)
+    id
 
-    representative.rep_code = request.form.get("rep_code")
+):
 
-    representative.ims_code = request.form.get("ims_code")
+    representative = Representative.query.get_or_404(
 
-    representative.sap_code = request.form.get("sap_code")
+        id
 
-    representative.rep_name = request.form.get("rep_name")
-
-    representative.region = request.form.get("region")
-
-    representative.city = request.form.get("city")
-
-    representative.district = request.form.get("district")
-
-    representative.manager = request.form.get("manager")
-
-    representative.team = request.form.get("team")
-
-    db.session.commit()
-
-    flash(
-        "Temsilci bilgileri güncellendi.",
-        "success"
     )
+
+    try:
+
+        representative.rep_code = request.form.get(
+
+            "rep_code"
+
+        ).strip()
+
+        representative.ims_code = request.form.get(
+
+            "ims_code"
+
+        ).strip()
+
+        representative.sap_code = request.form.get(
+
+            "sap_code"
+
+        ).strip()
+
+        representative.rep_name = request.form.get(
+
+            "rep_name"
+
+        ).strip()
+
+        representative.region = request.form.get(
+
+            "region"
+
+        )
+
+        representative.city = request.form.get(
+
+            "city"
+
+        )
+
+        representative.district = request.form.get(
+
+            "district"
+
+        )
+
+        representative.territory = request.form.get(
+
+            "territory"
+
+        )
+
+        representative.manager = request.form.get(
+
+            "manager"
+
+        )
+
+        representative.team = request.form.get(
+
+            "team"
+
+        )
+
+        representative.email = request.form.get(
+
+            "email"
+
+        )
+
+        representative.phone = request.form.get(
+
+            "phone"
+
+        )
+
+        db.session.commit()
+
+        flash(
+
+            "Temsilci bilgileri güncellendi.",
+
+            "success"
+
+        )
+
+    except Exception as exc:
+
+        db.session.rollback()
+
+        flash(
+
+            str(
+
+                exc
+
+            ),
+
+            "danger"
+
+        )
 
     return redirect(
-        url_for("representatives.index")
+
+        url_for(
+
+            "representatives.index"
+
+        )
+
+    )
+
+@representatives_bp.route(
+
+    "/status/<int:id>"
+
+)
+@login_required
+def status(
+
+    id
+
+):
+
+    representative = Representative.query.get_or_404(
+
+        id
+
+    )
+
+    try:
+
+        representative.active = (
+
+            not representative.active
+
+        )
+
+        db.session.commit()
+
+        flash(
+
+            "Temsilci durumu güncellendi.",
+
+            "success"
+
+        )
+
+    except Exception as exc:
+
+        db.session.rollback()
+
+        flash(
+
+            str(
+
+                exc
+
+            ),
+
+            "danger"
+
+        )
+
+    return redirect(
+
+        url_for(
+
+            "representatives.index"
+
+        )
+
+    )
+
+
+@representatives_bp.route(
+
+    "/view/<int:id>"
+
+)
+@login_required
+def view(
+
+    id
+
+):
+
+    representative = Representative.query.get_or_404(
+
+        id
+
+    )
+
+    return render_template(
+
+        "representative_detail.html",
+
+        representative=representative
+
+    )
+
+
+@representatives_bp.route(
+
+    "/api"
+
+)
+@login_required
+def api():
+
+    representatives = Representative.query.order_by(
+
+        Representative.rep_name.asc()
+
+    ).all()
+
+    return jsonify(
+
+        {
+
+            "success": True,
+
+            "count": len(
+
+                representatives
+
+            ),
+
+            "representatives": [
+
+                {
+
+                    "id": representative.id,
+
+                    "rep_code": representative.rep_code,
+
+                    "ims_code": representative.ims_code,
+
+                    "sap_code": representative.sap_code,
+
+                    "rep_name": representative.rep_name,
+
+                    "region": representative.region,
+
+                    "city": representative.city,
+
+                    "district": representative.district,
+
+                    "territory": representative.territory,
+
+                    "manager": representative.manager,
+
+                    "team": representative.team,
+
+                    "email": representative.email,
+
+                    "phone": representative.phone,
+
+                    "active": representative.active
+
+                }
+
+                for representative in representatives
+
+            ]
+
+        }
+
+    )
+
+
+@representatives_bp.route(
+
+    "/health"
+
+)
+@login_required
+def health():
+
+    return jsonify(
+
+        {
+
+            "success": True,
+
+            "module": "Representatives",
+
+            "version": "1.0.0",
+
+            "statistics": {
+
+                "total":
+
+                    Representative.query.count(),
+
+                "active":
+
+                    Representative.query.filter_by(
+
+                        active=True
+
+                    ).count(),
+
+                "inactive":
+
+                    Representative.query.filter_by(
+
+                        active=False
+
+                    ).count()
+
+            }
+
+        }
+
     )
