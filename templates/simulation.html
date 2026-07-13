@@ -1,0 +1,911 @@
+{% extends "base.html" %}
+
+{% block title %}
+
+Prim Simülasyonu
+
+{% endblock %}
+
+{% block page_title %}
+
+Prim Simülasyonu
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards">
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Simülasyon Bilgileri
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <form id="simulationForm">
+
+                    <div class="mb-3">
+
+                        <label class="form-label">
+
+                            Temsilci
+
+                        </label>
+
+                        <select
+
+                            class="form-select"
+
+                            name="representative_id"
+
+                            required
+
+                        >
+
+                            <option value="">
+
+                                Seçiniz
+
+                            </option>
+
+                            {% for representative in representatives %}
+
+                            <option value="{{ representative.id }}">
+
+                                {{ representative.rep_name }}
+
+                            </option>
+
+                            {% endfor %}
+
+                        </select>
+
+                    </div>
+
+                    <div class="row">
+
+                        <div class="col-6">
+
+                            <label class="form-label">
+
+                                Yıl
+
+                            </label>
+
+                            <input
+
+                                type="number"
+
+                                class="form-control"
+
+                                name="year"
+
+                                value="2026"
+
+                            >
+
+                        </div>
+
+                        <div class="col-6">
+
+                            <label class="form-label">
+
+                                Ay
+
+                            </label>
+
+                            <select
+
+                                class="form-select"
+
+                                name="month"
+
+                            >
+
+                                {% for i in range(1,13) %}
+
+                                <option value="{{ i }}">
+
+                                    {{ i }}
+
+                                </option>
+
+                                {% endfor %}
+
+                            </select>
+
+                        </div>
+
+                    </div>
+
+                    <hr>
+
+                    <h4 class="mb-3">
+
+                        Ürün Güncellemeleri
+
+                    </h4>
+
+                    <div class="table-responsive">
+
+                        <table class="table table-sm align-middle">
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>
+
+                                        Ürün
+
+                                    </th>
+
+                                    <th>
+
+                                        Kutu
+
+                                    </th>
+
+                                    <th>
+
+                                        TL
+
+                                    </th>
+
+                                </tr>
+
+                            </thead>
+
+                            <tbody>
+
+                                {% for product in products %}
+
+                                <tr>
+
+                                    <td>
+
+                                        {{ product.product_name }}
+
+                                    </td>
+
+                                    <td>
+
+                                        <input
+
+                                            class="form-control"
+
+                                            type="number"
+
+                                            name="unit_{{ product.id }}"
+
+                                            value="0"
+
+                                        >
+
+                                    </td>
+
+                                    <td>
+
+                                        <input
+
+                                            class="form-control"
+
+                                            type="number"
+
+                                            name="tl_{{ product.id }}"
+
+                                            value="0"
+
+                                        >
+
+                                    </td>
+
+                                </tr>
+
+                                {% endfor %}
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                    <button
+
+                        class="btn btn-primary w-100 mt-3"
+
+                        type="submit"
+
+                    >
+
+                        <i class="bi bi-calculator-fill me-2"></i>
+
+                        Simülasyonu Hesapla
+
+                    </button>
+
+                </form>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Simülasyon Sonuçları
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div id="simulationResult">
+
+                    <div class="text-center py-5 text-secondary">
+
+                        Simülasyonu başlatmak için soldaki bilgileri doldurunuz.
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card bg-primary-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Ana Prim
+
+                </div>
+
+                <div
+
+                    id="mainPrime"
+
+                    class="display-6 fw-bold"
+
+                >
+
+                    ₺0
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card bg-success-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Ciro Primi
+
+                </div>
+
+                <div
+
+                    id="ciroPrime"
+
+                    class="display-6 fw-bold"
+
+                >
+
+                    ₺0
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card bg-warning-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Toplam Prim
+
+                </div>
+
+                <div
+
+                    id="totalPrime"
+
+                    class="display-6 fw-bold"
+
+                >
+
+                    ₺0
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card bg-danger-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Quarter
+
+                </div>
+
+                <div
+
+                    id="quarterPercent"
+
+                    class="display-6 fw-bold"
+
+                >
+
+                    %0
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-6">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Ürün Performansı
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-striped">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>
+
+                                Ürün
+
+                            </th>
+
+                            <th>
+
+                                Gerçekleşme
+
+                            </th>
+
+                            <th>
+
+                                Durum
+
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody
+
+                        id="productResultTable"
+
+                    >
+
+                        <tr>
+
+                            <td
+
+                                colspan="3"
+
+                                class="text-center text-secondary"
+
+                            >
+
+                                Henüz hesaplama yapılmadı.
+
+                            </td>
+
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    AI Önerileri
+
+                </h3>
+
+            </div>
+
+            <div
+
+                class="card-body"
+
+                id="aiMessages"
+
+            >
+
+                <div class="text-secondary">
+
+                    Simülasyon tamamlandıktan sonra öneriler burada görüntülenecektir.
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-12">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Recovery Analizi
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>
+
+                                Ürün
+
+                            </th>
+
+                            <th>
+
+                                Durum
+
+                            </th>
+
+                            <th>
+
+                                Açıklama
+
+                            </th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody
+
+                        id="recoveryTable"
+
+                    >
+
+                        <tr>
+
+                            <td
+
+                                colspan="3"
+
+                                class="text-center text-secondary"
+
+                            >
+
+                                Recovery analizi bekleniyor.
+
+                            </td>
+
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+
+const simulationForm = document.getElementById(
+
+    "simulationForm"
+
+);
+
+if(
+
+    simulationForm
+
+){
+
+simulationForm.addEventListener(
+
+    "submit",
+
+    async function(
+
+        e
+
+    ){
+
+        e.preventDefault();
+
+        showLoading(
+
+            "Prim simülasyonu hesaplanıyor..."
+
+        );
+
+        try{
+
+            const formData = new FormData(
+
+                simulationForm
+
+            );
+
+            const payload={
+
+                representative_id:Number(
+
+                    formData.get(
+
+                        "representative_id"
+
+                    )
+
+                ),
+
+                year:Number(
+
+                    formData.get(
+
+                        "year"
+
+                    )
+
+                ),
+
+                month:Number(
+
+                    formData.get(
+
+                        "month"
+
+                    )
+
+                ),
+
+                products:[]
+
+            };
+
+            {% for product in products %}
+
+            payload.products.push(
+
+                {
+
+                    product_id:{{ product.id }},
+
+                    unit:Number(
+
+                        formData.get(
+
+                            "unit_{{ product.id }}"
+
+                        )||0
+
+                    ),
+
+                    tl:Number(
+
+                        formData.get(
+
+                            "tl_{{ product.id }}"
+
+                        )||0
+
+                    )
+
+                }
+
+            );
+
+            {% endfor %}
+
+            const response=await fetch(
+
+                "{{ url_for('simulation.calculate') }}",
+
+                {
+
+                    method:"POST",
+
+                    headers:{
+
+                        "Content-Type":"application/json"
+
+                    },
+
+                    body:JSON.stringify(
+
+                        payload
+
+                    )
+
+                }
+
+            );
+
+            const result=await response.json();
+
+            hideLoading();
+
+            if(
+
+                !result.success
+
+            ){
+
+                alert(
+
+                    result.message
+
+                );
+
+                return;
+
+            }
+
+            document.getElementById(
+
+                "mainPrime"
+
+            ).innerHTML=result.summary.main_prime.toLocaleString(
+
+                "tr-TR"
+
+            )+" ₺";
+
+            document.getElementById(
+
+                "ciroPrime"
+
+            ).innerHTML=result.summary.ciro_prime.toLocaleString(
+
+                "tr-TR"
+
+            )+" ₺";
+
+            document.getElementById(
+
+                "totalPrime"
+
+            ).innerHTML=result.summary.total_prime.toLocaleString(
+
+                "tr-TR"
+
+            )+" ₺";
+
+            document.getElementById(
+
+                "quarterPercent"
+
+            ).innerHTML=result.summary.quarter_percent+"%";
+
+            let productHtml="";
+
+            result.quarter.products.forEach(
+
+                function(
+
+                    item
+
+                ){
+
+                    productHtml+=`
+
+<tr>
+
+<td>${item.product}</td>
+
+<td>${item.percent}%</td>
+
+<td>${item.status}</td>
+
+</tr>
+
+`;
+
+                }
+
+            );
+
+            document.getElementById(
+
+                "productResultTable"
+
+            ).innerHTML=productHtml;
+
+            let recoveryHtml="";
+
+            result.recovery.forEach(
+
+                function(
+
+                    item
+
+                ){
+
+                    recoveryHtml+=`
+
+<tr>
+
+<td>${item.product}</td>
+
+<td>${item.status}</td>
+
+<td>${item.description}</td>
+
+</tr>
+
+`;
+
+                }
+
+            );
+
+            document.getElementById(
+
+                "recoveryTable"
+
+            ).innerHTML=recoveryHtml;
+
+            let aiHtml="";
+
+            result.summary.ai_messages.forEach(
+
+                function(
+
+                    item
+
+                ){
+
+                    aiHtml+=`
+
+<div class="alert alert-primary">
+
+${item}
+
+</div>
+
+`;
+
+                }
+
+            );
+
+            document.getElementById(
+
+                "aiMessages"
+
+            ).innerHTML=aiHtml;
+
+        }
+
+        catch(
+
+            err
+
+        ){
+
+            hideLoading();
+
+            alert(
+
+                err
+
+            );
+
+        }
+
+    }
+
+);
+
+}
+
+</script>
+
+{% endblock %}
