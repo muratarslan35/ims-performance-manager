@@ -1,31 +1,101 @@
-<footer class="footer footer-transparent">
+<footer class="footer footer-transparent border-top bg-white">
 
-<div class="container-xl">
+    <div class="container-xl">
 
-<div class="row align-items-center">
+        <div class="row align-items-center py-3">
 
-<div class="col-md-6 text-center text-md-start">
+            <div class="col-lg-4 text-center text-lg-start mb-3 mb-lg-0">
 
-© {{ current_year if current_year else 2026 }}
+                <div class="fw-bold">
 
-IMS Performans Yönetim Sistemi
+                    IMS Performance Manager
 
-</div>
+                </div>
 
-<div class="col-md-6 text-center text-md-end">
+                <small class="text-secondary">
 
-Sürüm
+                    Bilim İlaç Prim & IMS Yönetim Sistemi
 
-<strong>
+                </small>
 
-v1.0.0
+            </div>
 
-</strong>
+            <div class="col-lg-4 text-center mb-3 mb-lg-0">
 
-</div>
+                <div class="d-flex justify-content-center gap-4">
 
-</div>
+                    <div>
 
-</div>
+                        <div class="fw-semibold">
+
+                            Version
+
+                        </div>
+
+                        <small class="text-secondary">
+
+                            v2.0.0
+
+                        </small>
+
+                    </div>
+
+                    <div>
+
+                        <div class="fw-semibold">
+
+                            Ortam
+
+                        </div>
+
+                        <small class="badge bg-success-lt text-success">
+
+                            Production
+
+                        </small>
+
+                    </div>
+
+                    <div>
+
+                        <div class="fw-semibold">
+
+                            Durum
+
+                        </div>
+
+                        <small class="badge bg-primary-lt text-primary">
+
+                            Aktif
+
+                        </small>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="col-lg-4 text-center text-lg-end">
+
+                <div class="fw-semibold">
+
+                    © {{ current_year if current_year else 2026 }}
+
+                    Bilim İlaç
+
+                </div>
+
+                <small class="text-secondary">
+
+                    IMS Performance Manager • Tüm Hakları Saklıdır.
+
+                </small>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </footer>
