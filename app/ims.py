@@ -12,133 +12,207 @@ from werkzeug.utils import secure_filename
 
 from config import Config
 
-from app.extensions import db
-from app.ims_importer import IMSImporter
-from app.ims_reader import IMSReader
 from app.models import IMSUpload
 
-
-ims_bp = Blueprint(
-    "ims",
-    __name__,
-    url_prefix="/ims"
+from app.services.ims_import_service import (
+    IMSImportService
 )
 
 
-@ims_bp.route("/")
+ims_bp = Blueprint(
+
+    "ims",
+
+    __name__,
+
+    url_prefix="/ims"
+
+)
+
+
+@ims_bp.route(
+
+    "/"
+
+)
 @login_required
 def index():
 
     uploads = IMSUpload.query.order_by(
+
         IMSUpload.uploaded_at.desc()
+
     ).all()
 
     return render_template(
+
         "ims.html",
+
         uploads=uploads
+
     )
 
 
-@ims_bp.route("/upload", methods=["POST"])
+@ims_bp.route(
+
+    "/upload",
+
+    methods=["POST"]
+
+)
 @login_required
 def upload():
 
-    file = request.files.get("file")
+    file = request.files.get(
+
+        "file"
+
+    )
 
     if file is None or file.filename == "":
 
         flash(
+
             "Lütfen bir IMS dosyası seçiniz.",
+
             "warning"
+
         )
 
         return redirect(
-            url_for("ims.index")
+
+            url_for(
+
+                "ims.index"
+
+            )
+
         )
 
     filename = secure_filename(
+
         file.filename
+
     )
 
     upload_path = (
+
         Config.UPLOAD_FOLDER /
+
         filename
+
     )
 
     try:
 
-        file.save(upload_path)
+        file.save(
 
-        reader = IMSReader(
             upload_path
+
         )
 
-        sheet_list = reader.get_sheet_names()
+        year = int(
 
-        upload = IMSUpload(
+            request.form.get(
 
-            file_name=filename,
+                "year"
 
-            sheet_count=len(
-                sheet_list
-            ),
+            )
 
-            status="İşleniyor",
+        )
+
+        month = int(
+
+            request.form.get(
+
+                "month"
+
+            )
+
+        )
+
+        service = IMSImportService(
+
+            file_path=upload_path,
 
             uploaded_by=current_user.full_name
 
         )
 
-        db.session.add(upload)
+        result = service.run(
 
-        db.session.commit()
+            year=year,
 
-        importer = IMSImporter(
+            month=month,
 
-            upload.id,
-
-            upload_path
+            clear_before_import=True
 
         )
 
-        importer.run()
+        if result["success"]:
 
-        upload.status = "Tamamlandı"
+            flash(
 
-        db.session.commit()
+                f"{filename} başarıyla içe aktarıldı.",
+
+                "success"
+
+            )
+
+            if result.get(
+
+                "warnings"
+
+            ):
+
+                flash(
+
+                    f"{len(result['warnings'])} uyarı oluştu.",
+
+                    "warning"
+
+                )
+
+        else:
+
+            flash(
+
+                "\n".join(
+
+                    result.get(
+
+                        "errors",
+
+                        [
+
+                            "İçe aktarma başarısız."
+
+                        ]
+
+                    )
+
+                ),
+
+                "danger"
+
+            )
+
+    except Exception as exc:
 
         flash(
 
-            f"{filename} başarıyla işlendi. {len(sheet_list)} çalışma sayfası bulundu.",
-
-            "success"
-
-        )
-
-    except Exception as error:
-
-        db.session.rollback()
-
-        try:
-
-            if "upload" in locals():
-
-                upload.status = "Hata"
-
-                db.session.commit()
-
-        except Exception:
-
-            db.session.rollback()
-
-        flash(
-
-            f"IMS içe aktarılırken hata oluştu: {error}",
+            f"IMS içe aktarılırken hata oluştu: {exc}",
 
             "danger"
 
         )
 
     return redirect(
-        url_for("ims.index")
+
+        url_for(
+
+            "ims.index"
+
+        )
+
     )
