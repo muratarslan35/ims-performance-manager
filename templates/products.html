@@ -1,251 +1,737 @@
 {% extends "base.html" %}
 
-{% block content %}
-
-<div class="container mt-4">
-
-<h2 class="mb-4">
+{% block title %}
 
 Ürün Yönetimi
 
-</h2>
+{% endblock %}
 
-<div class="card shadow-sm mb-4">
+{% block page_title %}
 
-<div class="card-body">
+Ürün Yönetimi
 
-<form
-action="{{ url_for('products.add') }}"
-method="POST"
-class="row g-3">
+{% endblock %}
 
-<div class="col-md-2">
+{% block content %}
 
-<input
-class="form-control"
-name="product_code"
-placeholder="Ürün Kodu">
+<div class="row row-cards mb-4">
 
-</div>
+    <div class="col-xl-3 col-md-6">
 
-<div class="col-md-3">
+        <div class="card bg-primary-lt">
 
-<input
-class="form-control"
-name="product_name"
-placeholder="Ürün Adı"
-required>
+            <div class="card-body text-center">
 
-</div>
+                <div class="text-secondary">
 
-<div class="col-md-3">
+                    Toplam Ürün
 
-<input
-class="form-control"
-name="ims_name"
-placeholder="IMS Ürün Adı">
+                </div>
 
-</div>
+                <div class="display-5 fw-bold">
 
-<div class="col-md-2">
+                    {{ products|length }}
 
-<input
-class="form-control"
-name="category"
-placeholder="Kategori">
+                </div>
 
-</div>
+            </div>
 
-<div class="col-md-2">
+        </div>
 
-<input
-type="number"
-step="0.01"
-class="form-control"
-name="unit_price"
-placeholder="Birim Fiyat">
+    </div>
 
-</div>
+    <div class="col-xl-3 col-md-6">
 
-<div class="col-md-2">
+        <div class="card bg-success-lt">
 
-<input
-type="number"
-class="form-control"
-name="display_order"
-placeholder="Sıra">
+            <div class="card-body text-center">
 
-</div>
+                <div class="text-secondary">
 
-<div class="col-md-2 d-flex align-items-center">
+                    Prime Ürün
 
-<div class="form-check">
+                </div>
 
-<input
-class="form-check-input"
-type="checkbox"
-name="prime"
-id="prime">
+                <div class="display-5 fw-bold">
 
-<label
-class="form-check-label"
-for="prime">
+                    {{ products|selectattr('is_prime_product')|list|length }}
 
-Prime Ürün
+                </div>
 
-</label>
+            </div>
 
-</div>
+        </div>
 
-</div>
+    </div>
 
-<div class="col-md-2">
+    <div class="col-xl-3 col-md-6">
 
-<button
-class="btn btn-primary w-100">
+        <div class="card bg-warning-lt">
 
-Ürün Ekle
+            <div class="card-body text-center">
 
-</button>
+                <div class="text-secondary">
 
-</div>
+                    Aktif Ürün
 
-</form>
+                </div>
 
-</div>
+                <div class="display-5 fw-bold">
+
+                    {{ products|selectattr('is_active')|list|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card bg-danger-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Pasif Ürün
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ products|rejectattr('is_active')|list|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
 <div class="card shadow-sm">
 
-<div class="card-body">
+    <div class="card-header">
 
-<table class="table table-hover align-middle">
+        <div class="d-flex justify-content-between align-items-center w-100">
 
-<thead>
+            <div>
 
-<tr>
+                <h3 class="card-title mb-1">
 
-<th>ID</th>
+                    Ürün Tanımları
 
-<th>Kod</th>
+                </h3>
 
-<th>Ürün</th>
+                <div class="text-secondary">
 
-<th>IMS Adı</th>
+                    IMS sisteminde kullanılacak ürünleri yönetin.
 
-<th>Kategori</th>
+                </div>
 
-<th>Fiyat</th>
+            </div>
 
-<th>Prime</th>
+        </div>
 
-<th>Durum</th>
+    </div>
 
-<th width="220">İşlemler</th>
+    <div class="card-body">
 
-</tr>
+        <form
 
-</thead>
+            method="POST"
 
-<tbody>
+            action="{{ url_for('products.add') }}"
 
-{% for product in products %}
+        >
 
-<tr>
+            <div class="row">
 
-<td>{{ product.id }}</td>
+                <div class="col-md-2 mb-3">
 
-<td>{{ product.product_code }}</td>
+                    <label class="form-label">
 
-<td>{{ product.product_name }}</td>
+                        Ürün Kodu
 
-<td>{{ product.ims_name }}</td>
+                    </label>
 
-<td>{{ product.category }}</td>
+                    <input
 
-<td>{{ "%.2f"|format(product.unit_price) }} ₺</td>
+                        class="form-control"
 
-<td>
+                        name="product_code"
 
-{% if product.is_prime_product %}
+                        required
 
-<span class="badge bg-success">
+                    >
 
-⭐ Prime
+                </div>
 
-</span>
+                <div class="col-md-4 mb-3">
 
-{% else %}
+                    <label class="form-label">
 
-<span class="badge bg-secondary">
+                        Ürün Adı
 
-Normal
+                    </label>
 
-</span>
+                    <input
 
-{% endif %}
+                        class="form-control"
 
-</td>
+                        name="product_name"
 
-<td>
+                        required
 
-{% if product.is_active %}
+                    >
 
-<span class="badge bg-success">
+                </div>
 
-🟢 Aktif
+                <div class="col-md-3 mb-3">
 
-</span>
+                    <label class="form-label">
 
-{% else %}
+                        IMS Adı
 
-<span class="badge bg-danger">
+                    </label>
 
-🔴 Pasif
+                    <input
 
-</span>
+                        class="form-control"
 
-{% endif %}
+                        name="ims_name"
 
-</td>
+                    >
 
-<td>
+                </div>
 
-<a
-href="{{ url_for('products.change_prime', id=product.id) }}"
-class="btn btn-outline-warning btn-sm">
+                <div class="col-md-3 mb-3">
 
-Prime
+                    <label class="form-label">
 
-</a>
+                        Kategori
 
-<a
-href="{{ url_for('products.change_status', id=product.id) }}"
-class="btn btn-outline-primary btn-sm">
+                    </label>
 
-{% if product.is_active %}
-Pasif Yap
-{% else %}
-Aktif Yap
-{% endif %}
+                    <input
 
-</a>
+                        class="form-control"
 
-</td>
+                        name="category"
 
-</tr>
+                    >
 
-{% endfor %}
+                </div>
 
-</tbody>
+                <div class="col-md-3 mb-3">
 
-</table>
+                    <label class="form-label">
+
+                        Molekül
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="molecule"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Güç
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="strength"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Form
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="dosage_form"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Birim Fiyat
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        step="0.01"
+
+                        name="unit_price"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Hedef %
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        name="required_percent"
+
+                    >
+
+                </div>
+                                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Görünüm Sırası
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        name="display_order"
+
+                        value="0"
+
+                    >
+
+                </div>
+
+                <div class="col-md-3 mb-3 d-flex align-items-end">
+
+                    <div class="form-check form-switch">
+
+                        <input
+
+                            class="form-check-input"
+
+                            type="checkbox"
+
+                            name="prime"
+
+                            id="prime"
+
+                        >
+
+                        <label
+
+                            class="form-check-label"
+
+                            for="prime"
+
+                        >
+
+                            Prime Ürün
+
+                        </label>
+
+                    </div>
+
+                </div>
+
+                <div class="col-md-3 mb-3 d-flex align-items-end">
+
+                    <div class="form-check form-switch">
+
+                        <input
+
+                            class="form-check-input"
+
+                            type="checkbox"
+
+                            name="include_total_tl"
+
+                            id="include_total_tl"
+
+                            checked
+
+                        >
+
+                        <label
+
+                            class="form-check-label"
+
+                            for="include_total_tl"
+
+                        >
+
+                            Toplam TL'ye Dahil
+
+                        </label>
+
+                    </div>
+
+                </div>
+
+                <div class="col-md-2 mb-3 d-flex align-items-end">
+
+                    <button
+
+                        class="btn btn-primary w-100"
+
+                        type="submit"
+
+                    >
+
+                        <i class="bi bi-plus-circle me-2"></i>
+
+                        Ürün Ekle
+
+                    </button>
+
+                </div>
+
+            </div>
+
+        </form>
+
+    </div>
 
 </div>
 
-</div>
+<div class="card shadow-sm mt-4">
+
+    <div class="card-header">
+
+        <div class="d-flex justify-content-between align-items-center w-100">
+
+            <h3 class="card-title">
+
+                Ürün Listesi
+
+            </h3>
+
+            <div class="w-25">
+
+                <input
+
+                    type="search"
+
+                    class="form-control"
+
+                    placeholder="Ürün ara..."
+
+                >
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="table-responsive">
+
+        <table class="table table-hover table-striped datatable align-middle">
+
+            <thead>
+
+                <tr>
+
+                    <th>Kod</th>
+
+                    <th>Ürün</th>
+
+                    <th>IMS Adı</th>
+
+                    <th>Kategori</th>
+
+                    <th>Molekül</th>
+
+                    <th>Fiyat</th>
+
+                    <th>Hedef</th>
+
+                    <th>Prime</th>
+
+                    <th>Durum</th>
+
+                    <th class="text-center">
+
+                        İşlemler
+
+                    </th>
+
+                </tr>
+
+            </thead>
+
+            <tbody>
+
+                {% for product in products %}
+
+                <tr>
+
+                    <td>
+
+                        {{ product.product_code }}
+
+                    </td>
+
+                    <td>
+
+                        <strong>
+
+                            {{ product.product_name }}
+
+                        </strong>
+
+                    </td>
+
+                    <td>
+
+                        {{ product.ims_name }}
+
+                    </td>
+
+                    <td>
+
+                        {{ product.category }}
+
+                    </td>
+
+                    <td>
+
+                        {{ product.molecule }}
+
+                    </td>
+
+                    <td>
+
+                        {{ "%.2f"|format(product.unit_price) }} ₺
+
+                    </td>
+
+                    <td>
+
+                        %{{ product.required_percent }}
+
+                    </td>
+
+                    <td>
+
+                        {% if product.is_prime_product %}
+
+                        <span class="badge bg-success">
+
+                            Prime
+
+                        </span>
+
+                        {% else %}
+
+                        <span class="badge bg-secondary">
+
+                            Normal
+
+                        </span>
+
+                        {% endif %}
+
+                    </td>
+
+                    <td>
+
+                        {% if product.is_active %}
+
+                        <span class="badge bg-success">
+
+                            Aktif
+
+                        </span>
+
+                        {% else %}
+
+                        <span class="badge bg-danger">
+
+                            Pasif
+
+                        </span>
+
+                        {% endif %}
+
+                    </td>
+
+                    <td class="text-center">
+                                              <div class="btn-group">
+
+                            <a
+
+                                href="{{ url_for('products.view', id=product.id) }}"
+
+                                class="btn btn-sm btn-outline-info"
+
+                            >
+
+                                <i class="bi bi-eye"></i>
+
+                            </a>
+
+                            <a
+
+                                href="{{ url_for('products.change_prime', id=product.id) }}"
+
+                                class="btn btn-sm btn-outline-warning"
+
+                            >
+
+                                <i class="bi bi-star-fill"></i>
+
+                            </a>
+
+                            <a
+
+                                href="{{ url_for('products.change_status', id=product.id) }}"
+
+                                class="btn btn-sm btn-outline-primary"
+
+                            >
+
+                                {% if product.is_active %}
+
+                                <i class="bi bi-pause-circle"></i>
+
+                                {% else %}
+
+                                <i class="bi bi-play-circle"></i>
+
+                                {% endif %}
+
+                            </a>
+
+                            <form
+
+                                method="POST"
+
+                                action="{{ url_for('products.delete', id=product.id) }}"
+
+                                class="d-inline"
+
+                                onsubmit="return confirm('Bu ürün silinsin mi?');"
+
+                            >
+
+                                <button
+
+                                    class="btn btn-sm btn-outline-danger"
+
+                                    type="submit"
+
+                                >
+
+                                    <i class="bi bi-trash"></i>
+
+                                </button>
+
+                            </form>
+
+                        </div>
+
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
 
 </div>
+
+{% endblock %}
+
+{% block scripts %}
+
+<script>
+
+document.addEventListener(
+
+    "DOMContentLoaded",
+
+    function(){
+
+        const tooltipTriggerList=[].slice.call(
+
+            document.querySelectorAll(
+
+                '[data-bs-toggle="tooltip"]'
+
+            )
+
+        );
+
+        tooltipTriggerList.map(
+
+            function(
+
+                tooltipTriggerEl
+
+            ){
+
+                return new bootstrap.Tooltip(
+
+                    tooltipTriggerEl
+
+                );
+
+            }
+
+        );
+
+    }
+
+);
+
+</script>
 
 {% endblock %}
