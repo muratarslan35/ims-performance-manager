@@ -1,7 +1,550 @@
 {% extends "base.html" %}
 
-{% block content %}
+{% block title %}
 
-<h2>Settings</h2>
+Sistem Ayarları
 
 {% endblock %}
+
+{% block page_title %}
+
+Sistem Ayarları
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards mb-4">
+
+    <div class="col-xl-3">
+
+        <div class="card bg-primary-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Toplam Ayar
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ settings|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-success-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Ana Prim
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ config.MAIN_PRIME if config else "50.000" }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-warning-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Ciro Primi
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ config.CIRO_PRIME if config else "20.000" }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-info-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Maksimum Prim
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    %140
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="card shadow-sm">
+
+    <div class="card-header">
+
+        <h3 class="card-title">
+
+            Sistem Parametreleri
+
+        </h3>
+
+    </div>
+
+    <div class="card-body">
+
+        <form
+
+            method="POST"
+
+            action="{{ url_for('settings.save') }}"
+
+        >
+
+            <div class="row">
+
+                {% for item in settings %}
+
+                <div class="col-md-6 mb-3">
+
+                    <label class="form-label">
+
+                        {{ item.description }}
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        name="{{ item.setting_key }}"
+
+                        value="{{ item.setting_value }}"
+
+                    >
+
+                    <div class="form-hint">
+
+                        {{ item.setting_key }}
+
+                    </div>
+
+                </div>
+
+                {% endfor %}
+
+            </div>
+
+            <div class="text-end">
+
+                <button
+
+                    class="btn btn-primary"
+
+                    type="submit"
+
+                >
+
+                    <i class="bi bi-floppy-fill me-2"></i>
+
+                    Ayarları Kaydet
+
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 1 BİTTİ -->
+<div class="card shadow-sm mt-4">
+
+    <div class="card-header">
+
+        <div class="d-flex justify-content-between align-items-center">
+
+            <h3 class="card-title">
+
+                Sistem Ayarları
+
+            </h3>
+
+            <div>
+
+                <form
+
+                    method="POST"
+
+                    action="{{ url_for('settings.reset') }}"
+
+                    class="d-inline"
+
+                    onsubmit="return confirm('Varsayılan ayarlar geri yüklensin mi?');"
+
+                >
+
+                    <button
+
+                        type="submit"
+
+                        class="btn btn-warning"
+
+                    >
+
+                        <i class="bi bi-arrow-counterclockwise me-2"></i>
+
+                        Varsayılana Dön
+
+                    </button>
+
+                </form>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="table-responsive">
+
+        <table class="table table-hover table-striped align-middle">
+
+            <thead>
+
+                <tr>
+
+                    <th>Ayar Anahtarı</th>
+
+                    <th>Açıklama</th>
+
+                    <th>Değer</th>
+
+                    <th>Durum</th>
+
+                </tr>
+
+            </thead>
+
+            <tbody>
+
+                {% for item in settings %}
+
+                <tr>
+
+                    <td>
+
+                        <code>
+
+                            {{ item.setting_key }}
+
+                        </code>
+
+                    </td>
+
+                    <td>
+
+                        {{ item.description }}
+
+                    </td>
+
+                    <td>
+
+                        <strong>
+
+                            {{ item.setting_value }}
+
+                        </strong>
+
+                    </td>
+
+                    <td>
+
+                        <span class="badge bg-success">
+
+                            Aktif
+
+                        </span>
+
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-6">
+
+        <div class="card">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Prim Sistemi
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <ul class="list-group list-group-flush">
+
+                    <li class="list-group-item d-flex justify-content-between">
+
+                        <span>Ana Prim</span>
+
+                        <strong>50.000 ₺</strong>
+
+                    </li>
+
+                    <li class="list-group-item d-flex justify-content-between">
+
+                        <span>Ciro Primi</span>
+
+                        <strong>20.000 ₺</strong>
+
+                    </li>
+
+                    <li class="list-group-item d-flex justify-content-between">
+
+                        <span>Maksimum Prim</span>
+
+                        <strong>%140</strong>
+
+                    </li>
+
+                    <li class="list-group-item d-flex justify-content-between">
+
+                        <span>Prim Artış Adımı</span>
+
+                        <strong>%5</strong>
+
+                    </li>
+
+                </ul>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+
+        <div class="card">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Sistem Bilgisi
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <table class="table table-borderless mb-0">
+
+                    <tr>
+
+                        <td>Sürüm</td>
+
+                        <td class="text-end">
+
+                            v2.0.0
+
+                        </td>
+
+                    </tr>
+
+                    <tr>
+
+                        <td>IMS Motoru</td>
+
+                        <td class="text-end text-success">
+
+                            Aktif
+
+                        </td>
+
+                    </tr>
+
+                    <tr>
+
+                        <td>Prim Motoru</td>
+
+                        <td class="text-end text-success">
+
+                            Aktif
+
+                        </td>
+
+                    </tr>
+
+                    <tr>
+
+                        <td>Quarter Motoru</td>
+
+                        <td class="text-end text-success">
+
+                            Aktif
+
+                        </td>
+
+                    </tr>
+
+                    <tr>
+
+                        <td>Recovery Motoru</td>
+
+                        <td class="text-end text-success">
+
+                            Aktif
+
+                        </td>
+
+                    </tr>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 2 BİTTİ -->
+<div class="row mt-4">
+
+    <div class="col-lg-12">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Açıklamalar
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="alert alert-primary mb-3">
+
+                    <i class="bi bi-info-circle-fill me-2"></i>
+
+                    Buradaki parametreler Prim, Quarter, Recovery ve Simülasyon
+                    motorları tarafından ortak olarak kullanılmaktadır.
+
+                </div>
+
+                <div class="alert alert-warning mb-3">
+
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+
+                    Parametre değişiklikleri yalnızca yeni hesaplamaları etkiler.
+                    Geçmiş IMS verileri değiştirilmez.
+
+                </div>
+
+                <div class="alert alert-success mb-0">
+
+                    <i class="bi bi-check-circle-fill me-2"></i>
+
+                    Değişiklik yaptıktan sonra Prim Simülasyonu ekranından
+                    yeni hesaplama yapmanız önerilir.
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+
+<script>
+
+document.addEventListener(
+
+    "DOMContentLoaded",
+
+    function(){
+
+        console.log(
+
+            "Settings module loaded."
+
+        );
+
+    }
+
+);
+
+</script>
+
+{% endblock %}
+
+<!-- PARÇA 3 BİTTİ -->
+
+<!-- DOSYA TAMAMLANDI -->
