@@ -9,7 +9,7 @@ SQLAlchemy==2.0.41
 Alembic==1.16.4
 
 pandas==2.3.1
-numpy==2.3.1
+numpy==2.2.6
 openpyxl==3.1.5
 xlsxwriter==3.2.5
 
