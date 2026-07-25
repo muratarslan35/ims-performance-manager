@@ -1,0 +1,1077 @@
+{% extends "base.html" %}
+
+{% block title %}
+
+Dashboard
+
+{% endblock %}
+
+{% block page_title %}
+
+Dashboard
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards mb-4">
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Aktif Ürün
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_products }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-primary-lt">
+
+                        <i class="bi bi-capsule-pill fs-2 text-primary"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Temsilci
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_representatives }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-success-lt">
+
+                        <i class="bi bi-people-fill fs-2 text-success"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Hedef
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            {{ total_targets }}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-warning-lt">
+
+                        <i class="bi bi-bullseye fs-2 text-warning"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Ana Prim
+
+                        </div>
+
+                        <div class="display-6 fw-bold">
+
+                            50.000 ₺
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-blue-lt">
+
+                        <i class="bi bi-cash-stack fs-2 text-primary"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Quarter
+
+                        </div>
+
+                        <div class="display-5 fw-bold">
+
+                            Q2
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-purple-lt">
+
+                        <i class="bi bi-calendar-week fs-2 text-purple"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-2 col-md-4 col-sm-6">
+
+        <div class="card dashboard-card border-0 shadow-sm">
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between">
+
+                    <div>
+
+                        <div class="text-secondary">
+
+                            Son IMS
+
+                        </div>
+
+                        <div class="fw-bold">
+
+                            {% if last_upload %}
+
+                            Hazır
+
+                            {% else %}
+
+                            Yok
+
+                            {% endif %}
+
+                        </div>
+
+                    </div>
+
+                    <div class="avatar avatar-lg bg-green-lt">
+
+                        <i class="bi bi-file-earmark-excel fs-2 text-success"></i>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row">
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <div class="d-flex justify-content-between align-items-center w-100">
+
+                    <h3 class="card-title">
+
+                        IMS Performans Grafiği
+
+                    </h3>
+
+                    <select class="form-select w-auto">
+
+                        <option>
+
+                            Son 12 Ay
+
+                        </option>
+
+                        <option>
+
+                            Son 6 Ay
+
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+            <div class="card-body">
+
+                <div
+
+                    id="dashboardPerformanceChart"
+
+                    style="height:380px;"
+
+                >
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm h-100">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Hedef Özeti
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div id="goalChart">
+
+                </div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Ana Prim
+
+                    </span>
+
+                    <strong>
+
+                        50.000 ₺
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Ciro Primi
+
+                    </span>
+
+                    <strong>
+
+                        20.000 ₺
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Maksimum
+
+                    </span>
+
+                    <strong>
+
+                        %140
+
+                    </strong>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 1 BİTTİ -->
+<div class="row mt-4">
+
+    <div class="col-lg-7">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <div class="d-flex justify-content-between align-items-center">
+
+                    <h3 class="card-title">
+
+                        Ürün Performansı
+
+                    </h3>
+
+                    <span class="badge bg-primary">
+
+                        Canlı IMS
+
+                    </span>
+
+                </div>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover table-striped align-middle">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Ürün</th>
+
+                            <th>Gerçekleşme</th>
+
+                            <th>Hedef</th>
+
+                            <th>Durum</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+
+                            <td>Travazol</td>
+
+                            <td>%112</td>
+
+                            <td>%90</td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    Tamamlandı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>Monurol</td>
+
+                            <td>%104</td>
+
+                            <td>%90</td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    Tamamlandı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>Mixovul</td>
+
+                            <td>%89</td>
+
+                            <td>%90</td>
+
+                            <td>
+
+                                <span class="badge bg-warning">
+
+                                    Kritik
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>Acnemix</td>
+
+                            <td>%73</td>
+
+                            <td>%75</td>
+
+                            <td>
+
+                                <span class="badge bg-danger">
+
+                                    Riskli
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-5">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    AI Önerileri
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="alert alert-success">
+
+                    Travazol hedefini geçtiği için ana prime olumlu katkı sağlıyor.
+
+                </div>
+
+                <div class="alert alert-warning">
+
+                    Mixovul %90 hedefinin hemen altında.
+
+                </div>
+
+                <div class="alert alert-danger">
+
+                    Acnemix öncelikli aksiyon gerektiriyor.
+
+                </div>
+
+                <div class="alert alert-info mb-0">
+
+                    Quarter sonuna kadar mevcut performans korunursa ana prim oluşacaktır.
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-6">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Son IMS Yüklemeleri
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Dosya</th>
+
+                            <th>Durum</th>
+
+                            <th>Tarih</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {% if last_upload %}
+
+                        <tr>
+
+                            <td>
+
+                                {{ last_upload.file_name }}
+
+                            </td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    {{ last_upload.status }}
+
+                                </span>
+
+                            </td>
+
+                            <td>
+
+                                {{ last_upload.uploaded_at.strftime("%d.%m.%Y %H:%M") }}
+
+                            </td>
+
+                        </tr>
+
+                        {% else %}
+
+                        <tr>
+
+                            <td colspan="3">
+
+                                IMS kaydı bulunamadı.
+
+                            </td>
+
+                        </tr>
+
+                        {% endif %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Recovery Durumu
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="progress progress-lg mb-3">
+
+                    <div
+
+                        class="progress-bar bg-success"
+
+                        style="width:72%;"
+
+                    >
+
+                        %72
+
+                    </div>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-2">
+
+                    <span>
+
+                        Tamamlanan Ürün
+
+                    </span>
+
+                    <strong>
+
+                        3
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-2">
+
+                    <span>
+
+                        Riskli Ürün
+
+                    </span>
+
+                    <strong>
+
+                        1
+
+                    </strong>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Quarter
+
+                    </span>
+
+                    <strong>
+
+                        Q2
+
+                    </strong>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 2 BİTTİ -->
+<div class="row mt-4">
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <div class="d-flex justify-content-between align-items-center">
+
+                    <h3 class="card-title">
+
+                        Bölge Performansı
+
+                    </h3>
+
+                    <span class="badge bg-success">
+
+                        Canlı
+
+                    </span>
+
+                </div>
+
+            </div>
+
+            <div class="card-body">
+
+                <div
+
+                    id="regionPerformanceChart"
+
+                    style="height:340px;"
+
+                >
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Hızlı İşlemler
+
+                </h3>
+
+            </div>
+
+            <div class="card-body d-grid gap-2">
+
+                <a
+
+                    href="{{ url_for('ims.index') }}"
+
+                    class="btn btn-primary"
+
+                >
+
+                    <i class="bi bi-upload me-2"></i>
+
+                    IMS Yükle
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('simulation.index') }}"
+
+                    class="btn btn-success"
+
+                >
+
+                    <i class="bi bi-calculator me-2"></i>
+
+                    Prim Simülasyonu
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('targets.index') }}"
+
+                    class="btn btn-warning"
+
+                >
+
+                    <i class="bi bi-bullseye me-2"></i>
+
+                    Hedef Yönetimi
+
+                </a>
+
+                <a
+
+                    href="{{ url_for('products.index') }}"
+
+                    class="btn btn-info"
+
+                >
+
+                    <i class="bi bi-capsule me-2"></i>
+
+                    Ürün Yönetimi
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Sistem Durumu
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        IMS
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Prim Motoru
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Quarter
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Recovery
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Son Aktiviteler
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Tarih</th>
+
+                            <th>İşlem</th>
+
+                            <th>Kullanıcı</th>
+
+                            <th>Durum</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        <tr>
+
+                            <td>09.07.2026</td>
+
+                            <td>IMS Dosyası Yüklendi</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-success">
+
+                                    Başarılı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>09.07.2026</td>
+
+                            <td>Prim Simülasyonu</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-primary">
+
+                                    Tamamlandı
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                        <tr>
+
+                            <td>08.07.2026</td>
+
+                            <td>Hedef Güncellemesi</td>
+
+                            <td>{{ current_user.full_name }}</td>
+
+                            <td>
+
+                                <span class="badge bg-warning">
+
+                                    Güncellendi
+
+                                </span>
+
+                            </td>
+
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 3 BİTTİ -->
+
+{% endblock %}
+
+<!-- DOSYA TAMAMLANDI -->

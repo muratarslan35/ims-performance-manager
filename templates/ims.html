@@ -1,0 +1,766 @@
+{% extends "base.html" %}
+
+{% block title %}
+
+IMS Yönetimi
+
+{% endblock %}
+
+{% block page_title %}
+
+IMS Merkezi
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards">
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <div>
+
+                    <h3 class="card-title mb-1">
+
+                        IMS Excel İçe Aktarma
+
+                    </h3>
+
+                    <div class="text-secondary">
+
+                        Gerçek IMS raporunu sisteme yükleyerek tüm prim ve performans hesaplamalarını güncelleyin.
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="card-body">
+
+                <form
+
+                    method="POST"
+
+                    action="{{ url_for('ims.upload') }}"
+
+                    enctype="multipart/form-data"
+
+                >
+
+                    <div class="row">
+
+                        <div class="col-md-6 mb-3">
+
+                            <label class="form-label">
+
+                                Yıl
+
+                            </label>
+
+                            <select
+
+                                class="form-select"
+
+                                name="year"
+
+                                required
+
+                            >
+
+                                {% for year in range(2025,2036) %}
+
+                                <option value="{{ year }}">
+
+                                    {{ year }}
+
+                                </option>
+
+                                {% endfor %}
+
+                            </select>
+
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+
+                            <label class="form-label">
+
+                                Ay
+
+                            </label>
+
+                            <select
+
+                                class="form-select"
+
+                                name="month"
+
+                                required
+
+                            >
+
+                                <option value="1">Ocak</option>
+                                <option value="2">Şubat</option>
+                                <option value="3">Mart</option>
+                                <option value="4">Nisan</option>
+                                <option value="5">Mayıs</option>
+                                <option value="6">Haziran</option>
+                                <option value="7">Temmuz</option>
+                                <option value="8">Ağustos</option>
+                                <option value="9">Eylül</option>
+                                <option value="10">Ekim</option>
+                                <option value="11">Kasım</option>
+                                <option value="12">Aralık</option>
+
+                            </select>
+
+                        </div>
+
+                    </div>
+
+                    <div class="mb-4">
+
+                        <label class="form-label">
+
+                            IMS Excel Dosyası
+
+                        </label>
+
+                        <input
+
+                            class="form-control"
+
+                            type="file"
+
+                            name="file"
+
+                            accept=".xlsx,.xls"
+
+                            required
+
+                        >
+
+                        <div class="form-hint">
+
+                            Gerçek IMS Excel dosyasını seçiniz.
+
+                        </div>
+
+                    </div>
+
+                    <div class="form-check form-switch mb-4">
+
+                        <input
+
+                            class="form-check-input"
+
+                            type="checkbox"
+
+                            checked
+
+                            name="replace"
+
+                            value="1"
+
+                        >
+
+                        <label class="form-check-label">
+
+                            Aynı dönem verilerini temizleyerek yeniden içe aktar
+
+                        </label>
+
+                    </div>
+
+                    <div class="d-flex gap-2">
+
+                        <button
+
+                            class="btn btn-primary"
+
+                            type="submit"
+
+                            onclick="showLoading('IMS dosyası işleniyor...')"
+
+                        >
+
+                            <i class="bi bi-upload me-2"></i>
+
+                            IMS Dosyasını İçe Aktar
+
+                        </button>
+
+                        <button
+
+                            class="btn btn-outline-secondary"
+
+                            type="reset"
+
+                        >
+
+                            Temizle
+
+                        </button>
+
+                    </div>
+
+                </form>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Son Yükleme
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                {% if uploads %}
+
+                <div class="mb-3">
+
+                    <div class="text-secondary">
+
+                        Dosya
+
+                    </div>
+
+                    <div class="fw-bold">
+
+                        {{ uploads[0].file_name }}
+
+                    </div>
+
+                </div>
+
+                <div class="mb-3">
+
+                    <div class="text-secondary">
+
+                        Durum
+
+                    </div>
+
+                    <span class="badge bg-success">
+
+                        {{ uploads[0].status }}
+
+                    </span>
+
+                </div>
+
+                <div class="mb-3">
+
+                    <div class="text-secondary">
+
+                        Yüklenme Tarihi
+
+                    </div>
+
+                    <div>
+
+                        {{ uploads[0].uploaded_at.strftime("%d.%m.%Y %H:%M") }}
+
+                    </div>
+
+                </div>
+
+                {% else %}
+
+                <div class="alert alert-warning mb-0">
+
+                    Henüz IMS dosyası yüklenmedi.
+
+                </div>
+
+                {% endif %}
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row row-cards mt-3">
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Toplam Yükleme
+
+                </div>
+
+                <div class="display-6">
+
+                    {{ uploads|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Aktif Temsilci
+
+                </div>
+
+                <div class="display-6">
+
+                    {{ dashboard.total_representatives if dashboard else 0 }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Aktif Ürün
+
+                </div>
+
+                <div class="display-6">
+
+                    {{ dashboard.total_products if dashboard else 0 }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3 col-md-6">
+
+        <div class="card">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Son Durum
+
+                </div>
+
+                <div class="display-6 text-success">
+
+                    Hazır
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-12">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    IMS Yükleme Geçmişi
+
+                </h3>
+
+            </div>
+
+            <div class="table-responsive">
+
+                <table class="table table-hover table-striped datatable">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>#</th>
+
+                            <th>Dosya</th>
+
+                            <th>Yıl</th>
+
+                            <th>Ay</th>
+
+                            <th>Çeyrek</th>
+
+                            <th>Sayfa</th>
+
+                            <th>Yükleyen</th>
+
+                            <th>Durum</th>
+
+                            <th>Tarih</th>
+
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {% for item in uploads %}
+
+                        <tr>
+
+                            <td>
+
+                                {{ item.id }}
+
+                            </td>
+
+                            <td>
+
+                                <strong>
+
+                                    {{ item.file_name }}
+
+                                </strong>
+
+                            </td>
+
+                            <td>
+
+                                {{ item.year or "-" }}
+
+                            </td>
+
+                            <td>
+
+                                {{ item.month or "-" }}
+
+                            </td>
+
+                            <td>
+
+                                {{ item.quarter or "-" }}
+
+                            </td>
+
+                            <td>
+
+                                {{ item.sheet_count }}
+
+                            </td>
+
+                            <td>
+
+                                {{ item.uploaded_by }}
+
+                            </td>
+
+                            <td>
+
+                                {% if item.status=="Hazır" %}
+
+                                <span class="badge bg-success">
+
+                                    {{ item.status }}
+
+                                </span>
+
+                                {% elif item.status=="İşleniyor" %}
+
+                                <span class="badge bg-warning">
+
+                                    {{ item.status }}
+
+                                </span>
+
+                                {% else %}
+
+                                <span class="badge bg-danger">
+
+                                    {{ item.status }}
+
+                                </span>
+
+                                {% endif %}
+
+                            </td>
+
+                            <td>
+
+                                {{ item.uploaded_at.strftime("%d.%m.%Y %H:%M") }}
+
+                            </td>
+
+                        </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="row mt-4">
+
+    <div class="col-lg-8">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    İçe Aktarma Bilgilendirmesi
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="row">
+
+                    <div class="col-md-6">
+
+                        <ul class="list-unstyled mb-0">
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Excel (.xlsx / .xls) desteği
+
+                            </li>
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Otomatik Alias Eşleştirme
+
+                            </li>
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Ürün Bazlı Hedef Güncelleme
+
+                            </li>
+
+                            <li>
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Prim Motoru Entegrasyonu
+
+                            </li>
+
+                        </ul>
+
+                    </div>
+
+                    <div class="col-md-6">
+
+                        <ul class="list-unstyled mb-0">
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Quarter Hesaplama
+
+                            </li>
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Recovery Analizi
+
+                            </li>
+
+                            <li class="mb-2">
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Simülasyon Desteği
+
+                            </li>
+
+                            <li>
+
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+
+                                Dashboard Otomatik Güncelleme
+
+                            </li>
+
+                        </ul>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-lg-4">
+
+        <div class="card shadow-sm">
+
+            <div class="card-header">
+
+                <h3 class="card-title">
+
+                    Sistem Durumu
+
+                </h3>
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        IMS Import
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Alias Service
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Prime Engine
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between mb-3">
+
+                    <span>
+
+                        Quarter Engine
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+                <div class="d-flex justify-content-between">
+
+                    <span>
+
+                        Recovery Engine
+
+                    </span>
+
+                    <span class="badge bg-success">
+
+                        Aktif
+
+                    </span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

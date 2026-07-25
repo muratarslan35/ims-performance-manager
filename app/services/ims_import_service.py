@@ -1,0 +1,1419 @@
+import os
+import time
+from datetime import datetime
+
+import pandas as pd
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.extensions import db
+
+from app.models import (
+
+    IMSUpload,
+
+    IMSRawData,
+
+    IMSSummary
+
+)
+
+from app.services.alias_service import AliasService
+
+
+class IMSImportService:
+
+    REPORT_SHEETS = {
+
+        "brick_sales": "BRICK SATIS",
+
+        "brick_realization": "BRICK REA",
+
+        "balance": "BAKİYE",
+
+        "weekly_sales": "HAFTALIK",
+
+        "competition_tl": "REKABET TL",
+
+        "competition_box": "REKABET KUTU",
+
+        "competition_pp": "REKABET PP"
+
+    }
+
+    PRODUCT_COLUMNS = [
+
+        "TRAVAZOL",
+
+        "MONUROL",
+
+        "MIXOVUL",
+
+        "FENTIVAG",
+
+        "STIDERM",
+
+        "ACNEMIX",
+
+        "BRIMODER"
+
+    ]
+
+    IGNORE_ROWS = [
+
+        "",
+
+        None,
+
+        "NATIONAL",
+
+        "Grand Total"
+
+    ]
+
+    def __init__(
+
+        self,
+
+        file_path,
+
+        uploaded_by=None
+
+    ):
+
+        self.file_path = file_path
+
+        self.uploaded_by = uploaded_by
+
+        self.started = time.time()
+
+        self.upload = None
+
+        self.workbook = None
+
+        self.errors = []
+
+        self.warnings = []
+
+        self.unknown_products = []
+
+        self.unknown_columns = []
+
+        self.statistics = {
+
+            "sheet_count": 0,
+
+            "processed_sheet": 0,
+
+            "processed_rows": 0,
+
+            "raw_records": 0,
+
+            "summary_records": 0,
+
+            "matched_products": 0,
+
+            "matched_representatives": 0,
+
+            "failed_products": 0,
+
+            "failed_representatives": 0
+
+        }
+
+        AliasService.warmup()
+
+
+    def create_upload(
+
+        self
+
+    ):
+
+        filename = os.path.basename(
+
+            self.file_path
+
+        )
+
+        self.upload = IMSUpload(
+
+            file_name=filename,
+
+            uploaded_by=self.uploaded_by,
+
+            uploaded_at=datetime.utcnow(),
+
+            status="İşleniyor"
+
+        )
+
+        db.session.add(
+
+            self.upload
+
+        )
+
+        db.session.flush()
+
+        return self.upload
+
+
+    def load_workbook(
+
+        self
+
+    ):
+
+        self.workbook = pd.read_excel(
+
+            self.file_path,
+
+            sheet_name=None,
+
+            header=None
+
+        )
+
+        self.statistics["sheet_count"] = len(
+
+            self.workbook
+
+        )
+
+        return self.workbook
+
+
+    def commit(
+
+        self
+
+    ):
+
+        try:
+
+            db.session.commit()
+
+        except SQLAlchemyError as exc:
+
+            db.session.rollback()
+
+            raise Exception(
+
+                str(
+
+                    exc
+
+                )
+
+            )
+
+
+    def rollback(
+
+        self
+
+    ):
+
+        db.session.rollback()
+
+
+    def finish(
+
+        self,
+
+        success=True
+
+    ):
+
+        self.upload.processing_time = round(
+
+            time.time()
+
+            -
+
+            self.started,
+
+            2
+
+        )
+
+        self.upload.sheet_count = self.statistics[
+
+            "sheet_count"
+
+        ]
+
+        self.upload.status = (
+
+            "Hazır"
+
+            if success
+
+            else "Hata"
+
+        )
+
+        if self.errors:
+
+            self.upload.error_message = "\n".join(
+
+                self.errors
+
+            )
+
+        self.commit()
+
+    def find_header_row(
+
+        self,
+
+        dataframe
+
+    ):
+
+        for index in range(
+
+            min(
+
+                15,
+
+                len(
+
+                    dataframe
+
+                )
+
+            )
+
+        ):
+
+            row = [
+
+                str(
+
+                    value
+
+                ).upper().strip()
+
+                for value in dataframe.iloc[index].tolist()
+
+            ]
+
+            joined = " ".join(
+
+                row
+
+            )
+
+            if (
+
+                "TEMSİLCİ" in joined
+
+                or
+
+                "REPRESENTATIVE" in joined
+
+            ):
+
+                return index
+
+        return None
+
+
+    def normalize_header(
+
+        self,
+
+        value
+
+    ):
+
+        if pd.isna(
+
+            value
+
+        ):
+
+            return ""
+
+        return str(
+
+            value
+
+        ).strip().upper()
+
+
+    def build_headers(
+
+        self,
+
+        dataframe,
+
+        header_row
+
+    ):
+
+        headers = []
+
+        for value in dataframe.iloc[header_row]:
+
+            headers.append(
+
+                self.normalize_header(
+
+                    value
+
+                )
+
+            )
+
+        dataframe = dataframe.iloc[
+
+            header_row + 1:
+
+        ].copy()
+
+        dataframe.columns = headers
+
+        dataframe.reset_index(
+
+            drop=True,
+
+            inplace=True
+
+        )
+
+        return dataframe
+
+
+    def detect_sheet_type(
+
+        self,
+
+        sheet_name
+
+    ):
+
+        upper = sheet_name.upper()
+
+        for key, text in self.REPORT_SHEETS.items():
+
+            if text in upper:
+
+                return key
+
+        return "unknown"
+
+
+    def analyze_sheet(
+
+        self,
+
+        sheet_name,
+
+        dataframe
+
+    ):
+
+        header_row = self.find_header_row(
+
+            dataframe
+
+        )
+
+        if header_row is None:
+
+            self.warnings.append(
+
+                f"{sheet_name} : Header bulunamadı."
+
+            )
+
+            return None
+
+        dataframe = self.build_headers(
+
+            dataframe,
+
+            header_row
+
+        )
+
+        return {
+
+            "sheet_name": sheet_name,
+
+            "sheet_type": self.detect_sheet_type(
+
+                sheet_name
+
+            ),
+
+            "header_row": header_row,
+
+            "row_count": len(
+
+                dataframe
+
+            ),
+
+            "columns": list(
+
+                dataframe.columns
+
+            ),
+
+            "data": dataframe
+
+        }
+
+
+    def analyze_workbook(
+
+        self
+
+    ):
+
+        analyzed = []
+
+        for sheet_name, dataframe in self.workbook.items():
+
+            result = self.analyze_sheet(
+
+                sheet_name,
+
+                dataframe
+
+            )
+
+            if result is None:
+
+                continue
+
+            analyzed.append(
+
+                result
+
+            )
+
+        return analyzed
+
+      def detect_product_columns(
+
+        self,
+
+        dataframe
+
+    ):
+
+        products = {}
+
+        columns = list(
+
+            dataframe.columns
+
+        )
+
+        for index, column in enumerate(
+
+            columns
+
+        ):
+
+            result = AliasService.find_product(
+
+                column
+
+            )
+
+            if not result["matched"]:
+
+                continue
+
+            product = result["object"]
+
+            if product.id not in products:
+
+                products[product.id] = {
+
+                    "product": product,
+
+                    "columns": []
+
+                }
+
+            products[product.id]["columns"].append(
+
+                {
+
+                    "index": index,
+
+                    "header": column
+
+                }
+
+            )
+
+            self.statistics[
+
+                "matched_products"
+
+            ] += 1
+
+        return products
+
+
+    def detect_representative_column(
+
+        self,
+
+        dataframe
+
+    ):
+
+        candidates = [
+
+            "TEMSİLCİ",
+
+            "REPRESENTATIVE",
+
+            "MÜMESSİL",
+
+            "REP",
+
+            "ADI SOYADI"
+
+        ]
+
+        for column in dataframe.columns:
+
+            upper = str(
+
+                column
+
+            ).upper()
+
+            for candidate in candidates:
+
+                if candidate in upper:
+
+                    return column
+
+        return None
+
+
+    def clean_dataframe(
+
+        self,
+
+        dataframe,
+
+        representative_column
+
+    ):
+
+        dataframe = dataframe.copy()
+
+        dataframe = dataframe.fillna("")
+
+        dataframe = dataframe[
+
+            dataframe[
+
+                representative_column
+
+            ].astype(
+
+                str
+
+            ).str.strip() != ""
+
+        ]
+
+        dataframe = dataframe[
+
+            ~
+
+            dataframe[
+
+                representative_column
+
+            ].astype(
+
+                str
+
+            ).str.upper().isin(
+
+                [
+
+                    "NATIONAL",
+
+                    "TOPLAM",
+
+                    "GRAND TOTAL",
+
+                    "TOTAL"
+
+                ]
+
+            )
+
+        ]
+
+        dataframe.reset_index(
+
+            drop=True,
+
+            inplace=True
+
+        )
+
+        return dataframe
+
+
+    def prepare_sheet(
+
+        self,
+
+        sheet
+
+    ):
+
+        dataframe = sheet["data"]
+
+        representative_column = self.detect_representative_column(
+
+            dataframe
+
+        )
+
+        if representative_column is None:
+
+            self.warnings.append(
+
+                f"{sheet['sheet_name']} : Temsilci kolonu bulunamadı."
+
+            )
+
+            return None
+
+        dataframe = self.clean_dataframe(
+
+            dataframe,
+
+            representative_column
+
+        )
+
+        products = self.detect_product_columns(
+
+            dataframe
+
+        )
+
+        return {
+
+            "sheet_name": sheet["sheet_name"],
+
+            "sheet_type": sheet["sheet_type"],
+
+            "representative_column": representative_column,
+
+            "products": products,
+
+            "dataframe": dataframe
+
+        }
+
+    def create_raw_record(
+
+        self,
+
+        representative,
+
+        product,
+
+        year,
+
+        month,
+
+        sheet_type,
+
+        values
+
+    ):
+
+        raw = IMSRawData(
+
+            upload_id=self.upload.id,
+
+            representative_id=representative.id,
+
+            product_id=product.id,
+
+            year=year,
+
+            month=month,
+
+            sheet_type=sheet_type,
+
+            unit=self.safe_float(
+
+                values.get(
+
+                    "unit"
+
+                )
+
+            ),
+
+            tl=self.safe_float(
+
+                values.get(
+
+                    "tl"
+
+                )
+
+            ),
+
+            raw_json=values
+
+        )
+
+        db.session.add(
+
+            raw
+
+        )
+
+        self.statistics[
+
+            "raw_records"
+
+        ] += 1
+
+        return raw
+
+
+    def process_sheet(
+
+        self,
+
+        sheet,
+
+        year,
+
+        month
+
+    ):
+
+        dataframe = sheet["dataframe"]
+
+        representative_column = sheet[
+
+            "representative_column"
+
+        ]
+
+        products = sheet["products"]
+
+        sheet_type = sheet["sheet_type"]
+
+        for _, row in dataframe.iterrows():
+
+            representative = self.match_representative(
+
+                row[
+
+                    representative_column
+
+                ]
+
+            )
+
+            if representative is None:
+
+                continue
+
+            for product_info in products.values():
+
+                product = product_info[
+
+                    "product"
+
+                ]
+
+                values = {}
+
+                for column in product_info[
+
+                    "columns"
+
+                ]:
+
+                    header = str(
+
+                        column["header"]
+
+                    ).upper()
+
+                    value = row.iloc[
+
+                        column["index"]
+
+                    ]
+
+                    if "TL" in header:
+
+                        values["tl"] = value
+
+                    elif (
+
+                        "KUTU" in header
+
+                        or
+
+                        "UNIT" in header
+
+                        or
+
+                        "BOX" in header
+
+                    ):
+
+                        values["unit"] = value
+
+                    else:
+
+                        values[
+
+                            header
+
+                        ] = value
+
+                if (
+
+                    self.safe_float(
+
+                        values.get(
+
+                            "unit"
+
+                        )
+
+                    ) == 0
+
+                    and
+
+                    self.safe_float(
+
+                        values.get(
+
+                            "tl"
+
+                        )
+
+                    ) == 0
+
+                ):
+
+                    continue
+
+                self.create_raw_record(
+
+                    representative,
+
+                    product,
+
+                    year,
+
+                    month,
+
+                    sheet_type,
+
+                    values
+
+                )
+
+        self.statistics[
+
+            "processed_sheet"
+
+        ] += 1
+
+      def rebuild_summary(
+
+        self,
+
+        year,
+
+        month
+
+    ):
+
+        IMSSummary.query.filter_by(
+
+            year=year,
+
+            month=month
+
+        ).delete(
+
+            synchronize_session=False
+
+        )
+
+        records = (
+
+            db.session.query(
+
+                IMSRawData.representative_id,
+
+                IMSRawData.product_id,
+
+                db.func.sum(
+
+                    IMSRawData.unit
+
+                ).label(
+
+                    "unit"
+
+                ),
+
+                db.func.sum(
+
+                    IMSRawData.tl
+
+                ).label(
+
+                    "tl"
+
+                )
+
+            )
+
+            .filter(
+
+                IMSRawData.year == year,
+
+                IMSRawData.month == month
+
+            )
+
+            .group_by(
+
+                IMSRawData.representative_id,
+
+                IMSRawData.product_id
+
+            )
+
+            .all()
+
+        )
+
+        summaries = []
+
+        for row in records:
+
+            summary = IMSSummary(
+
+                representative_id=row.representative_id,
+
+                product_id=row.product_id,
+
+                year=year,
+
+                month=month,
+
+                unit=row.unit or 0,
+
+                tl=row.tl or 0
+
+            )
+
+            summaries.append(
+
+                summary
+
+            )
+
+        if summaries:
+
+            db.session.bulk_save_objects(
+
+                summaries
+
+            )
+
+        self.statistics[
+
+            "summary_records"
+
+        ] = len(
+
+            summaries
+
+        )
+
+
+    def process_workbook(
+
+        self,
+
+        year,
+
+        month
+
+    ):
+
+        sheets = self.analyze_workbook()
+
+        for sheet in sheets:
+
+            prepared = self.prepare_sheet(
+
+                sheet
+
+            )
+
+            if prepared is None:
+
+                continue
+
+            self.process_sheet(
+
+                prepared,
+
+                year,
+
+                month
+
+            )
+
+        db.session.flush()
+
+        self.rebuild_summary(
+
+            year,
+
+            month
+
+        )
+
+
+    def import_file(
+
+        self,
+
+        year,
+
+        month
+
+    ):
+
+        try:
+
+            self.create_upload()
+
+            self.load_workbook()
+
+            self.process_workbook(
+
+                year,
+
+                month
+
+            )
+
+            self.finish(
+
+                True
+
+            )
+
+            return {
+
+                "success": True,
+
+                "statistics": self.statistics,
+
+                "warnings": self.warnings,
+
+                "errors": self.errors
+
+            }
+
+        except Exception as exc:
+
+            self.rollback()
+
+            self.errors.append(
+
+                str(
+
+                    exc
+
+                )
+
+            )
+
+            if self.upload:
+
+                self.upload.status = "Hata"
+
+                self.upload.error_message = "\n".join(
+
+                    self.errors
+
+                )
+
+                db.session.commit()
+
+            return {
+
+                "success": False,
+
+                "statistics": self.statistics,
+
+                "warnings": self.warnings,
+
+                "errors": self.errors
+
+            }
+
+          def report(
+
+        self
+
+    ):
+
+        return {
+
+            "success": len(
+
+                self.errors
+
+            ) == 0,
+
+            "statistics": self.statistics,
+
+            "warnings": self.warnings,
+
+            "errors": self.errors,
+
+            "unknown_products":
+
+                sorted(
+
+                    set(
+
+                        self.unknown_products
+
+                    )
+
+                ),
+
+            "unknown_columns":
+
+                sorted(
+
+                    set(
+
+                        self.unknown_columns
+
+                    )
+
+                ),
+
+            "processing_time":
+
+                round(
+
+                    time.time()
+
+                    -
+
+                    self.started,
+
+                    2
+
+                )
+
+        }
+
+
+    def validate(
+
+        self
+
+    ):
+
+        if self.workbook is None:
+
+            raise Exception(
+
+                "Workbook yüklenmedi."
+
+            )
+
+        if self.upload is None:
+
+            raise Exception(
+
+                "IMSUpload oluşturulmadı."
+
+            )
+
+        return True
+
+
+    def clear_month(
+
+        self,
+
+        year,
+
+        month
+
+    ):
+
+        IMSRawData.query.filter_by(
+
+            year=year,
+
+            month=month
+
+        ).delete(
+
+            synchronize_session=False
+
+        )
+
+        IMSSummary.query.filter_by(
+
+            year=year,
+
+            month=month
+
+        ).delete(
+
+            synchronize_session=False
+
+        )
+
+
+    def run(
+
+        self,
+
+        year,
+
+        month,
+
+        clear_before_import=True
+
+    ):
+
+        try:
+
+            self.create_upload()
+
+            self.load_workbook()
+
+            self.validate()
+
+            if clear_before_import:
+
+                self.clear_month(
+
+                    year,
+
+                    month
+
+                )
+
+            self.process_workbook(
+
+                year,
+
+                month
+
+            )
+
+            self.finish(
+
+                True
+
+            )
+
+            return self.report()
+
+        except Exception as exc:
+
+            self.rollback()
+
+            self.errors.append(
+
+                str(
+
+                    exc
+
+                )
+
+            )
+
+            if self.upload:
+
+                self.upload.status = "Hata"
+
+                self.upload.error_message = "\n".join(
+
+                    self.errors
+
+                )
+
+                db.session.commit()
+
+            return self.report()
+
+
+    @classmethod
+    def health(
+
+        cls
+
+    ):
+
+        return {
+
+            "service":
+
+                "IMSImportService",
+
+            "version":
+
+                "1.0.0",
+
+            "status":
+
+                "READY"
+
+        }
+
+
+    @classmethod
+    def supported_reports(
+
+        cls
+
+    ):
+
+        return list(
+
+            cls.REPORT_SHEETS.values()
+
+    )

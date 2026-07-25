@@ -1,0 +1,689 @@
+{% extends "base.html" %}
+
+{% block title %}
+
+Hedef Yönetimi
+
+{% endblock %}
+
+{% block page_title %}
+
+Hedef Yönetimi
+
+{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards mb-4">
+
+    <div class="col-xl-3">
+
+        <div class="card bg-primary-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Toplam Hedef
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ targets|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-success-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Aktif Temsilci
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ representatives|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-warning-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Aktif Ürün
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ products|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="col-xl-3">
+
+        <div class="card bg-info-lt">
+
+            <div class="card-body text-center">
+
+                <div class="text-secondary">
+
+                    Tanımlı Dönem
+
+                </div>
+
+                <div class="display-5 fw-bold">
+
+                    {{ targets|map(attribute='year')|list|unique|list|length }}
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<div class="card shadow-sm">
+
+    <div class="card-header">
+
+        <h3 class="card-title">
+
+            Yeni Hedef Tanımı
+
+        </h3>
+
+    </div>
+
+    <div class="card-body">
+
+        <form
+
+            method="POST"
+
+            action="{{ url_for('targets.add') }}"
+
+        >
+
+            <div class="row">
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        Temsilci
+
+                    </label>
+
+                    <select
+
+                        class="form-select"
+
+                        name="representative_id"
+
+                        required
+
+                    >
+
+                        <option value="">
+
+                            Seçiniz
+
+                        </option>
+
+                        {% for representative in representatives %}
+
+                        <option value="{{ representative.id }}">
+
+                            {{ representative.rep_name }}
+
+                        </option>
+
+                        {% endfor %}
+
+                    </select>
+
+                </div>
+
+                <div class="col-md-3 mb-3">
+
+                    <label class="form-label">
+
+                        Ürün
+
+                    </label>
+
+                    <select
+
+                        class="form-select"
+
+                        name="product_id"
+
+                        required
+
+                    >
+
+                        <option value="">
+
+                            Seçiniz
+
+                        </option>
+
+                        {% for product in products %}
+
+                        <option value="{{ product.id }}">
+
+                            {{ product.product_name }}
+
+                        </option>
+
+                        {% endfor %}
+
+                    </select>
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Yıl
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        name="year"
+
+                        value="2026"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Ay
+
+                    </label>
+
+                    <select
+
+                        class="form-select"
+
+                        name="month"
+
+                    >
+
+                        {% for i in range(1,13) %}
+
+                        <option value="{{ i }}">
+
+                            {{ i }}
+
+                        </option>
+
+                        {% endfor %}
+
+                    </select>
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        Kutu Hedefi
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        step="0.01"
+
+                        name="target_unit"
+
+                    >
+
+                </div>
+
+                <div class="col-md-2 mb-3">
+
+                    <label class="form-label">
+
+                        TL Hedefi
+
+                    </label>
+
+                    <input
+
+                        class="form-control"
+
+                        type="number"
+
+                        step="0.01"
+
+                        name="target_tl"
+
+                    >
+
+                </div>
+
+                <div class="col-12 text-end">
+
+                    <button
+
+                        class="btn btn-primary"
+
+                        type="submit"
+
+                    >
+
+                        <i class="bi bi-plus-circle me-2"></i>
+
+                        Hedef Kaydet
+
+                    </button>
+
+                </div>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 1 BİTTİ -->
+<div class="card shadow-sm mt-4">
+
+    <div class="card-header">
+
+        <div class="d-flex justify-content-between align-items-center">
+
+            <h3 class="card-title">
+
+                Hedef Listesi
+
+            </h3>
+
+            <div class="w-25">
+
+                <input
+
+                    type="search"
+
+                    class="form-control"
+
+                    placeholder="Hedef ara..."
+
+                >
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="table-responsive">
+
+        <table class="table table-hover table-striped datatable align-middle">
+
+            <thead>
+
+                <tr>
+
+                    <th>Temsilci</th>
+
+                    <th>Ürün</th>
+
+                    <th>Yıl</th>
+
+                    <th>Ay</th>
+
+                    <th>Kutu Hedefi</th>
+
+                    <th>TL Hedefi</th>
+
+                    <th class="text-center">
+
+                        İşlemler
+
+                    </th>
+
+                </tr>
+
+            </thead>
+
+            <tbody>
+
+                {% for target in targets %}
+
+                <tr>
+
+                    <td>
+
+                        {{ target.representative.rep_name }}
+
+                    </td>
+
+                    <td>
+
+                        {{ target.product.product_name }}
+
+                    </td>
+
+                    <td>
+
+                        {{ target.year }}
+
+                    </td>
+
+                    <td>
+
+                        {{ target.month }}
+
+                    </td>
+
+                    <td>
+
+                        {{ "{:,.2f}".format(target.target_unit) }}
+
+                    </td>
+
+                    <td>
+
+                        {{ "{:,.2f}".format(target.target_tl) }} ₺
+
+                    </td>
+
+                    <td class="text-center">
+
+                        <div class="btn-group">
+
+                            <button
+
+                                class="btn btn-sm btn-outline-warning"
+
+                                data-bs-toggle="modal"
+
+                                data-bs-target="#editTarget{{ target.id }}"
+
+                            >
+
+                                <i class="bi bi-pencil"></i>
+
+                            </button>
+
+                            <form
+
+                                method="POST"
+
+                                action="{{ url_for('targets.delete', id=target.id) }}"
+
+                                class="d-inline"
+
+                                onsubmit="return confirm('Bu hedef silinsin mi?');"
+
+                            >
+
+                                <button
+
+                                    type="submit"
+
+                                    class="btn btn-sm btn-outline-danger"
+
+                                >
+
+                                    <i class="bi bi-trash"></i>
+
+                                </button>
+
+                            </form>
+
+                        </div>
+
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+</div>
+
+<!-- PARÇA 2 BİTTİ -->
+{% for target in targets %}
+
+<div
+
+    class="modal fade"
+
+    id="editTarget{{ target.id }}"
+
+    tabindex="-1"
+
+>
+
+    <div class="modal-dialog">
+
+        <div class="modal-content">
+
+            <form
+
+                method="POST"
+
+                action="{{ url_for('targets.edit', id=target.id) }}"
+
+            >
+
+                <div class="modal-header">
+
+                    <h3 class="modal-title">
+
+                        Hedef Düzenle
+
+                    </h3>
+
+                    <button
+
+                        type="button"
+
+                        class="btn-close"
+
+                        data-bs-dismiss="modal"
+
+                    >
+
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <div class="mb-3">
+
+                        <label class="form-label">
+
+                            Temsilci
+
+                        </label>
+
+                        <input
+
+                            class="form-control"
+
+                            value="{{ target.representative.rep_name }}"
+
+                            readonly
+
+                        >
+
+                    </div>
+
+                    <div class="mb-3">
+
+                        <label class="form-label">
+
+                            Ürün
+
+                        </label>
+
+                        <input
+
+                            class="form-control"
+
+                            value="{{ target.product.product_name }}"
+
+                            readonly
+
+                        >
+
+                    </div>
+
+                    <div class="row">
+
+                        <div class="col-md-6 mb-3">
+
+                            <label class="form-label">
+
+                                Kutu Hedefi
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                type="number"
+
+                                step="0.01"
+
+                                name="target_unit"
+
+                                value="{{ target.target_unit }}"
+
+                            >
+
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+
+                            <label class="form-label">
+
+                                TL Hedefi
+
+                            </label>
+
+                            <input
+
+                                class="form-control"
+
+                                type="number"
+
+                                step="0.01"
+
+                                name="target_tl"
+
+                                value="{{ target.target_tl }}"
+
+                            >
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="modal-footer">
+
+                    <button
+
+                        type="button"
+
+                        class="btn btn-secondary"
+
+                        data-bs-dismiss="modal"
+
+                    >
+
+                        Vazgeç
+
+                    </button>
+
+                    <button
+
+                        type="submit"
+
+                        class="btn btn-primary"
+
+                    >
+
+                        Güncelle
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+</div>
+
+{% endfor %}
+
+{% endblock %}
+
+<!-- PARÇA 3 BİTTİ -->
+
+<!-- DOSYA TAMAMLANDI -->

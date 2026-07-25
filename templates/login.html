@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="login-wrapper">
+
+<div class="login-card">
+
+<div class="text-center mb-4">
+
+<i class="bi bi-activity fs-1 text-primary"></i>
+
+<h2 class="mt-3">
+
+IMS Performans Yönetim Sistemi
+
+</h2>
+
+<p class="text-secondary">
+
+Kullanıcı Girişi
+
+</p>
+
+</div>
+
+<form
+method="POST"
+action="{{ url_for('auth.login') }}">
+
+<div class="mb-3">
+
+<label class="form-label">
+
+E-Posta
+
+</label>
+
+<input
+type="email"
+name="email"
+class="form-control"
+placeholder="ornek@firma.com"
+required>
+
+</div>
+
+<div class="mb-4">
+
+<label class="form-label">
+
+Şifre
+
+</label>
+
+<input
+type="password"
+name="password"
+class="form-control"
+placeholder="********"
+required>
+
+</div>
+
+<button
+class="btn btn-primary w-100">
+
+<i class="bi bi-box-arrow-in-right"></i>
+
+Giriş Yap
+
+</button>
+
+</form>
+
+<hr>
+
+<div class="text-center text-secondary">
+
+IPM v1.0
+
+<br>
+
+IMS Performans Yönetim Sistemi
+
+</div>
+
+</div>
+
+</div>
+
+{% endblock %}
