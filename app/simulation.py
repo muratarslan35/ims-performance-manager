@@ -422,7 +422,10 @@ def representative_info(
 
         }
 
-        @simulation_bp.route(
+    )
+
+
+@simulation_bp.route(
 
     "/health"
 
@@ -586,7 +589,5 @@ def validate():
                 )
 
         }
-
-)
 
     )

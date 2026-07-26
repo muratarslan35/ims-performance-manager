@@ -1,5 +1,6 @@
 from flask import Flask
 from flask import render_template
+from pathlib import Path
 
 from config import Config
 
@@ -14,10 +15,12 @@ from app.database import initialize_database
 from app.routes import main_bp
 from app.auth import auth_bp
 from app.products import products_bp
-from app.targets import targets_bp
+from app.routes.settings import settings_bp
+from app.routes.targets import targets_bp
 from app.ims import ims_bp
 from app.dashboard import dashboard_bp
 from app.representatives import representatives_bp
+from app.simulation import simulation_bp
 
 def register_extensions(app):
 
@@ -26,6 +29,12 @@ def register_extensions(app):
     migrate.init_app(app, db)
 
     login_manager.init_app(app)
+
+    login_manager.login_view = "auth.login"
+
+    login_manager.login_message = "Bu sayfayı görüntülemek için giriş yapın."
+
+    login_manager.login_message_category = "warning"
 
 
 def register_blueprints(app):
@@ -36,6 +45,8 @@ def register_blueprints(app):
 
     app.register_blueprint(products_bp)
 
+    app.register_blueprint(settings_bp)
+
     app.register_blueprint(targets_bp)
 
     app.register_blueprint(ims_bp)
@@ -43,6 +54,8 @@ def register_blueprints(app):
     app.register_blueprint(dashboard_bp)
 
     app.register_blueprint(representatives_bp)
+
+    app.register_blueprint(simulation_bp)
 
 
 def create_directories(app):
@@ -58,6 +71,14 @@ def create_directories(app):
         app.config["LOG_FOLDER"]
 
     ]
+
+    database_uri = app.config["SQLALCHEMY_DATABASE_URI"]
+
+    if database_uri.startswith("sqlite:///") and database_uri != "sqlite:///":
+
+        folders.append(
+            Path(database_uri.removeprefix("sqlite:///" )).parent
+        )
 
     for folder in folders:
 
@@ -92,7 +113,7 @@ def create_database(app):
         initialize_database()
 
 
-def create_app():
+def create_app(config_object=Config):
 
     app = Flask(
 
@@ -104,7 +125,7 @@ def create_app():
 
     )
 
-    app.config.from_object(Config)
+    app.config.from_object(config_object)
 
     create_directories(app)
 

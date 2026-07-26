@@ -94,7 +94,7 @@ IMS Performans Yönetim Sistemi
 
 </head>
 
-<body>
+<body class="{{ 'authenticated' if current_user.is_authenticated else 'anonymous' }}">
 
 <div class="page">
 

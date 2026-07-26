@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Hesap Oluştur | IMS Performans Yönetimi{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+    <section class="auth-card">
+        <div class="auth-brand">
+            <span class="auth-brand-icon"><i class="bi bi-person-plus-fill"></i></span>
+            <div>
+                <p class="auth-eyebrow">IMS PERFORMANS</p>
+                <h1>Hesabınızı oluşturun</h1>
+                <p>Performans verilerinize güvenle erişmek için bilgilerinizi tamamlayın.</p>
+            </div>
+        </div>
+        <form method="post" action="{{ url_for('auth.register') }}" class="auth-form" novalidate>
+            <div class="mb-3">
+                <label class="form-label" for="full_name">Ad soyad</label>
+                <input id="full_name" name="full_name" type="text" class="form-control" autocomplete="name" required minlength="3" value="{{ request.form.get('full_name', '') }}">
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="email">E-posta adresi</label>
+                <input id="email" name="email" type="email" class="form-control" autocomplete="email" required value="{{ request.form.get('email', '') }}">
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="password">Şifre</label>
+                    <input id="password" name="password" type="password" class="form-control" autocomplete="new-password" required minlength="8">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label" for="password_confirm">Şifre tekrarı</label>
+                    <input id="password_confirm" name="password_confirm" type="password" class="form-control" autocomplete="new-password" required minlength="8">
+                </div>
+            </div>
+            <p class="form-hint">Şifreniz en az 8 karakter olmalıdır.</p>
+            <button class="btn btn-primary w-100" type="submit"><i class="bi bi-person-check-fill me-2"></i>Hesap oluştur</button>
+        </form>
+        <p class="auth-footer">Zaten hesabınız var mı? <a href="{{ url_for('auth.login') }}">Giriş yapın</a></p>
+    </section>
+</div>
+{% endblock %}

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -11,6 +12,8 @@ class Config:
 
     SECRET_KEY = "CHANGE_THIS_SECRET_KEY"
 
+    RESET_TOKEN_MAX_AGE = 60 * 60
+
     DEBUG = False
 
     TESTING = False
@@ -19,9 +22,9 @@ class Config:
     # Database
     # ------------------------------------------------------------------
 
-    SQLALCHEMY_DATABASE_URI = (
-        "sqlite:///" +
-        str(BASE_DIR / "instance" / "ipm.db")
+    SQLALCHEMY_DATABASE_URI = os.getenv(
+        "DATABASE_URL",
+        "sqlite:///" + str(BASE_DIR / "instance" / "ipm.db"),
     )
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False

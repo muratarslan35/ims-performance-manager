@@ -2,31 +2,7 @@
 
 {% block content %}
 
-<div class="login-wrapper">
-
-<div class="login-card">
-
-<div class="text-center mb-4">
-
-<i class="bi bi-activity fs-1 text-primary"></i>
-
-<h2 class="mt-3">
-
-IMS Performans Yönetim Sistemi
-
-</h2>
-
-<p class="text-secondary">
-
-Kullanıcı Girişi
-
-</p>
-
-</div>
-
-<form
-method="POST"
-action="{{ url_for('auth.login') }}">
+<div class="auth-shell"><section class="auth-card auth-card-narrow"><div class="auth-brand"><span class="auth-brand-icon"><i class="bi bi-graph-up-arrow"></i></span><div><p class="auth-eyebrow">IMS PERFORMANS</p><h1>Tekrar hoş geldiniz</h1><p>Performans yönetim alanınıza giriş yapın.</p></div></div><form method="POST" action="{{ url_for('auth.login') }}" class="auth-form">
 
 <div class="mb-3">
 
@@ -45,7 +21,7 @@ required>
 
 </div>
 
-<div class="mb-4">
+<div class="mb-2">
 
 <label class="form-label">
 
@@ -62,31 +38,6 @@ required>
 
 </div>
 
-<button
-class="btn btn-primary w-100">
-
-<i class="bi bi-box-arrow-in-right"></i>
-
-Giriş Yap
-
-</button>
-
-</form>
-
-<hr>
-
-<div class="text-center text-secondary">
-
-IPM v1.0
-
-<br>
-
-IMS Performans Yönetim Sistemi
-
-</div>
-
-</div>
-
-</div>
+<div class="text-end mb-4"><a class="auth-link" href="{{ url_for('auth.forgot_password') }}">Şifremi unuttum</a></div><button class="btn btn-primary w-100" type="submit"><i class="bi bi-box-arrow-in-right me-2"></i>Giriş yap</button></form><p class="auth-footer">Hesabınız yok mu? <a href="{{ url_for('auth.register') }}">Kayıt olun</a></p></section></div>
 
 {% endblock %}

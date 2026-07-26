@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import Blueprint
 from flask import flash
 from flask import jsonify
 from flask import redirect
@@ -154,7 +155,11 @@ def api():
             ]
 
         }
-  @settings_bp.route(
+
+    )
+
+
+@settings_bp.route(
 
     "/health"
 

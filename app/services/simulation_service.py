@@ -1,8 +1,8 @@
 from datetime import date
 
-from app.engines.prime_engine import PrimeEngine
-from app.engines.quarter_engine import QuarterEngine
-from app.engines.recovery_engine import RecoveryEngine
+from app.prime_engine import PrimeEngine
+from app.quarter_engine import QuarterEngine
+from app.recovery_engine import RecoveryEngine
 
 from app.models import (
     Product,
@@ -217,7 +217,7 @@ class SimulationService:
 
         )
 
-      def calculate_prime(
+    def calculate_prime(
 
         self
 
@@ -407,7 +407,7 @@ class SimulationService:
             "recovery": results["recovery"]
 
         }
-          def build_dashboard(
+    def build_dashboard(
 
         self,
 
