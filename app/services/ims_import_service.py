@@ -183,62 +183,62 @@ class IMSImportService:
 
 
     
-def load_workbook(
-
-        self
-
-    ):
-
-        logger.info("IMS workbook yükleniyor: %s", self.file_path)
-
-        if not os.path.exists(self.file_path):
-
-            raise FileNotFoundError(
-
-                f"Dosya bulunamadı: {self.file_path}"
-
+    def load_workbook(
+    
+            self
+    
+        ):
+    
+            logger.info("IMS workbook yükleniyor: %s", self.file_path)
+    
+            if not os.path.exists(self.file_path):
+    
+                raise FileNotFoundError(
+    
+                    f"Dosya bulunamadı: {self.file_path}"
+    
+                )
+    
+            try:
+    
+                self.workbook = pd.read_excel(
+    
+                    self.file_path,
+    
+                    sheet_name=None,
+    
+                    header=None
+    
+                )
+    
+            except Exception:
+    
+                logger.exception(
+    
+                    "Workbook okunamadı."
+    
+                )
+    
+                raise
+    
+            self.statistics["sheet_count"] = len(
+    
+                self.workbook
+    
             )
-
-        try:
-
-            self.workbook = pd.read_excel(
-
-                self.file_path,
-
-                sheet_name=None,
-
-                header=None
-
+    
+            logger.info(
+    
+                "Workbook yüklendi (%s sheet)",
+    
+                self.statistics["sheet_count"]
+    
             )
-
-        except Exception:
-
-            logger.exception(
-
-                "Workbook okunamadı."
-
-            )
-
-            raise
-
-        self.statistics["sheet_count"] = len(
-
-            self.workbook
-
-        )
-
-        logger.info(
-
-            "Workbook yüklendi (%s sheet)",
-
-            self.statistics["sheet_count"]
-
-        )
-
-        return self.workbook
-
-
-
+    
+            return self.workbook
+    
+    
+    
     def commit(
 
         self
