@@ -870,63 +870,27 @@ def load_workbook(
 
             return
 
-        try:
+        for record in self._raw_buffer:
 
-            db.session.bulk_save_objects(
+            db.session.add(
+
+                record
+
+            )
+
+        logger.info(
+
+            "RAW buffer flush: %s kayıt",
+
+            len(
 
                 self._raw_buffer
 
             )
 
-            logger.info(
+        )
 
-                "RAW buffer bulk insert: %s kayıt",
-
-                len(
-
-                    self._raw_buffer
-
-                )
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_batches",
-
-                0
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_records",
-
-                0
-
-            )
-
-            self.statistics["bulk_batches"] += 1
-
-            self.statistics["bulk_records"] += len(
-
-                self._raw_buffer
-
-            )
-
-            self._raw_buffer.clear()
-
-        except Exception:
-
-            db.session.rollback()
-
-            logger.exception(
-
-                "RAW bulk insert hatası"
-
-            )
-
-            raise
+        self._raw_buffer.clear()
 
 
 

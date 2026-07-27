@@ -139,10 +139,6 @@ class IMSImportService:
         self._representative_cache = {}
         self._product_cache = {}
 
-        self._raw_buffer = []
-
-        self._raw_buffer_limit = 1000
-
 
     def create_upload(
 
@@ -837,19 +833,11 @@ def load_workbook(
 
         )
 
-        self._raw_buffer.append(
+        db.session.add(
 
             raw
 
         )
-
-        if len(
-
-            self._raw_buffer
-
-        ) >= self._raw_buffer_limit:
-
-            self.flush_raw_buffer()
 
         self.statistics[
 
@@ -858,76 +846,6 @@ def load_workbook(
         ] += 1
 
         return raw
-
-
-    def flush_raw_buffer(
-
-        self
-
-    ):
-
-        if not self._raw_buffer:
-
-            return
-
-        try:
-
-            db.session.bulk_save_objects(
-
-                self._raw_buffer
-
-            )
-
-            logger.info(
-
-                "RAW buffer bulk insert: %s kayıt",
-
-                len(
-
-                    self._raw_buffer
-
-                )
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_batches",
-
-                0
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_records",
-
-                0
-
-            )
-
-            self.statistics["bulk_batches"] += 1
-
-            self.statistics["bulk_records"] += len(
-
-                self._raw_buffer
-
-            )
-
-            self._raw_buffer.clear()
-
-        except Exception:
-
-            db.session.rollback()
-
-            logger.exception(
-
-                "RAW bulk insert hatası"
-
-            )
-
-            raise
-
 
 
     def process_sheet(
@@ -1076,7 +994,45 @@ def load_workbook(
 
         ] += 1
 
-        self.flush_raw_buffer()
+        logger.info(
+
+            "FACT Builder başlatılıyor (%s)",
+
+            sheet_type
+
+        )
+
+        try:
+
+            IMSFactBuilderService().build(
+
+                upload_id=self.upload.id,
+
+                year=year,
+
+                month=month,
+
+                sheet_type=sheet_type
+
+            )
+
+        except Exception:
+
+            logger.exception(
+
+                "FACT Builder hatası"
+
+            )
+
+            raise
+
+        logger.info(
+
+            "FACT Builder tamamlandı (%s)",
+
+            sheet_type
+
+        )
 
     def rebuild_summary(
 

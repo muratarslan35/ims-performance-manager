@@ -870,63 +870,27 @@ def load_workbook(
 
             return
 
-        try:
+        for record in self._raw_buffer:
 
-            db.session.bulk_save_objects(
+            db.session.add(
+
+                record
+
+            )
+
+        logger.info(
+
+            "RAW buffer flush: %s kayıt",
+
+            len(
 
                 self._raw_buffer
 
             )
 
-            logger.info(
+        )
 
-                "RAW buffer bulk insert: %s kayıt",
-
-                len(
-
-                    self._raw_buffer
-
-                )
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_batches",
-
-                0
-
-            )
-
-            self.statistics.setdefault(
-
-                "bulk_records",
-
-                0
-
-            )
-
-            self.statistics["bulk_batches"] += 1
-
-            self.statistics["bulk_records"] += len(
-
-                self._raw_buffer
-
-            )
-
-            self._raw_buffer.clear()
-
-        except Exception:
-
-            db.session.rollback()
-
-            logger.exception(
-
-                "RAW bulk insert hatası"
-
-            )
-
-            raise
+        self._raw_buffer.clear()
 
 
 
@@ -1077,6 +1041,46 @@ def load_workbook(
         ] += 1
 
         self.flush_raw_buffer()
+
+        logger.info(
+
+            "FACT Builder başlatılıyor (%s)",
+
+            sheet_type
+
+        )
+
+        try:
+
+            IMSFactBuilderService().build(
+
+                upload_id=self.upload.id,
+
+                year=year,
+
+                month=month,
+
+                sheet_type=sheet_type
+
+            )
+
+        except Exception:
+
+            logger.exception(
+
+                "FACT Builder hatası"
+
+            )
+
+            raise
+
+        logger.info(
+
+            "FACT Builder tamamlandı (%s)",
+
+            sheet_type
+
+        )
 
     def rebuild_summary(
 
