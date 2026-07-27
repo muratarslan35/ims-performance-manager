@@ -15,8 +15,6 @@ from app.models import (
 
     IMSRawData,
 
-    IMSFact,
-
     IMSSummary
 
 )
@@ -157,9 +155,6 @@ class IMSImportService:
             self.upload
 
         )
-
-        print(f"RAW RECORDS: {self.statistics['raw_records']}")
-        print(f"ROWS: {self.statistics['processed_rows']}")
 
         db.session.flush()
 
@@ -976,13 +971,13 @@ class IMSImportService:
 
             db.session.query(
 
-                IMSFact.representative_id,
+                IMSRawData.representative_id,
 
-                IMSFact.product_id,
+                IMSRawData.product_id,
 
                 db.func.sum(
 
-                    IMSFact.unit
+                    IMSRawData.unit
 
                 ).label(
 
@@ -992,7 +987,7 @@ class IMSImportService:
 
                 db.func.sum(
 
-                    IMSFact.tl
+                    IMSRawData.tl
 
                 ).label(
 
@@ -1006,7 +1001,7 @@ class IMSImportService:
 
                 IMSUpload,
 
-                IMSFact.upload_id == IMSUpload.id
+                IMSRawData.upload_id == IMSUpload.id
 
             )
 
@@ -1020,9 +1015,9 @@ class IMSImportService:
 
             .group_by(
 
-                IMSFact.representative_id,
+                IMSRawData.representative_id,
 
-                IMSFact.product_id
+                IMSRawData.product_id
 
             )
 
@@ -1110,12 +1105,6 @@ class IMSImportService:
             )
 
         db.session.flush()
-
-        IMSFactBuilderService.build(
-
-            self.upload.id
-
-        )
 
         self.rebuild_summary(
 
@@ -1304,31 +1293,17 @@ class IMSImportService:
 
     ):
 
-        upload_ids = [
+        IMSRawData.query.filter_by(
 
-            row.id
+            year=year,
 
-            for row in IMSUpload.query.filter_by(
+            month=month
 
-                year=year,
+        ).delete(
 
-                month=month
+            synchronize_session=False
 
-            ).all()
-
-        ]
-
-        if upload_ids:
-
-            IMSRawData.query.filter(
-
-                IMSRawData.upload_id.in_(upload_ids)
-
-            ).delete(
-
-                synchronize_session=False
-
-            )
+        )
 
         IMSSummary.query.filter_by(
 
@@ -1390,8 +1365,6 @@ class IMSImportService:
             return self.report()
 
         except Exception as exc:
-
-            traceback.print_exc()
 
             self.rollback()
 

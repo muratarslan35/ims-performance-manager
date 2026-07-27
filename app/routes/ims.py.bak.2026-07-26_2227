@@ -1,4 +1,3 @@
-import traceback
 from flask import Blueprint
 from flask import flash
 from flask import redirect
@@ -199,8 +198,6 @@ def upload():
             )
 
     except Exception as exc:
-
-        traceback.print_exc()
 
         flash(
 

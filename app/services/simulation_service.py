@@ -1,8 +1,8 @@
 from datetime import date
 
-from app.engines.prime_engine import PrimeEngine
-from app.engines.quarter_engine import QuarterEngine
-from app.engines.recovery_engine import RecoveryEngine
+from app.prime_engine import PrimeEngine
+from app.quarter_engine import QuarterEngine
+from app.recovery_engine import RecoveryEngine
 
 from app.models import (
     Product,
@@ -203,7 +203,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         return RecoveryEngine(
 
@@ -217,11 +217,11 @@ class SimulationService:
 
         )
 
-      def calculate_prime(
+    def calculate_prime(
 
         self
 
-    ):
+        ):
 
         engine = self.create_prime_engine()
 
@@ -232,7 +232,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         engine = self.create_quarter_engine()
 
@@ -243,7 +243,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         engine = self.create_recovery_engine()
 
@@ -254,7 +254,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         prime = self.calculate_prime()
 
@@ -279,7 +279,7 @@ class SimulationService:
 
         results
 
-    ):
+        ):
 
         prime = results["prime"]
 
@@ -388,7 +388,7 @@ class SimulationService:
 
         results
 
-    ):
+        ):
 
         return {
 
@@ -407,13 +407,13 @@ class SimulationService:
             "recovery": results["recovery"]
 
         }
-          def build_dashboard(
+    def build_dashboard(
 
         self,
 
         results
 
-    ):
+        ):
 
         dashboard = []
 
@@ -550,7 +550,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         report = []
 
@@ -578,7 +578,7 @@ class SimulationService:
 
                 "simulation"
 
-            ):
+        ):
 
                 continue
 
@@ -615,7 +615,7 @@ class SimulationService:
 
         results
 
-    ):
+        ):
 
         response = self.build_result(
 
@@ -651,7 +651,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         results = self.calculate_all()
 
@@ -666,7 +666,7 @@ class SimulationService:
 
         self
 
-    ):
+        ):
 
         response = self.run()
 
@@ -696,7 +696,7 @@ class SimulationService:
 
         cls
 
-    ):
+        ):
 
         return {
 
@@ -720,7 +720,7 @@ class SimulationService:
 
         cls
 
-    ):
+        ):
 
         return {
 
@@ -760,7 +760,7 @@ class SimulationService:
 
         cls
 
-    ):
+        ):
 
         return {
 

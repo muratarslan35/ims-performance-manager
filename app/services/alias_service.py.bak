@@ -140,7 +140,7 @@ class AliasService:
 
         return value.strip()
 
-    @classmethod
+      @classmethod
     def similarity(
 
         cls,
@@ -367,7 +367,7 @@ class AliasService:
                     ] = product
 
 
-            aliases = ProductAlias.query.all()
+                      aliases = ProductAlias.query.all()
 
             for alias in aliases:
 
@@ -406,7 +406,7 @@ class AliasService:
 
             cls._initialized = True
 
-    @classmethod
+          @classmethod
     def cache_loaded(
 
         cls
@@ -415,7 +415,7 @@ class AliasService:
 
         return cls._initialized
 
-    @classmethod
+      @classmethod
     def cache_version(
 
         cls
@@ -456,7 +456,7 @@ class AliasService:
 
             cls._representative_alias_cache.clear()
 
-    @classmethod
+          @classmethod
     def clean_name(
 
         cls,
@@ -1244,7 +1244,7 @@ class AliasService:
 
         )["matched"]
 
-    @classmethod
+      @classmethod
     def match_product_list(
 
         cls,

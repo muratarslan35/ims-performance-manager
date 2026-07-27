@@ -160,6 +160,7 @@ class IMSImportService:
 
         print(f"RAW RECORDS: {self.statistics['raw_records']}")
         print(f"ROWS: {self.statistics['processed_rows']}")
+        print(f"SHEETS: {self.statistics['processed_sheets']}")
 
         db.session.flush()
 

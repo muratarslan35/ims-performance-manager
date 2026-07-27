@@ -182,7 +182,7 @@ class DashboardService:
 
         }
 
-      def load_prime_summary(
+    def load_prime_summary(
 
         self
 

@@ -1,5 +1,7 @@
 from flask import Blueprint
 from flask import render_template
+from flask import redirect
+from flask import url_for
 
 from flask_login import current_user
 from flask_login import login_required
@@ -49,11 +51,3 @@ def reports():
     )
 
 
-@main_bp.route("/settings")
-@login_required
-def settings():
-
-    return render_template(
-        "settings.html",
-        user=current_user
-    )
