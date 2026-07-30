@@ -1,4 +1,5 @@
 from werkzeug.security import generate_password_hash
+from sqlalchemy import inspect
 
 from app.extensions import db
 
@@ -147,6 +148,11 @@ DEFAULT_PRODUCTS = [
 
 
 def initialize_database():
+    inspector = inspect(db.engine)
+    required_tables = {"settings", "products", "prime_rules", "users"}
+    if not required_tables.issubset(set(inspector.get_table_names())):
+        return
+
     create_default_settings()
 
     create_default_products()
