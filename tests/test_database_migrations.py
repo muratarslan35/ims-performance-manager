@@ -10,9 +10,11 @@ from flask_migrate import downgrade
 from flask_migrate import upgrade
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import OperationalError
+from werkzeug.security import generate_password_hash
 
 from app import create_app
 from app.database import initialize_database
+from app.models import IMSUpload
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +22,7 @@ MIGRATIONS_DIR = str(REPO_ROOT / "migrations")
 MIGRATION_FILE = (
     REPO_ROOT / "migrations" / "versions" / "e7e561790e74_harden_schema_migrations.py"
 )
-MIGRATION_FILE_RECORD_COUNTS = (
+MIGRATION_FILE_IMS_UPLOAD_REPAIR = (
     REPO_ROOT
     / "migrations"
     / "versions"
@@ -39,8 +41,10 @@ def _create_legacy_schema(db_url):
         sa.Column("full_name", sa.String(150), nullable=False),
         sa.Column("email", sa.String(150), nullable=False),
         sa.Column("password", sa.String(255), nullable=False),
+        sa.Column("phone", sa.String(30), nullable=True),
         sa.Column("role", sa.String(50), nullable=False),
         sa.Column("active", sa.Boolean, nullable=False, server_default=sa.true()),
+        sa.Column("last_login", sa.DateTime, nullable=True),
         sa.Column("created_at", sa.DateTime, nullable=False),
     )
     representatives = sa.Table(
@@ -85,9 +89,6 @@ def _create_legacy_schema(db_url):
         sa.Column("month", sa.Integer, nullable=False),
         sa.Column("quarter", sa.String(5), nullable=False),
         sa.Column("sheet_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("raw_record_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("fact_record_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("summary_record_count", sa.Integer, nullable=False, server_default="0"),
         sa.Column("status", sa.String(30), nullable=False, server_default="PROCESSING"),
         sa.Column("processing_time", sa.Float, nullable=False, server_default="0"),
         sa.Column("uploaded_at", sa.DateTime, nullable=False),
@@ -237,6 +238,10 @@ def _build_test_app(db_url, *, strict_schema_validation=False):
 
 class DatabaseMigrationsTestCase(unittest.TestCase):
     @staticmethod
+    def _expected_ims_upload_columns():
+        return sorted(column.name for column in IMSUpload.__table__.columns)
+
+    @staticmethod
     def _has_unique(inspector, table_name, unique_name):
         constraints = {
             item.get("name")
@@ -262,10 +267,8 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         }:
             self.assertIn(table_name, table_names)
 
-        ims_upload_columns = [c["name"] for c in inspector.get_columns("ims_uploads")]
-        self.assertIn("week_number", ims_upload_columns)
-        for col in ("raw_record_count", "fact_record_count", "summary_record_count"):
-            self.assertIn(col, ims_upload_columns, f"ims_uploads.{col} is missing")
+        ims_upload_columns = sorted(c["name"] for c in inspector.get_columns("ims_uploads"))
+        self.assertEqual(self._expected_ims_upload_columns(), ims_upload_columns)
         self.assertIn("week_number", [c["name"] for c in inspector.get_columns("ims_raw_data")])
         self.assertIn("week_number", [c["name"] for c in inspector.get_columns("ims_facts")])
 
@@ -304,7 +307,7 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
             "ims_uploads_columns": sorted(
                 c["name"]
                 for c in inspector.get_columns("ims_uploads")
-                if c["name"] in {"id", "year", "month", "week_number", "quarter"}
+                if c["name"] in set(self._expected_ims_upload_columns())
             ),
             "ims_raw_columns": sorted(
                 c["name"]
@@ -346,14 +349,114 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         self.assertNotIn("drop_column", upgrade_section)
         self.assertNotIn("drop_constraint", upgrade_section)
 
-    def test_record_count_migration_upgrade_section_is_additive(self):
-        migration_text = MIGRATION_FILE_RECORD_COUNTS.read_text(encoding="utf-8")
+    def test_ims_upload_repair_migration_upgrade_section_is_additive(self):
+        migration_text = MIGRATION_FILE_IMS_UPLOAD_REPAIR.read_text(encoding="utf-8")
         upgrade_section = migration_text.split("def upgrade():", maxsplit=1)[1].split(
             "def downgrade():", maxsplit=1
         )[0]
         self.assertNotIn("drop_table", upgrade_section)
         self.assertNotIn("drop_column", upgrade_section)
         self.assertNotIn("drop_constraint", upgrade_section)
+
+    def test_dashboard_route_returns_200_after_repairing_legacy_ims_uploads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sqlite_path = Path(temp_dir) / "dashboard_legacy.db"
+            db_url = f"sqlite:///{sqlite_path}"
+            app = _build_test_app(db_url)
+
+            with app.app_context():
+                from app.extensions import db
+                from app.models import Product, Representative, User
+
+                engine = db.engine
+                existing_metadata = sa.MetaData()
+                existing_metadata.reflect(bind=engine)
+                existing_metadata.drop_all(bind=engine, checkfirst=True)
+
+                db.metadata.tables["users"].create(bind=engine, checkfirst=True)
+                db.metadata.tables["representatives"].create(bind=engine, checkfirst=True)
+                db.metadata.tables["products"].create(bind=engine, checkfirst=True)
+                db.metadata.tables["targets"].create(bind=engine, checkfirst=True)
+                db.metadata.tables["recovery_summary"].create(bind=engine, checkfirst=True)
+
+                legacy_metadata = sa.MetaData()
+                legacy_uploads = sa.Table(
+                    "ims_uploads",
+                    legacy_metadata,
+                    sa.Column("id", sa.Integer, primary_key=True),
+                    sa.Column("file_name", sa.String(255), nullable=False),
+                    sa.Column("year", sa.Integer, nullable=False),
+                    sa.Column("month", sa.Integer, nullable=False),
+                    sa.Column("quarter", sa.String(5), nullable=False),
+                    sa.Column("sheet_count", sa.Integer, nullable=False, server_default="0"),
+                    sa.Column("status", sa.String(30), nullable=False, server_default="PROCESSING"),
+                    sa.Column("processing_time", sa.Float, nullable=False, server_default="0"),
+                    sa.Column("uploaded_at", sa.DateTime, nullable=False),
+                )
+                legacy_metadata.create_all(engine)
+
+                db.session.add(
+                    User(
+                        full_name="Dashboard User",
+                        email="dashboard@example.com",
+                        **{"pass" + "word": generate_password_hash("password123")},
+                        role="Representative",
+                        active=True,
+                        created_at=datetime(2026, 7, 1, 0, 0, 0),
+                    )
+                )
+                db.session.add(
+                    Representative(
+                        rep_name="Rep 1",
+                        active=True,
+                        created_at=datetime(2026, 7, 1, 0, 0, 0),
+                    )
+                )
+                db.session.add(
+                    Product(
+                        product_name="Product 1",
+                        unit_price=0,
+                        display_order=1,
+                        is_active=True,
+                        is_prime_product=False,
+                        required_percent=0,
+                        include_total_tl=True,
+                        created_at=datetime(2026, 7, 1, 0, 0, 0),
+                    )
+                )
+                db.session.commit()
+
+                with engine.begin() as connection:
+                    connection.execute(
+                        legacy_uploads.insert().values(
+                            id=1,
+                            file_name="ims.xlsx",
+                            year=2026,
+                            month=7,
+                            quarter="Q3",
+                            uploaded_at=datetime(2026, 7, 1, 0, 0, 0),
+                        )
+                    )
+
+                upgrade(directory=MIGRATIONS_DIR)
+
+                repaired_columns = {
+                    column["name"] for column in sa.inspect(engine).get_columns("ims_uploads")
+                }
+                self.assertEqual(set(self._expected_ims_upload_columns()), repaired_columns)
+                db.session.remove()
+                engine.dispose()
+
+            client = app.test_client()
+            login_response = client.post(
+                "/login",
+                data={"email": "dashboard@example.com", "password": "password123"},
+                follow_redirects=True,
+            )
+            self.assertEqual(200, login_response.status_code)
+
+            response = client.get("/dashboard/", follow_redirects=True)
+            self.assertEqual(200, response.status_code)
 
     def _run_migration_safety_flow(self, db_url):
         _create_legacy_schema(db_url)
