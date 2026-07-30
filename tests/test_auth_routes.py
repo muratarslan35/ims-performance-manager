@@ -186,3 +186,25 @@ def test_login_absolute_url_redirect_is_blocked(client):
     assert parsed.netloc != "evil.com", (
         f"Open redirect detected: '{location}'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard: authenticated user gets 200 (not 500)
+# ---------------------------------------------------------------------------
+
+def test_dashboard_returns_200_for_authenticated_user(app):
+    """Authenticated GET /dashboard/ must return 200 — not a 500 schema error."""
+    client = app.test_client()
+    # Log in first
+    login_resp = client.post(
+        "/login",
+        data={"email": "test@example.com", "password": "password123"},
+        follow_redirects=True,
+    )
+    assert login_resp.status_code == 200
+
+    response = client.get("/dashboard/", follow_redirects=True)
+    assert response.status_code == 200, (
+        f"Expected 200 from /dashboard/, got {response.status_code}. "
+        "Possible schema mismatch (missing IMSUpload columns)."
+    )
