@@ -5,6 +5,7 @@ from flask import render_template
 from flask import current_app
 from flask import request
 from flask import url_for
+from urllib.parse import urlparse
 
 from flask_login import current_user
 from flask_login import login_required
@@ -35,7 +36,7 @@ def _password_reset_token(user):
     return _reset_serializer().dumps({"user_id": user.id}, salt="password-reset")
 
 
-@auth_bp.route("/", methods=["GET", "POST"])
+@auth_bp.route("/login", methods=["GET", "POST"])
 def login():
 
     if current_user.is_authenticated:
@@ -115,6 +116,14 @@ def login():
             f"Hoş geldiniz {user.full_name}",
             "success"
         )
+
+        next_page = request.args.get("next") or request.form.get("next")
+        if next_page:
+            parsed_next = urlparse(next_page)
+            if (not parsed_next.scheme
+                    and not parsed_next.netloc
+                    and parsed_next.path.startswith("/")):
+                return redirect(parsed_next.path)
 
         return redirect(
             url_for("main.dashboard")
