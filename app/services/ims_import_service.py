@@ -12,8 +12,14 @@ from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.extensions import db
-from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Target
+from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, ImportAuditLog, ManualMatchQueue, Target
 from app.services.alias_service import AliasService
+
+
+# Regex to extract week number from typical IMS file names.
+# Examples: "Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx"
+#           "25.Hafta Mayıs IMS.xlsx"
+_WEEK_REGEX = re.compile(r"(\d{1,2})\s*\.?\s*hafta", re.IGNORECASE)
 
 
 class IMSImportService:
@@ -59,12 +65,25 @@ class IMSImportService:
             "processed_rows": 0,
             "raw_records": 0,
             "fact_records": 0,
+            "facts_inserted": 0,
+            "facts_updated": 0,
             "summary_records": 0,
             "matched_products": 0,
             "matched_representatives": 0,
             "unmatched_representatives": 0,
+            "queued_for_manual": 0,
             "skipped_records": 0,
         }
+
+    @staticmethod
+    def extract_week_number(file_name):
+        """Extract week number from an IMS file name (e.g. '24.Hafta' -> 24)."""
+        match = _WEEK_REGEX.search(os.path.basename(file_name))
+        if match:
+            week = int(match.group(1))
+            if 1 <= week <= 53:
+                return week
+        return None
 
     @staticmethod
     def quarter_for(month):
@@ -109,11 +128,12 @@ class IMSImportService:
             return value
         return str(value)
 
-    def create_upload(self, year, month):
+    def create_upload(self, year, month, week_number=None):
         self.upload = IMSUpload(
             file_name=os.path.basename(self.file_path),
             year=year,
             month=month,
+            week_number=week_number,
             quarter=self.quarter_for(month),
             uploaded_by=self.uploaded_by,
             status="PROCESSING",
@@ -263,6 +283,7 @@ class IMSImportService:
         *,
         year,
         month,
+        week_number=None,
         sheet_name,
         sheet_type,
         source_row,
@@ -276,6 +297,7 @@ class IMSImportService:
             upload_id=self.upload.id,
             year=year,
             month=month,
+            week_number=week_number,
             quarter=self.quarter_for(month),
             sheet_name=sheet_name,
             sheet_type=sheet_type,
@@ -302,7 +324,7 @@ class IMSImportService:
         self.statistics["raw_records"] += 1
         return raw
 
-    def stage_raw_data(self, prepared_sheets, year, month):
+    def stage_raw_data(self, prepared_sheets, year, month, week_number=None):
         for sheet in prepared_sheets:
             dataframe = sheet["dataframe"]
             representative_column = sheet["representative_column"]
@@ -320,6 +342,15 @@ class IMSImportService:
                         f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
                         f"temsilci eşleşmedi ({representative_name})."
                     )
+                    # Queue for manual resolution
+                    best = representative_match.get("object")
+                    AliasService.enqueue_unmatched_representative(
+                        ims_name=representative_name,
+                        upload_id=self.upload.id,
+                        best_candidate=best.rep_name if best else None,
+                        best_score=representative_match.get("score", 0.0),
+                    )
+                    self.statistics["queued_for_manual"] += 1
 
                 for product_info in sheet["products"].values():
                     metrics = {"unit": 0.0, "tl": 0.0, "market_share": 0.0, "value_share": 0.0, "growth": 0.0}
@@ -336,6 +367,7 @@ class IMSImportService:
                     self.create_raw_record(
                         year=year,
                         month=month,
+                        week_number=week_number,
                         sheet_name=sheet["sheet_name"],
                         sheet_type=sheet["sheet_type"],
                         source_row=dataframe_index + sheet["header_row"] + 2,
@@ -350,29 +382,56 @@ class IMSImportService:
 
         db.session.flush()
 
-    def transform_raw_to_facts(self, year, month):
+    def transform_raw_to_facts(self, year, month, week_number=None):
+        """UPSERT IMS facts: update existing rows for the same week/period, insert new ones."""
         raw_records = IMSRawData.query.filter_by(upload_id=self.upload.id, year=year, month=month).all()
         for raw in raw_records:
             if raw.representative_id is None or raw.product_id is None:
                 self.statistics["skipped_records"] += 1
                 continue
-            fact = IMSFact(
-                upload_id=self.upload.id,
-                raw_data_id=raw.id,
-                representative_id=raw.representative_id,
-                product_id=raw.product_id,
-                year=raw.year,
-                month=raw.month,
-                quarter=raw.quarter,
-                report_type=raw.sheet_type,
-                unit=raw.unit,
-                tl=raw.tl,
-                market_share=raw.market_share,
-                value_share=raw.value_share,
-                growth=raw.growth,
-                metrics_json=raw.raw_json,
-            )
-            db.session.add(fact)
+
+            # Attempt to find an existing fact for this (year, week, rep, product, report_type)
+            existing = None
+            if week_number is not None:
+                existing = IMSFact.query.filter_by(
+                    year=year,
+                    week_number=week_number,
+                    representative_id=raw.representative_id,
+                    product_id=raw.product_id,
+                    report_type=raw.sheet_type,
+                ).first()
+
+            if existing:
+                existing.upload_id = self.upload.id
+                existing.raw_data_id = raw.id
+                existing.unit = raw.unit
+                existing.tl = raw.tl
+                existing.market_share = raw.market_share
+                existing.value_share = raw.value_share
+                existing.growth = raw.growth
+                existing.metrics_json = raw.raw_json
+                self.statistics["facts_updated"] += 1
+            else:
+                fact = IMSFact(
+                    upload_id=self.upload.id,
+                    raw_data_id=raw.id,
+                    representative_id=raw.representative_id,
+                    product_id=raw.product_id,
+                    year=raw.year,
+                    month=raw.month,
+                    week_number=week_number,
+                    quarter=raw.quarter,
+                    report_type=raw.sheet_type,
+                    unit=raw.unit,
+                    tl=raw.tl,
+                    market_share=raw.market_share,
+                    value_share=raw.value_share,
+                    growth=raw.growth,
+                    metrics_json=raw.raw_json,
+                )
+                db.session.add(fact)
+                self.statistics["facts_inserted"] += 1
+
             self.statistics["fact_records"] += 1
         db.session.flush()
 
@@ -430,20 +489,47 @@ class IMSImportService:
         self.statistics["summary_records"] = len(rows)
         db.session.flush()
 
+    def clear_week(self, year, week_number):
+        """Remove all IMS data for a specific week (used only as a fallback)."""
+        IMSFact.query.filter_by(year=year, week_number=week_number).delete(synchronize_session=False)
+        IMSRawData.query.filter_by(year=year, week_number=week_number).delete(synchronize_session=False)
+        db.session.flush()
+
     def clear_month(self, year, month):
+        """Remove all IMS data for a calendar month (destructive; kept for backward compat)."""
         IMSFact.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         IMSRawData.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
 
-    def process_workbook(self, year, month):
+    def process_workbook(self, year, month, week_number=None):
         sheets = self.analyze_workbook()
         prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
-        self.stage_raw_data(prepared_sheets, year, month)
-        self.transform_raw_to_facts(year, month)
+        self.stage_raw_data(prepared_sheets, year, month, week_number=week_number)
+        self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
 
-    def finish(self, success=True):
+    def write_audit_log(self, year, month, week_number, success):
+        """Write an ImportAuditLog record for this import run."""
+        log = ImportAuditLog(
+            upload_id=self.upload.id,
+            year=year,
+            month=month,
+            week_number=week_number,
+            uploaded_by=self.uploaded_by,
+            rows_inserted=self.statistics.get("facts_inserted", 0),
+            rows_updated=self.statistics.get("facts_updated", 0),
+            rows_skipped=self.statistics.get("skipped_records", 0),
+            rows_unmatched=self.statistics.get("unmatched_representatives", 0),
+            rows_error=len(self.errors),
+            queued_for_manual=self.statistics.get("queued_for_manual", 0),
+            processing_time=round(time.monotonic() - self.started, 2),
+            status="COMPLETED" if success else "FAILED",
+            notes=("\n".join(self.warnings) or None),
+        )
+        db.session.add(log)
+
+    def finish(self, success=True, year=None, month=None, week_number=None):
         self.upload.processing_time = round(time.monotonic() - self.started, 2)
         self.upload.sheet_count = self.statistics["sheet_count"]
         self.upload.raw_record_count = self.statistics["raw_records"]
@@ -453,6 +539,8 @@ class IMSImportService:
         self.upload.error_message = "\n".join(self.errors) or None
         self.upload.status = "COMPLETED" if success else "FAILED"
         self.upload.completed_at = datetime.utcnow()
+        if year and month:
+            self.write_audit_log(year, month, week_number, success)
 
     def report(self):
         return {
@@ -473,11 +561,12 @@ class IMSImportService:
             raise ValueError("Yalnızca .xlsx ve .xls dosyaları içe aktarılabilir.")
         return True
 
-    def _persist_failure(self, year, month):
+    def _persist_failure(self, year, month, week_number=None):
         failure_upload = IMSUpload(
             file_name=os.path.basename(self.file_path),
             year=year,
             month=month,
+            week_number=week_number,
             quarter=self.quarter_for(month),
             uploaded_by=self.uploaded_by,
             status="FAILED",
@@ -490,22 +579,32 @@ class IMSImportService:
         db.session.commit()
         self.upload = failure_upload
 
-    def run(self, year, month, clear_before_import=True):
+    def run(self, year, month, clear_before_import=False, week_number=None):
+        """Run the full ETL pipeline.
+
+        week_number is extracted from the file name when not provided explicitly.
+        When a week_number is available the pipeline performs an idempotent UPSERT
+        instead of a destructive clear+insert.  clear_before_import is retained for
+        backward compatibility but defaults to False.
+        """
+        if week_number is None:
+            week_number = self.extract_week_number(self.file_path)
+
         try:
             self.validate()
             AliasService.warmup()
-            self.create_upload(year, month)
+            self.create_upload(year, month, week_number=week_number)
             self.load_workbook()
-            if clear_before_import:
+            if clear_before_import and week_number is None:
                 self.clear_month(year, month)
-            self.process_workbook(year, month)
-            self.finish(success=True)
+            self.process_workbook(year, month, week_number=week_number)
+            self.finish(success=True, year=year, month=month, week_number=week_number)
             db.session.commit()
         except (OSError, ValueError, SQLAlchemyError, Exception) as exc:
             db.session.rollback()
             self.errors.append(str(exc))
             try:
-                self._persist_failure(year, month)
+                self._persist_failure(year, month, week_number=week_number)
             except SQLAlchemyError as persistence_error:
                 db.session.rollback()
                 self.errors.append(f"Hata kaydı yazılamadı: {persistence_error}")
@@ -513,11 +612,11 @@ class IMSImportService:
 
     def import_file(self, year, month):
         """Backward-compatible alias for callers of the previous service."""
-        return self.run(year, month, clear_before_import=True)
+        return self.run(year, month, clear_before_import=False)
 
     @classmethod
     def health(cls):
-        return {"service": "IMSImportService", "version": "2.0.0", "status": "READY"}
+        return {"service": "IMSImportService", "version": "2.1.0", "status": "READY"}
 
     @classmethod
     def supported_reports(cls):
