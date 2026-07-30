@@ -138,6 +138,7 @@ def create_app(config_object=Config):
 
     register_error_handlers(app)
 
-    create_database(app)
+    if not app.config.get("TESTING", False):
+        create_database(app)
 
     return app

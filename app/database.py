@@ -147,9 +147,6 @@ DEFAULT_PRODUCTS = [
 
 
 def initialize_database():
-
-    db.create_all()
-
     create_default_settings()
 
     create_default_products()
