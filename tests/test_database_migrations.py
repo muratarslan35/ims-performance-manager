@@ -161,6 +161,18 @@ def _build_test_app(db_url):
 
 
 class DatabaseMigrationsTestCase(unittest.TestCase):
+    @staticmethod
+    def _has_unique(inspector, table_name, unique_name):
+        constraints = {
+            item.get("name")
+            for item in inspector.get_unique_constraints(table_name)
+            if item.get("name")
+        }
+        if unique_name in constraints:
+            return True
+        indexes = inspector.get_indexes(table_name)
+        return any(index["name"] == unique_name and index.get("unique") for index in indexes)
+
     def test_upgrade_and_downgrade_preserve_existing_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "migration_test.db"
@@ -189,6 +201,18 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
             fact_indexes = {idx["name"] for idx in inspector.get_indexes("ims_facts")}
             self.assertIn("ix_ims_fact_week", fact_indexes)
             self.assertIn("uq_ims_fact_week_period", fact_indexes)
+            self.assertTrue(
+                self._has_unique(inspector, "representative_matches", "uq_rep_match_ims_name")
+            )
+            self.assertTrue(
+                self._has_unique(inspector, "product_matches", "uq_product_match_ims_name")
+            )
+            self.assertTrue(
+                self._has_unique(inspector, "manual_match_queue", "uq_match_queue_entity_name")
+            )
+            self.assertTrue(
+                self._has_unique(inspector, "ims_facts", "uq_ims_fact_week_period")
+            )
 
             with engine.begin() as connection:
                 uploads_count = connection.execute(sa.text("SELECT COUNT(*) FROM ims_uploads")).scalar_one()
