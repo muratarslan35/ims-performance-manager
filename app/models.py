@@ -121,6 +121,7 @@ class IMSUpload(db.Model):
     file_name = db.Column(db.String(255), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
+    week_number = db.Column(db.Integer)
     quarter = db.Column(db.String(5), nullable=False)
     sheet_count = db.Column(db.Integer, default=0, nullable=False)
     raw_record_count = db.Column(db.Integer, default=0, nullable=False)
@@ -151,6 +152,7 @@ class IMSRawData(db.Model):
     upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
+    week_number = db.Column(db.Integer)
     quarter = db.Column(db.String(5), nullable=False)
     sheet_name = db.Column(db.String(150), nullable=False)
     sheet_type = db.Column(db.String(50), nullable=False, default="unknown")
@@ -187,8 +189,13 @@ class IMSFact(db.Model):
     __tablename__ = "ims_facts"
     __table_args__ = (
         db.UniqueConstraint("raw_data_id", name="uq_ims_fact_raw_data"),
+        db.UniqueConstraint(
+            "year", "week_number", "representative_id", "product_id", "report_type",
+            name="uq_ims_fact_week_period",
+        ),
         db.Index("ix_ims_fact_period", "year", "month"),
         db.Index("ix_ims_fact_rep_product", "representative_id", "product_id"),
+        db.Index("ix_ims_fact_week", "year", "week_number"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -200,6 +207,7 @@ class IMSFact(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
+    week_number = db.Column(db.Integer)
     quarter = db.Column(db.String(5), nullable=False)
     report_type = db.Column(db.String(50), nullable=False)
     unit = db.Column(db.Float, default=0, nullable=False)
@@ -368,3 +376,119 @@ class RecoverySummary(db.Model):
 
     def __repr__(self):
         return f"<RecoverySummary {self.id}>"
+
+
+# ---------------------------------------------------------------------------
+# Matching infrastructure
+# ---------------------------------------------------------------------------
+
+class RepresentativeMatch(db.Model):
+    """Persistent mapping from IMS raw name to a Representative record."""
+
+    __tablename__ = "representative_matches"
+    __table_args__ = (
+        db.UniqueConstraint("ims_name", name="uq_rep_match_ims_name"),
+        db.Index("ix_rep_match_rep_id", "representative_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    ims_name = db.Column(db.String(200), nullable=False)
+    representative_id = db.Column(
+        db.Integer, db.ForeignKey("representatives.id"), nullable=False
+    )
+    match_method = db.Column(db.String(50), nullable=False, default="MANUAL")
+    match_score = db.Column(db.Float, default=100.0, nullable=False)
+    created_by = db.Column(db.String(150))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    representative = db.relationship("Representative", backref="ims_matches")
+
+    def __repr__(self):
+        return f"<RepresentativeMatch {self.ims_name!r} -> {self.representative_id}>"
+
+
+class ProductMatch(db.Model):
+    """Persistent mapping from IMS raw product name to a Product record."""
+
+    __tablename__ = "product_matches"
+    __table_args__ = (
+        db.UniqueConstraint("ims_name", name="uq_product_match_ims_name"),
+        db.Index("ix_product_match_product_id", "product_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    ims_name = db.Column(db.String(200), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    match_method = db.Column(db.String(50), nullable=False, default="MANUAL")
+    match_score = db.Column(db.Float, default=100.0, nullable=False)
+    created_by = db.Column(db.String(150))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship("Product", backref="ims_matches")
+
+    def __repr__(self):
+        return f"<ProductMatch {self.ims_name!r} -> {self.product_id}>"
+
+
+class ManualMatchQueue(db.Model):
+    """Unmatched IMS names waiting for admin resolution."""
+
+    __tablename__ = "manual_match_queue"
+    __table_args__ = (
+        db.UniqueConstraint("entity_type", "ims_name", name="uq_match_queue_entity_name"),
+        db.Index("ix_match_queue_status", "status"),
+    )
+
+    ENTITY_REPRESENTATIVE = "representative"
+    ENTITY_PRODUCT = "product"
+    STATUS_PENDING = "PENDING"
+    STATUS_RESOLVED = "RESOLVED"
+    STATUS_IGNORED = "IGNORED"
+
+    id = db.Column(db.Integer, primary_key=True)
+    entity_type = db.Column(db.String(30), nullable=False)
+    ims_name = db.Column(db.String(200), nullable=False)
+    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"))
+    best_candidate = db.Column(db.String(200))
+    best_score = db.Column(db.Float, default=0.0, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="PENDING")
+    resolved_by = db.Column(db.String(150))
+    resolved_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    upload = db.relationship("IMSUpload", backref="match_queue_items")
+
+    def __repr__(self):
+        return f"<ManualMatchQueue {self.entity_type}:{self.ims_name!r} {self.status}>"
+
+
+class ImportAuditLog(db.Model):
+    """Per-import audit record capturing counts, actors, and outcomes."""
+
+    __tablename__ = "import_audit_logs"
+    __table_args__ = (
+        db.Index("ix_import_audit_upload", "upload_id"),
+        db.Index("ix_import_audit_period", "year", "week_number"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    week_number = db.Column(db.Integer)
+    uploaded_by = db.Column(db.String(150))
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    rows_inserted = db.Column(db.Integer, default=0, nullable=False)
+    rows_updated = db.Column(db.Integer, default=0, nullable=False)
+    rows_skipped = db.Column(db.Integer, default=0, nullable=False)
+    rows_unmatched = db.Column(db.Integer, default=0, nullable=False)
+    rows_error = db.Column(db.Integer, default=0, nullable=False)
+    queued_for_manual = db.Column(db.Integer, default=0, nullable=False)
+    processing_time = db.Column(db.Float, default=0.0, nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="COMPLETED")
+    notes = db.Column(db.Text)
+
+    upload = db.relationship("IMSUpload", backref=db.backref("audit_log", uselist=False))
+
+    def __repr__(self):
+        return f"<ImportAuditLog upload={self.upload_id} {self.year}W{self.week_number}>"

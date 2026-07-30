@@ -3,6 +3,16 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+_SECRET_KEY_ENV = os.environ.get("SECRET_KEY")
+
+if not _SECRET_KEY_ENV:
+    import warnings
+    warnings.warn(
+        "SECRET_KEY environment variable is not set. "
+        "A temporary key is used – set SECRET_KEY in production!",
+        stacklevel=2,
+    )
+
 
 class Config:
 
@@ -10,7 +20,7 @@ class Config:
     # Uygulama
     # ------------------------------------------------------------------
 
-    SECRET_KEY = "CHANGE_THIS_SECRET_KEY"
+    SECRET_KEY = _SECRET_KEY_ENV or "dev-only-insecure-key-change-in-production"
 
     RESET_TOKEN_MAX_AGE = 60 * 60
 

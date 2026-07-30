@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Manuel Eşleştirme{% endblock %}
+
+{% block page_title %}Manuel Eşleştirme Kuyruğu{% endblock %}
+
+{% block content %}
+
+<div class="row row-cards mb-4">
+    <div class="col-xl-4">
+        <div class="card bg-warning-lt">
+            <div class="card-body text-center">
+                <div class="text-secondary">Bekleyen</div>
+                <div class="display-5 fw-bold">{{ pending|length }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="card bg-success-lt">
+            <div class="card-body text-center">
+                <div class="text-secondary">Çözülen</div>
+                <div class="display-5 fw-bold">{{ resolved|length }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="card bg-info-lt">
+            <div class="card-body text-center">
+                <div class="text-secondary">Temsilci / Ürün</div>
+                <div class="display-5 fw-bold">
+                    {{ pending|selectattr('entity_type','equalto','representative')|list|length }} /
+                    {{ pending|selectattr('entity_type','equalto','product')|list|length }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if pending %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header">
+        <h3 class="card-title mb-0">
+            <i class="bi bi-exclamation-circle-fill text-warning me-2"></i>
+            Bekleyen Eşleştirmeler
+        </h3>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead>
+                    <tr>
+                        <th>IMS Adı</th>
+                        <th>Tür</th>
+                        <th>En İyi Aday</th>
+                        <th>Skor</th>
+                        <th>Tarih</th>
+                        <th>İşlem</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in pending %}
+                    <tr>
+                        <td><strong>{{ item.ims_name }}</strong></td>
+                        <td>
+                            {% if item.entity_type == 'representative' %}
+                            <span class="badge bg-blue-lt">Temsilci</span>
+                            {% else %}
+                            <span class="badge bg-purple-lt">Ürün</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.best_candidate or '-' }}</td>
+                        <td>
+                            {% if item.best_score %}
+                            <span class="badge {% if item.best_score >= 80 %}bg-success-lt{% elif item.best_score >= 50 %}bg-warning-lt{% else %}bg-danger-lt{% endif %}">
+                                {{ "%.0f"|format(item.best_score) }}%
+                            </span>
+                            {% else %}-{% endif %}
+                        </td>
+                        <td class="text-secondary">{{ item.created_at.strftime('%d.%m.%Y') }}</td>
+                        <td>
+                            <button type="button" class="btn btn-sm btn-primary"
+                                data-bs-toggle="modal"
+                                data-bs-target="#resolveModal"
+                                data-queue-id="{{ item.id }}"
+                                data-ims-name="{{ item.ims_name }}"
+                                data-entity-type="{{ item.entity_type }}"
+                                data-best-candidate="{{ item.best_candidate or '' }}">
+                                <i class="bi bi-link-45deg"></i> Eşleştir
+                            </button>
+                            <form method="POST" action="{{ url_for('matching.ignore', queue_id=item.id) }}" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-ghost-danger"
+                                    onclick="return confirm('Görmezden gelmek istediğinize emin misiniz?')">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-success">
+    <i class="bi bi-check-circle-fill me-2"></i>
+    Bekleyen eşleştirme yok. Tüm IMS isimleri başarıyla eşleştirilmiş.
+</div>
+{% endif %}
+
+{% if resolved %}
+<div class="card shadow-sm">
+    <div class="card-header">
+        <h3 class="card-title mb-0">
+            <i class="bi bi-check-circle-fill text-success me-2"></i>
+            Son Çözülen Eşleştirmeler
+        </h3>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead>
+                    <tr>
+                        <th>IMS Adı</th>
+                        <th>Tür</th>
+                        <th>Durum</th>
+                        <th>Çözen</th>
+                        <th>Tarih</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in resolved %}
+                    <tr>
+                        <td>{{ item.ims_name }}</td>
+                        <td>
+                            {% if item.entity_type == 'representative' %}
+                            <span class="badge bg-blue-lt">Temsilci</span>
+                            {% else %}
+                            <span class="badge bg-purple-lt">Ürün</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if item.status == 'RESOLVED' %}
+                            <span class="badge bg-success-lt">Çözüldü</span>
+                            {% else %}
+                            <span class="badge bg-secondary-lt">Görmezden Gelindi</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-secondary">{{ item.resolved_by or '-' }}</td>
+                        <td class="text-secondary">
+                            {{ item.resolved_at.strftime('%d.%m.%Y') if item.resolved_at else '-' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Resolve Modal -->
+<div class="modal fade" id="resolveModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">IMS İsmini Eşleştir</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" id="resolveForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">IMS Adı</label>
+                        <input type="text" class="form-control" id="modalImsName" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Eşleştirme Seçiniz</label>
+                        <select class="form-select" name="target_id" required id="targetSelect">
+                            <option value="">-- Seçiniz --</option>
+                        </select>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="create_alias" value="1"
+                            id="createAlias" checked>
+                        <label class="form-check-label" for="createAlias">
+                            Otomatik alias oluştur (gelecek importlar için)
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> Eşleştir
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const representatives = {{ representatives | tojson }};
+const products = {{ products | tojson }};
+
+document.getElementById('resolveModal').addEventListener('show.bs.modal', function(event) {
+    const btn = event.relatedTarget;
+    const queueId = btn.dataset.queueId;
+    const imsName = btn.dataset.imsName;
+    const entityType = btn.dataset.entityType;
+    const bestCandidate = btn.dataset.bestCandidate;
+
+    document.getElementById('modalImsName').value = imsName;
+    document.getElementById('resolveForm').action = `/matching/resolve/${queueId}`;
+
+    const sel = document.getElementById('targetSelect');
+    sel.innerHTML = '<option value="">-- Seçiniz --</option>';
+
+    const items = entityType === 'representative' ? representatives : products;
+    items.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.id;
+        opt.text = entityType === 'representative' ? item.rep_name : item.product_name;
+        if (item.rep_name === bestCandidate || item.product_name === bestCandidate) {
+            opt.selected = true;
+        }
+        sel.appendChild(opt);
+    });
+});
+</script>
+{% endblock %}
