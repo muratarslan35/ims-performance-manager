@@ -225,6 +225,9 @@ def upgrade():
 
 
 def downgrade():
+    # Downgrade is intentionally destructive for this revision:
+    # - week_number data stored after upgrade will be removed.
+    # - matching/audit tables introduced by this revision will be dropped.
     if _has_table("ims_facts"):
         if _is_sqlite():
             if _has_index("ims_facts", "uq_ims_fact_week_period"):

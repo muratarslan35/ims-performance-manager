@@ -1,12 +1,19 @@
 import os
+import warnings
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
 _SECRET_KEY_ENV = os.environ.get("SECRET_KEY")
+_APP_ENV = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "development")).lower()
+_IS_PRODUCTION = _APP_ENV == "production"
 
-if not _SECRET_KEY_ENV:
-    import warnings
+if _IS_PRODUCTION and not _SECRET_KEY_ENV:
+    raise RuntimeError(
+        "SECRET_KEY environment variable must be set when APP_ENV is production."
+    )
+
+if not _SECRET_KEY_ENV and not _IS_PRODUCTION:
     warnings.warn(
         "SECRET_KEY environment variable is not set. "
         "A temporary key is used – set SECRET_KEY in production!",
@@ -21,6 +28,8 @@ class Config:
     # ------------------------------------------------------------------
 
     SECRET_KEY = _SECRET_KEY_ENV or "dev-only-insecure-key-change-in-production"
+    APP_ENV = _APP_ENV
+    STRICT_SCHEMA_VALIDATION = _IS_PRODUCTION
 
     RESET_TOKEN_MAX_AGE = 60 * 60
 

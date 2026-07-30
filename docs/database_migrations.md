@@ -18,57 +18,85 @@ export DATABASE_URL="sqlite:///instance/ipm.db"
 export DATABASE_URL="******host:5432/dbname"
 ```
 
-## 2) Yeni Migration Oluşturma
+## 2) Migration Komutları
 
-Model değişikliği sonrası:
+Yeni migration üretimi:
 
 ```bash
 python -m flask --app run.py db migrate -m "kısa açıklama"
 ```
 
-## 3) Migration Çalıştırma
-
-Son sürüme yükseltmek için:
+Yükseltme:
 
 ```bash
 python -m flask --app run.py db upgrade
-```
-
-## 4) Upgrade
-
-Belirli revizyona geçiş:
-
-```bash
 python -m flask --app run.py db upgrade <revision_id>
 ```
 
-## 5) Downgrade
-
-Bir adım geri:
+Düşürme:
 
 ```bash
 python -m flask --app run.py db downgrade -1
+python -m flask --app run.py db downgrade <revision_id>
+python -m flask --app run.py db downgrade base
 ```
 
-Belirli revizyona geri:
+Geçerli revizyon kontrolü:
 
 ```bash
-python -m flask --app run.py db downgrade <revision_id>
+python -m flask --app run.py db current
 ```
 
-## 6) Production Deployment Flow
+## 3) Verified Migration Safety Scope
 
-1. Yeni release’i deploy etmeden önce veritabanı yedeği alın.
-2. Uygulama kodunu deploy edin.
-3. Aynı sürümde migration çalıştırın: `python -m flask --app run.py db upgrade`
-4. Uygulama health-check doğrulayın.
-5. Gerekirse kontrollü rollback için `db downgrade` planını uygulayın.
+`e7e561790e74_harden_schema_migrations` revizyonunda upgrade adımı additive/non-destructive tasarlanmıştır:
+- yeni tablolar eklenir
+- yeni index/unique korumaları eklenir
+- mevcut IMS tablolara `week_number` kolonu eklenir
+- upgrade içinde drop işlemi yoktur
 
-Notlar:
-- Bu migration seti SQLite ve PostgreSQL ile uyumludur.
-- Migration’lar veri kaybını önlemek için yeni nesneleri koşullu/additive şekilde ekler.
+Legacy veri koruma doğrulaması:
+- mevcut `users` kayıtları korunur
+- mevcut IMS (`ims_uploads`, `ims_raw_data`, `ims_facts`) kayıtları korunur
 
-## 7) Common Errors & Troubleshooting
+## 4) SQLite vs PostgreSQL Notes
+
+Fonksiyonel parity hedeflenir (SQL birebirliği değil):
+- aynı tablo/kolon seti
+- aynı index varlığı
+- aynı unique semantiği
+
+Beklenen dialect farkı:
+- SQLite'da `uq_ims_fact_week_period` bir **unique index** olarak uygulanır
+- PostgreSQL'de aynı kural **unique constraint** olarak uygulanır
+
+## 5) Downgrade Caveat
+
+Bu revizyonun downgrade adımı bilinçli olarak destrüktiftir:
+- migration ile gelen tablolar (`representative_matches`, `product_matches`, `manual_match_queue`, `import_audit_logs`) silinir
+- migration ile gelen `week_number` kolonları kaldırılır
+- bu kolon/tablolarda oluşan veri geri alınamaz
+
+Downgrade kullanmadan önce mutlaka yedek alın.
+
+## 6) Production Rollout Safety (Single Migrator)
+
+Production ortamında migration tek bir instance tarafından çalıştırılmalıdır:
+1. Bakım penceresi açın ve yedek alın.
+2. Yeni uygulama sürümünü deploy edin.
+3. Sadece **bir** migrator instance ile `db upgrade` çalıştırın.
+4. Upgrade tamamlandıktan sonra uygulama instance’larını trafiğe açın.
+5. Health-check ve temel smoke testleri doğrulayın.
+
+Uygulama runtime'da schema oluşturmaz. Schema eksikse `initialize_database()` açık log üretir ve production-safe strict modda fail-fast davranır.
+
+## 7) Production Secret Key Safety
+
+Production için `SECRET_KEY` zorunludur:
+- `APP_ENV=production` iken `SECRET_KEY` yoksa uygulama başlangıçta fail-fast eder
+- test/development ortamlarında geçici dev anahtarı ile çalışma devam eder
+
+## 8) Common Errors & Troubleshooting
 
 ### `flask: command not found`
 - `python -m flask ...` formatını kullanın.
@@ -82,6 +110,3 @@ Notlar:
 
 ### `Can't locate revision identified by ...`
 - Kod ve migration dosyalarının aynı branch/release sürümünde olduğundan emin olun.
-
-### SQLite / PostgreSQL farkları
-- Migration scriptleri dialect kontrolü içerir; SQLite için desteklenmeyen unique-constraint değişimleri unique index ile güvenli şekilde uygulanır.

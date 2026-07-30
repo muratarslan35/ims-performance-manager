@@ -1,5 +1,9 @@
-from werkzeug.security import generate_password_hash
+import logging
+
 from sqlalchemy import inspect
+from werkzeug.security import generate_password_hash
+from flask import current_app
+from flask import has_app_context
 
 from app.extensions import db
 
@@ -147,10 +151,30 @@ DEFAULT_PRODUCTS = [
 ]
 
 
+logger = logging.getLogger(__name__)
+
+
 def initialize_database():
     inspector = inspect(db.engine)
     required_tables = {"settings", "products", "prime_rules", "users"}
-    if not required_tables.issubset(set(inspector.get_table_names())):
+    existing_tables = set(inspector.get_table_names())
+    missing_tables = sorted(required_tables - existing_tables)
+    if missing_tables:
+        message = (
+            "Database schema is incomplete; missing required tables: "
+            f"{', '.join(missing_tables)}. "
+            "Apply Alembic migrations before starting writable traffic."
+        )
+        strict_schema_check = False
+        if has_app_context():
+            strict_schema_check = bool(
+                current_app.config.get("STRICT_SCHEMA_VALIDATION", False)
+            )
+        if strict_schema_check:
+            logger.error(message)
+            raise RuntimeError(message)
+
+        logger.warning(message)
         return
 
     create_default_settings()
