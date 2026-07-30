@@ -17,6 +17,7 @@ from app.auth import auth_bp
 from app.products import products_bp
 from app.routes.settings import settings_bp
 from app.routes.targets import targets_bp
+from app.routes.matching import matching_bp
 from app.ims import ims_bp
 from app.dashboard import dashboard_bp
 from app.representatives import representatives_bp
@@ -48,6 +49,8 @@ def register_blueprints(app):
     app.register_blueprint(settings_bp)
 
     app.register_blueprint(targets_bp)
+
+    app.register_blueprint(matching_bp)
 
     app.register_blueprint(ims_bp)
 
