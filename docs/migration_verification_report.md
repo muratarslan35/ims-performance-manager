@@ -9,9 +9,19 @@ Revision verified: `e7e561790e74_harden_schema_migrations`
 
 ```bash
 python -m pytest tests/test_database_migrations.py tests/test_config_security.py -v
-TEST_POSTGRES_URL='postgresql+psycopg2://runner@/migration_test?host=/tmp&port=55432' python -m pytest tests/test_database_migrations.py -v
 python -m pytest tests/ -v
+# Optional PostgreSQL parity (requires live PostgreSQL service):
+TEST_POSTGRES_URL='postgresql+psycopg2://runner@/migration_test?host=/tmp&port=55432' python -m pytest tests/test_database_migrations.py -v
 ```
+
+PostgreSQL parity prerequisites:
+- running PostgreSQL instance
+- reachable database/user in `TEST_POSTGRES_URL`
+- socket/host/port availability from test runtime
+
+Expected behavior without PostgreSQL service (e.g., CI without postgres):
+- PostgreSQL parity test is skipped with explicit reason
+- SQLite migration safety verification still runs and must pass
 
 Verification data collection command:
 
@@ -42,10 +52,13 @@ Additional explicit checks passed:
 
 ## 2) SQLite vs PostgreSQL Parity
 
-Both dialect test runs passed and validated:
+SQLite verification is always mandatory and validates:
 - same required tables exist
 - same required columns (including `week_number`) exist
 - same required index/unique semantics are enforceable
+
+PostgreSQL parity is validated when environment is configured and reachable (`TEST_POSTGRES_URL` set + live service).  
+If PostgreSQL is not configured or unreachable, parity test is skipped with an explicit message instead of failing the whole suite.
 
 ### Verified metadata findings
 - `ix_import_audit_upload`: present on both

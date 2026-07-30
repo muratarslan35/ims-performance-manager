@@ -70,6 +70,34 @@ Beklenen dialect farkı:
 - SQLite'da `uq_ims_fact_week_period` bir **unique index** olarak uygulanır
 - PostgreSQL'de aynı kural **unique constraint** olarak uygulanır
 
+## 4.1) Migration Test Split (Default vs PostgreSQL)
+
+Varsayılan migration test akışı SQLite zorunlu doğrulamasını içerir:
+
+```bash
+python -m pytest tests/test_database_migrations.py tests/test_config_security.py -v
+python -m pytest tests/ -v
+```
+
+PostgreSQL parity doğrulaması ayrı bir testte tutulur ve yalnızca PostgreSQL erişilebilir olduğunda çalışır.
+
+PostgreSQL testi için gereksinimler:
+- çalışan PostgreSQL instance
+- erişilebilir database ve kullanıcı
+- `TEST_POSTGRES_URL` ortam değişkeni
+
+Canlı PostgreSQL ile parity çalıştırma komutu:
+
+```bash
+TEST_POSTGRES_URL='postgresql+psycopg2://runner@/migration_test?host=/tmp&port=55432' \
+python -m pytest tests/test_database_migrations.py -v
+```
+
+Beklenen skip davranışı:
+- `TEST_POSTGRES_URL` yoksa PostgreSQL parity testi `SKIPPED` olur.
+- `TEST_POSTGRES_URL` var ama bağlantı kurulamazsa test, ortam erişilemez mesajıyla `SKIPPED` olur.
+- Bu durumlarda test suite başarısız olmaz; SQLite migration doğrulaması yine zorunlu olarak çalışır.
+
 ## 5) Downgrade Caveat
 
 Bu revizyonun downgrade adımı bilinçli olarak destrüktiftir:

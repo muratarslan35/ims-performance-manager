@@ -4,10 +4,12 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from flask_migrate import downgrade
 from flask_migrate import upgrade
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import OperationalError
 
 from app import create_app
 from app.database import initialize_database
@@ -241,19 +243,6 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         return any(index["name"] == unique_name and index.get("unique") for index in indexes)
 
     @staticmethod
-    def _database_targets(sqlite_db_path=None):
-        if sqlite_db_path is None:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                sqlite_path = Path(temp_dir) / "migration_test.db"
-                yield "sqlite", f"sqlite:///{sqlite_path}"
-        else:
-            yield "sqlite", f"sqlite:///{sqlite_db_path}"
-
-        postgres_url = os.getenv("TEST_POSTGRES_URL")
-        if postgres_url:
-            yield "postgresql", postgres_url
-
-    @staticmethod
     def _count_rows(connection, table_name):
         return connection.execute(sa.text(f"SELECT COUNT(*) FROM {table_name}")).scalar_one()
 
@@ -348,142 +337,170 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         self.assertNotIn("drop_column", upgrade_section)
         self.assertNotIn("drop_constraint", upgrade_section)
 
-    def test_migration_safety_parity_and_reentrancy(self):
+    def _run_migration_safety_flow(self, db_url):
+        _create_legacy_schema(db_url)
+        app = _build_test_app(db_url)
+        engine = sa.create_engine(db_url)
+
+        with engine.begin() as connection:
+            before_counts = {
+                "users": self._count_rows(connection, "users"),
+                "ims_uploads": self._count_rows(connection, "ims_uploads"),
+                "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
+                "ims_facts": self._count_rows(connection, "ims_facts"),
+            }
+
+        with app.app_context():
+            upgrade(directory=MIGRATIONS_DIR)
+            upgrade(directory=MIGRATIONS_DIR)
+
+        inspector = sa.inspect(engine)
+        self._assert_required_schema(inspector)
+
+        with engine.begin() as connection:
+            after_counts = {
+                "users": self._count_rows(connection, "users"),
+                "ims_uploads": self._count_rows(connection, "ims_uploads"),
+                "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
+                "ims_facts": self._count_rows(connection, "ims_facts"),
+            }
+            self.assertEqual(before_counts, after_counts)
+
+            legacy_user_email = connection.execute(
+                sa.text("SELECT email FROM users WHERE id = 1")
+            ).scalar_one()
+            self.assertEqual("legacy.user@example.com", legacy_user_email)
+
+            legacy_upload_name = connection.execute(
+                sa.text("SELECT file_name FROM ims_uploads WHERE id = 1")
+            ).scalar_one()
+            self.assertEqual("ims.xlsx", legacy_upload_name)
+
+            created_at = datetime(2026, 7, 1, 0, 0, 0)
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO ims_raw_data
+                    (id, upload_id, year, month, week_number, quarter, sheet_name, sheet_type,
+                     source_row, representative_id, product_id, unit, tl, market_share,
+                     value_share, growth, raw_json, created_at)
+                    VALUES
+                    (2, 1, 2026, 7, 31, 'Q3', 'BRICK SATIS', 'unknown',
+                     3, 1, 1, 0, 0, 0, 0, 0, '{}', :created_at)
+                    """
+                ),
+                {"created_at": created_at},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO ims_facts
+                    (id, upload_id, raw_data_id, representative_id, product_id,
+                     year, month, week_number, quarter, report_type, unit, tl,
+                     market_share, value_share, growth, metrics_json, created_at)
+                    VALUES
+                    (2, 1, 2, 1, 1, 2026, 7, 31, 'Q3', 'BOX',
+                     0, 0, 0, 0, 0, '{}', :created_at)
+                    """
+                ),
+                {"created_at": created_at},
+            )
+
+        with self.assertRaises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO ims_raw_data
+                        (id, upload_id, year, month, week_number, quarter, sheet_name, sheet_type,
+                         source_row, representative_id, product_id, unit, tl, market_share,
+                         value_share, growth, raw_json, created_at)
+                        VALUES
+                        (3, 1, 2026, 7, 31, 'Q3', 'BRICK SATIS', 'unknown',
+                         4, 1, 1, 0, 0, 0, 0, 0, '{}', :created_at)
+                        """
+                    ),
+                    {"created_at": datetime(2026, 7, 1, 0, 0, 0)},
+                )
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO ims_facts
+                        (id, upload_id, raw_data_id, representative_id, product_id,
+                         year, month, week_number, quarter, report_type, unit, tl,
+                         market_share, value_share, growth, metrics_json, created_at)
+                        VALUES
+                        (3, 1, 3, 1, 1, 2026, 7, 31, 'Q3', 'BOX',
+                         0, 0, 0, 0, 0, '{}', :created_at)
+                        """
+                    ),
+                    {"created_at": datetime(2026, 7, 1, 0, 0, 0)},
+                )
+
+        fingerprint = self._schema_fingerprint(inspector)
+
+        with app.app_context():
+            downgrade(directory=MIGRATIONS_DIR, revision="base")
+
+        downgraded_inspector = sa.inspect(engine)
+        self.assertNotIn("representative_matches", downgraded_inspector.get_table_names())
+        self.assertNotIn("product_matches", downgraded_inspector.get_table_names())
+        self.assertNotIn("manual_match_queue", downgraded_inspector.get_table_names())
+        self.assertNotIn("import_audit_logs", downgraded_inspector.get_table_names())
+        self.assertNotIn(
+            "week_number",
+            [c["name"] for c in downgraded_inspector.get_columns("ims_uploads")],
+        )
+        self.assertNotIn(
+            "week_number",
+            [c["name"] for c in downgraded_inspector.get_columns("ims_raw_data")],
+        )
+        self.assertNotIn(
+            "week_number",
+            [c["name"] for c in downgraded_inspector.get_columns("ims_facts")],
+        )
+
+        with app.app_context():
+            upgrade(directory=MIGRATIONS_DIR)
+
+        cycle_inspector = sa.inspect(engine)
+        self._assert_required_schema(cycle_inspector)
+        return fingerprint
+
+    def test_sqlite_migration_safety_and_reentrancy(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             sqlite_path = Path(temp_dir) / "migration_test.db"
-            fingerprints = {}
+            sqlite_url = f"sqlite:///{sqlite_path}"
+            self._run_migration_safety_flow(sqlite_url)
 
-            for dialect_name, db_url in self._database_targets(sqlite_path):
-                _create_legacy_schema(db_url)
-                app = _build_test_app(db_url)
+    def test_postgresql_migration_parity_when_available(self):
+        postgres_url = os.getenv("TEST_POSTGRES_URL")
+        if not postgres_url:
+            pytest.skip(
+                "Skipping PostgreSQL migration parity test: TEST_POSTGRES_URL is not set."
+            )
 
-                engine = sa.create_engine(db_url)
-                with engine.begin() as connection:
-                    before_counts = {
-                        "users": self._count_rows(connection, "users"),
-                        "ims_uploads": self._count_rows(connection, "ims_uploads"),
-                        "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
-                        "ims_facts": self._count_rows(connection, "ims_facts"),
-                    }
+        try:
+            probe_engine = sa.create_engine(postgres_url)
+            with probe_engine.connect() as connection:
+                connection.execute(sa.text("SELECT 1"))
+        except OperationalError as exc:
+            pytest.skip(
+                "Skipping PostgreSQL migration parity test: TEST_POSTGRES_URL is set "
+                f"but database is unreachable ({exc})."
+            )
+        except Exception as exc:  # pragma: no cover - defensive environment handling
+            pytest.skip(
+                "Skipping PostgreSQL migration parity test: TEST_POSTGRES_URL is set "
+                f"but environment is unavailable ({exc})."
+            )
 
-                with app.app_context():
-                    upgrade(directory=MIGRATIONS_DIR)
-                    upgrade(directory=MIGRATIONS_DIR)
-
-                inspector = sa.inspect(engine)
-                self._assert_required_schema(inspector)
-
-                with engine.begin() as connection:
-                    after_counts = {
-                        "users": self._count_rows(connection, "users"),
-                        "ims_uploads": self._count_rows(connection, "ims_uploads"),
-                        "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
-                        "ims_facts": self._count_rows(connection, "ims_facts"),
-                    }
-                    self.assertEqual(before_counts, after_counts)
-
-                    legacy_user_email = connection.execute(
-                        sa.text("SELECT email FROM users WHERE id = 1")
-                    ).scalar_one()
-                    self.assertEqual("legacy.user@example.com", legacy_user_email)
-
-                    legacy_upload_name = connection.execute(
-                        sa.text("SELECT file_name FROM ims_uploads WHERE id = 1")
-                    ).scalar_one()
-                    self.assertEqual("ims.xlsx", legacy_upload_name)
-
-                    created_at = datetime(2026, 7, 1, 0, 0, 0)
-                    connection.execute(
-                        sa.text(
-                            """
-                            INSERT INTO ims_raw_data
-                            (id, upload_id, year, month, week_number, quarter, sheet_name, sheet_type,
-                             source_row, representative_id, product_id, unit, tl, market_share,
-                             value_share, growth, raw_json, created_at)
-                            VALUES
-                            (2, 1, 2026, 7, 31, 'Q3', 'BRICK SATIS', 'unknown',
-                             3, 1, 1, 0, 0, 0, 0, 0, '{}', :created_at)
-                            """
-                        ),
-                        {"created_at": created_at},
-                    )
-                    connection.execute(
-                        sa.text(
-                            """
-                            INSERT INTO ims_facts
-                            (id, upload_id, raw_data_id, representative_id, product_id,
-                             year, month, week_number, quarter, report_type, unit, tl,
-                             market_share, value_share, growth, metrics_json, created_at)
-                            VALUES
-                            (2, 1, 2, 1, 1, 2026, 7, 31, 'Q3', 'BOX',
-                             0, 0, 0, 0, 0, '{}', :created_at)
-                            """
-                        ),
-                        {"created_at": created_at},
-                    )
-
-                with self.assertRaises(IntegrityError):
-                    with engine.begin() as connection:
-                        connection.execute(
-                            sa.text(
-                                """
-                                INSERT INTO ims_raw_data
-                                (id, upload_id, year, month, week_number, quarter, sheet_name, sheet_type,
-                                 source_row, representative_id, product_id, unit, tl, market_share,
-                                 value_share, growth, raw_json, created_at)
-                                VALUES
-                                (3, 1, 2026, 7, 31, 'Q3', 'BRICK SATIS', 'unknown',
-                                 4, 1, 1, 0, 0, 0, 0, 0, '{}', :created_at)
-                                """
-                            ),
-                            {"created_at": datetime(2026, 7, 1, 0, 0, 0)},
-                        )
-                        connection.execute(
-                            sa.text(
-                                """
-                                INSERT INTO ims_facts
-                                (id, upload_id, raw_data_id, representative_id, product_id,
-                                 year, month, week_number, quarter, report_type, unit, tl,
-                                 market_share, value_share, growth, metrics_json, created_at)
-                                VALUES
-                                (3, 1, 3, 1, 1, 2026, 7, 31, 'Q3', 'BOX',
-                                 0, 0, 0, 0, 0, '{}', :created_at)
-                                """
-                            ),
-                            {"created_at": datetime(2026, 7, 1, 0, 0, 0)},
-                        )
-
-                fingerprints[dialect_name] = self._schema_fingerprint(inspector)
-
-                with app.app_context():
-                    downgrade(directory=MIGRATIONS_DIR, revision="base")
-
-                downgraded_inspector = sa.inspect(engine)
-                self.assertNotIn("representative_matches", downgraded_inspector.get_table_names())
-                self.assertNotIn("product_matches", downgraded_inspector.get_table_names())
-                self.assertNotIn("manual_match_queue", downgraded_inspector.get_table_names())
-                self.assertNotIn("import_audit_logs", downgraded_inspector.get_table_names())
-                self.assertNotIn(
-                    "week_number",
-                    [c["name"] for c in downgraded_inspector.get_columns("ims_uploads")],
-                )
-                self.assertNotIn(
-                    "week_number",
-                    [c["name"] for c in downgraded_inspector.get_columns("ims_raw_data")],
-                )
-                self.assertNotIn(
-                    "week_number",
-                    [c["name"] for c in downgraded_inspector.get_columns("ims_facts")],
-                )
-
-                with app.app_context():
-                    upgrade(directory=MIGRATIONS_DIR)
-
-                cycle_inspector = sa.inspect(engine)
-                self._assert_required_schema(cycle_inspector)
-
-            if "postgresql" in fingerprints:
-                self.assertEqual(fingerprints["sqlite"], fingerprints["postgresql"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sqlite_path = Path(temp_dir) / "migration_test.db"
+            sqlite_url = f"sqlite:///{sqlite_path}"
+            sqlite_fingerprint = self._run_migration_safety_flow(sqlite_url)
+            postgres_fingerprint = self._run_migration_safety_flow(postgres_url)
+            self.assertEqual(sqlite_fingerprint, postgres_fingerprint)
 
     def test_initialize_database_missing_schema_warns_or_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
