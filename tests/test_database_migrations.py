@@ -20,6 +20,12 @@ MIGRATIONS_DIR = str(REPO_ROOT / "migrations")
 MIGRATION_FILE = (
     REPO_ROOT / "migrations" / "versions" / "e7e561790e74_harden_schema_migrations.py"
 )
+MIGRATION_FILE_RECORD_COUNTS = (
+    REPO_ROOT
+    / "migrations"
+    / "versions"
+    / "3a7f2e1b9c05_add_ims_uploads_record_count_columns.py"
+)
 
 
 def _create_legacy_schema(db_url):
@@ -256,7 +262,10 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         }:
             self.assertIn(table_name, table_names)
 
-        self.assertIn("week_number", [c["name"] for c in inspector.get_columns("ims_uploads")])
+        ims_upload_columns = [c["name"] for c in inspector.get_columns("ims_uploads")]
+        self.assertIn("week_number", ims_upload_columns)
+        for col in ("raw_record_count", "fact_record_count", "summary_record_count"):
+            self.assertIn(col, ims_upload_columns, f"ims_uploads.{col} is missing")
         self.assertIn("week_number", [c["name"] for c in inspector.get_columns("ims_raw_data")])
         self.assertIn("week_number", [c["name"] for c in inspector.get_columns("ims_facts")])
 
@@ -330,6 +339,15 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
 
     def test_upgrade_section_is_additive(self):
         migration_text = MIGRATION_FILE.read_text(encoding="utf-8")
+        upgrade_section = migration_text.split("def upgrade():", maxsplit=1)[1].split(
+            "def downgrade():", maxsplit=1
+        )[0]
+        self.assertNotIn("drop_table", upgrade_section)
+        self.assertNotIn("drop_column", upgrade_section)
+        self.assertNotIn("drop_constraint", upgrade_section)
+
+    def test_record_count_migration_upgrade_section_is_additive(self):
+        migration_text = MIGRATION_FILE_RECORD_COUNTS.read_text(encoding="utf-8")
         upgrade_section = migration_text.split("def upgrade():", maxsplit=1)[1].split(
             "def downgrade():", maxsplit=1
         )[0]
