@@ -5,7 +5,7 @@ from flask import render_template
 from flask import current_app
 from flask import request
 from flask import url_for
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 from flask_login import current_user
 from flask_login import login_required
@@ -119,9 +119,11 @@ def login():
 
         next_page = request.args.get("next") or request.form.get("next")
         if next_page:
-            parsed = urlparse(urljoin(request.host_url, next_page))
-            if parsed.netloc == urlparse(request.host_url).netloc and next_page.startswith("/") and not next_page.startswith("//"):
-                return redirect(next_page)
+            parsed_next = urlparse(next_page)
+            if (not parsed_next.scheme
+                    and not parsed_next.netloc
+                    and parsed_next.path.startswith("/")):
+                return redirect(parsed_next.path)
 
         return redirect(
             url_for("main.dashboard")
