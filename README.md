@@ -20,12 +20,23 @@ IMS Excel içe aktarımı üç kalıcı katmanda çalışır:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python -m flask --app run.py db upgrade
 python run.py
 ```
 
 Uygulama varsayılan olarak `instance/ipm.db` SQLite veritabanını kullanır.
 
-## Oracle yapılandırması
+## Veritabanı migration komutları
+
+```bash
+python -m flask --app run.py db migrate -m "schema change"
+python -m flask --app run.py db upgrade
+python -m flask --app run.py db downgrade -1
+```
+
+Detaylı operasyon akışı: `docs/database_migrations.md`
+
+## Harici veritabanı yapılandırması
 
 Sunucuda bağlantı dizgesini ortam değişkeniyle verin; uygulama bu değer varsa SQLite yerine onu kullanır:
 
@@ -33,16 +44,12 @@ Sunucuda bağlantı dizgesini ortam değişkeniyle verin; uygulama bu değer var
 export DATABASE_URL='oracle+oracledb://user:password@host:1521/?service_name=SERVICE'
 ```
 
-Oracle Python sürücüsünü sunucunun standartlarına göre kurun. Mevcut bir veritabanında model değişikliklerini `db.create_all()` ile değil Alembic/Flask-Migrate ile yönetin:
-
-```bash
-flask --app run.py db migrate -m "add IMS ETL facts"
-flask --app run.py db upgrade
-```
+Oracle/Pg sürücülerini sunucu standartlarına göre kurun ve şema değişikliklerini Alembic/Flask-Migrate ile yönetin.
 
 ## Doğrulama
 
 ```powershell
+python -m pytest tests/test_database_migrations.py -v
 python -m unittest tests.test_ims_import_service
 python -m compileall -q app config.py run.py tests
 ```
