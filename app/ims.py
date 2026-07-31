@@ -13,6 +13,9 @@ from werkzeug.utils import secure_filename
 
 from app.models import IMSUpload
 
+from app.services.dashboard_service import (
+    DashboardService
+)
 from app.services.ims_import_service import (
     IMSImportService
 )
@@ -43,11 +46,15 @@ def index():
 
     ).all()
 
+    dashboard = DashboardService().run()
+
     return render_template(
 
         "ims.html",
 
-        uploads=uploads
+        uploads=uploads,
+
+        dashboard=dashboard
 
     )
 
