@@ -37,9 +37,13 @@ class AliasService:
     _product_cache = {}
     _product_alias_cache = {}
     _product_match_cache = {}
+    _product_raw_cache = {}
+    _product_alias_raw_cache = {}
     _representative_cache = {}
     _representative_alias_cache = {}
     _representative_match_cache = {}
+    _representative_raw_cache = {}
+    _representative_alias_raw_cache = {}
     _region_cache = {}
     _province_cache = {}
     _statistics = {
@@ -65,6 +69,24 @@ class AliasService:
     @classmethod
     def clean_name(cls, value):
         return cls.normalize(value)
+
+    @classmethod
+    def _raw_key(cls, value):
+        return "" if value is None else str(value).strip().upper()
+
+    @classmethod
+    def _whitespace_key(cls, value):
+        return re.sub(r"\s+", " ", cls._raw_key(value)).strip()
+
+    @classmethod
+    def _punctuation_key(cls, value):
+        return re.sub(r"[^0-9A-ZÇĞİÖŞÜ ]+", " ", cls._whitespace_key(value))
+
+    @classmethod
+    def _accent_key(cls, value):
+        text = unicodedata.normalize("NFKD", cls._punctuation_key(value))
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        return re.sub(r"\s+", " ", text).strip()
 
     @classmethod
     def similarity(cls, first, second):
@@ -97,9 +119,13 @@ class AliasService:
             cls._product_cache = {}
             cls._product_alias_cache = {}
             cls._product_match_cache = {}
+            cls._product_raw_cache = {}
+            cls._product_alias_raw_cache = {}
             cls._representative_cache = {}
             cls._representative_alias_cache = {}
             cls._representative_match_cache = {}
+            cls._representative_raw_cache = {}
+            cls._representative_alias_raw_cache = {}
             cls._region_cache = {}
             cls._province_cache = {}
 
@@ -112,22 +138,32 @@ class AliasService:
             cls._product_cache = {}
             cls._product_alias_cache = {}
             cls._product_match_cache = {}
+            cls._product_raw_cache = {}
+            cls._product_alias_raw_cache = {}
             cls._representative_cache = {}
             cls._representative_alias_cache = {}
             cls._representative_match_cache = {}
+            cls._representative_raw_cache = {}
+            cls._representative_alias_raw_cache = {}
             cls._region_cache = {}
             cls._province_cache = {}
 
             for product in Product.query.filter_by(is_active=True).all():
                 for label in (product.product_name, product.product_code, product.ims_name):
                     normalized = cls.normalize(label)
+                    raw_key = cls._raw_key(label)
                     if normalized:
                         cls._product_cache[normalized] = product
+                    if raw_key:
+                        cls._product_raw_cache[raw_key] = product
 
             for alias in ProductAlias.query.all():
                 normalized = cls.normalize(alias.alias_name)
+                raw_key = cls._raw_key(alias.alias_name)
                 if normalized and alias.product and alias.product.is_active:
                     cls._product_alias_cache[normalized] = alias.product
+                if raw_key and alias.product and alias.product.is_active:
+                    cls._product_alias_raw_cache[raw_key] = alias.product
 
             for match in ProductMatch.query.all():
                 normalized = cls.normalize(match.ims_name)
@@ -137,8 +173,11 @@ class AliasService:
             for representative in Representative.query.filter_by(active=True).all():
                 for label in (representative.rep_name, representative.rep_code, representative.ims_code):
                     normalized = cls.normalize(label)
+                    raw_key = cls._raw_key(label)
                     if normalized:
                         cls._representative_cache[normalized] = representative
+                    if raw_key:
+                        cls._representative_raw_cache[raw_key] = representative
                 normalized_region = cls.normalize(representative.region)
                 if normalized_region:
                     cls._region_cache.setdefault(normalized_region, representative.region)
@@ -148,8 +187,11 @@ class AliasService:
 
             for alias in RepresentativeAlias.query.all():
                 normalized = cls.normalize(alias.alias_name)
+                raw_key = cls._raw_key(alias.alias_name)
                 if normalized and alias.representative and alias.representative.active:
                     cls._representative_alias_cache[normalized] = alias.representative
+                if raw_key and alias.representative and alias.representative.active:
+                    cls._representative_alias_raw_cache[raw_key] = alias.representative
 
             for match in RepresentativeMatch.query.all():
                 normalized = cls.normalize(match.ims_name)
@@ -171,9 +213,19 @@ class AliasService:
         cls.load_cache()
 
     @classmethod
-    def _find(cls, value, primary_cache, alias_cache, match_cache, minimum_score):
+    def _find(
+        cls,
+        value,
+        primary_cache,
+        alias_cache,
+        match_cache,
+        primary_raw_cache,
+        alias_raw_cache,
+        minimum_score,
+    ):
         cls.load_cache()
         normalized = cls.normalize(value)
+        raw_key = cls._raw_key(value)
         if not normalized:
             cls._statistics["cache_miss"] += 1
             return cls.build_match(False, 0, "EMPTY", None)
@@ -184,13 +236,37 @@ class AliasService:
             cls._statistics["cache_hits"] += 1
             return cls.build_match(True, 100, "MATCH_TABLE", obj)
 
+        # Priority 2: exact source-value match (case/whitespace preserved key)
+        for cache, method in ((primary_raw_cache, "EXACT"), (alias_raw_cache, "ALIAS_EXACT")):
+            obj = cache.get(raw_key)
+            if obj is not None:
+                cls._statistics["cache_hits"] += 1
+                return cls.build_match(True, 100, method, obj)
+
         # Priority 2 & 3: exact primary cache (covers code, name, ims_name)
         # Priority 4: alias cache
-        for cache, method in ((primary_cache, "EXACT"), (alias_cache, "ALIAS")):
+        for cache, method in ((primary_cache, "NORMALIZED"), (alias_cache, "ALIAS_NORMALIZED")):
             obj = cache.get(normalized)
             if obj is not None:
                 cls._statistics["cache_hits"] += 1
                 return cls.build_match(True, 100, method, obj)
+
+        transformed_checks = (
+            (cls._accent_key, "ACCENT_INSENSITIVE"),
+            (cls._whitespace_key, "WHITESPACE_NORMALIZED"),
+            (cls._punctuation_key, "PUNCTUATION_NORMALIZED"),
+        )
+        for transform, method_name in transformed_checks:
+            transformed_input = transform(value)
+            for cache, suffix in ((primary_raw_cache, ""), (alias_raw_cache, "_ALIAS")):
+                transformed_candidates = sorted(
+                    ((transform(key), obj) for key, obj in cache.items()),
+                    key=lambda item: item[0],
+                )
+                for transformed_key, obj in transformed_candidates:
+                    if transformed_key and transformed_key == transformed_input:
+                        cls._statistics["cache_hits"] += 1
+                        return cls.build_match(True, 100, f"{method_name}{suffix}", obj)
 
         # Priority 5: contains match
         candidates = [
@@ -214,14 +290,14 @@ class AliasService:
         best_method = "NO_MATCH"
         best_score = 0.0
         for cache, method in ((primary_cache, "SIMILARITY"), (alias_cache, "ALIAS_SIMILARITY")):
-            for label, obj in cache.items():
+            for label, obj in sorted(cache.items(), key=lambda item: item[0]):
                 score = cls.similarity(normalized, label)
-                if score > best_score:
+                if score > best_score or (score == best_score and label < best_label):
                     best_label, best_obj, best_method, best_score = label, obj, method, score
 
         if best_obj is not None and best_score >= minimum_score:
             cls._statistics["cache_hits"] += 1
-            return cls.build_match(True, best_score * 100, best_method, best_obj)
+            return cls.build_match(True, best_score * 100, "FUZZY" if best_method == "SIMILARITY" else best_method, best_obj)
 
         # No match found
         cls._statistics["cache_miss"] += 1
@@ -235,6 +311,8 @@ class AliasService:
             cls._product_cache,
             cls._product_alias_cache,
             cls._product_match_cache,
+            cls._product_raw_cache,
+            cls._product_alias_raw_cache,
             cls.SIMILARITY_LIMIT if minimum_score is None else minimum_score,
         )
 
@@ -246,6 +324,8 @@ class AliasService:
             cls._representative_cache,
             cls._representative_alias_cache,
             cls._representative_match_cache,
+            cls._representative_raw_cache,
+            cls._representative_alias_raw_cache,
             cls.SIMILARITY_LIMIT if minimum_score is None else minimum_score,
         )
 
