@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sys
 import tempfile
@@ -17,6 +16,7 @@ from app import create_app
 from app.database import initialize_database
 from app.extensions import db
 from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload
+from app.services.alias_service import AliasService
 from app.services.ims_import_service import IMSImportService
 from config import Config
 
@@ -30,22 +30,6 @@ class ValidationConfig(Config):
     TESTING = True
 
 
-class _StageCaptureHandler(logging.Handler):
-    def __init__(self):
-        super().__init__()
-        self.payloads: list[dict] = []
-
-    def emit(self, record):  # pragma: no cover - logging hook
-        message = record.getMessage()
-        prefix = "ims_import_stage_metrics "
-        if not message.startswith(prefix):
-            return
-        try:
-            self.payloads.append(json.loads(message[len(prefix) :]))
-        except json.JSONDecodeError:
-            return
-
-
 def run_validation(db_url: str, sample_path: Path = DEFAULT_SAMPLE) -> dict:
     if not sample_path.exists():
         raise FileNotFoundError(f"Sample workbook not found: {sample_path}")
@@ -55,6 +39,7 @@ def run_validation(db_url: str, sample_path: Path = DEFAULT_SAMPLE) -> dict:
     with app.app_context():
         upgrade(directory=MIGRATIONS_DIR)
         initialize_database()
+        AliasService.clear_cache()
 
         IMSUpload.query.delete(synchronize_session=False)
         IMSRawData.query.delete(synchronize_session=False)
@@ -62,16 +47,27 @@ def run_validation(db_url: str, sample_path: Path = DEFAULT_SAMPLE) -> dict:
         IMSSummary.query.delete(synchronize_session=False)
         db.session.commit()
 
-        logger = logging.getLogger("app.services.ims_import_service")
-        stage_capture = _StageCaptureHandler()
-        logger.addHandler(stage_capture)
+        captured_stage_payloads: list[dict] = []
+        original_log_stage_metrics = IMSImportService._log_stage_metrics
+
+        def capture_stage_metrics(service, stage, **metrics):
+            payload = {
+                "stage": stage,
+                "upload_id": service.upload.id if service.upload else None,
+                **metrics,
+            }
+            captured_stage_payloads.append(payload)
+            return original_log_stage_metrics(service, stage, **metrics)
+
+        IMSImportService._log_stage_metrics = capture_stage_metrics
 
         try:
             result = IMSImportService(sample_path, uploaded_by="Runtime Validation").run(2026, 6)
         except OperationalError as exc:
             raise RuntimeError(f"sqlite OperationalError during import: {exc}") from exc
         finally:
-            logger.removeHandler(stage_capture)
+            IMSImportService._log_stage_metrics = original_log_stage_metrics
+            AliasService.clear_cache()
 
         error_blob = " | ".join(result.get("errors", []))
         if not result.get("success"):
@@ -93,7 +89,7 @@ def run_validation(db_url: str, sample_path: Path = DEFAULT_SAMPLE) -> dict:
         if summary_with_value_share <= 0:
             raise RuntimeError("value_share insert failed for ims_summary")
 
-        stage_names = {item.get("stage") for item in stage_capture.payloads}
+        stage_names = {item.get("stage") for item in captured_stage_payloads}
         expected_stages = {
             "workbook_rows_read",
             "parsed_rows",
@@ -119,7 +115,7 @@ def run_validation(db_url: str, sample_path: Path = DEFAULT_SAMPLE) -> dict:
                 "ims_summary": summary_count,
                 "ims_summary_value_share_non_null": summary_with_value_share,
             },
-            "stage_metrics_count": len(stage_capture.payloads),
+            "stage_metrics_count": len(captured_stage_payloads),
             "statistics": result.get("statistics", {}),
         }
 

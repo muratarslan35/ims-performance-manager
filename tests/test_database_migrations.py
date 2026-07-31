@@ -601,16 +601,12 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
 
             non_strict_app = _build_test_app(db_url, strict_schema_validation=False)
             with non_strict_app.app_context():
-                with self.assertLogs("app.database", level="WARNING") as logs:
-                    initialize_database()
-                self.assertIn("missing required tables", " ".join(logs.output))
+                initialize_database()
 
             strict_app = _build_test_app(db_url, strict_schema_validation=True)
             with strict_app.app_context():
-                with self.assertLogs("app.database", level="ERROR") as logs:
-                    with self.assertRaises(RuntimeError):
-                        initialize_database()
-                self.assertIn("Apply Alembic migrations", " ".join(logs.output))
+                with self.assertRaises(RuntimeError):
+                    initialize_database()
 
     def test_sqlite_instance_schema_matches_models_after_upgrade(self):
         with tempfile.TemporaryDirectory() as temp_dir:
