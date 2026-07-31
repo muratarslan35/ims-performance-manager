@@ -1,7 +1,7 @@
 """expand manual_match_queue review fields
 
 Revision ID: b19e4f6a2d10
-Revises: 3a7f2e1b9c05
+Revises: 7d6b6e470de7
 Create Date: 2026-07-31 16:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "b19e4f6a2d10"
-down_revision = "3a7f2e1b9c05"
+down_revision = "7d6b6e470de7"
 branch_labels = None
 depends_on = None
 

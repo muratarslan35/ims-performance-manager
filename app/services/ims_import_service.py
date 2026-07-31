@@ -465,14 +465,11 @@ class IMSImportService:
         result = dataframe.copy()
         representative_values = result[representative_column].fillna("").astype(str).str.strip()
         normalized_values = representative_values.map(AliasService.normalize)
-        result = result[representative_values != ""]
-        result = result[
-            ~normalized_values.isin(self.TOTAL_LABELS)
-        ]
-        result = result[
-            ~normalized_values.isin(self.REPRESENTATIVE_HEADERS)
-            & ~normalized_values.str.startswith(tuple(self.NOISE_ROW_TOKENS))
-        ]
+        valid_mask = representative_values != ""
+        valid_mask &= ~normalized_values.isin(self.TOTAL_LABELS)
+        valid_mask &= ~normalized_values.isin(self.REPRESENTATIVE_HEADERS)
+        valid_mask &= ~normalized_values.str.startswith(tuple(self.NOISE_ROW_TOKENS))
+        result = result[valid_mask]
         duplicate_mask = normalized_values.duplicated(keep=False) & ~normalized_values.isin(self.TOTAL_LABELS)
         duplicate_count = int(duplicate_mask.sum())
         if duplicate_count:
