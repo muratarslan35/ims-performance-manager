@@ -104,6 +104,7 @@ class IMSImportService:
             "unmatched_provinces": 0,
             "queued_for_manual": 0,
             "skipped_records": 0,
+            "rows_error": 0,
         }
         self.skipped_logs = []
         self.parser_decisions = []
@@ -352,6 +353,23 @@ class IMSImportService:
         self.skipped_logs.append(payload)
         logger.warning("ims_import_skipped_row %s", self._json_dump(payload))
 
+    def _log_warning(self, reason, sheet_name, source_row, **context):
+        payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
+        self.warnings.append(self._json_dump(payload))
+
+    def parse_metric_value(self, value):
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return 0.0, True
+        if isinstance(value, (int, float, bool)):
+            return self.safe_float(value), True
+        text = str(value).strip()
+        if not text or AliasService.normalize(text) in {"", "NAN", "NONE", "-"}:
+            return 0.0, True
+        parsed = self.safe_float(text)
+        has_numeric_marker = bool(re.search(r"\d", text))
+        valid = has_numeric_marker or parsed != 0.0
+        return parsed, valid
+
     def resolve_representative_match(self, representative_name):
         normalized = AliasService.normalize(representative_name)
         if normalized not in self._representative_match_cache:
@@ -410,6 +428,7 @@ class IMSImportService:
 
     def detect_product_columns(self, dataframe, representative_column):
         products = {}
+        seen_metric_pairs = set()
         for column_index, header in enumerate(dataframe.columns):
             if header == representative_column:
                 continue
@@ -429,6 +448,16 @@ class IMSImportService:
                     "metric": self.metric_for_column(header),
                 }
             )
+            metric_pair = (product.id, self.metric_for_column(header))
+            if metric_pair in seen_metric_pairs:
+                self._log_warning(
+                    reason="duplicate_product_metric_column",
+                    sheet_name="unknown",
+                    source_row=0,
+                    product=product.product_name,
+                    header=str(header),
+                )
+            seen_metric_pairs.add(metric_pair)
             self.statistics["matched_products"] += 1
         return products
 
@@ -444,6 +473,15 @@ class IMSImportService:
             ~normalized_values.isin(self.REPRESENTATIVE_HEADERS)
             & ~normalized_values.str.startswith(tuple(self.NOISE_ROW_TOKENS))
         ]
+        duplicate_mask = normalized_values.duplicated(keep=False) & ~normalized_values.isin(self.TOTAL_LABELS)
+        duplicate_count = int(duplicate_mask.sum())
+        if duplicate_count:
+            self._log_warning(
+                reason="duplicate_representative_rows",
+                sheet_name="unknown",
+                source_row=0,
+                count=duplicate_count,
+            )
         result.reset_index(drop=True, inplace=True)
         return result
 
@@ -552,123 +590,159 @@ class IMSImportService:
     def stage_normalized_raw_data(self, normalized_rows, year, month, week_number=None):
         for item in normalized_rows:
             representative_name = item["representative_name"]
-            representative_match = self.resolve_representative_match(representative_name)
-            representative_id = None
-            if representative_match["matched"]:
-                representative_id = representative_match["object"].id
-                self.statistics["matched_representatives"] += 1
-            else:
-                self.statistics["unmatched_representatives"] += 1
-                self.statistics["queued_for_manual"] += 1
-                self._log_skipped_row(
-                    reason="unmatched_representative",
-                    sheet_name=" | ".join(sorted(item["sheet_names"])),
-                    source_row=min(item["source_rows"]),
-                    representative=representative_name,
-                )
-                best = representative_match.get("object")
-                AliasService.enqueue_unmatched_representative(
-                    ims_name=representative_name,
-                    upload_id=self.upload.id,
-                    best_candidate=best.rep_name if best else None,
-                    best_score=representative_match.get("score", 0.0),
-                    worksheet=" | ".join(sorted(item["sheet_names"])),
-                    row_number=min(item["source_rows"]),
-                    reason="unmatched_representative",
-                )
-
-            product_group_name = item["product_group"]
-            product_match = self.resolve_product_match(product_group_name)
-            if not product_match["matched"]:
-                self.statistics["skipped_records"] += 1
-                self.statistics["unmatched_products"] += 1
-                self.unknown_products.append(product_group_name)
-                self._log_skipped_row(
-                    reason="unmatched_product_group",
-                    sheet_name=" | ".join(sorted(item["sheet_names"])),
-                    source_row=min(item["source_rows"]),
-                    representative=representative_name,
-                    product_group=product_group_name,
-                )
-                best = product_match.get("object")
-                AliasService.enqueue_unmatched_product(
-                    ims_name=product_group_name,
-                    upload_id=self.upload.id,
-                    best_candidate=best.product_name if best else None,
-                    best_score=product_match.get("score", 0.0),
-                    worksheet=" | ".join(sorted(item["sheet_names"])),
-                    row_number=min(item["source_rows"]),
-                    reason="unmatched_product_group",
-                )
-                continue
-
-            region_value = self.clean_text(item.get("region"))
-            if region_value:
-                region_suggestion = AliasService.suggest_region(region_value)
-                if not region_suggestion["matched"]:
-                    self.statistics["unmatched_regions"] += 1
+            try:
+                representative_match = self.resolve_representative_match(representative_name)
+                representative_id = None
+                if representative_match["matched"]:
+                    representative_id = representative_match["object"].id
+                    self.statistics["matched_representatives"] += 1
+                else:
+                    self.statistics["unmatched_representatives"] += 1
                     self.statistics["queued_for_manual"] += 1
-                    AliasService.enqueue_unmatched_region(
-                        source_value=region_value,
-                        import_id=self.upload.id,
+                    self._log_skipped_row(
+                        reason="unmatched_representative",
+                        sheet_name=" | ".join(sorted(item["sheet_names"])),
+                        source_row=min(item["source_rows"]),
+                        representative=representative_name,
+                    )
+                    best = representative_match.get("object")
+                    AliasService.enqueue_unmatched_representative(
+                        ims_name=representative_name,
+                        upload_id=self.upload.id,
+                        best_candidate=best.rep_name if best else None,
+                        best_score=representative_match.get("score", 0.0),
                         worksheet=" | ".join(sorted(item["sheet_names"])),
                         row_number=min(item["source_rows"]),
-                        suggested_match=region_suggestion.get("value"),
-                        confidence_score=region_suggestion.get("score", 0.0),
-                        reason="unmatched_region",
+                        reason="unmatched_representative",
                     )
 
-            province_value = self.clean_text(item.get("province"))
-            if province_value:
-                province_suggestion = AliasService.suggest_province(province_value)
-                if not province_suggestion["matched"]:
-                    self.statistics["unmatched_provinces"] += 1
-                    self.statistics["queued_for_manual"] += 1
-                    AliasService.enqueue_unmatched_province(
-                        source_value=province_value,
-                        import_id=self.upload.id,
+                product_group_name = item["product_group"]
+                product_match = self.resolve_product_match(product_group_name)
+                if not product_match["matched"]:
+                    self.statistics["skipped_records"] += 1
+                    self.statistics["unmatched_products"] += 1
+                    self.unknown_products.append(product_group_name)
+                    self._log_skipped_row(
+                        reason="unmatched_product_group",
+                        sheet_name=" | ".join(sorted(item["sheet_names"])),
+                        source_row=min(item["source_rows"]),
+                        representative=representative_name,
+                        product_group=product_group_name,
+                    )
+                    best = product_match.get("object")
+                    AliasService.enqueue_unmatched_product(
+                        ims_name=product_group_name,
+                        upload_id=self.upload.id,
+                        best_candidate=best.product_name if best else None,
+                        best_score=product_match.get("score", 0.0),
                         worksheet=" | ".join(sorted(item["sheet_names"])),
                         row_number=min(item["source_rows"]),
-                        suggested_match=province_suggestion.get("value"),
-                        confidence_score=province_suggestion.get("score", 0.0),
-                        reason="unmatched_province",
+                        reason="unmatched_product_group",
                     )
+                    continue
 
-            self.statistics["matched_products"] += 1
-            metrics = item["metrics"]
-            if not any(metrics.values()):
-                self.statistics["skipped_records"] += 1
-                self._log_skipped_row(
-                    reason="empty_metrics",
+                region_value = self.clean_text(item.get("region"))
+                if region_value:
+                    region_suggestion = AliasService.suggest_region(region_value)
+                    if not region_suggestion["matched"]:
+                        self.statistics["unmatched_regions"] += 1
+                        self.statistics["queued_for_manual"] += 1
+                        AliasService.enqueue_unmatched_region(
+                            source_value=region_value,
+                            import_id=self.upload.id,
+                            worksheet=" | ".join(sorted(item["sheet_names"])),
+                            row_number=min(item["source_rows"]),
+                            suggested_match=region_suggestion.get("value"),
+                            confidence_score=region_suggestion.get("score", 0.0),
+                            reason="unmatched_region",
+                        )
+                    elif representative_match["matched"]:
+                        canonical_region = self.clean_text(representative_match["object"].region)
+                        if canonical_region and AliasService.normalize(canonical_region) != AliasService.normalize(
+                            region_value
+                        ):
+                            self._log_warning(
+                                reason="inconsistent_region",
+                                sheet_name=" | ".join(sorted(item["sheet_names"])),
+                                source_row=min(item["source_rows"]),
+                                representative=representative_name,
+                                region=region_value,
+                                expected_region=canonical_region,
+                            )
+
+                province_value = self.clean_text(item.get("province"))
+                if province_value:
+                    province_suggestion = AliasService.suggest_province(province_value)
+                    if not province_suggestion["matched"]:
+                        self.statistics["unmatched_provinces"] += 1
+                        self.statistics["queued_for_manual"] += 1
+                        AliasService.enqueue_unmatched_province(
+                            source_value=province_value,
+                            import_id=self.upload.id,
+                            worksheet=" | ".join(sorted(item["sheet_names"])),
+                            row_number=min(item["source_rows"]),
+                            suggested_match=province_suggestion.get("value"),
+                            confidence_score=province_suggestion.get("score", 0.0),
+                            reason="unmatched_province",
+                        )
+                    elif representative_match["matched"]:
+                        canonical_province = self.clean_text(representative_match["object"].city)
+                        if canonical_province and AliasService.normalize(
+                            canonical_province
+                        ) != AliasService.normalize(province_value):
+                            self._log_warning(
+                                reason="inconsistent_province",
+                                sheet_name=" | ".join(sorted(item["sheet_names"])),
+                                source_row=min(item["source_rows"]),
+                                representative=representative_name,
+                                province=province_value,
+                                expected_province=canonical_province,
+                            )
+
+                self.statistics["matched_products"] += 1
+                metrics = item["metrics"]
+                if not any(metrics.values()):
+                    self.statistics["skipped_records"] += 1
+                    self._log_skipped_row(
+                        reason="empty_metrics",
+                        sheet_name=" | ".join(sorted(item["sheet_names"])),
+                        source_row=min(item["source_rows"]),
+                        representative=representative_name,
+                        product_group=product_group_name,
+                    )
+                    continue
+
+                source_values = {
+                    **item["source_values"],
+                    "region": item["region"],
+                    "province": item["province"],
+                    "product_group": product_group_name,
+                    "sheet_names": sorted(item["sheet_names"]),
+                }
+
+                self.create_raw_record(
+                    year=year,
+                    month=month,
+                    week_number=week_number,
                     sheet_name=" | ".join(sorted(item["sheet_names"])),
+                    sheet_type="brick_normalized",
                     source_row=min(item["source_rows"]),
-                    representative=representative_name,
-                    product_group=product_group_name,
+                    representative_name=representative_name,
+                    representative_id=representative_id,
+                    product=product_match["object"],
+                    metrics=metrics,
+                    source_values=source_values,
+                )
+                self.statistics["processed_rows"] += 1
+            except Exception as exc:
+                self.statistics["rows_error"] += 1
+                self._log_skipped_row(
+                    reason="row_processing_error",
+                    sheet_name=" | ".join(sorted(item.get("sheet_names", []))),
+                    source_row=min(item.get("source_rows", [0])),
+                    error=str(exc),
                 )
                 continue
-
-            source_values = {
-                **item["source_values"],
-                "region": item["region"],
-                "province": item["province"],
-                "product_group": product_group_name,
-                "sheet_names": sorted(item["sheet_names"]),
-            }
-
-            self.create_raw_record(
-                year=year,
-                month=month,
-                week_number=week_number,
-                sheet_name=" | ".join(sorted(item["sheet_names"])),
-                sheet_type="brick_normalized",
-                source_row=min(item["source_rows"]),
-                representative_name=representative_name,
-                representative_id=representative_id,
-                product=product_match["object"],
-                metrics=metrics,
-                source_values=source_values,
-            )
-            self.statistics["processed_rows"] += 1
 
     def create_raw_record(
         self,
@@ -724,70 +798,102 @@ class IMSImportService:
             representative_column = sheet["representative_column"]
 
             for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
-                representative_name = str(row[representative_column]).strip()
-                representative_match = self.resolve_representative_match(representative_name)
-                representative_id = None
-                if representative_match["matched"]:
-                    representative_id = representative_match["object"].id
-                    self.statistics["matched_representatives"] += 1
-                else:
-                    self.statistics["unmatched_representatives"] += 1
-                    self.warnings.append(
-                        f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
-                        f"temsilci eşleşmedi ({representative_name})."
-                    )
-                    self._log_skipped_row(
-                        reason="unmatched_representative",
-                        sheet_name=sheet["sheet_name"],
-                        source_row=dataframe_index + sheet["header_row"] + 2,
-                        representative=representative_name,
-                    )
-                    # Queue for manual resolution
-                    best = representative_match.get("object")
-                    AliasService.enqueue_unmatched_representative(
-                        ims_name=representative_name,
-                        upload_id=self.upload.id,
-                        best_candidate=best.rep_name if best else None,
-                        best_score=representative_match.get("score", 0.0),
-                        worksheet=sheet["sheet_name"],
-                        row_number=dataframe_index + sheet["header_row"] + 2,
-                        reason="unmatched_representative",
-                    )
-                    self.statistics["queued_for_manual"] += 1
-
-                for product_info in sheet["products"].values():
-                    metrics = {"unit": 0.0, "tl": 0.0, "market_share": 0.0, "value_share": 0.0, "growth": 0.0}
-                    source_values = {}
-                    for column in product_info["columns"]:
-                        value = row.iloc[column["index"]]
-                        metrics[column["metric"]] += self.safe_float(value)
-                        source_values[column["header"]] = self._value_for_json(value)
-
-                    if not any(metrics.values()):
-                        self.statistics["skipped_records"] += 1
+                try:
+                    representative_name = str(row[representative_column]).strip()
+                    representative_match = self.resolve_representative_match(representative_name)
+                    representative_id = None
+                    if representative_match["matched"]:
+                        representative_id = representative_match["object"].id
+                        self.statistics["matched_representatives"] += 1
+                    else:
+                        self.statistics["unmatched_representatives"] += 1
+                        self.warnings.append(
+                            f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
+                            f"temsilci eşleşmedi ({representative_name})."
+                        )
                         self._log_skipped_row(
-                            reason="empty_metrics",
+                            reason="unmatched_representative",
                             sheet_name=sheet["sheet_name"],
                             source_row=dataframe_index + sheet["header_row"] + 2,
                             representative=representative_name,
-                            product=product_info["product"].product_name,
                         )
-                        continue
+                        # Queue for manual resolution
+                        best = representative_match.get("object")
+                        AliasService.enqueue_unmatched_representative(
+                            ims_name=representative_name,
+                            upload_id=self.upload.id,
+                            best_candidate=best.rep_name if best else None,
+                            best_score=representative_match.get("score", 0.0),
+                            worksheet=sheet["sheet_name"],
+                            row_number=dataframe_index + sheet["header_row"] + 2,
+                            reason="unmatched_representative",
+                        )
+                        self.statistics["queued_for_manual"] += 1
 
-                    self.create_raw_record(
-                        year=year,
-                        month=month,
-                        week_number=week_number,
+                    for product_info in sheet["products"].values():
+                        metrics = {
+                            "unit": 0.0,
+                            "tl": 0.0,
+                            "market_share": 0.0,
+                            "value_share": 0.0,
+                            "growth": 0.0,
+                        }
+                        source_values = {}
+                        for column in product_info["columns"]:
+                            value = row.iloc[column["index"]]
+                            parsed_value, valid_numeric = self.parse_metric_value(value)
+                            if not valid_numeric:
+                                self.statistics["skipped_records"] += 1
+                                self._log_skipped_row(
+                                    reason="invalid_numeric_value",
+                                    sheet_name=sheet["sheet_name"],
+                                    source_row=dataframe_index + sheet["header_row"] + 2,
+                                    representative=representative_name,
+                                    product=product_info["product"].product_name,
+                                    field=column["header"],
+                                    value=self._value_for_json(value),
+                                )
+                                metrics = None
+                                break
+                            metrics[column["metric"]] += parsed_value
+                            source_values[column["header"]] = self._value_for_json(value)
+                        if metrics is None:
+                            continue
+
+                        if not any(metrics.values()):
+                            self.statistics["skipped_records"] += 1
+                            self._log_skipped_row(
+                                reason="empty_metrics",
+                                sheet_name=sheet["sheet_name"],
+                                source_row=dataframe_index + sheet["header_row"] + 2,
+                                representative=representative_name,
+                                product=product_info["product"].product_name,
+                            )
+                            continue
+
+                        self.create_raw_record(
+                            year=year,
+                            month=month,
+                            week_number=week_number,
+                            sheet_name=sheet["sheet_name"],
+                            sheet_type=sheet["sheet_type"],
+                            source_row=dataframe_index + sheet["header_row"] + 2,
+                            representative_name=representative_name,
+                            representative_id=representative_id,
+                            product=product_info["product"],
+                            metrics=metrics,
+                            source_values=source_values,
+                        )
+                    self.statistics["processed_rows"] += 1
+                except Exception as exc:
+                    self.statistics["rows_error"] += 1
+                    self._log_skipped_row(
+                        reason="row_processing_error",
                         sheet_name=sheet["sheet_name"],
-                        sheet_type=sheet["sheet_type"],
                         source_row=dataframe_index + sheet["header_row"] + 2,
-                        representative_name=representative_name,
-                        representative_id=representative_id,
-                        product=product_info["product"],
-                        metrics=metrics,
-                        source_values=source_values,
+                        error=str(exc),
                     )
-                self.statistics["processed_rows"] += 1
+                    continue
             self.statistics["processed_sheets"] += 1
 
         db.session.flush()
@@ -936,8 +1042,13 @@ class IMSImportService:
             rows_inserted=self.statistics.get("facts_inserted", 0),
             rows_updated=self.statistics.get("facts_updated", 0),
             rows_skipped=self.statistics.get("skipped_records", 0),
-            rows_unmatched=self.statistics.get("unmatched_representatives", 0),
-            rows_error=len(self.errors),
+            rows_unmatched=(
+                self.statistics.get("unmatched_representatives", 0)
+                + self.statistics.get("unmatched_products", 0)
+                + self.statistics.get("unmatched_regions", 0)
+                + self.statistics.get("unmatched_provinces", 0)
+            ),
+            rows_error=self.statistics.get("rows_error", 0) + len(self.errors),
             queued_for_manual=self.statistics.get("queued_for_manual", 0),
             processing_time=round(time.monotonic() - self.started, 2),
             status="COMPLETED" if success else "FAILED",
@@ -968,6 +1079,7 @@ class IMSImportService:
             "unknown_products": sorted(set(self.unknown_products)),
             "unknown_columns": sorted(set(self.unknown_columns)),
             "skipped_logs": self.skipped_logs,
+            "parser_decisions": self.parser_decisions,
             "processing_time": round(time.monotonic() - self.started, 2),
         }
 
