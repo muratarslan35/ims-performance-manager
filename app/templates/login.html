@@ -1,43 +1,65 @@
 {% extends "base.html" %}
 
+{% block title %}Giriş Yap | BİLİM İLAÇ IMS{% endblock %}
+
 {% block content %}
+<div class="auth-shell">
+    <section class="auth-card auth-card-narrow">
+        <div class="auth-brand-hero">
+            <div class="auth-brand-logo">
+                <i class="bi bi-bar-chart-line-fill"></i>
+            </div>
+            <div>
+                <p class="auth-eyebrow">BİLİM İLAÇ</p>
+                <h1 class="auth-headline">IMS Performans Yönetim Sistemi</h1>
+                <p class="auth-tagline">Performans &bull; Hedef &bull; Prim &bull; Analiz</p>
+            </div>
+        </div>
 
-<div class="auth-shell"><section class="auth-card auth-card-narrow"><div class="auth-brand"><span class="auth-brand-icon"><i class="bi bi-graph-up-arrow"></i></span><div><p class="auth-eyebrow">IMS PERFORMANS</p><h1>Tekrar hoş geldiniz</h1><p>Performans yönetim alanınıza giriş yapın.</p></div></div><form method="POST" action="{{ url_for('auth.login') }}" class="auth-form">
+        <h2 class="auth-welcome">Tekrar hoş geldiniz</h2>
+        <p class="auth-subtitle">Performans yönetim alanınıza giriş yapın.</p>
 
-<div class="mb-3">
+        <form method="POST" action="{{ url_for('auth.login') }}" class="auth-form">
 
-<label class="form-label">
+            <div class="mb-3">
+                <label class="form-label" for="login_email">E-Posta</label>
+                <input
+                    type="email"
+                    id="login_email"
+                    name="email"
+                    class="form-control"
+                    placeholder="ornek@firma.com"
+                    autocomplete="email"
+                    required>
+            </div>
 
-E-Posta
+            <div class="mb-3">
+                <label class="form-label" for="login_password">Şifre</label>
+                <input
+                    type="password"
+                    id="login_password"
+                    name="password"
+                    class="form-control"
+                    placeholder="••••••••"
+                    autocomplete="current-password"
+                    required>
+            </div>
 
-</label>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" name="remember" id="remember_me">
+                    <label class="form-check-label text-secondary" for="remember_me">Beni Hatırla</label>
+                </div>
+                <a class="auth-link" href="{{ url_for('auth.forgot_password') }}">Şifremi Unuttum</a>
+            </div>
 
-<input
-type="email"
-name="email"
-class="form-control"
-placeholder="ornek@firma.com"
-required>
+            <button class="btn btn-primary w-100 btn-auth-submit" type="submit">
+                <i class="bi bi-box-arrow-in-right me-2"></i>Giriş Yap
+            </button>
 
+        </form>
+
+        <p class="auth-footer">Hesabınız yok mu? <a href="{{ url_for('auth.register') }}">Kayıt Olun</a></p>
+    </section>
 </div>
-
-<div class="mb-2">
-
-<label class="form-label">
-
-Şifre
-
-</label>
-
-<input
-type="password"
-name="password"
-class="form-control"
-placeholder="********"
-required>
-
-</div>
-
-<div class="text-end mb-4"><a class="auth-link" href="{{ url_for('auth.forgot_password') }}">Şifremi unuttum</a></div><button class="btn btn-primary w-100" type="submit"><i class="bi bi-box-arrow-in-right me-2"></i>Giriş yap</button></form><p class="auth-footer">Hesabınız yok mu? <a href="{{ url_for('auth.register') }}">Kayıt olun</a></p></section></div>
-
 {% endblock %}

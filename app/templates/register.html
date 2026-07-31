@@ -1,41 +1,61 @@
 {% extends "base.html" %}
 
-{% block title %}Hesap Oluştur | IMS Performans Yönetimi{% endblock %}
+{% block title %}Hesap Oluştur | BİLİM İLAÇ IMS{% endblock %}
 
 {% block content %}
 <div class="auth-shell">
     <section class="auth-card">
-        <div class="auth-brand">
-            <span class="auth-brand-icon"><i class="bi bi-person-plus-fill"></i></span>
+        <div class="auth-brand-hero">
+            <div class="auth-brand-logo">
+                <i class="bi bi-person-plus-fill"></i>
+            </div>
             <div>
-                <p class="auth-eyebrow">IMS PERFORMANS</p>
-                <h1>Hesabınızı oluşturun</h1>
-                <p>Performans verilerinize güvenle erişmek için bilgilerinizi tamamlayın.</p>
+                <p class="auth-eyebrow">BİLİM İLAÇ</p>
+                <h1 class="auth-headline">IMS Performans Yönetim Sistemi</h1>
+                <p class="auth-tagline">Performans &bull; Hedef &bull; Prim &bull; Analiz</p>
             </div>
         </div>
+
+        <h2 class="auth-welcome">Hesabınızı oluşturun</h2>
+        <p class="auth-subtitle">Performans verilerinize güvenle erişmek için bilgilerinizi tamamlayın.</p>
+
         <form method="post" action="{{ url_for('auth.register') }}" class="auth-form" novalidate>
+
             <div class="mb-3">
-                <label class="form-label" for="full_name">Ad soyad</label>
+                <label class="form-label" for="full_name">Ad Soyad</label>
                 <input id="full_name" name="full_name" type="text" class="form-control" autocomplete="name" required minlength="3" value="{{ request.form.get('full_name', '') }}">
             </div>
+
             <div class="mb-3">
-                <label class="form-label" for="email">E-posta adresi</label>
+                <label class="form-label" for="email">E-Posta Adresi</label>
                 <input id="email" name="email" type="email" class="form-control" autocomplete="email" required value="{{ request.form.get('email', '') }}">
             </div>
+
+            <div class="mb-3">
+                <label class="form-label" for="phone">Telefon</label>
+                <input id="phone" name="phone" type="tel" class="form-control" autocomplete="tel" placeholder="+90 5XX XXX XX XX" value="{{ request.form.get('phone', '') }}">
+            </div>
+
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label" for="password">Şifre</label>
                     <input id="password" name="password" type="password" class="form-control" autocomplete="new-password" required minlength="8">
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label class="form-label" for="password_confirm">Şifre tekrarı</label>
+                    <label class="form-label" for="password_confirm">Şifre Tekrar</label>
                     <input id="password_confirm" name="password_confirm" type="password" class="form-control" autocomplete="new-password" required minlength="8">
                 </div>
             </div>
-            <p class="form-hint">Şifreniz en az 8 karakter olmalıdır.</p>
-            <button class="btn btn-primary w-100" type="submit"><i class="bi bi-person-check-fill me-2"></i>Hesap oluştur</button>
+
+            <p class="form-hint mb-3">Şifreniz en az 8 karakter olmalıdır.</p>
+
+            <button class="btn btn-primary w-100 btn-auth-submit" type="submit">
+                <i class="bi bi-person-check-fill me-2"></i>Hesap Oluştur
+            </button>
+
         </form>
-        <p class="auth-footer">Zaten hesabınız var mı? <a href="{{ url_for('auth.login') }}">Giriş yapın</a></p>
+
+        <p class="auth-footer">Zaten hesabınız var mı? <a href="{{ url_for('auth.login') }}">Giriş Yapın</a></p>
     </section>
 </div>
 {% endblock %}
