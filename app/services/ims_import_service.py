@@ -11,6 +11,7 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
+from openpyxl import load_workbook as openpyxl_load_workbook
 
 from app.extensions import db
 from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, ImportAuditLog, ManualMatchQueue, Target
@@ -65,6 +66,16 @@ class IMSImportService:
         "PP": "competition_pp",
     }
     TOTAL_LABELS = {"NATIONAL", "TOPLAM", "GRAND TOTAL", "TOTAL", "GENEL TOPLAM"}
+    NOISE_ROW_TOKENS = {
+        "NOT",
+        "NOTE",
+        "ACIKLAMA",
+        "AÇIKLAMA",
+        "COMMENTS",
+        "YORUM",
+        "BILGI",
+        "BİLGİ",
+    }
 
     def __init__(self, file_path, uploaded_by=None):
         self.file_path = str(file_path)
@@ -95,6 +106,7 @@ class IMSImportService:
             "skipped_records": 0,
         }
         self.skipped_logs = []
+        self.parser_decisions = []
         self._representative_match_cache = {}
         self._product_match_cache = {}
 
@@ -173,12 +185,42 @@ class IMSImportService:
         return self.upload
 
     def load_workbook(self):
-        self.workbook = pd.read_excel(self.file_path, sheet_name=None, header=None)
+        workbook = {}
+        hidden_rows_by_sheet = self._hidden_rows_by_sheet()
+        raw_workbook = pd.read_excel(self.file_path, sheet_name=None, header=None)
+        for sheet_name, dataframe in raw_workbook.items():
+            hidden_rows = hidden_rows_by_sheet.get(str(sheet_name), set())
+            workbook[str(sheet_name)] = self._sanitize_sheet_dataframe(dataframe, hidden_rows=hidden_rows)
+        self.workbook = workbook
         self.statistics["sheet_count"] = len(self.workbook)
         return self.workbook
 
+    def _hidden_rows_by_sheet(self):
+        hidden_by_sheet = {}
+        try:
+            workbook = openpyxl_load_workbook(self.file_path, data_only=True, read_only=False)
+            for worksheet in workbook.worksheets:
+                hidden_rows = {
+                    row_number - 1
+                    for row_number, dimensions in worksheet.row_dimensions.items()
+                    if getattr(dimensions, "hidden", False)
+                }
+                hidden_by_sheet[str(worksheet.title)] = hidden_rows
+            workbook.close()
+        except Exception:  # pragma: no cover - defensive fallback for unsupported workbook metadata
+            return {}
+        return hidden_by_sheet
+
+    def _sanitize_sheet_dataframe(self, dataframe, hidden_rows=None):
+        prepared = dataframe.copy()
+        if hidden_rows:
+            prepared = prepared.drop(index=[idx for idx in hidden_rows if idx in prepared.index], errors="ignore")
+        prepared = prepared.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        prepared.reset_index(drop=True, inplace=True)
+        return prepared
+
     def find_header_row(self, dataframe):
-        max_rows = min(30, len(dataframe))
+        max_rows = min(80, len(dataframe))
         best_index = None
         best_score = -1
         for index in range(max_rows):
@@ -206,9 +248,7 @@ class IMSImportService:
     def build_headers(self, dataframe, header_row):
         headers = []
         used_headers = {}
-        header_rows = [header_row]
-        if header_row > 0:
-            header_rows.insert(0, header_row - 1)
+        header_rows = [row_index for row_index in range(max(0, header_row - 2), header_row + 1)]
 
         for column_index in range(dataframe.shape[1]):
             parts = []
@@ -249,6 +289,7 @@ class IMSImportService:
             if dimensions["representative"] is None and (
                 normalized in self.REPRESENTATIVE_HEADERS
                 or any(candidate in normalized for candidate in self.REPRESENTATIVE_HEADERS if len(candidate) > 3)
+                or ("TEMSILCI" in normalized and "KOD" not in normalized)
             ):
                 dimensions["representative"] = column
                 continue
@@ -394,9 +435,14 @@ class IMSImportService:
     def clean_dataframe(self, dataframe, representative_column):
         result = dataframe.copy()
         representative_values = result[representative_column].fillna("").astype(str).str.strip()
+        normalized_values = representative_values.map(AliasService.normalize)
         result = result[representative_values != ""]
         result = result[
-            ~representative_values.str.upper().map(AliasService.normalize).isin(self.TOTAL_LABELS)
+            ~normalized_values.isin(self.TOTAL_LABELS)
+        ]
+        result = result[
+            ~normalized_values.isin(self.REPRESENTATIVE_HEADERS)
+            & ~normalized_values.str.startswith(tuple(self.NOISE_ROW_TOKENS))
         ]
         result.reset_index(drop=True, inplace=True)
         return result
@@ -408,6 +454,15 @@ class IMSImportService:
         if representative_column is None:
             self.warnings.append(f"{sheet['sheet_name']}: temsilci kolonu bulunamadı; sayfa atlandı.")
             return None
+        self.parser_decisions.append(
+            {
+                "sheet_name": sheet["sheet_name"],
+                "sheet_type": sheet["sheet_type"],
+                "header_row": sheet["header_row"],
+                "representative_column": str(representative_column),
+                "mode": "normalized" if dimensions["product_group"] is not None else "wide",
+            }
+        )
 
         if dimensions["product_group"] is not None:
             metric_kind = self.detect_metric_kind(sheet["sheet_name"], dataframe)
