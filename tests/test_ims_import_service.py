@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 import pandas as pd
+from openpyxl import Workbook
 
 from app import create_app
 from app.extensions import db
@@ -285,6 +286,122 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertTrue(result["success"], result["errors"])
         self.assertEqual(find_product.call_count, 1)
         self.assertEqual(IMSRawData.query.count(), 1)
+
+    def test_shifted_header_and_noise_rows_are_tolerated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "shifted_noise.xlsx"
+            pd.DataFrame(
+                [
+                    ["Random note", None, None],
+                    ["Another note", None, None],
+                    ["Representative", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", 7, 140.0],
+                    ["Toplam", 7, 140.0],
+                    ["Note: internal", None, None],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 6)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(IMSRawData.query.count(), 1)
+
+    def test_merged_cells_and_partial_sheet_do_not_abort_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "merged_partial.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "BRICK SATIS"
+            sheet["A1"] = "IMS Performans Raporu"
+            sheet.merge_cells("A1:C1")
+            sheet["A2"] = "Representative"
+            sheet["B2"] = "Travazol Box"
+            sheet["C2"] = "Travazol TL"
+            sheet["A3"] = "Ayşe Kaya"
+            sheet["B3"] = 3
+            sheet["C3"] = 75
+            partial = workbook.create_sheet("Partial")
+            partial["A1"] = "Only title"
+            workbook.save(workbook_path)
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 6)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(IMSRawData.query.count(), 1)
+
+    def test_mixed_language_headers_normalized_sheet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "mixed_language.xlsx"
+            pd.DataFrame(
+                [
+                    ["Bilim İlaç Brick Analizi", None, None, None, None],
+                    ["Region", "İl", "Temsilci", "Ürün Grubu", "Kutu"],
+                    ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 9],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BOX")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(IMSRawData.query.count(), 1)
+
+    def test_corrupted_numeric_is_skipped_as_row_error_not_global_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "corrupted_numeric.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None],
+                    ["Representative", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", "ABC", 100.0],
+                    ["Ayşe Kaya", 5, 150.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
+
+        self.assertTrue(result["success"], result["errors"])
+        reasons = {item["reason"] for item in result["skipped_logs"]}
+        self.assertIn("invalid_numeric_value", reasons)
+        self.assertEqual(IMSRawData.query.count(), 1)
+
+    def test_region_and_province_unmatched_items_have_review_fields(self):
+        db.session.query(Representative).delete()
+        db.session.add(Representative(rep_code="R-100", rep_name="Ali Veli", region="Ege", city="İzmir", active=True))
+        db.session.commit()
+        AliasService.refresh()
+
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "region_province_unmatched.xlsx"
+            pd.DataFrame(
+                [
+                    ["Bilim İlaç Brick Analizi", None, None, None, None],
+                    ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                    ["Bölge", "İl", "Temsilci", "Ürün Grubu", "TL"],
+                    ["Bilinmeyen Bölge", "Bilinmeyen İl", "Ali Veli", "Travazol", 55.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="TL")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 8)
+
+        self.assertTrue(result["success"], result["errors"])
+        queue_items = ManualMatchQueue.query.filter(
+            ManualMatchQueue.entity_type.in_(
+                [ManualMatchQueue.ENTITY_REGION, ManualMatchQueue.ENTITY_PROVINCE]
+            )
+        ).all()
+        self.assertEqual(len(queue_items), 2)
+        for item in queue_items:
+            self.assertIsNotNone(item.source_value)
+            self.assertIsNotNone(item.normalized_value)
+            self.assertIsNotNone(item.import_id)
+            self.assertIsNotNone(item.worksheet)
+            self.assertIsNotNone(item.row_number)
+            self.assertIsNotNone(item.reason)
+
+    def test_fuzzy_matching_stays_deterministic(self):
+        product = Product.query.first()
+        AliasService.create_product_alias(product, "Travazol Plus")
+        AliasService.refresh()
+        first = AliasService.find_product("Travazol Pluz")
+        second = AliasService.find_product("Travazol Pluz")
+        self.assertTrue(first["matched"])
+        self.assertEqual(first["object"].id, second["object"].id)
+        self.assertEqual(first["method"], second["method"])
 
 
 if __name__ == "__main__":
