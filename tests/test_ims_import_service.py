@@ -6,6 +6,7 @@ from unittest import mock
 
 import pandas as pd
 from openpyxl import Workbook
+from flask_migrate import upgrade
 from werkzeug.security import generate_password_hash
 
 from app import create_app
@@ -39,11 +40,18 @@ class IMSEtlTestConfig:
 
 class IMSImportServiceTestCase(unittest.TestCase):
     def setUp(self):
-        self.app = create_app(IMSEtlTestConfig)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "ims-import-test.db"
+        config = type(
+            "IMSEtlRuntimeConfig",
+            (IMSEtlTestConfig,),
+            {"SQLALCHEMY_DATABASE_URI": f"sqlite:///{self.db_path}"},
+        )
+        self.app = create_app(config)
         self.context = self.app.app_context()
         self.context.push()
-        db.drop_all()
-        db.create_all()
+        migrations_dir = str(Path(__file__).resolve().parents[1] / "migrations")
+        upgrade(directory=migrations_dir)
         user = User(
             full_name="Test User",
             email="test@example.com",
@@ -63,8 +71,8 @@ class IMSImportServiceTestCase(unittest.TestCase):
 
     def tearDown(self):
         db.session.remove()
-        db.drop_all()
         self.context.pop()
+        self.temp_dir.cleanup()
 
     def _make_workbook(self, directory, filename="ims.xlsx"):
         workbook_path = Path(directory) / filename
