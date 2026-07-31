@@ -14,7 +14,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from openpyxl import load_workbook as openpyxl_load_workbook
 
 from app.extensions import db
-from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, ImportAuditLog, ManualMatchQueue, Target
+from app.models import (
+    IMSFact,
+    IMSRawData,
+    IMSSummary,
+    IMSUpload,
+    ImportAuditLog,
+    ManualMatchQueue,
+    Representative,
+    Target,
+)
 from app.services.alias_service import AliasService
 
 
@@ -49,9 +58,12 @@ class IMSImportService:
         "REP",
         "ADI SOYADI",
         "SATIS TEMSILCISI",
+        "TTS ISMI",
     }
     REGION_HEADERS = {"BOLGE", "REGION"}
     PROVINCE_HEADERS = {"IL", "SEHIR", "CITY", "PROVINCE"}
+    BRICK_HEADERS = {"IAM BRICK", "BRICK", "SUBTERRITORIES", "SUBTERRITORY", "TERRITORY"}
+    MANAGER_HEADERS = {"MANAGER", "MUDUR", "MÜDÜR", "BOLGE MUDURU", "BÖLGE MÜDÜRÜ", "2 TTS ISMI"}
     PRODUCT_GROUP_HEADERS = {"URUN GRUBU", "PRODUCT GROUP", "MARKA", "URUN", "PRODUCT"}
     NORMALIZED_SHEET_TYPES = {
         "TL": "competition_tl",
@@ -284,6 +296,8 @@ class IMSImportService:
             "region": None,
             "province": None,
             "product_group": None,
+            "brick": None,
+            "manager": None,
         }
         for column in dataframe.columns:
             normalized = AliasService.normalize(column)
@@ -304,6 +318,12 @@ class IMSImportService:
                 token in normalized for token in self.PRODUCT_GROUP_HEADERS
             ):
                 dimensions["product_group"] = column
+                continue
+            if dimensions["brick"] is None and any(token in normalized for token in self.BRICK_HEADERS):
+                dimensions["brick"] = column
+                continue
+            if dimensions["manager"] is None and any(token in normalized for token in self.MANAGER_HEADERS):
+                dimensions["manager"] = column
         return dimensions
 
     def detect_metric_kind(self, sheet_name, dataframe):
@@ -403,13 +423,117 @@ class IMSImportService:
         ]
 
     def detect_representative_column(self, dataframe):
+        candidates = self.detect_representative_columns(dataframe)
+        return candidates[0] if candidates else None
+
+    def detect_representative_columns(self, dataframe):
+        candidates = []
         for column in dataframe.columns:
             normalized = AliasService.normalize(column)
             if normalized in self.REPRESENTATIVE_HEADERS:
-                return column
+                candidates.append(column)
+                continue
             if any(candidate in normalized for candidate in self.REPRESENTATIVE_HEADERS if len(candidate) > 3):
-                return column
-        return None
+                candidates.append(column)
+
+        if not candidates:
+            return []
+
+        def representative_score(column_name):
+            values = dataframe[column_name].fillna("").astype(str).head(250)
+            score = 0
+            for value in values:
+                text = self.clean_text(value)
+                if not text:
+                    continue
+                normalized_value = AliasService.normalize(text)
+                if normalized_value in self.TOTAL_LABELS:
+                    continue
+                has_letters = bool(re.search(r"[A-ZÇĞİÖŞÜ]", normalized_value))
+                has_digits = bool(re.search(r"\d", normalized_value))
+                if has_letters:
+                    score += 2
+                if " " in text:
+                    score += 1
+                if has_digits:
+                    score -= 2
+            return score
+
+        ranked = sorted(candidates, key=representative_score, reverse=True)
+        seen = set()
+        unique_ranked = []
+        for column in ranked:
+            if str(column) in seen:
+                continue
+            seen.add(str(column))
+            unique_ranked.append(column)
+        return unique_ranked
+
+    def _is_aggregate_label(self, text):
+        normalized = AliasService.normalize(text)
+        if not normalized:
+            return True
+        if normalized in self.TOTAL_LABELS:
+            return True
+        if normalized == "NATIONAL":
+            return True
+        if re.match(r"^\d{3}\s+[A-ZÇĞİÖŞÜ]+$", normalized):
+            return True
+        return False
+
+    def _is_probable_representative_name(self, text):
+        normalized = AliasService.normalize(text)
+        if not normalized or self._is_aggregate_label(text):
+            return False
+        if bool(re.search(r"\d", normalized)):
+            return False
+        return bool(re.search(r"[A-ZÇĞİÖŞÜ]", normalized))
+
+    def _ensure_representative(self, name, *, territory=None, manager=None, region=None, city=None):
+        match = self.resolve_representative_match(name)
+        if match["matched"]:
+            self.statistics["matched_representatives"] += 1
+            representative = match["object"]
+            changed = False
+            if territory and not representative.territory:
+                representative.territory = territory
+                changed = True
+            if manager and not representative.manager:
+                representative.manager = manager
+                changed = True
+            if region and not representative.region:
+                representative.region = region
+                changed = True
+            if city and not representative.city:
+                representative.city = city
+                changed = True
+            if changed:
+                db.session.flush()
+            return representative.id, True
+
+        self.statistics["unmatched_representatives"] += 1
+        normalized = AliasService.normalize(name)
+        base_code = f"AUTO-{re.sub(r'[^A-Z0-9]+', '', normalized)[:18] or 'REP'}"
+        candidate_code = base_code
+        suffix = 1
+        while Representative.query.filter_by(rep_code=candidate_code).first() is not None:
+            suffix += 1
+            candidate_code = f"{base_code[:18]}-{suffix}"
+
+        representative = Representative(
+            rep_code=candidate_code,
+            rep_name=name,
+            territory=territory,
+            manager=manager,
+            region=region,
+            city=city,
+            active=True,
+        )
+        db.session.add(representative)
+        db.session.flush()
+        AliasService.refresh()
+        self.statistics["matched_representatives"] += 1
+        return representative.id, False
 
     @staticmethod
     def metric_for_column(header):
@@ -485,16 +609,22 @@ class IMSImportService:
     def prepare_sheet(self, sheet):
         dataframe = sheet["dataframe"]
         dimensions = self.detect_dimension_columns(dataframe)
-        representative_column = dimensions["representative"] or self.detect_representative_column(dataframe)
+        representative_columns = self.detect_representative_columns(dataframe)
+        representative_column = dimensions["representative"] or (
+            representative_columns[0] if representative_columns else None
+        )
         if representative_column is None:
             self.warnings.append(f"{sheet['sheet_name']}: temsilci kolonu bulunamadı; sayfa atlandı.")
             return None
+        if representative_columns and representative_column not in representative_columns:
+            representative_columns.insert(0, representative_column)
         self.parser_decisions.append(
             {
                 "sheet_name": sheet["sheet_name"],
                 "sheet_type": sheet["sheet_type"],
                 "header_row": sheet["header_row"],
                 "representative_column": str(representative_column),
+                "representative_columns": [str(column) for column in representative_columns],
                 "mode": "normalized" if dimensions["product_group"] is not None else "wide",
             }
         )
@@ -527,6 +657,9 @@ class IMSImportService:
             "mode": "wide",
             "dataframe": self.clean_dataframe(dataframe, representative_column),
             "representative_column": representative_column,
+            "representative_columns": representative_columns or [representative_column],
+            "brick_column": dimensions["brick"],
+            "manager_column": dimensions["manager"],
             "products": products,
         }
 
@@ -755,6 +888,10 @@ class IMSImportService:
         product,
         metrics,
         source_values,
+        manager=None,
+        brick=None,
+        market=None,
+        competitor=None,
     ):
         raw = IMSRawData(
             upload_id=self.upload.id,
@@ -768,7 +905,11 @@ class IMSImportService:
             representative_id=representative_id,
             product_id=product.id,
             representative=representative_name,
+            manager=manager,
             product=product.product_name,
+            competitor=competitor,
+            brick=brick,
+            market=market,
             unit=metrics["unit"],
             tl=metrics["tl"],
             market_share=metrics["market_share"],
@@ -792,95 +933,108 @@ class IMSImportService:
             if sheet.get("mode") == "normalized":
                 continue
             dataframe = sheet["dataframe"]
-            representative_column = sheet["representative_column"]
+            representative_columns = sheet.get("representative_columns") or [sheet["representative_column"]]
+            representative_column = representative_columns[0]
+            brick_column = sheet.get("brick_column")
+            manager_column = sheet.get("manager_column")
 
             for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
                 try:
-                    representative_name = str(row[representative_column]).strip()
-                    representative_match = self.resolve_representative_match(representative_name)
-                    representative_id = None
-                    if representative_match["matched"]:
-                        representative_id = representative_match["object"].id
-                        self.statistics["matched_representatives"] += 1
-                    else:
-                        self.statistics["unmatched_representatives"] += 1
-                        self.warnings.append(
-                            f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
-                            f"temsilci eşleşmedi ({representative_name})."
-                        )
+                    representative_values = []
+                    for candidate_column in representative_columns:
+                        value = self.clean_text(row[candidate_column])
+                        if value:
+                            representative_values.append(value)
+                    representative_values = list(dict.fromkeys(representative_values))
+                    if not representative_values:
+                        self.statistics["skipped_records"] += 1
                         self._log_skipped_row(
-                            reason="unmatched_representative",
+                            reason="missing_representative",
                             sheet_name=sheet["sheet_name"],
                             source_row=dataframe_index + sheet["header_row"] + 2,
-                            representative=representative_name,
                         )
-                        # Queue for manual resolution
-                        best = representative_match.get("object")
-                        AliasService.enqueue_unmatched_representative(
-                            ims_name=representative_name,
-                            upload_id=self.upload.id,
-                            best_candidate=best.rep_name if best else None,
-                            best_score=representative_match.get("score", 0.0),
-                            worksheet=sheet["sheet_name"],
-                            row_number=dataframe_index + sheet["header_row"] + 2,
-                            reason="unmatched_representative",
-                        )
-                        self.statistics["queued_for_manual"] += 1
+                        continue
 
-                    for product_info in sheet["products"].values():
-                        metrics = {
-                            "unit": 0.0,
-                            "tl": 0.0,
-                            "market_share": 0.0,
-                            "value_share": 0.0,
-                            "growth": 0.0,
-                        }
-                        source_values = {}
-                        for column in product_info["columns"]:
-                            value = row.iloc[column["index"]]
-                            parsed_value, valid_numeric = self.parse_metric_value(value)
-                            if not valid_numeric:
+                    territory_value = self.clean_text(row[brick_column]) if brick_column else None
+                    manager_value = self.clean_text(row[manager_column]) if manager_column else None
+
+                    for representative_name in representative_values:
+                        if not self._is_probable_representative_name(representative_name):
+                            self.statistics["skipped_records"] += 1
+                            self._log_skipped_row(
+                                reason="aggregate_or_invalid_representative",
+                                sheet_name=sheet["sheet_name"],
+                                source_row=dataframe_index + sheet["header_row"] + 2,
+                                representative=representative_name,
+                            )
+                            continue
+                        representative_id, existed = self._ensure_representative(
+                            representative_name,
+                            territory=territory_value,
+                            manager=manager_value,
+                        )
+                        if not existed:
+                            self.warnings.append(
+                                f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
+                                f"yeni temsilci oluşturuldu ({representative_name})."
+                            )
+
+                        for product_info in sheet["products"].values():
+                            metrics = {
+                                "unit": 0.0,
+                                "tl": 0.0,
+                                "market_share": 0.0,
+                                "value_share": 0.0,
+                                "growth": 0.0,
+                            }
+                            source_values = {}
+                            for column in product_info["columns"]:
+                                value = row.iloc[column["index"]]
+                                parsed_value, valid_numeric = self.parse_metric_value(value)
+                                if not valid_numeric:
+                                    self.statistics["skipped_records"] += 1
+                                    self._log_skipped_row(
+                                        reason="invalid_numeric_value",
+                                        sheet_name=sheet["sheet_name"],
+                                        source_row=dataframe_index + sheet["header_row"] + 2,
+                                        representative=representative_name,
+                                        product=product_info["product"].product_name,
+                                        field=column["header"],
+                                        value=self._value_for_json(value),
+                                    )
+                                    metrics = None
+                                    break
+                                metrics[column["metric"]] += parsed_value
+                                source_values[column["header"]] = self._value_for_json(value)
+                            if metrics is None:
+                                continue
+
+                            if not any(metrics.values()):
                                 self.statistics["skipped_records"] += 1
                                 self._log_skipped_row(
-                                    reason="invalid_numeric_value",
+                                    reason="empty_metrics",
                                     sheet_name=sheet["sheet_name"],
                                     source_row=dataframe_index + sheet["header_row"] + 2,
                                     representative=representative_name,
                                     product=product_info["product"].product_name,
-                                    field=column["header"],
-                                    value=self._value_for_json(value),
                                 )
-                                metrics = None
-                                break
-                            metrics[column["metric"]] += parsed_value
-                            source_values[column["header"]] = self._value_for_json(value)
-                        if metrics is None:
-                            continue
+                                continue
 
-                        if not any(metrics.values()):
-                            self.statistics["skipped_records"] += 1
-                            self._log_skipped_row(
-                                reason="empty_metrics",
+                            self.create_raw_record(
+                                year=year,
+                                month=month,
+                                week_number=week_number,
                                 sheet_name=sheet["sheet_name"],
+                                sheet_type=sheet["sheet_type"],
                                 source_row=dataframe_index + sheet["header_row"] + 2,
-                                representative=representative_name,
-                                product=product_info["product"].product_name,
+                                representative_name=representative_name,
+                                representative_id=representative_id,
+                                product=product_info["product"],
+                                metrics=metrics,
+                                source_values=source_values,
+                                manager=manager_value,
+                                brick=territory_value,
                             )
-                            continue
-
-                        self.create_raw_record(
-                            year=year,
-                            month=month,
-                            week_number=week_number,
-                            sheet_name=sheet["sheet_name"],
-                            sheet_type=sheet["sheet_type"],
-                            source_row=dataframe_index + sheet["header_row"] + 2,
-                            representative_name=representative_name,
-                            representative_id=representative_id,
-                            product=product_info["product"],
-                            metrics=metrics,
-                            source_values=source_values,
-                        )
                     self.statistics["processed_rows"] += 1
                 except Exception as exc:
                     self.statistics["rows_error"] += 1
