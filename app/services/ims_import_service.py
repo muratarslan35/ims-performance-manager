@@ -88,6 +88,9 @@ class IMSImportService:
             "matched_products": 0,
             "matched_representatives": 0,
             "unmatched_representatives": 0,
+            "unmatched_products": 0,
+            "unmatched_regions": 0,
+            "unmatched_provinces": 0,
             "queued_for_manual": 0,
             "skipped_records": 0,
         }
@@ -514,12 +517,16 @@ class IMSImportService:
                     upload_id=self.upload.id,
                     best_candidate=best.rep_name if best else None,
                     best_score=representative_match.get("score", 0.0),
+                    worksheet=" | ".join(sorted(item["sheet_names"])),
+                    row_number=min(item["source_rows"]),
+                    reason="unmatched_representative",
                 )
 
             product_group_name = item["product_group"]
             product_match = self.resolve_product_match(product_group_name)
             if not product_match["matched"]:
                 self.statistics["skipped_records"] += 1
+                self.statistics["unmatched_products"] += 1
                 self.unknown_products.append(product_group_name)
                 self._log_skipped_row(
                     reason="unmatched_product_group",
@@ -534,8 +541,43 @@ class IMSImportService:
                     upload_id=self.upload.id,
                     best_candidate=best.product_name if best else None,
                     best_score=product_match.get("score", 0.0),
+                    worksheet=" | ".join(sorted(item["sheet_names"])),
+                    row_number=min(item["source_rows"]),
+                    reason="unmatched_product_group",
                 )
                 continue
+
+            region_value = self.clean_text(item.get("region"))
+            if region_value:
+                region_suggestion = AliasService.suggest_region(region_value)
+                if not region_suggestion["matched"]:
+                    self.statistics["unmatched_regions"] += 1
+                    self.statistics["queued_for_manual"] += 1
+                    AliasService.enqueue_unmatched_region(
+                        source_value=region_value,
+                        import_id=self.upload.id,
+                        worksheet=" | ".join(sorted(item["sheet_names"])),
+                        row_number=min(item["source_rows"]),
+                        suggested_match=region_suggestion.get("value"),
+                        confidence_score=region_suggestion.get("score", 0.0),
+                        reason="unmatched_region",
+                    )
+
+            province_value = self.clean_text(item.get("province"))
+            if province_value:
+                province_suggestion = AliasService.suggest_province(province_value)
+                if not province_suggestion["matched"]:
+                    self.statistics["unmatched_provinces"] += 1
+                    self.statistics["queued_for_manual"] += 1
+                    AliasService.enqueue_unmatched_province(
+                        source_value=province_value,
+                        import_id=self.upload.id,
+                        worksheet=" | ".join(sorted(item["sheet_names"])),
+                        row_number=min(item["source_rows"]),
+                        suggested_match=province_suggestion.get("value"),
+                        confidence_score=province_suggestion.get("score", 0.0),
+                        reason="unmatched_province",
+                    )
 
             self.statistics["matched_products"] += 1
             metrics = item["metrics"]
@@ -652,6 +694,9 @@ class IMSImportService:
                         upload_id=self.upload.id,
                         best_candidate=best.rep_name if best else None,
                         best_score=representative_match.get("score", 0.0),
+                        worksheet=sheet["sheet_name"],
+                        row_number=dataframe_index + sheet["header_row"] + 2,
+                        reason="unmatched_representative",
                     )
                     self.statistics["queued_for_manual"] += 1
 

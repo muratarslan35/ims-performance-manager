@@ -40,6 +40,8 @@ class AliasService:
     _representative_cache = {}
     _representative_alias_cache = {}
     _representative_match_cache = {}
+    _region_cache = {}
+    _province_cache = {}
     _statistics = {
         "product": 0,
         "product_alias": 0,
@@ -98,6 +100,8 @@ class AliasService:
             cls._representative_cache = {}
             cls._representative_alias_cache = {}
             cls._representative_match_cache = {}
+            cls._region_cache = {}
+            cls._province_cache = {}
 
     @classmethod
     def load_cache(cls):
@@ -111,6 +115,8 @@ class AliasService:
             cls._representative_cache = {}
             cls._representative_alias_cache = {}
             cls._representative_match_cache = {}
+            cls._region_cache = {}
+            cls._province_cache = {}
 
             for product in Product.query.filter_by(is_active=True).all():
                 for label in (product.product_name, product.product_code, product.ims_name):
@@ -133,6 +139,12 @@ class AliasService:
                     normalized = cls.normalize(label)
                     if normalized:
                         cls._representative_cache[normalized] = representative
+                normalized_region = cls.normalize(representative.region)
+                if normalized_region:
+                    cls._region_cache.setdefault(normalized_region, representative.region)
+                normalized_city = cls.normalize(representative.city)
+                if normalized_city:
+                    cls._province_cache.setdefault(normalized_city, representative.city)
 
             for alias in RepresentativeAlias.query.all():
                 normalized = cls.normalize(alias.alias_name)
@@ -238,58 +250,196 @@ class AliasService:
         )
 
     @classmethod
-    def enqueue_unmatched_representative(cls, ims_name, upload_id=None, best_candidate=None, best_score=0.0):
+    def enqueue_unmatched_representative(
+        cls,
+        ims_name,
+        upload_id=None,
+        best_candidate=None,
+        best_score=0.0,
+        worksheet=None,
+        row_number=None,
+        reason="unmatched_representative",
+    ):
         """Add an unmatched representative name to the manual match queue (idempotent)."""
-        normalized = cls.normalize(ims_name)
+        return cls.enqueue_unmatched_item(
+            entity_type=ManualMatchQueue.ENTITY_REPRESENTATIVE,
+            source_value=ims_name,
+            import_id=upload_id,
+            upload_id=upload_id,
+            worksheet=worksheet,
+            row_number=row_number,
+            confidence_score=best_score,
+            suggested_match=best_candidate,
+            reason=reason,
+        )
+
+    @classmethod
+    def enqueue_unmatched_product(
+        cls,
+        ims_name,
+        upload_id=None,
+        best_candidate=None,
+        best_score=0.0,
+        worksheet=None,
+        row_number=None,
+        reason="unmatched_product_group",
+    ):
+        """Add an unmatched product name to the manual match queue (idempotent)."""
+        return cls.enqueue_unmatched_item(
+            entity_type=ManualMatchQueue.ENTITY_PRODUCT,
+            source_value=ims_name,
+            import_id=upload_id,
+            upload_id=upload_id,
+            worksheet=worksheet,
+            row_number=row_number,
+            confidence_score=best_score,
+            suggested_match=best_candidate,
+            reason=reason,
+        )
+
+    @classmethod
+    def enqueue_unmatched_region(
+        cls,
+        source_value,
+        import_id=None,
+        upload_id=None,
+        worksheet=None,
+        row_number=None,
+        suggested_match=None,
+        confidence_score=0.0,
+        reason="unmatched_region",
+    ):
+        return cls.enqueue_unmatched_item(
+            entity_type=ManualMatchQueue.ENTITY_REGION,
+            source_value=source_value,
+            import_id=import_id or upload_id,
+            upload_id=upload_id or import_id,
+            worksheet=worksheet,
+            row_number=row_number,
+            confidence_score=confidence_score,
+            suggested_match=suggested_match,
+            reason=reason,
+        )
+
+    @classmethod
+    def enqueue_unmatched_province(
+        cls,
+        source_value,
+        import_id=None,
+        upload_id=None,
+        worksheet=None,
+        row_number=None,
+        suggested_match=None,
+        confidence_score=0.0,
+        reason="unmatched_province",
+    ):
+        return cls.enqueue_unmatched_item(
+            entity_type=ManualMatchQueue.ENTITY_PROVINCE,
+            source_value=source_value,
+            import_id=import_id or upload_id,
+            upload_id=upload_id or import_id,
+            worksheet=worksheet,
+            row_number=row_number,
+            confidence_score=confidence_score,
+            suggested_match=suggested_match,
+            reason=reason,
+        )
+
+    @classmethod
+    def enqueue_unmatched_item(
+        cls,
+        *,
+        entity_type,
+        source_value,
+        import_id=None,
+        upload_id=None,
+        worksheet=None,
+        row_number=None,
+        confidence_score=0.0,
+        suggested_match=None,
+        reason=None,
+    ):
+        normalized = cls.normalize(source_value)
         if not normalized:
             return None
-        existing = ManualMatchQueue.query.filter_by(
-            entity_type=ManualMatchQueue.ENTITY_REPRESENTATIVE,
-            ims_name=ims_name.strip(),
-        ).first()
+        raw_value = str(source_value).strip()
+        existing = ManualMatchQueue.query.filter_by(entity_type=entity_type, ims_name=raw_value).first()
         if existing:
             if existing.status == ManualMatchQueue.STATUS_PENDING:
                 existing.upload_id = upload_id or existing.upload_id
-                existing.best_candidate = best_candidate or existing.best_candidate
-                existing.best_score = max(best_score, existing.best_score)
+                existing.import_id = import_id or existing.import_id or existing.upload_id
+                existing.worksheet = worksheet or existing.worksheet
+                existing.row_number = row_number or existing.row_number
+                existing.reason = reason or existing.reason
+                existing.normalized_value = normalized
+                existing.source_value = raw_value
+                existing.suggested_match = suggested_match or existing.suggested_match or existing.best_candidate
+                existing.confidence_score = max(confidence_score, existing.confidence_score)
+                existing.best_candidate = existing.suggested_match
+                existing.best_score = max(confidence_score, existing.best_score)
             return existing
         entry = ManualMatchQueue(
-            entity_type=ManualMatchQueue.ENTITY_REPRESENTATIVE,
-            ims_name=ims_name.strip(),
-            upload_id=upload_id,
-            best_candidate=best_candidate,
-            best_score=best_score,
+            entity_type=entity_type,
+            ims_name=raw_value,
+            source_value=raw_value,
+            normalized_value=normalized,
+            import_id=import_id or upload_id,
+            upload_id=upload_id or import_id,
+            worksheet=worksheet,
+            row_number=row_number,
+            confidence_score=confidence_score,
+            suggested_match=suggested_match,
+            reason=reason,
+            best_candidate=suggested_match,
+            best_score=confidence_score,
             status=ManualMatchQueue.STATUS_PENDING,
         )
         db.session.add(entry)
         return entry
 
     @classmethod
-    def enqueue_unmatched_product(cls, ims_name, upload_id=None, best_candidate=None, best_score=0.0):
-        """Add an unmatched product name to the manual match queue (idempotent)."""
-        normalized = cls.normalize(ims_name)
+    def suggest_region(cls, value):
+        cls.load_cache()
+        normalized = cls.normalize(value)
         if not normalized:
-            return None
-        existing = ManualMatchQueue.query.filter_by(
-            entity_type=ManualMatchQueue.ENTITY_PRODUCT,
-            ims_name=ims_name.strip(),
-        ).first()
-        if existing:
-            if existing.status == ManualMatchQueue.STATUS_PENDING:
-                existing.upload_id = upload_id or existing.upload_id
-                existing.best_candidate = best_candidate or existing.best_candidate
-                existing.best_score = max(best_score, existing.best_score)
-            return existing
-        entry = ManualMatchQueue(
-            entity_type=ManualMatchQueue.ENTITY_PRODUCT,
-            ims_name=ims_name.strip(),
-            upload_id=upload_id,
-            best_candidate=best_candidate,
-            best_score=best_score,
-            status=ManualMatchQueue.STATUS_PENDING,
-        )
-        db.session.add(entry)
-        return entry
+            return {"matched": False, "score": 0.0, "method": "EMPTY", "value": None}
+        if normalized in cls._region_cache:
+            return {"matched": True, "score": 100.0, "method": "EXACT", "value": cls._region_cache[normalized]}
+        best_value, best_score = None, 0.0
+        for region_key, region_value in cls._region_cache.items():
+            score = cls.similarity(region_key, normalized)
+            if score > best_score:
+                best_value, best_score = region_value, score
+        if best_value and best_score >= cls.SIMILARITY_LIMIT:
+            return {
+                "matched": True,
+                "score": round(best_score * 100, 2),
+                "method": "SIMILARITY",
+                "value": best_value,
+            }
+        return {"matched": False, "score": round(best_score * 100, 2), "method": "NO_MATCH", "value": best_value}
+
+    @classmethod
+    def suggest_province(cls, value):
+        cls.load_cache()
+        normalized = cls.normalize(value)
+        if not normalized:
+            return {"matched": False, "score": 0.0, "method": "EMPTY", "value": None}
+        if normalized in cls._province_cache:
+            return {"matched": True, "score": 100.0, "method": "EXACT", "value": cls._province_cache[normalized]}
+        best_value, best_score = None, 0.0
+        for city_key, city_value in cls._province_cache.items():
+            score = cls.similarity(city_key, normalized)
+            if score > best_score:
+                best_value, best_score = city_value, score
+        if best_value and best_score >= cls.SIMILARITY_LIMIT:
+            return {
+                "matched": True,
+                "score": round(best_score * 100, 2),
+                "method": "SIMILARITY",
+                "value": best_value,
+            }
+        return {"matched": False, "score": round(best_score * 100, 2), "method": "NO_MATCH", "value": best_value}
 
     @classmethod
     def persist_representative_match(cls, ims_name, representative, method="AUTO", score=100.0, created_by=None):
