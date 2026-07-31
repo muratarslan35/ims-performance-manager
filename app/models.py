@@ -441,6 +441,8 @@ class ManualMatchQueue(db.Model):
 
     ENTITY_REPRESENTATIVE = "representative"
     ENTITY_PRODUCT = "product"
+    ENTITY_REGION = "region"
+    ENTITY_PROVINCE = "province"
     STATUS_PENDING = "PENDING"
     STATUS_RESOLVED = "RESOLVED"
     STATUS_IGNORED = "IGNORED"
@@ -448,7 +450,15 @@ class ManualMatchQueue(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     entity_type = db.Column(db.String(30), nullable=False)
     ims_name = db.Column(db.String(200), nullable=False)
+    source_value = db.Column(db.String(200))
+    normalized_value = db.Column(db.String(200))
+    import_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"))
     upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"))
+    worksheet = db.Column(db.String(150))
+    row_number = db.Column(db.Integer)
+    confidence_score = db.Column(db.Float, default=0.0, nullable=False)
+    suggested_match = db.Column(db.String(200))
+    reason = db.Column(db.String(100))
     best_candidate = db.Column(db.String(200))
     best_score = db.Column(db.Float, default=0.0, nullable=False)
     status = db.Column(db.String(20), nullable=False, default="PENDING")
@@ -456,7 +466,8 @@ class ManualMatchQueue(db.Model):
     resolved_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    upload = db.relationship("IMSUpload", backref="match_queue_items")
+    upload = db.relationship("IMSUpload", foreign_keys=[upload_id], backref="match_queue_items")
+    import_ref = db.relationship("IMSUpload", foreign_keys=[import_id], backref="unmatched_review_items")
 
     def __repr__(self):
         return f"<ManualMatchQueue {self.entity_type}:{self.ims_name!r} {self.status}>"

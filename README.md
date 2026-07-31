@@ -1,57 +1,142 @@
 # IMS Performance Manager
 
-Flask tabanlı, ilaç satış temsilcilerinin IMS performansı, hedefleri ve prim hesapları için yönetim uygulaması.
+Flask tabanlı IMS performans yönetimi uygulaması.
 
-## IMS ETL akışı
+## Temel veritabanı ilkeleri
 
-IMS Excel içe aktarımı üç kalıcı katmanda çalışır:
+- Şema yönetimi yalnızca Alembic/Flask-Migrate ile yapılır.
+- Uygulama başlangıcında `db.create_all()` çalıştırılmaz.
+- Varsayılan çalışma veritabanı: `instance/ipm.db`
+- Migration zinciri baştan sona uygulanarak sıfırdan kurulabilir.
 
-| Katman | Tablo | Sorumluluk |
-| --- | --- | --- |
-| Staging | `IMSRawData` | Excel’deki kaynak satırları, eşleşmemiş temsilciler dahil, denetlenebilir şekilde saklar. |
-| Transform | `IMSFact` | Ürün ve temsilci ana verisiyle eşleşen, raporlamaya uygun kayıtları üretir. |
-| Aggregate | `IMSSummary` | `year + month + representative + product` düzeyinde dönem toplamlarını oluşturur. |
+## Clean install / deployment flow (Oracle VM dahil)
 
-`IMSImportService` yalnızca bu sırayı kullanır. Bir dönemi yeniden yüklemek varsayılan olarak o dönemin eski raw, fact ve summary kayıtlarını temizler; önceki `IMSUpload` kayıtları ise denetim amacıyla tutulur.
-
-## Kurulum
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```bash
+git clone https://github.com/muratarslan35/ims-performance-manager.git
+cd ims-performance-manager
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python -m flask --app run.py db upgrade
-python run.py
+python verify_runtime.py
+python -m flask --app run.py run
 ```
 
-Uygulama varsayılan olarak `instance/ipm.db` SQLite veritabanını kullanır.
+Bu akış sonunda uygulama ilk IMS yüklemesi için hazırdır.
 
-## Veritabanı migration komutları
+## Migration flow
 
 ```bash
-python -m flask --app run.py db migrate -m "schema change"
+python -m flask --app run.py db history
+python -m flask --app run.py db heads
+python -m flask --app run.py db current
 python -m flask --app run.py db upgrade
-python -m flask --app run.py db downgrade -1
 ```
 
-Detaylı operasyon akışı: `docs/database_migrations.md`
+## Runtime verification
 
-## Harici veritabanı yapılandırması
+`verify_runtime.py` aşağıdakileri kontrol eder:
 
-Sunucuda bağlantı dizgesini ortam değişkeniyle verin; uygulama bu değer varsa SQLite yerine onu kullanır:
+- git branch + commit
+- çalışma dizini
+- Python sürümü
+- Flask app yüklenmesi
+- SQLAlchemy URI
+- Alembic current/head revizyonu
+- DB dosya yolu
+- şema drift (model vs DB)
+- zorunlu kolon varlığı
+- clean-state satır sayımı (core IMS tabloları)
+- import pipeline readiness
+
+Çalıştırma:
 
 ```bash
-export DATABASE_URL='oracle+oracledb://user:password@host:1521/?service_name=SERVICE'
+python verify_runtime.py
 ```
 
-Oracle/Pg sürücülerini sunucu standartlarına göre kurun ve şema değişikliklerini Alembic/Flask-Migrate ile yönetin.
+Tüm kontroller geçerse exit code `0`, aksi durumda non-zero döner.
 
-## Doğrulama
+## Seed / bootstrap (yalnızca sistem verileri)
 
-```powershell
-python -m pytest tests/test_database_migrations.py -v
-python -m unittest tests.test_ims_import_service
-python -m compileall -q app config.py run.py tests
+`bootstrap_system_data.py` migration + deterministic sistem seed uygular:
+
+- varsayılan admin kullanıcı
+- uygulama ayarları
+- sabit ürün tanımları
+- gerekli prime rule kayıtları
+
+Yüklemez:
+
+- `ims_uploads`
+- `ims_raw_data`
+- `ims_facts`
+- `ims_summary`
+- temsilci iş verileri / geçmiş import kayıtları
+
+Çalıştırma:
+
+```bash
+python bootstrap_system_data.py
 ```
 
-İlk test, örnek bir Excel sayfasından bir raw kayıt, bir fact ve bir özet kaydı üretildiğini doğrular.
+## Import validation (real sample workbook)
+
+Geliştirmede kullanılan gerçek örnek dosya ile otomatik doğrulama:
+
+```bash
+python validate_sample_import.py
+```
+
+Bu doğrulama şunları kanıtlar:
+
+- import tamamlanır
+- sqlite `OperationalError` oluşmaz
+- missing-column hatası oluşmaz
+- `ims_summary` insert başarılıdır
+- `value_share` insert başarılıdır
+- stage metrics/logging üretilir
+
+Bu komut deploy için opsiyoneldir; app boot sırasında zorunlu değildir.
+
+## DB reset (güvenli yaklaşım)
+
+Sadece temiz ortam yeniden kurulumunda:
+
+1. uygulamayı durdurun
+2. `instance/ipm.db` dosyasını kaldırın (veya farklı bir `DATABASE_URL` kullanın)
+3. `python -m flask --app run.py db upgrade`
+4. `python bootstrap_system_data.py`
+5. `python verify_runtime.py`
+
+Not: canlı ortamda veri koruma gereksinimi varsa manuel dosya silme yerine yedek/restore prosedürü uygulayın.
+
+## İlk IMS upload
+
+1. uygulamayı başlatın
+2. admin hesabıyla giriş yapın (`admin@ipm.local`)
+3. IMS ekranından Excel dosyasını seçin
+4. yıl/ay girip yüklemeyi başlatın
+5. upload tamamlandıktan sonra dashboard/rapor kontrollerini yapın
+
+## Schema drift troubleshooting
+
+Belirtiler:
+
+- `no such column`
+- `has no column named`
+- import sırasında `OperationalError`
+
+Adımlar:
+
+1. `python -m flask --app run.py db current`
+2. `python -m flask --app run.py db heads`
+3. current != head ise `python -m flask --app run.py db upgrade`
+4. `python verify_runtime.py` çalıştırın
+5. `python validate_sample_import.py` ile import pipeline doğrulayın
+
+## Test
+
+```bash
+python -m pytest tests/ -v
+```

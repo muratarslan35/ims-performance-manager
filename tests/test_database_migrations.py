@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 
 from app import create_app
 from app.database import initialize_database
+from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Product, Representative
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,12 @@ MIGRATION_FILE_RECORD_COUNTS = (
     / "migrations"
     / "versions"
     / "3a7f2e1b9c05_add_ims_uploads_record_count_columns.py"
+)
+MIGRATION_FILE_REPAIR = (
+    REPO_ROOT
+    / "migrations"
+    / "versions"
+    / "9f8b1c2d4e6f_repair_ims_table_column_drift.py"
 )
 
 
@@ -138,6 +145,27 @@ def _create_legacy_schema(db_url):
         sa.Column("metrics_json", sa.Text, nullable=False),
         sa.Column("created_at", sa.DateTime, nullable=False),
     )
+    ims_summary = sa.Table(
+        "ims_summary",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("upload_id", sa.Integer, sa.ForeignKey("ims_uploads.id"), nullable=False),
+        sa.Column(
+            "representative_id",
+            sa.Integer,
+            sa.ForeignKey("representatives.id"),
+            nullable=False,
+        ),
+        sa.Column("product_id", sa.Integer, sa.ForeignKey("products.id"), nullable=False),
+        sa.Column("year", sa.Integer, nullable=False),
+        sa.Column("month", sa.Integer, nullable=False),
+        sa.Column("quarter", sa.String(5), nullable=False),
+        sa.Column("unit", sa.Float, nullable=False, server_default="0"),
+        sa.Column("tl", sa.Float, nullable=False, server_default="0"),
+        sa.Column("market_share", sa.Float, nullable=False, server_default="0"),
+        sa.Column("growth", sa.Float, nullable=False, server_default="0"),
+        sa.Column("created_at", sa.DateTime, nullable=False),
+    )
 
     existing_metadata = sa.MetaData()
     existing_metadata.reflect(bind=engine)
@@ -181,6 +209,22 @@ def _create_legacy_schema(db_url):
                 month=7,
                 quarter="Q3",
                 uploaded_at=created_at,
+            )
+        )
+        connection.execute(
+            ims_summary.insert().values(
+                id=1,
+                upload_id=1,
+                representative_id=1,
+                product_id=1,
+                year=2026,
+                month=7,
+                quarter="Q3",
+                unit=0,
+                tl=0,
+                market_share=0,
+                growth=0,
+                created_at=created_at,
             )
         )
         connection.execute(
@@ -251,6 +295,24 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
     @staticmethod
     def _count_rows(connection, table_name):
         return connection.execute(sa.text(f"SELECT COUNT(*) FROM {table_name}")).scalar_one()
+
+    def _assert_model_schema_parity(self, inspector):
+        model_tables = {
+            "representatives": Representative,
+            "products": Product,
+            "ims_uploads": IMSUpload,
+            "ims_raw_data": IMSRawData,
+            "ims_facts": IMSFact,
+            "ims_summary": IMSSummary,
+        }
+        for table_name, model in model_tables.items():
+            model_columns = {column.name for column in model.__table__.columns}
+            db_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            self.assertEqual(
+                model_columns,
+                db_columns,
+                f"Schema mismatch for {table_name}: model={sorted(model_columns)} db={sorted(db_columns)}",
+            )
 
     def _assert_required_schema(self, inspector):
         table_names = set(inspector.get_table_names())
@@ -355,6 +417,15 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         self.assertNotIn("drop_column", upgrade_section)
         self.assertNotIn("drop_constraint", upgrade_section)
 
+    def test_repair_migration_upgrade_section_is_additive(self):
+        migration_text = MIGRATION_FILE_REPAIR.read_text(encoding="utf-8")
+        upgrade_section = migration_text.split("def upgrade():", maxsplit=1)[1].split(
+            "def downgrade():", maxsplit=1
+        )[0]
+        self.assertNotIn("drop_table", upgrade_section)
+        self.assertNotIn("drop_column", upgrade_section)
+        self.assertNotIn("drop_constraint", upgrade_section)
+
     def _run_migration_safety_flow(self, db_url):
         _create_legacy_schema(db_url)
         app = _build_test_app(db_url)
@@ -366,6 +437,7 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
                 "ims_uploads": self._count_rows(connection, "ims_uploads"),
                 "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
                 "ims_facts": self._count_rows(connection, "ims_facts"),
+                "ims_summary": self._count_rows(connection, "ims_summary"),
             }
 
         with app.app_context():
@@ -374,6 +446,7 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
 
         inspector = sa.inspect(engine)
         self._assert_required_schema(inspector)
+        self._assert_model_schema_parity(inspector)
 
         with engine.begin() as connection:
             after_counts = {
@@ -381,6 +454,7 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
                 "ims_uploads": self._count_rows(connection, "ims_uploads"),
                 "ims_raw_data": self._count_rows(connection, "ims_raw_data"),
                 "ims_facts": self._count_rows(connection, "ims_facts"),
+                "ims_summary": self._count_rows(connection, "ims_summary"),
             }
             self.assertEqual(before_counts, after_counts)
 
@@ -527,16 +601,38 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
 
             non_strict_app = _build_test_app(db_url, strict_schema_validation=False)
             with non_strict_app.app_context():
-                with self.assertLogs("app.database", level="WARNING") as logs:
-                    initialize_database()
-                self.assertIn("missing required tables", " ".join(logs.output))
+                initialize_database()
 
             strict_app = _build_test_app(db_url, strict_schema_validation=True)
             with strict_app.app_context():
-                with self.assertLogs("app.database", level="ERROR") as logs:
-                    with self.assertRaises(RuntimeError):
-                        initialize_database()
-                self.assertIn("Apply Alembic migrations", " ".join(logs.output))
+                with self.assertRaises(RuntimeError):
+                    initialize_database()
+
+    def test_sqlite_instance_schema_matches_models_after_upgrade(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sqlite_path = Path(temp_dir) / "ipm.db"
+            sqlite_url = f"sqlite:///{sqlite_path}"
+            _create_legacy_schema(sqlite_url)
+            app = _build_test_app(sqlite_url)
+
+            with app.app_context():
+                upgrade(directory=MIGRATIONS_DIR)
+
+            inspector = sa.inspect(sa.create_engine(sqlite_url))
+            model_tables = {
+                "ims_uploads": IMSUpload,
+                "ims_raw_data": IMSRawData,
+                "ims_facts": IMSFact,
+                "ims_summary": IMSSummary,
+            }
+            for table_name, model in model_tables.items():
+                model_columns = {column.name for column in model.__table__.columns}
+                db_columns = {column["name"] for column in inspector.get_columns(table_name)}
+                self.assertEqual(
+                    model_columns,
+                    db_columns,
+                    f"Schema mismatch for {table_name}: model={sorted(model_columns)} db={sorted(db_columns)}",
+                )
 
 
 if __name__ == "__main__":

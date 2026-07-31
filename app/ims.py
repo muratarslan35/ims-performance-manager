@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import current_app
 from flask import flash
 from flask import redirect
 from flask import render_template
@@ -9,8 +10,6 @@ from flask_login import current_user
 from flask_login import login_required
 
 from werkzeug.utils import secure_filename
-
-from config import Config
 
 from app.models import IMSUpload
 
@@ -95,13 +94,7 @@ def upload():
 
     )
 
-    upload_path = (
-
-        Config.UPLOAD_FOLDER /
-
-        filename
-
-    )
+    upload_path = current_app.config["UPLOAD_FOLDER"] / filename
 
     try:
 

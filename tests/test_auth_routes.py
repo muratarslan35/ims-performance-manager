@@ -12,9 +12,12 @@ Verifies:
 import os
 import sys
 import pytest
+import tempfile
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+MIGRATIONS_DIR = str(Path(__file__).resolve().parents[1] / "migrations")
 
 
 @pytest.fixture()
@@ -24,10 +27,13 @@ def app():
 
     from app import create_app
 
+    temp_dir = tempfile.TemporaryDirectory()
+    db_path = Path(temp_dir.name) / "auth-test.db"
+
     class TestConfig:
         TESTING = True
         SECRET_KEY = "test-secret-key"
-        SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{db_path}"
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         WTF_CSRF_ENABLED = False
         LOGIN_DISABLED = False
@@ -40,8 +46,11 @@ def app():
     application = create_app(TestConfig)
 
     with application.app_context():
+        from flask_migrate import upgrade
+        from app.database import initialize_database
         from app.extensions import db
-        db.create_all()
+        upgrade(directory=MIGRATIONS_DIR)
+        initialize_database()
 
         from app.models import User
         from werkzeug.security import generate_password_hash
@@ -59,7 +68,8 @@ def app():
 
     with application.app_context():
         from app.extensions import db
-        db.drop_all()
+        db.session.remove()
+    temp_dir.cleanup()
 
 
 @pytest.fixture()
