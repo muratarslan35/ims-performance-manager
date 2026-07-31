@@ -14,6 +14,7 @@ from app.models import (
     IMSFact,
     IMSRawData,
     IMSSummary,
+    IMSUpload,
     ImportAuditLog,
     ManualMatchQueue,
     Product,
