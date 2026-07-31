@@ -121,6 +121,43 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(summary.year, 2026)
         self.assertEqual(summary.month, 1)
 
+    def test_run_logs_structured_stage_metrics_with_upload_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = self._make_workbook(directory, "stage-metrics.xlsx")
+            with mock.patch("app.services.ims_import_service.logger") as mocked_logger:
+                result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 1)
+
+        self.assertTrue(result["success"], result["errors"])
+        stage_payloads = []
+        for call in mocked_logger.info.call_args_list:
+            if not call.args or call.args[0] != "ims_import_stage_metrics %s":
+                continue
+            payload = json.loads(call.args[1])
+            stage_payloads.append(payload)
+
+        expected_stages = {
+            "workbook_rows_read",
+            "parsed_rows",
+            "detected_representatives",
+            "skipped_rows",
+            "staged_raw_rows",
+            "created_raw_records",
+            "created_facts",
+            "created_summaries",
+        }
+        self.assertEqual({payload.get("stage") for payload in stage_payloads}, expected_stages)
+        self.assertTrue(all(payload.get("upload_id") == result["upload_id"] for payload in stage_payloads))
+
+        stage_map = {payload["stage"]: payload for payload in stage_payloads}
+        self.assertEqual(stage_map["workbook_rows_read"]["workbook_rows_read"], 3)
+        self.assertEqual(stage_map["parsed_rows"]["parsed_rows"], 1)
+        self.assertEqual(stage_map["detected_representatives"]["detected_representatives"], 1)
+        self.assertIsInstance(stage_map["skipped_rows"]["skipped_rows"], dict)
+        self.assertEqual(stage_map["staged_raw_rows"]["staged_raw_rows"], 1)
+        self.assertEqual(stage_map["created_raw_records"]["created_raw_records"], 1)
+        self.assertEqual(stage_map["created_facts"]["created_facts"], 1)
+        self.assertEqual(stage_map["created_summaries"]["created_summaries"], 1)
+
     def test_week_number_extracted_from_filename(self):
         """Week number is parsed from the file name (e.g. '24.Hafta')."""
         with tempfile.TemporaryDirectory() as directory:

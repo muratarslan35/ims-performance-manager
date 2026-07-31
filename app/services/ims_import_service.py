@@ -6,6 +6,7 @@ import math
 import os
 import re
 import time
+from collections import Counter
 from datetime import datetime
 
 import pandas as pd
@@ -376,6 +377,10 @@ class IMSImportService:
     def _log_warning(self, reason, sheet_name, source_row, **context):
         payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
         self.warnings.append(self._json_dump(payload))
+
+    def _log_stage_metrics(self, stage, **metrics):
+        payload = {"stage": stage, "upload_id": self.upload.id if self.upload else None, **metrics}
+        logger.info("ims_import_stage_metrics %s", self._json_dump(payload))
 
     def parse_metric_value(self, value):
         if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -1342,9 +1347,36 @@ class IMSImportService:
             AliasService.warmup()
             self.create_upload(year, month, week_number=week_number)
             self.load_workbook()
+            workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
+            self._log_stage_metrics("workbook_rows_read", workbook_rows_read=workbook_rows_read)
             if clear_before_import and week_number is None:
                 self.clear_month(year, month)
             self.process_workbook(year, month, week_number=week_number)
+            skipped_rows = dict(Counter(item.get("reason", "unknown") for item in self.skipped_logs))
+            self._log_stage_metrics("parsed_rows", parsed_rows=self.statistics.get("processed_rows", 0))
+            self._log_stage_metrics(
+                "detected_representatives",
+                detected_representatives=(
+                    self.statistics.get("matched_representatives", 0)
+                    + self.statistics.get("unmatched_representatives", 0)
+                ),
+            )
+            self._log_stage_metrics("skipped_rows", skipped_rows=skipped_rows)
+            self._log_stage_metrics("staged_raw_rows", staged_raw_rows=self.statistics.get("raw_records", 0))
+            self._log_stage_metrics(
+                "created_raw_records",
+                created_raw_records=self.statistics.get("raw_records", 0),
+            )
+            self._log_stage_metrics(
+                "created_facts",
+                created_facts=self.statistics.get("fact_records", 0),
+                facts_inserted=self.statistics.get("facts_inserted", 0),
+                facts_updated=self.statistics.get("facts_updated", 0),
+            )
+            self._log_stage_metrics(
+                "created_summaries",
+                created_summaries=self.statistics.get("summary_records", 0),
+            )
             self.finish(success=True, year=year, month=month, week_number=week_number)
             db.session.commit()
         except (OSError, ValueError, SQLAlchemyError, Exception) as exc:
