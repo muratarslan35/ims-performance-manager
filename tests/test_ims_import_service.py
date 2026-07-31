@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import json
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
@@ -241,6 +242,49 @@ class IMSImportServiceTestCase(unittest.TestCase):
 
         reasons = {item["reason"] for item in result["skipped_logs"]}
         self.assertIn("missing_product_group", reasons)
+
+    def test_wide_mode_representative_match_memoized_per_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "ims-memo-wide.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None],
+                    ["Representative", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", 12, 300.5],
+                    ["Ayşe Kaya", 10, 200.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+
+            service = IMSImportService(workbook_path, uploaded_by="Test User")
+            with mock.patch.object(
+                AliasService, "find_representative", wraps=AliasService.find_representative
+            ) as find_representative:
+                result = service.run(2026, 4)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(find_representative.call_count, 1)
+        self.assertEqual(IMSRawData.query.count(), 2)
+
+    def test_normalized_mode_product_match_memoized_per_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "ims-memo-normalized.xlsx"
+            pd.DataFrame(
+                [
+                    ["Bilim İlaç Brick Analizi", None, None, None, None],
+                    ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                    ["Bölge", "İl", "Temsilci", "Ürün Grubu", "TL"],
+                    ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 300.5],
+                    ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 110.5],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="TL")
+
+            service = IMSImportService(workbook_path, uploaded_by="Test User")
+            with mock.patch.object(AliasService, "find_product", wraps=AliasService.find_product) as find_product:
+                result = service.run(2026, 5)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(find_product.call_count, 1)
+        self.assertEqual(IMSRawData.query.count(), 1)
 
 
 if __name__ == "__main__":

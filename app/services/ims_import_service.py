@@ -92,6 +92,8 @@ class IMSImportService:
             "skipped_records": 0,
         }
         self.skipped_logs = []
+        self._representative_match_cache = {}
+        self._product_match_cache = {}
 
     @staticmethod
     def extract_week_number(file_name):
@@ -306,6 +308,18 @@ class IMSImportService:
         self.skipped_logs.append(payload)
         logger.warning("ims_import_skipped_row %s", self._json_dump(payload))
 
+    def resolve_representative_match(self, representative_name):
+        normalized = AliasService.normalize(representative_name)
+        if normalized not in self._representative_match_cache:
+            self._representative_match_cache[normalized] = AliasService.find_representative(representative_name)
+        return self._representative_match_cache[normalized]
+
+    def resolve_product_match(self, product_group_name):
+        normalized = AliasService.normalize(product_group_name)
+        if normalized not in self._product_match_cache:
+            self._product_match_cache[normalized] = AliasService.find_product(product_group_name)
+        return self._product_match_cache[normalized]
+
     def analyze_sheet(self, sheet_name, dataframe):
         header_row = self.find_header_row(dataframe)
         if header_row is None:
@@ -480,7 +494,7 @@ class IMSImportService:
     def stage_normalized_raw_data(self, normalized_rows, year, month, week_number=None):
         for item in normalized_rows:
             representative_name = item["representative_name"]
-            representative_match = AliasService.find_representative(representative_name)
+            representative_match = self.resolve_representative_match(representative_name)
             representative_id = None
             if representative_match["matched"]:
                 representative_id = representative_match["object"].id
@@ -503,7 +517,7 @@ class IMSImportService:
                 )
 
             product_group_name = item["product_group"]
-            product_match = AliasService.find_product(product_group_name)
+            product_match = self.resolve_product_match(product_group_name)
             if not product_match["matched"]:
                 self.statistics["skipped_records"] += 1
                 self.unknown_products.append(product_group_name)
@@ -614,7 +628,7 @@ class IMSImportService:
 
             for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
                 representative_name = str(row[representative_column]).strip()
-                representative_match = AliasService.find_representative(representative_name)
+                representative_match = self.resolve_representative_match(representative_name)
                 representative_id = None
                 if representative_match["matched"]:
                     representative_id = representative_match["object"].id
