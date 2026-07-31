@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -61,6 +62,34 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 ["Ayşe Kaya", 12, 300.5],
             ]
         ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+        return workbook_path
+
+    def _make_brick_analysis_workbook(self, directory, filename="brick_analysis.xlsx"):
+        workbook_path = Path(directory) / filename
+        sheets = {
+            "TL": [
+                ["Bilim İlaç Brick Analizi", None, None, None, None],
+                ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                ["Bölge", "İl", "Temsilci", "Ürün Grubu", "TL"],
+                ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 300.5],
+                ["Marmara", "İstanbul", "Ayşe Kaya", "", 10],
+            ],
+            "BOX": [
+                ["Bilim İlaç Brick Analizi", None, None, None, None],
+                ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                ["Bölge", "İl", "Temsilci", "Ürün Grubu", "Kutu"],
+                ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 12],
+            ],
+            "MARKET": [
+                ["Bilim İlaç Brick Analizi", None, None, None, None],
+                ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                ["Bölge", "İl", "Temsilci", "Ürün Grubu", "Pazar Payı"],
+                ["Marmara", "İstanbul", "Ayşe Kaya", "Travazol", 4.2],
+            ],
+        }
+        with pd.ExcelWriter(workbook_path) as writer:
+            for sheet_name, rows in sheets.items():
+                pd.DataFrame(rows).to_excel(writer, index=False, header=False, sheet_name=sheet_name)
         return workbook_path
 
     def test_import_builds_raw_facts_and_summary(self):
@@ -188,6 +217,30 @@ class IMSImportServiceTestCase(unittest.TestCase):
         result = AliasService.find_representative("Match Table Name")
         self.assertTrue(result["matched"])
         self.assertEqual(result["method"], "MATCH_TABLE")
+
+    def test_brick_analysis_multi_sheet_merge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = self._make_brick_analysis_workbook(directory)
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 3)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(IMSRawData.query.count(), 1)
+        self.assertEqual(IMSFact.query.count(), 1)
+        self.assertEqual(IMSSummary.query.count(), 1)
+
+        fact = IMSFact.query.one()
+        self.assertEqual(fact.unit, 12)
+        self.assertEqual(fact.tl, 300.5)
+        self.assertEqual(fact.market_share, 4.2)
+
+        raw = IMSRawData.query.one()
+        payload = json.loads(raw.raw_json)
+        self.assertEqual(payload["source_values"]["region"], "Marmara")
+        self.assertEqual(payload["source_values"]["province"], "İstanbul")
+        self.assertEqual(payload["source_values"]["product_group"], "Travazol")
+
+        reasons = {item["reason"] for item in result["skipped_logs"]}
+        self.assertIn("missing_product_group", reasons)
 
 
 if __name__ == "__main__":

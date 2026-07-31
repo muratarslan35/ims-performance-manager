@@ -1,6 +1,7 @@
 """Workbook import service implementing IMSRawData -> IMSFact -> IMSSummary."""
 
 import json
+import logging
 import math
 import os
 import re
@@ -20,6 +21,7 @@ from app.services.alias_service import AliasService
 # Examples: "Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx"
 #           "25.Hafta Mayıs IMS.xlsx"
 _WEEK_REGEX = re.compile(r"(\d{1,2})\s*\.?\s*hafta", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 class IMSImportService:
@@ -46,6 +48,21 @@ class IMSImportService:
         "REP",
         "ADI SOYADI",
         "SATIS TEMSILCISI",
+    }
+    REGION_HEADERS = {"BOLGE", "REGION"}
+    PROVINCE_HEADERS = {"IL", "SEHIR", "CITY", "PROVINCE"}
+    PRODUCT_GROUP_HEADERS = {"URUN GRUBU", "PRODUCT GROUP", "MARKA", "URUN", "PRODUCT"}
+    NORMALIZED_SHEET_TYPES = {
+        "TL": "competition_tl",
+        "CIRO": "competition_tl",
+        "TUTAR": "competition_tl",
+        "KUTU": "competition_box",
+        "BOX": "competition_box",
+        "ADET": "competition_box",
+        "MARKET": "competition_pp",
+        "PAZAR": "competition_pp",
+        "PAY": "competition_pp",
+        "PP": "competition_pp",
     }
     TOTAL_LABELS = {"NATIONAL", "TOPLAM", "GRAND TOTAL", "TOTAL", "GENEL TOPLAM"}
 
@@ -74,6 +91,7 @@ class IMSImportService:
             "queued_for_manual": 0,
             "skipped_records": 0,
         }
+        self.skipped_logs = []
 
     @staticmethod
     def extract_week_number(file_name):
@@ -128,6 +146,13 @@ class IMSImportService:
             return value
         return str(value)
 
+    @staticmethod
+    def clean_text(value):
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return ""
+        text = str(value).strip()
+        return "" if AliasService.normalize(text) in {"", "NAN", "NONE"} else text
+
     def create_upload(self, year, month, week_number=None):
         self.upload = IMSUpload(
             file_name=os.path.basename(self.file_path),
@@ -148,13 +173,26 @@ class IMSImportService:
         return self.workbook
 
     def find_header_row(self, dataframe):
-        for index in range(min(20, len(dataframe))):
+        max_rows = min(30, len(dataframe))
+        best_index = None
+        best_score = -1
+        for index in range(max_rows):
             values = [AliasService.normalize(value) for value in dataframe.iloc[index].tolist()]
-            if any(
-                candidate in " ".join(values)
-                for candidate in self.REPRESENTATIVE_HEADERS
-            ):
-                return index
+            row_text = " ".join(values)
+            score = 0
+            if any(candidate in row_text for candidate in self.REPRESENTATIVE_HEADERS):
+                score += 3
+            if any(candidate in row_text for candidate in self.PRODUCT_GROUP_HEADERS):
+                score += 2
+            if any(candidate in row_text for candidate in self.REGION_HEADERS | self.PROVINCE_HEADERS):
+                score += 1
+            if any(candidate in row_text for candidate in self.NORMALIZED_SHEET_TYPES):
+                score += 1
+            if score > best_score:
+                best_index = index
+                best_score = score
+        if best_score >= 3:
+            return best_index
         return None
 
     def normalize_header(self, value):
@@ -163,8 +201,18 @@ class IMSImportService:
     def build_headers(self, dataframe, header_row):
         headers = []
         used_headers = {}
-        for column_index, value in enumerate(dataframe.iloc[header_row].tolist(), start=1):
-            header = self.normalize_header(value) or f"COLUMN_{column_index}"
+        header_rows = [header_row]
+        if header_row > 0:
+            header_rows.insert(0, header_row - 1)
+
+        for column_index in range(dataframe.shape[1]):
+            parts = []
+            for row_index in header_rows:
+                token = self.normalize_header(dataframe.iloc[row_index, column_index])
+                if token and token not in parts:
+                    parts.append(token)
+
+            header = " ".join(parts) or f"COLUMN_{column_index + 1}"
             duplicate_count = used_headers.get(header, 0)
             used_headers[header] = duplicate_count + 1
             headers.append(header if duplicate_count == 0 else f"{header}_{duplicate_count + 1}")
@@ -179,7 +227,84 @@ class IMSImportService:
         for sheet_label, sheet_type in self.REPORT_SHEETS.items():
             if AliasService.normalize(sheet_label) in normalized_name:
                 return sheet_type
+        for token, sheet_type in self.NORMALIZED_SHEET_TYPES.items():
+            if token in normalized_name:
+                return sheet_type
         return "unknown"
+
+    def detect_dimension_columns(self, dataframe):
+        dimensions = {
+            "representative": None,
+            "region": None,
+            "province": None,
+            "product_group": None,
+        }
+        for column in dataframe.columns:
+            normalized = AliasService.normalize(column)
+            if dimensions["representative"] is None and (
+                normalized in self.REPRESENTATIVE_HEADERS
+                or any(candidate in normalized for candidate in self.REPRESENTATIVE_HEADERS if len(candidate) > 3)
+            ):
+                dimensions["representative"] = column
+                continue
+            if dimensions["region"] is None and any(token in normalized for token in self.REGION_HEADERS):
+                dimensions["region"] = column
+                continue
+            if dimensions["province"] is None and any(token in normalized for token in self.PROVINCE_HEADERS):
+                dimensions["province"] = column
+                continue
+            if dimensions["product_group"] is None and any(
+                token in normalized for token in self.PRODUCT_GROUP_HEADERS
+            ):
+                dimensions["product_group"] = column
+        return dimensions
+
+    def detect_metric_kind(self, sheet_name, dataframe):
+        normalized_name = AliasService.normalize(sheet_name)
+        for token, sheet_type in self.NORMALIZED_SHEET_TYPES.items():
+            if token in normalized_name:
+                if sheet_type == "competition_tl":
+                    return "tl"
+                if sheet_type == "competition_box":
+                    return "unit"
+                if sheet_type == "competition_pp":
+                    return "market_share"
+
+        headers = " ".join(AliasService.normalize(column) for column in dataframe.columns)
+        if any(token in headers for token in ("TL", "CIRO", "TUTAR", "VALUE")):
+            return "tl"
+        if any(token in headers for token in ("KUTU", "BOX", "ADET", "UNIT")):
+            return "unit"
+        return "market_share"
+
+    def detect_metric_column(self, dataframe, dimensions, metric_kind):
+        dimension_columns = {column for column in dimensions.values() if column}
+        metric_tokens = {
+            "tl": ("TL", "CIRO", "TUTAR", "VALUE"),
+            "unit": ("KUTU", "BOX", "ADET", "UNIT"),
+            "market_share": ("PAZAR", "PAY", "MARKET", "SHARE", "PP"),
+        }
+        candidates = [column for column in dataframe.columns if column not in dimension_columns]
+        for column in candidates:
+            normalized = AliasService.normalize(column)
+            if any(token in normalized for token in metric_tokens[metric_kind]):
+                return column
+
+        scored = []
+        for column in candidates:
+            sample = dataframe[column].head(20)
+            numeric_count = sum(1 for value in sample if self.safe_float(value) != 0.0)
+            if numeric_count:
+                scored.append((numeric_count, column))
+        if scored:
+            scored.sort(reverse=True)
+            return scored[0][1]
+        return None
+
+    def _log_skipped_row(self, reason, sheet_name, source_row, **context):
+        payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
+        self.skipped_logs.append(payload)
+        logger.warning("ims_import_skipped_row %s", self._json_dump(payload))
 
     def analyze_sheet(self, sheet_name, dataframe):
         header_row = self.find_header_row(dataframe)
@@ -261,10 +386,29 @@ class IMSImportService:
 
     def prepare_sheet(self, sheet):
         dataframe = sheet["dataframe"]
-        representative_column = self.detect_representative_column(dataframe)
+        dimensions = self.detect_dimension_columns(dataframe)
+        representative_column = dimensions["representative"] or self.detect_representative_column(dataframe)
         if representative_column is None:
             self.warnings.append(f"{sheet['sheet_name']}: temsilci kolonu bulunamadı; sayfa atlandı.")
             return None
+
+        if dimensions["product_group"] is not None:
+            metric_kind = self.detect_metric_kind(sheet["sheet_name"], dataframe)
+            metric_column = self.detect_metric_column(dataframe, dimensions, metric_kind)
+            if metric_column is None:
+                self.warnings.append(f"{sheet['sheet_name']}: metrik kolonu bulunamadı; sayfa atlandı.")
+                return None
+            return {
+                **sheet,
+                "mode": "normalized",
+                "dataframe": self.clean_dataframe(dataframe, representative_column),
+                "representative_column": representative_column,
+                "region_column": dimensions["region"],
+                "province_column": dimensions["province"],
+                "product_group_column": dimensions["product_group"],
+                "metric_kind": metric_kind,
+                "metric_column": metric_column,
+            }
 
         products = self.detect_product_columns(dataframe, representative_column)
         if not products:
@@ -273,10 +417,147 @@ class IMSImportService:
 
         return {
             **sheet,
+            "mode": "wide",
             "dataframe": self.clean_dataframe(dataframe, representative_column),
             "representative_column": representative_column,
             "products": products,
         }
+
+    def merge_normalized_sheets(self, normalized_sheets):
+        merged = {}
+        for sheet in normalized_sheets:
+            dataframe = sheet["dataframe"]
+            representative_column = sheet["representative_column"]
+            product_group_column = sheet["product_group_column"]
+            for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
+                representative_name = self.clean_text(row[representative_column])
+                product_group_name = self.clean_text(row[product_group_column])
+                source_row = dataframe_index + sheet["header_row"] + 2
+                if not representative_name:
+                    self.statistics["skipped_records"] += 1
+                    self._log_skipped_row(
+                        reason="missing_representative",
+                        sheet_name=sheet["sheet_name"],
+                        source_row=source_row,
+                    )
+                    continue
+                if not product_group_name:
+                    self.statistics["skipped_records"] += 1
+                    self._log_skipped_row(
+                        reason="missing_product_group",
+                        sheet_name=sheet["sheet_name"],
+                        source_row=source_row,
+                        representative=representative_name,
+                    )
+                    continue
+
+                key = (
+                    AliasService.normalize(representative_name),
+                    AliasService.normalize(product_group_name),
+                )
+                merged_row = merged.setdefault(
+                    key,
+                    {
+                        "representative_name": representative_name,
+                        "product_group": product_group_name,
+                        "region": self.clean_text(row[sheet["region_column"]]) if sheet["region_column"] else None,
+                        "province": self.clean_text(row[sheet["province_column"]]) if sheet["province_column"] else None,
+                        "source_rows": [],
+                        "sheet_names": set(),
+                        "metrics": {"unit": 0.0, "tl": 0.0, "market_share": 0.0, "value_share": 0.0, "growth": 0.0},
+                        "source_values": {},
+                    },
+                )
+                merged_row["source_rows"].append(source_row)
+                merged_row["sheet_names"].add(sheet["sheet_name"])
+                metric_value = row[sheet["metric_column"]]
+                merged_row["metrics"][sheet["metric_kind"]] += self.safe_float(metric_value)
+                merged_row["source_values"][f"{sheet['sheet_name']}::{sheet['metric_column']}"] = self._value_for_json(
+                    metric_value
+                )
+        return list(merged.values())
+
+    def stage_normalized_raw_data(self, normalized_rows, year, month, week_number=None):
+        for item in normalized_rows:
+            representative_name = item["representative_name"]
+            representative_match = AliasService.find_representative(representative_name)
+            representative_id = None
+            if representative_match["matched"]:
+                representative_id = representative_match["object"].id
+                self.statistics["matched_representatives"] += 1
+            else:
+                self.statistics["unmatched_representatives"] += 1
+                self.statistics["queued_for_manual"] += 1
+                self._log_skipped_row(
+                    reason="unmatched_representative",
+                    sheet_name=" | ".join(sorted(item["sheet_names"])),
+                    source_row=min(item["source_rows"]),
+                    representative=representative_name,
+                )
+                best = representative_match.get("object")
+                AliasService.enqueue_unmatched_representative(
+                    ims_name=representative_name,
+                    upload_id=self.upload.id,
+                    best_candidate=best.rep_name if best else None,
+                    best_score=representative_match.get("score", 0.0),
+                )
+
+            product_group_name = item["product_group"]
+            product_match = AliasService.find_product(product_group_name)
+            if not product_match["matched"]:
+                self.statistics["skipped_records"] += 1
+                self.unknown_products.append(product_group_name)
+                self._log_skipped_row(
+                    reason="unmatched_product_group",
+                    sheet_name=" | ".join(sorted(item["sheet_names"])),
+                    source_row=min(item["source_rows"]),
+                    representative=representative_name,
+                    product_group=product_group_name,
+                )
+                best = product_match.get("object")
+                AliasService.enqueue_unmatched_product(
+                    ims_name=product_group_name,
+                    upload_id=self.upload.id,
+                    best_candidate=best.product_name if best else None,
+                    best_score=product_match.get("score", 0.0),
+                )
+                continue
+
+            self.statistics["matched_products"] += 1
+            metrics = item["metrics"]
+            if not any(metrics.values()):
+                self.statistics["skipped_records"] += 1
+                self._log_skipped_row(
+                    reason="empty_metrics",
+                    sheet_name=" | ".join(sorted(item["sheet_names"])),
+                    source_row=min(item["source_rows"]),
+                    representative=representative_name,
+                    product_group=product_group_name,
+                )
+                continue
+
+            source_values = {
+                **item["source_values"],
+                "region": item["region"],
+                "province": item["province"],
+                "product_group": product_group_name,
+                "sheet_names": sorted(item["sheet_names"]),
+            }
+
+            self.create_raw_record(
+                year=year,
+                month=month,
+                week_number=week_number,
+                sheet_name=" | ".join(sorted(item["sheet_names"])),
+                sheet_type="brick_normalized",
+                source_row=min(item["source_rows"]),
+                representative_name=representative_name,
+                representative_id=representative_id,
+                product=product_match["object"],
+                metrics=metrics,
+                source_values=source_values,
+            )
+            self.statistics["processed_rows"] += 1
 
     def create_raw_record(
         self,
@@ -326,6 +607,8 @@ class IMSImportService:
 
     def stage_raw_data(self, prepared_sheets, year, month, week_number=None):
         for sheet in prepared_sheets:
+            if sheet.get("mode") == "normalized":
+                continue
             dataframe = sheet["dataframe"]
             representative_column = sheet["representative_column"]
 
@@ -341,6 +624,12 @@ class IMSImportService:
                     self.warnings.append(
                         f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
                         f"temsilci eşleşmedi ({representative_name})."
+                    )
+                    self._log_skipped_row(
+                        reason="unmatched_representative",
+                        sheet_name=sheet["sheet_name"],
+                        source_row=dataframe_index + sheet["header_row"] + 2,
+                        representative=representative_name,
                     )
                     # Queue for manual resolution
                     best = representative_match.get("object")
@@ -362,6 +651,13 @@ class IMSImportService:
 
                     if not any(metrics.values()):
                         self.statistics["skipped_records"] += 1
+                        self._log_skipped_row(
+                            reason="empty_metrics",
+                            sheet_name=sheet["sheet_name"],
+                            source_row=dataframe_index + sheet["header_row"] + 2,
+                            representative=representative_name,
+                            product=product_info["product"].product_name,
+                        )
                         continue
 
                     self.create_raw_record(
@@ -505,7 +801,13 @@ class IMSImportService:
     def process_workbook(self, year, month, week_number=None):
         sheets = self.analyze_workbook()
         prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
-        self.stage_raw_data(prepared_sheets, year, month, week_number=week_number)
+        normalized_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") == "normalized"]
+        wide_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") != "normalized"]
+        if normalized_sheets:
+            self.statistics["processed_sheets"] += len(normalized_sheets)
+            normalized_rows = self.merge_normalized_sheets(normalized_sheets)
+            self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
+        self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
 
@@ -551,6 +853,7 @@ class IMSImportService:
             "errors": self.errors,
             "unknown_products": sorted(set(self.unknown_products)),
             "unknown_columns": sorted(set(self.unknown_columns)),
+            "skipped_logs": self.skipped_logs,
             "processing_time": round(time.monotonic() - self.started, 2),
         }
 
