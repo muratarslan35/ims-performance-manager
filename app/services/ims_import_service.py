@@ -66,6 +66,39 @@ class IMSImportService:
     BRICK_HEADERS = {"IAM BRICK", "BRICK", "SUBTERRITORIES", "SUBTERRITORY", "TERRITORY"}
     MANAGER_HEADERS = {"MANAGER", "MUDUR", "MÜDÜR", "BOLGE MUDURU", "BÖLGE MÜDÜRÜ", "2 TTS ISMI"}
     PRODUCT_GROUP_HEADERS = {"URUN GRUBU", "PRODUCT GROUP", "MARKA", "URUN", "PRODUCT"}
+    PRODUCT_HEADER_NOISE_TOKENS = {
+        "SUBTOTAL",
+        "TOPLAM",
+        "TOTAL",
+        "PAZAR",
+        "MARKET",
+        "GRUP",
+        "GROUP",
+        "HEDEF",
+        "CIKIS",
+        "ÇIKIŞ",
+        "NATIONAL",
+        "GRAND",
+    }
+    REPRESENTATIVE_NOISE_TOKENS = {
+        "SUBTOTAL",
+        "TOPLAM",
+        "TOTAL",
+        "NATIONAL",
+        "GRAND",
+        "BOS",
+        "KADRO",
+        "BRICK",
+    }
+    STRICT_PRODUCT_MATCH_METHODS = {
+        "MATCH_TABLE",
+        "EXACT",
+        "ALIAS_EXACT",
+        "NORMALIZED",
+        "ALIAS_NORMALIZED",
+        "CONTAINS",
+        "ALIAS_CONTAINS",
+    }
     NORMALIZED_SHEET_TYPES = {
         "TL": "competition_tl",
         "CIRO": "competition_tl",
@@ -492,6 +525,11 @@ class IMSImportService:
             return False
         if bool(re.search(r"\d", normalized)):
             return False
+        tokens = normalized.split()
+        if any(token in self.REPRESENTATIVE_NOISE_TOKENS for token in tokens):
+            return False
+        if len(tokens) < 2:
+            return False
         return bool(re.search(r"[A-ZÇĞİÖŞÜ]", normalized))
 
     def _ensure_representative(self, name, *, territory=None, manager=None, region=None, city=None):
@@ -607,11 +645,22 @@ class IMSImportService:
         for column_index, header in enumerate(dataframe.columns):
             if header == representative_column:
                 continue
+            normalized_header = AliasService.normalize(header)
+            if any(token in normalized_header for token in self.PRODUCT_HEADER_NOISE_TOKENS):
+                continue
             match = AliasService.find_product(header)
-            if not match["matched"]:
+            if not match["matched"] or match["method"] not in self.STRICT_PRODUCT_MATCH_METHODS:
                 continue
 
             product = match["object"]
+            canonical_labels = {
+                AliasService.normalize(product.product_code),
+                AliasService.normalize(product.product_name),
+                AliasService.normalize(product.ims_name),
+            }
+            canonical_labels = {label for label in canonical_labels if label}
+            if canonical_labels and not any(label in normalized_header for label in canonical_labels):
+                continue
             product_info = products.setdefault(
                 product.id,
                 {"product": product, "columns": []},
@@ -999,10 +1048,15 @@ class IMSImportService:
             for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
                 try:
                     representative_values = []
-                    for candidate_column in representative_columns:
-                        value = self.clean_text(row[candidate_column])
-                        if value:
-                            representative_values.append(value)
+                    primary_representative = self.clean_text(row[representative_column])
+                    if primary_representative:
+                        representative_values.append(primary_representative)
+                    else:
+                        for candidate_column in representative_columns[1:]:
+                            value = self.clean_text(row[candidate_column])
+                            if value:
+                                representative_values.append(value)
+                                break
                     representative_values = list(dict.fromkeys(representative_values))
                     if not representative_values:
                         self.statistics["skipped_records"] += 1

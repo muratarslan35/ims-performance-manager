@@ -451,6 +451,39 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(first["object"].id, second["object"].id)
         self.assertEqual(first["method"], second["method"])
 
+    def test_secondary_representative_placeholder_is_not_imported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "secondary-placeholder.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None, None],
+                    ["1. TTS ISMI", "2. TTS ISMI", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", "ANKARA BOS KADRO", 8, 120.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 9)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(IMSRawData.query.count(), 1)
+        raw = IMSRawData.query.one()
+        self.assertEqual(raw.representative, "Ayşe Kaya")
+
+    def test_competitor_like_header_is_not_fuzzy_matched_to_company_product(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "competitor-fuzzy-header.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None, None],
+                    ["Representative", "Travocort Box", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", 90, 10, 250.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 9)
+
+        self.assertTrue(result["success"], result["errors"])
+        fact = IMSFact.query.one()
+        self.assertEqual(fact.unit, 10)
+
     def test_upload_route_persists_full_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = self._make_workbook(directory, "upload-route.xlsx")
