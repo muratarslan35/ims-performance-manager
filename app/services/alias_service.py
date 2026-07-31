@@ -46,6 +46,7 @@ class AliasService:
     _representative_alias_raw_cache = {}
     _region_cache = {}
     _province_cache = {}
+    _normalize_memo = {}
     _statistics = {
         "product": 0,
         "product_alias": 0,
@@ -59,12 +60,20 @@ class AliasService:
     def normalize(cls, value):
         if value is None:
             return ""
+        source = str(value)
+        cached = cls._normalize_memo.get(source)
+        if cached is not None:
+            return cached
 
-        text = unicodedata.normalize("NFKD", str(value).strip().upper())
+        text = unicodedata.normalize("NFKD", source.strip().upper())
         text = "".join(char for char in text if not unicodedata.combining(char))
         text = text.translate(str.maketrans({"İ": "I", "Ş": "S", "Ğ": "G", "Ü": "U", "Ö": "O", "Ç": "C"}))
         text = re.sub(r"[^A-Z0-9]+", " ", text)
-        return re.sub(r"\s+", " ", text).strip()
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if len(cls._normalize_memo) > 50000:
+            cls._normalize_memo.clear()
+        cls._normalize_memo[source] = normalized
+        return normalized
 
     @classmethod
     def clean_name(cls, value):
@@ -128,6 +137,8 @@ class AliasService:
             cls._representative_alias_raw_cache = {}
             cls._region_cache = {}
             cls._province_cache = {}
+            cls._normalize_memo = {}
+            cls._normalize_memo = {}
 
     @classmethod
     def load_cache(cls):

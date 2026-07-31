@@ -901,6 +901,21 @@ class IMSImportService:
     def transform_raw_to_facts(self, year, month, week_number=None):
         """UPSERT IMS facts: update existing rows for the same week/period, insert new ones."""
         raw_records = IMSRawData.query.filter_by(upload_id=self.upload.id, year=year, month=month).all()
+        existing_map = {}
+        if week_number is not None:
+            existing_facts = (
+                IMSFact.query.filter_by(year=year, week_number=week_number)
+                .filter(IMSFact.report_type.isnot(None))
+                .all()
+            )
+            existing_map = {
+                (
+                    fact.representative_id,
+                    fact.product_id,
+                    fact.report_type,
+                ): fact
+                for fact in existing_facts
+            }
         for raw in raw_records:
             if raw.representative_id is None or raw.product_id is None:
                 self.statistics["skipped_records"] += 1
@@ -909,13 +924,7 @@ class IMSImportService:
             # Attempt to find an existing fact for this (year, week, rep, product, report_type)
             existing = None
             if week_number is not None:
-                existing = IMSFact.query.filter_by(
-                    year=year,
-                    week_number=week_number,
-                    representative_id=raw.representative_id,
-                    product_id=raw.product_id,
-                    report_type=raw.sheet_type,
-                ).first()
+                existing = existing_map.get((raw.representative_id, raw.product_id, raw.sheet_type))
 
             if existing:
                 existing.upload_id = self.upload.id
@@ -946,6 +955,8 @@ class IMSImportService:
                     metrics_json=raw.raw_json,
                 )
                 db.session.add(fact)
+                if week_number is not None:
+                    existing_map[(raw.representative_id, raw.product_id, raw.sheet_type)] = fact
                 self.statistics["facts_inserted"] += 1
 
             self.statistics["fact_records"] += 1
@@ -970,13 +981,10 @@ class IMSImportService:
         )
 
         quarter = self.quarter_for(month)
+        targets = Target.query.filter_by(year=year, month=month).all()
+        target_map = {(target.representative_id, target.product_id): target for target in targets}
         for row in rows:
-            target = Target.query.filter_by(
-                representative_id=row.representative_id,
-                product_id=row.product_id,
-                year=year,
-                month=month,
-            ).first()
+            target = target_map.get((row.representative_id, row.product_id))
             target_unit = target.unit_target if target else 0.0
             target_tl = target.tl_target if target else 0.0
             realization_base = target_tl or target_unit
