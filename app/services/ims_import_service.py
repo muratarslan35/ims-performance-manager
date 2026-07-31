@@ -535,6 +535,51 @@ class IMSImportService:
         self.statistics["matched_representatives"] += 1
         return representative.id, False
 
+    def _resolve_representative(
+        self,
+        *,
+        representative_name,
+        allow_auto_create,
+        sheet_name,
+        source_row,
+        territory=None,
+        manager=None,
+    ):
+        if allow_auto_create:
+            return self._ensure_representative(
+                representative_name,
+                territory=territory,
+                manager=manager,
+            )
+
+        representative_match = self.resolve_representative_match(representative_name)
+        if representative_match["matched"]:
+            self.statistics["matched_representatives"] += 1
+            return representative_match["object"].id, True
+
+        self.statistics["unmatched_representatives"] += 1
+        self.warnings.append(
+            f"{sheet_name} satır {source_row}: temsilci eşleşmedi ({representative_name})."
+        )
+        self._log_skipped_row(
+            reason="unmatched_representative",
+            sheet_name=sheet_name,
+            source_row=source_row,
+            representative=representative_name,
+        )
+        best = representative_match.get("object")
+        AliasService.enqueue_unmatched_representative(
+            ims_name=representative_name,
+            upload_id=self.upload.id,
+            best_candidate=best.rep_name if best else None,
+            best_score=representative_match.get("score", 0.0),
+            worksheet=sheet_name,
+            row_number=source_row,
+            reason="unmatched_representative",
+        )
+        self.statistics["queued_for_manual"] += 1
+        return None, False
+
     @staticmethod
     def metric_for_column(header):
         normalized = AliasService.normalize(header)
@@ -618,6 +663,10 @@ class IMSImportService:
             return None
         if representative_columns and representative_column not in representative_columns:
             representative_columns.insert(0, representative_column)
+        auto_create_representatives = bool(
+            dimensions["brick"]
+            and any("TTS ISMI" in AliasService.normalize(column) for column in representative_columns)
+        )
         self.parser_decisions.append(
             {
                 "sheet_name": sheet["sheet_name"],
@@ -625,6 +674,7 @@ class IMSImportService:
                 "header_row": sheet["header_row"],
                 "representative_column": str(representative_column),
                 "representative_columns": [str(column) for column in representative_columns],
+                "auto_create_representatives": auto_create_representatives,
                 "mode": "normalized" if dimensions["product_group"] is not None else "wide",
             }
         )
@@ -660,6 +710,7 @@ class IMSImportService:
             "representative_columns": representative_columns or [representative_column],
             "brick_column": dimensions["brick"],
             "manager_column": dimensions["manager"],
+            "auto_create_representatives": auto_create_representatives,
             "products": products,
         }
 
@@ -937,6 +988,7 @@ class IMSImportService:
             representative_column = representative_columns[0]
             brick_column = sheet.get("brick_column")
             manager_column = sheet.get("manager_column")
+            auto_create_representatives = bool(sheet.get("auto_create_representatives"))
 
             for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
                 try:
@@ -957,6 +1009,7 @@ class IMSImportService:
 
                     territory_value = self.clean_text(row[brick_column]) if brick_column else None
                     manager_value = self.clean_text(row[manager_column]) if manager_column else None
+                    source_row = dataframe_index + sheet["header_row"] + 2
 
                     for representative_name in representative_values:
                         if not self._is_probable_representative_name(representative_name):
@@ -964,18 +1017,23 @@ class IMSImportService:
                             self._log_skipped_row(
                                 reason="aggregate_or_invalid_representative",
                                 sheet_name=sheet["sheet_name"],
-                                source_row=dataframe_index + sheet["header_row"] + 2,
+                                source_row=source_row,
                                 representative=representative_name,
                             )
                             continue
-                        representative_id, existed = self._ensure_representative(
-                            representative_name,
+                        representative_id, existed = self._resolve_representative(
+                            representative_name=representative_name,
+                            allow_auto_create=auto_create_representatives,
+                            sheet_name=sheet["sheet_name"],
+                            source_row=source_row,
                             territory=territory_value,
                             manager=manager_value,
                         )
+                        if representative_id is None:
+                            continue
                         if not existed:
                             self.warnings.append(
-                                f"{sheet['sheet_name']} satır {dataframe_index + sheet['header_row'] + 2}: "
+                                f"{sheet['sheet_name']} satır {source_row}: "
                                 f"yeni temsilci oluşturuldu ({representative_name})."
                             )
 
@@ -996,7 +1054,7 @@ class IMSImportService:
                                     self._log_skipped_row(
                                         reason="invalid_numeric_value",
                                         sheet_name=sheet["sheet_name"],
-                                        source_row=dataframe_index + sheet["header_row"] + 2,
+                                        source_row=source_row,
                                         representative=representative_name,
                                         product=product_info["product"].product_name,
                                         field=column["header"],
@@ -1014,7 +1072,7 @@ class IMSImportService:
                                 self._log_skipped_row(
                                     reason="empty_metrics",
                                     sheet_name=sheet["sheet_name"],
-                                    source_row=dataframe_index + sheet["header_row"] + 2,
+                                    source_row=source_row,
                                     representative=representative_name,
                                     product=product_info["product"].product_name,
                                 )
@@ -1026,7 +1084,7 @@ class IMSImportService:
                                 week_number=week_number,
                                 sheet_name=sheet["sheet_name"],
                                 sheet_type=sheet["sheet_type"],
-                                source_row=dataframe_index + sheet["header_row"] + 2,
+                                source_row=source_row,
                                 representative_name=representative_name,
                                 representative_id=representative_id,
                                 product=product_info["product"],
