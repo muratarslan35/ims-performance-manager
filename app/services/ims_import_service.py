@@ -532,6 +532,7 @@ class IMSImportService:
         db.session.add(representative)
         db.session.flush()
         AliasService.refresh()
+        self._representative_match_cache[normalized] = AliasService.find_representative(name)
         self.statistics["matched_representatives"] += 1
         return representative.id, False
 
