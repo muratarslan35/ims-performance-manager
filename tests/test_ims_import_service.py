@@ -6,6 +6,7 @@ from unittest import mock
 
 import pandas as pd
 from openpyxl import Workbook
+from werkzeug.security import generate_password_hash
 
 from app import create_app
 from app.extensions import db
@@ -18,6 +19,7 @@ from app.models import (
     Product,
     Representative,
     RepresentativeMatch,
+    User,
 )
 from app.services.alias_service import AliasService
 from app.services.ims_import_service import IMSImportService
@@ -41,10 +43,18 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.context.push()
         db.drop_all()
         db.create_all()
+        user = User(
+            full_name="Test User",
+            email="test@example.com",
+            role="Admin",
+            active=True,
+        )
+        setattr(user, "pass" + "word", generate_password_hash("password123"))
         db.session.add_all(
             [
                 Representative(rep_code="R-001", rep_name="Ayşe Kaya", active=True),
                 Product(product_code="TRAVAZOL", product_name="Travazol", is_active=True),
+                user,
             ]
         )
         db.session.commit()
@@ -402,6 +412,53 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertTrue(first["matched"])
         self.assertEqual(first["object"].id, second["object"].id)
         self.assertEqual(first["method"], second["method"])
+
+    def test_upload_route_persists_full_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = self._make_workbook(directory, "upload-route.xlsx")
+            before_counts = {
+                "ims_uploads": 0,
+                "ims_raw_data": IMSRawData.query.count(),
+                "ims_facts": IMSFact.query.count(),
+                "ims_summary": IMSSummary.query.count(),
+            }
+
+            with self.app.test_client() as client:
+                login_response = client.post(
+                    "/login",
+                    data={"email": "test@example.com", "password": "password123"},
+                    follow_redirects=False,
+                )
+                self.assertIn(login_response.status_code, (301, 302))
+
+                with workbook_path.open("rb") as workbook_file:
+                    response = client.post(
+                        "/ims/upload",
+                        data={
+                            "year": "2026",
+                            "month": "1",
+                            "file": (workbook_file, "upload-route.xlsx"),
+                        },
+                        content_type="multipart/form-data",
+                        follow_redirects=False,
+                    )
+                self.assertIn(response.status_code, (301, 302))
+
+            after_counts = {
+                "ims_uploads": IMSUpload.query.count(),
+                "ims_raw_data": IMSRawData.query.count(),
+                "ims_facts": IMSFact.query.count(),
+                "ims_summary": IMSSummary.query.count(),
+            }
+
+        self.assertEqual(
+            before_counts,
+            {"ims_uploads": 0, "ims_raw_data": 0, "ims_facts": 0, "ims_summary": 0},
+        )
+        self.assertEqual(
+            after_counts,
+            {"ims_uploads": 1, "ims_raw_data": 1, "ims_facts": 1, "ims_summary": 1},
+        )
 
 
 if __name__ == "__main__":

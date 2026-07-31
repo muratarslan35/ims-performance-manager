@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 
 from app import create_app
 from app.database import initialize_database
+from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -537,6 +538,32 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         initialize_database()
                 self.assertIn("Apply Alembic migrations", " ".join(logs.output))
+
+    def test_sqlite_instance_schema_matches_models_after_upgrade(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sqlite_path = Path(temp_dir) / "ipm.db"
+            sqlite_url = f"sqlite:///{sqlite_path}"
+            _create_legacy_schema(sqlite_url)
+            app = _build_test_app(sqlite_url)
+
+            with app.app_context():
+                upgrade(directory=MIGRATIONS_DIR)
+
+            inspector = sa.inspect(sa.create_engine(sqlite_url))
+            model_tables = {
+                "ims_uploads": IMSUpload,
+                "ims_raw_data": IMSRawData,
+                "ims_facts": IMSFact,
+                "ims_summary": IMSSummary,
+            }
+            for table_name, model in model_tables.items():
+                model_columns = {column.name for column in model.__table__.columns}
+                db_columns = {column["name"] for column in inspector.get_columns(table_name)}
+                self.assertEqual(
+                    model_columns,
+                    db_columns,
+                    f"Schema mismatch for {table_name}: model={sorted(model_columns)} db={sorted(db_columns)}",
+                )
 
 
 if __name__ == "__main__":
