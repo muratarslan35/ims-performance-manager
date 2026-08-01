@@ -13,6 +13,50 @@ from app.models import Product, PrimeRule, Setting
 from app.services.alias_service import AliasService
 
 
+PRIME_SETTING_DEFAULTS = {
+    "MAIN_PRIME": "50000",
+    "CIRO_PRIME": "20000",
+    "PRIME_STEP": "5",
+    "STEP_AMOUNT": "2500",
+    "MAX_PRIME_PERCENT": "140",
+    "MIN_PRIME_PERCENT": "100",
+    "TOTAL_PERCENT_REQUIRED": "100",
+    "ALLOW_CIRO_WITHOUT_PRODUCT": "1",
+    "RECOVERY_EFFECT_RATE": "2",
+    "QUARTER_EFFECT_RATE": "10",
+    "PRODUCT_COEFFICIENT_DEFAULT": "1",
+    "PRODUCT_BONUS_RATE": "1",
+    "BONUS_RATE": "5",
+    "PENALTY_RATE": "3",
+    "PENALTY_PER_FAILED_PRODUCT": "1500",
+    "WHAT_IF_WORST_FACTOR": "0.85",
+    "WHAT_IF_EXPECTED_FACTOR": "1.10",
+    "WHAT_IF_BEST_FACTOR": "1.25",
+    "SLIDER_MAX_PERCENT": "150",
+    "TARGET_75": "75",
+    "TARGET_90": "90",
+    "TARGET_100": "100",
+}
+
+
+def ensure_prime_settings():
+    changed = False
+    for key, value in PRIME_SETTING_DEFAULTS.items():
+        setting = Setting.query.filter_by(setting_key=key).first()
+        if setting:
+            continue
+        db.session.add(
+            Setting(
+                setting_key=key,
+                setting_value=value,
+                description="Sistem Varsayılanı",
+            )
+        )
+        changed = True
+    if changed:
+        db.session.commit()
+
+
 settings_bp = Blueprint(
 
     "settings",
@@ -31,6 +75,7 @@ settings_bp = Blueprint(
 )
 @login_required
 def index():
+    ensure_prime_settings()
 
     settings = Setting.query.order_by(
 
@@ -66,9 +111,8 @@ def index():
 )
 @login_required
 def save():
-
     try:
-
+        ensure_prime_settings()
         for item in Setting.query.all():
 
             value = request.form.get(
@@ -127,7 +171,7 @@ def save():
 )
 @login_required
 def api():
-
+    ensure_prime_settings()
     settings = Setting.query.order_by(
 
         Setting.setting_key.asc()
@@ -209,37 +253,10 @@ def health():
 )
 @login_required
 def reset():
-
     try:
-
-        defaults = {
-
-            "MAIN_PRIME": "50000",
-
-            "CIRO_PRIME": "20000",
-
-            "PRIME_STEP": "5",
-
-            "STEP_AMOUNT": "2500",
-
-            "MAX_PRIME_PERCENT": "140",
-
-            "MIN_PRIME_PERCENT": "100",
-
-            "TARGET_75": "75",
-
-            "TARGET_90": "90",
-
-            "TARGET_100": "100"
-
-        }
-
-        for key, value in defaults.items():
-
+        for key, value in PRIME_SETTING_DEFAULTS.items():
             setting = Setting.query.filter_by(
-
                 setting_key=key
-
             ).first()
 
             if setting:
