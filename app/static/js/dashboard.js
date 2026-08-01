@@ -50,6 +50,10 @@ function defaultTooltip() {
   };
 }
 
+function chartPlaceholderMarkup(icon) {
+  return `<div class="chart-placeholder"><i class="bi ${icon}"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div><div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>`;
+}
+
 function initMonthlyTrend(data) {
   const canvas = document.getElementById("monthlyTrendChart");
   if (!canvas || typeof Chart === "undefined" || !data || !Array.isArray(data.labels) || !data.labels.length) return;
@@ -198,8 +202,8 @@ function initProductDonut(data) {
   const canvas = document.getElementById("productDonutChart");
   if (!canvas || typeof Chart === "undefined") return;
   if (!data || !Array.isArray(data.values) || !data.values.length || data.values.every((v) => Number(v || 0) === 0)) {
-    const container = canvas.closest(".chart-container");
-    if (container) container.innerHTML = '<div class="empty-state"><i class="bi bi-pie-chart"></i><p>Veri bulunmuyor</p></div>';
+    const body = canvas.closest(".section-card-body");
+    if (body) body.innerHTML = chartPlaceholderMarkup("bi-pie-chart");
     return;
   }
 
@@ -290,6 +294,7 @@ function initTurkeyMap(cityPerformance) {
     low: "#E34B4B",
     empty: "#E7ECF4"
   };
+  let selectedRegion = null;
 
   regions.forEach((region, index) => {
     const regionName = region.dataset.region || "Bölge";
@@ -314,6 +319,16 @@ function initTurkeyMap(cityPerformance) {
     path.style.animation = "none";
     requestAnimationFrame(() => {
       path.style.animation = `mapPulse .45s ease ${Math.min(index * 0.04, 0.35)}s both`;
+    });
+
+    region.addEventListener("click", () => {
+      if (selectedRegion) selectedRegion.classList.remove("map-region-selected");
+      if (selectedRegion === region) {
+        selectedRegion = null;
+        return;
+      }
+      region.classList.add("map-region-selected");
+      selectedRegion = region;
     });
 
     if (!tooltip) return;
@@ -393,6 +408,23 @@ function initMapPulseStyle() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  const lastUpdateEl = document.getElementById("dashLastUpdate");
+  if (lastUpdateEl) {
+    const now = new Date();
+    lastUpdateEl.textContent = `Son güncelleme: ${now.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  const searchInput = document.getElementById("productTableSearch");
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      const q = searchInput.value.toLowerCase();
+      document.querySelectorAll(".premium-table tbody tr").forEach((row) => {
+        const name = (row.querySelector(".product-name-cell") || {}).textContent || "";
+        row.style.display = name.toLowerCase().includes(q) ? "" : "none";
+      });
+    });
+  }
+
   const data = getDashboardData();
   if (!data) return;
   initMapPulseStyle();

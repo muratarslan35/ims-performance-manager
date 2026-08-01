@@ -1,49 +1,51 @@
 <div class="turkey-map-wrapper" id="turkeyMapWrapper">
-  <svg id="turkeyMapSvg" viewBox="0 0 1000 450" xmlns="http://www.w3.org/2000/svg" aria-label="Türkiye Performans Haritası" role="img">
-    <defs>
-      <linearGradient id="regionBaseGradient" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#edf4ff" />
-        <stop offset="100%" stop-color="#dce9ff" />
-      </linearGradient>
-    </defs>
+  <div class="turkey-map-canvas">
+    <svg id="turkeyMapSvg" viewBox="0 0 1000 450" xmlns="http://www.w3.org/2000/svg" aria-label="Türkiye Performans Haritası" role="img">
+      <defs>
+        <linearGradient id="regionBaseGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#edf4ff" />
+          <stop offset="100%" stop-color="#dce9ff" />
+        </linearGradient>
+      </defs>
 
-    <g id="map-marmara" class="map-region" data-region="Marmara" data-cities="İstanbul,Bursa,Kocaeli,Tekirdağ,Edirne,Balıkesir,Çanakkale,Yalova,Sakarya,Bilecik,Kırklareli">
-      <path d="M 60 130 L 120 110 L 180 120 L 220 140 L 240 160 L 200 185 L 160 195 L 120 190 L 80 175 L 60 155 Z" class="region-path" />
-      <text x="150" y="160" class="region-label">Marmara</text>
-    </g>
+      <g id="map-marmara" class="map-region" data-region="Marmara" data-cities="İstanbul,Bursa,Kocaeli,Tekirdağ,Edirne,Balıkesir,Çanakkale,Yalova,Sakarya,Bilecik,Kırklareli">
+        <path d="M 60 130 L 120 110 L 180 120 L 220 140 L 240 160 L 200 185 L 160 195 L 120 190 L 80 175 L 60 155 Z" class="region-path" />
+        <text x="150" y="160" class="region-label">Marmara</text>
+      </g>
 
-    <g id="map-ege" class="map-region" data-region="Ege" data-cities="İzmir,Manisa,Aydın,Denizli,Muğla,Uşak,Afyonkarahisar,Kütahya">
-      <path d="M 60 155 L 120 190 L 160 195 L 200 185 L 220 210 L 210 250 L 185 280 L 140 295 L 100 275 L 65 250 L 55 210 Z" class="region-path" />
-      <text x="135" y="240" class="region-label">Ege</text>
-    </g>
+      <g id="map-ege" class="map-region" data-region="Ege" data-cities="İzmir,Manisa,Aydın,Denizli,Muğla,Uşak,Afyonkarahisar,Kütahya">
+        <path d="M 60 155 L 120 190 L 160 195 L 200 185 L 220 210 L 210 250 L 185 280 L 140 295 L 100 275 L 65 250 L 55 210 Z" class="region-path" />
+        <text x="135" y="240" class="region-label">Ege</text>
+      </g>
 
-    <g id="map-akdeniz" class="map-region" data-region="Akdeniz" data-cities="Antalya,Adana,Mersin,Hatay,Isparta,Burdur,Osmaniye,Kahramanmaraş">
-      <path d="M 185 280 L 210 250 L 255 255 L 310 260 L 370 270 L 420 285 L 450 305 L 470 330 L 440 360 L 380 370 L 310 365 L 250 345 L 210 315 Z" class="region-path" />
-      <text x="330" y="325" class="region-label">Akdeniz</text>
-    </g>
+      <g id="map-akdeniz" class="map-region" data-region="Akdeniz" data-cities="Antalya,Adana,Mersin,Hatay,Isparta,Burdur,Osmaniye,Kahramanmaraş">
+        <path d="M 185 280 L 210 250 L 255 255 L 310 260 L 370 270 L 420 285 L 450 305 L 470 330 L 440 360 L 380 370 L 310 365 L 250 345 L 210 315 Z" class="region-path" />
+        <text x="330" y="325" class="region-label">Akdeniz</text>
+      </g>
 
-    <g id="map-ic-anadolu" class="map-region" data-region="İç Anadolu" data-cities="Ankara,Konya,Kayseri,Eskişehir,Sivas,Nevşehir,Niğde,Aksaray,Yozgat,Kırıkkale,Kırşehir">
-      <path d="M 220 140 L 300 130 L 390 135 L 450 145 L 480 170 L 490 210 L 470 240 L 450 255 L 420 260 L 370 270 L 310 260 L 255 255 L 220 240 L 210 210 L 215 175 Z" class="region-path" />
-      <text x="355" y="205" class="region-label">İç Anadolu</text>
-    </g>
+      <g id="map-ic-anadolu" class="map-region" data-region="İç Anadolu" data-cities="Ankara,Konya,Kayseri,Eskişehir,Sivas,Nevşehir,Niğde,Aksaray,Yozgat,Kırıkkale,Kırşehir">
+        <path d="M 220 140 L 300 130 L 390 135 L 450 145 L 480 170 L 490 210 L 470 240 L 450 255 L 420 260 L 370 270 L 310 260 L 255 255 L 220 240 L 210 210 L 215 175 Z" class="region-path" />
+        <text x="355" y="205" class="region-label">İç Anadolu</text>
+      </g>
 
-    <g id="map-karadeniz" class="map-region" data-region="Karadeniz" data-cities="Trabzon,Samsun,Ordu,Giresun,Rize,Zonguldak,Kastamonu,Sinop,Artvin,Bartın,Düzce,Bolu,Tokat,Amasya,Çorum,Karabük">
-      <path d="M 120 110 L 180 80 L 260 60 L 350 55 L 440 60 L 520 70 L 580 85 L 610 105 L 590 130 L 540 140 L 480 145 L 450 145 L 390 135 L 300 130 L 220 140 L 180 120 Z" class="region-path" />
-      <text x="360" y="105" class="region-label">Karadeniz</text>
-    </g>
+      <g id="map-karadeniz" class="map-region" data-region="Karadeniz" data-cities="Trabzon,Samsun,Ordu,Giresun,Rize,Zonguldak,Kastamonu,Sinop,Artvin,Bartın,Düzce,Bolu,Tokat,Amasya,Çorum,Karabük">
+        <path d="M 120 110 L 180 80 L 260 60 L 350 55 L 440 60 L 520 70 L 580 85 L 610 105 L 590 130 L 540 140 L 480 145 L 450 145 L 390 135 L 300 130 L 220 140 L 180 120 Z" class="region-path" />
+        <text x="360" y="105" class="region-label">Karadeniz</text>
+      </g>
 
-    <g id="map-dogu-anadolu" class="map-region" data-region="Doğu Anadolu" data-cities="Erzurum,Van,Malatya,Elazığ,Erzincan,Ağrı,Kars,Ardahan,Iğdır,Bingöl,Muş,Bitlis,Hakkari,Bayburt,Tunceli">
-      <path d="M 540 140 L 610 105 L 660 110 L 730 120 L 790 140 L 840 160 L 860 195 L 840 230 L 800 255 L 750 265 L 700 270 L 650 265 L 600 250 L 565 225 L 540 200 L 530 170 Z" class="region-path" />
-      <text x="685" y="200" class="region-label">Doğu Anadolu</text>
-    </g>
+      <g id="map-dogu-anadolu" class="map-region" data-region="Doğu Anadolu" data-cities="Erzurum,Van,Malatya,Elazığ,Erzincan,Ağrı,Kars,Ardahan,Iğdır,Bingöl,Muş,Bitlis,Hakkari,Bayburt,Tunceli">
+        <path d="M 540 140 L 610 105 L 660 110 L 730 120 L 790 140 L 840 160 L 860 195 L 840 230 L 800 255 L 750 265 L 700 270 L 650 265 L 600 250 L 565 225 L 540 200 L 530 170 Z" class="region-path" />
+        <text x="685" y="200" class="region-label">Doğu Anadolu</text>
+      </g>
 
-    <g id="map-guneydogu" class="map-region" data-region="Güneydoğu Anadolu" data-cities="Gaziantep,Şanlıurfa,Diyarbakır,Mardin,Batman,Siirt,Şırnak,Kilis,Adıyaman">
-      <path d="M 450 255 L 490 245 L 540 250 L 565 265 L 600 270 L 650 275 L 700 280 L 700 310 L 670 340 L 620 360 L 560 370 L 500 365 L 460 345 L 450 315 Z" class="region-path" />
-      <text x="575" y="315" class="region-label">Güneydoğu</text>
-    </g>
+      <g id="map-guneydogu" class="map-region" data-region="Güneydoğu Anadolu" data-cities="Gaziantep,Şanlıurfa,Diyarbakır,Mardin,Batman,Siirt,Şırnak,Kilis,Adıyaman">
+        <path d="M 450 255 L 490 245 L 540 250 L 565 265 L 600 270 L 650 275 L 700 280 L 700 310 L 670 340 L 620 360 L 560 370 L 500 365 L 460 345 L 450 315 Z" class="region-path" />
+        <text x="575" y="315" class="region-label">Güneydoğu</text>
+      </g>
 
-    <ellipse cx="135" cy="148" rx="8" ry="18" fill="#c8deff" opacity="0.75" />
-  </svg>
+      <ellipse cx="135" cy="148" rx="8" ry="18" fill="#c8deff" opacity="0.75" />
+    </svg>
+  </div>
   <div id="mapTooltip" class="map-tooltip"></div>
 </div>
 
