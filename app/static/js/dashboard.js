@@ -1,167 +1,93 @@
-/* ═══════════════════════════════════════════════════════════
-   IMS Performance Manager – Enterprise Ana Sayfa (PR-3)
-   dashboard.js – Chart.js tabanlı grafik başlatma
-   ═══════════════════════════════════════════════════════════ */
-
 "use strict";
 
-/* ── Kurumsal renk paleti ────────────────────────────────── */
-const CORP_COLORS = [
-  "#0B4EA2", "#2D7FF9", "#18B368", "#F4A300",
-  "#6B5BFF", "#E34B4B", "#00B8C4", "#F47C20",
-  "#3B82F6", "#A855F7"
-];
+const CORP_COLORS = ["#0B4EA2", "#2D7FF9", "#18B368", "#F4A300", "#6B5BFF", "#E34B4B", "#00B8C4", "#F47C20", "#3B82F6", "#A855F7"];
+const CHARTS = {};
+let dashboardDataCache = null;
 
-/* ── Gradyan yardımcı fonksiyon ──────────────────────────── */
-function makeGradient(ctx, colorStart, colorEnd) {
-  const grad = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
-  grad.addColorStop(0, colorStart);
-  grad.addColorStop(1, colorEnd);
-  return grad;
-}
-
-/* ── Dashboard veri nesnesi (template'den JSON) ──────────── */
 function getDashboardData() {
+  if (dashboardDataCache) return dashboardDataCache;
   const el = document.getElementById("dashboardData");
   if (!el) return null;
   try {
-    return JSON.parse(el.textContent);
-  } catch (e) {
-    console.error("Dashboard verisi okunamadı:", e);
+    dashboardDataCache = JSON.parse(el.textContent);
+    return dashboardDataCache;
+  } catch (err) {
+    console.error("Dashboard verisi okunamadı:", err);
     return null;
   }
 }
 
-/* ════════════════════════════════════════════════════════════
-   1. ÜRÜN DONUT CHART
-   ════════════════════════════════════════════════════════════ */
-function initProductDonut(data) {
-  const canvas = document.getElementById("productDonutChart");
-  if (!canvas || typeof Chart === "undefined") return;
-  if (!data || !data.values || data.values.every(v => v === 0)) {
-    canvas.closest(".chart-container").innerHTML =
-      '<div class="empty-state"><i class="bi bi-pie-chart"></i><p>Veri bulunmuyor</p></div>';
-    return;
+function destroyChart(key) {
+  if (CHARTS[key]) {
+    CHARTS[key].destroy();
+    CHARTS[key] = null;
   }
-
-  /* Legend noktalarını renklendir */
-  data.labels.forEach((_, i) => {
-    const dot = document.getElementById("donut-dot-" + i);
-    if (dot) dot.style.background = CORP_COLORS[i % CORP_COLORS.length];
-  });
-
-  new Chart(canvas, {
-    type: "doughnut",
-    data: {
-      labels: data.labels,
-      datasets: [{
-        data: data.values,
-        backgroundColor: CORP_COLORS.slice(0, data.labels.length),
-        borderWidth: 3,
-        borderColor: "#fff",
-        hoverOffset: 8
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      cutout: "68%",
-      animation: { animateRotate: true, duration: 900 },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label(ctx) {
-              const val = ctx.parsed;
-              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-              const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
-              return ` ${ctx.label}: ${val.toLocaleString("tr-TR")} ₺ (%${pct})`;
-            }
-          }
-        }
-      }
-    }
-  });
 }
 
-/* ════════════════════════════════════════════════════════════
-   2. GAUGE (DOUGHNUT) CHART
-   ════════════════════════════════════════════════════════════ */
-function initGaugeChart(data) {
-  const canvas = document.getElementById("gaugeChart");
-  if (!canvas || typeof Chart === "undefined") return;
-
-  const pct = Math.min(data ? data.percent : 0, 100);
-  const remaining = Math.max(0, 100 - pct);
-  let fillColor = "#18B368";
-  if (pct < 70) fillColor = "#E34B4B";
-  else if (pct < 90) fillColor = "#F4A300";
-
-  new Chart(canvas, {
-    type: "doughnut",
-    data: {
-      datasets: [{
-        data: [pct, remaining],
-        backgroundColor: [fillColor, "#EEF2F9"],
-        borderWidth: 0,
-        hoverOffset: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      circumference: 270,
-      rotation: -135,
-      cutout: "75%",
-      animation: { duration: 1000, easing: "easeInOutQuart" },
-      plugins: { legend: { display: false }, tooltip: { enabled: false } }
-    }
-  });
+function createVerticalGradient(ctx, top, bottom) {
+  const gradient = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
+  gradient.addColorStop(0, top);
+  gradient.addColorStop(1, bottom);
+  return gradient;
 }
 
-/* ════════════════════════════════════════════════════════════
-   3. AYLIK CİRO TRENDİ (LINE CHART)
-   ════════════════════════════════════════════════════════════ */
+function numberTR(value, suffix = "") {
+  const safeValue = Number(value || 0);
+  return `${safeValue.toLocaleString("tr-TR")}${suffix}`;
+}
+
+function defaultTooltip() {
+  return {
+    backgroundColor: "rgba(11, 34, 67, .95)",
+    titleColor: "#fff",
+    bodyColor: "#fff",
+    borderColor: "rgba(255,255,255,.12)",
+    borderWidth: 1,
+    cornerRadius: 10,
+    padding: 10,
+    displayColors: true,
+    boxPadding: 4
+  };
+}
+
 function initMonthlyTrend(data) {
   const canvas = document.getElementById("monthlyTrendChart");
-  if (!canvas || typeof Chart === "undefined") return;
-  if (!data || !data.labels || data.labels.length === 0) return;
+  if (!canvas || typeof Chart === "undefined" || !data || !Array.isArray(data.labels) || !data.labels.length) return;
 
+  destroyChart("monthlyTrend");
   const ctx = canvas.getContext("2d");
-  const gradR = makeGradient(ctx, "rgba(11,78,162,.30)", "rgba(11,78,162,.02)");
-  const gradT = makeGradient(ctx, "rgba(244,163,0,.20)", "rgba(244,163,0,.02)");
+  const gradReal = createVerticalGradient(ctx, "rgba(11, 78, 162, .35)", "rgba(11, 78, 162, .02)");
+  const gradTarget = createVerticalGradient(ctx, "rgba(244, 163, 0, .22)", "rgba(244, 163, 0, .01)");
 
-  new Chart(canvas, {
+  CHARTS.monthlyTrend = new Chart(canvas, {
     type: "line",
     data: {
       labels: data.labels,
       datasets: [
         {
           label: "Gerçekleşen",
-          data: data.realization,
+          data: data.realization || [],
           borderColor: "#0B4EA2",
-          backgroundColor: gradR,
-          borderWidth: 2.5,
-          pointRadius: 4,
-          pointBackgroundColor: "#0B4EA2",
-          pointBorderColor: "#fff",
-          pointBorderWidth: 2,
+          backgroundColor: gradReal,
           fill: true,
-          tension: 0.4
+          borderWidth: 2.8,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.42,
+          cubicInterpolationMode: "monotone"
         },
         {
           label: "Hedef",
-          data: data.target,
+          data: data.target || [],
           borderColor: "#F4A300",
-          backgroundColor: gradT,
-          borderWidth: 2,
-          borderDash: [6, 4],
-          pointRadius: 3,
-          pointBackgroundColor: "#F4A300",
-          pointBorderColor: "#fff",
-          pointBorderWidth: 2,
+          backgroundColor: gradTarget,
           fill: true,
-          tension: 0.4
+          borderWidth: 2.2,
+          borderDash: [6, 5],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.42,
+          cubicInterpolationMode: "monotone"
         }
       ]
     },
@@ -169,30 +95,30 @@ function initMonthlyTrend(data) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
-      animation: { duration: 900 },
+      animation: { duration: 1100, easing: "easeOutQuart" },
       plugins: {
         legend: {
           position: "top",
-          labels: { font: { size: 12, weight: "600" }, padding: 16, usePointStyle: true }
+          labels: { usePointStyle: true, pointStyle: "circle", boxWidth: 7, padding: 14, font: { size: 12, weight: "600" } }
         },
         tooltip: {
+          ...defaultTooltip(),
           callbacks: {
             label(ctx) {
-              return ` ${ctx.dataset.label}: ${(ctx.parsed.y || 0).toLocaleString("tr-TR")} ₺`;
+              return ` ${ctx.dataset.label}: ${numberTR(ctx.parsed.y, " ₺")}`;
             }
           }
         }
       },
       scales: {
-        x: {
-          grid: { color: "rgba(0,0,0,.04)" },
-          ticks: { font: { size: 11 }, color: "#6B7280" }
-        },
+        x: { grid: { color: "rgba(13, 43, 83, .05)", drawBorder: false }, ticks: { color: "#6F8198" } },
         y: {
-          grid: { color: "rgba(0,0,0,.04)" },
+          grid: { color: "rgba(13, 43, 83, .05)", drawBorder: false },
           ticks: {
-            font: { size: 11 }, color: "#6B7280",
-            callback(v) { return (v / 1000).toFixed(0) + "K ₺"; }
+            color: "#6F8198",
+            callback(v) {
+              return `${Math.round(Number(v) / 1000)}K ₺`;
+            }
           }
         }
       }
@@ -200,162 +126,282 @@ function initMonthlyTrend(data) {
   });
 }
 
-/* ════════════════════════════════════════════════════════════
-   4. PAZAR PAYI TRENDİ (LINE CHART)
-   ════════════════════════════════════════════════════════════ */
 function initMarketShare(data) {
   const canvas = document.getElementById("marketShareChart");
-  if (!canvas || typeof Chart === "undefined") return;
-  if (!data || !data.labels || data.labels.length === 0) return;
+  if (!canvas || typeof Chart === "undefined" || !data || !Array.isArray(data.labels) || !data.labels.length) return;
 
+  destroyChart("marketShare");
   const ctx = canvas.getContext("2d");
-  const grad = makeGradient(ctx, "rgba(24,179,104,.28)", "rgba(24,179,104,.02)");
+  const grad = createVerticalGradient(ctx, "rgba(24, 179, 104, .30)", "rgba(24, 179, 104, .03)");
 
-  new Chart(canvas, {
+  CHARTS.marketShare = new Chart(canvas, {
     type: "line",
     data: {
       labels: data.labels,
       datasets: [{
-        label: "Pazar Payı (%)",
-        data: data.values,
+        label: "Pazar Payı",
+        data: data.values || [],
         borderColor: "#18B368",
         backgroundColor: grad,
-        borderWidth: 2.5,
-        pointRadius: 4,
-        pointBackgroundColor: "#18B368",
-        pointBorderColor: "#fff",
-        pointBorderWidth: 2,
+        borderWidth: 2.8,
+        pointRadius: 0,
+        pointHoverRadius: 4,
         fill: true,
-        tension: 0.4
+        tension: 0.4,
+        cubicInterpolationMode: "monotone"
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: 900 },
+      animation: { duration: 1000, easing: "easeOutQuart" },
       plugins: {
         legend: {
           position: "top",
-          labels: { font: { size: 12, weight: "600" }, usePointStyle: true }
+          labels: { usePointStyle: true, pointStyle: "circle", boxWidth: 7, font: { size: 12, weight: "600" } }
         },
         tooltip: {
-          callbacks: {
-            label(ctx) { return ` Pazar Payı: %${ctx.parsed.y}`; }
-          }
+          ...defaultTooltip(),
+          callbacks: { label(ctx) { return ` Pazar Payı: %${ctx.parsed.y}`; } }
         }
       },
       scales: {
-        x: {
-          grid: { color: "rgba(0,0,0,.04)" },
-          ticks: { font: { size: 11 }, color: "#6B7280" }
-        },
-        y: {
-          grid: { color: "rgba(0,0,0,.04)" },
-          ticks: {
-            font: { size: 11 }, color: "#6B7280",
-            callback(v) { return "%" + v; }
+        x: { grid: { color: "rgba(13, 43, 83, .05)", drawBorder: false }, ticks: { color: "#6F8198" } },
+        y: { grid: { color: "rgba(13, 43, 83, .05)", drawBorder: false }, ticks: { color: "#6F8198", callback(v) { return `%${v}`; } } }
+      }
+    }
+  });
+}
+
+function updateDonutLegendColors(dataLength) {
+  for (let i = 0; i < dataLength; i += 1) {
+    const dot = document.getElementById(`donut-dot-${i}`);
+    if (dot) dot.style.background = CORP_COLORS[i % CORP_COLORS.length];
+  }
+}
+
+function initDonutLegendInteractions(chart, dataLength) {
+  const items = document.querySelectorAll("#productDonutLegend [data-donut-index]");
+  items.forEach((item) => {
+    item.addEventListener("click", () => {
+      const index = Number(item.getAttribute("data-donut-index"));
+      if (Number.isNaN(index) || index >= dataLength) return;
+      const hidden = chart.getDataVisibility(index);
+      chart.toggleDataVisibility(index);
+      chart.update();
+      item.classList.toggle("inactive", hidden);
+    }, { passive: true });
+  });
+}
+
+function initProductDonut(data) {
+  const canvas = document.getElementById("productDonutChart");
+  if (!canvas || typeof Chart === "undefined") return;
+  if (!data || !Array.isArray(data.values) || !data.values.length || data.values.every((v) => Number(v || 0) === 0)) {
+    const container = canvas.closest(".chart-container");
+    if (container) container.innerHTML = '<div class="empty-state"><i class="bi bi-pie-chart"></i><p>Veri bulunmuyor</p></div>';
+    return;
+  }
+
+  destroyChart("productDonut");
+  updateDonutLegendColors(data.labels.length);
+
+  CHARTS.productDonut = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: data.labels,
+      datasets: [{
+        data: data.values,
+        backgroundColor: CORP_COLORS.slice(0, data.labels.length),
+        borderColor: "#fff",
+        borderWidth: 2,
+        hoverOffset: 9,
+        spacing: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "67%",
+      animation: { animateRotate: true, animateScale: true, duration: 1100 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...defaultTooltip(),
+          callbacks: {
+            label(ctx) {
+              const val = Number(ctx.parsed || 0);
+              const total = (ctx.dataset.data || []).reduce((sum, item) => sum + Number(item || 0), 0);
+              const pct = total > 0 ? ((val / total) * 100).toFixed(1) : "0.0";
+              return ` ${ctx.label}: ${numberTR(val, " ₺")} (%${pct})`;
+            }
           }
         }
       }
     }
   });
+
+  initDonutLegendInteractions(CHARTS.productDonut, data.labels.length);
 }
 
-/* ════════════════════════════════════════════════════════════
-   5. TÜRKİYE HARİTASI – bölge renklendirme
-   ════════════════════════════════════════════════════════════ */
+function initGaugeChart(data) {
+  const canvas = document.getElementById("gaugeChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  destroyChart("gauge");
+  const pct = Math.max(0, Math.min(100, Number(data && data.percent ? data.percent : 0)));
+  let fill = "#18B368";
+  if (pct < 70) fill = "#E34B4B";
+  else if (pct < 90) fill = "#F4A300";
+
+  CHARTS.gauge = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      datasets: [{
+        data: [pct, 100 - pct],
+        backgroundColor: [fill, "#E7EEF8"],
+        borderWidth: 0,
+        hoverOffset: 0,
+        borderRadius: 12
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      circumference: 180,
+      rotation: 270,
+      cutout: "78%",
+      animation: { duration: 1200, easing: "easeOutQuart" },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
+}
+
 function initTurkeyMap(cityPerformance) {
-  const regions = document.querySelectorAll(".map-region");
-  if (!regions.length) return;
-
-  const tooltip = document.getElementById("mapTooltip");
   const wrapper = document.getElementById("turkeyMapWrapper");
+  const regions = document.querySelectorAll(".map-region");
+  const tooltip = document.getElementById("mapTooltip");
+  if (!wrapper || !regions.length) return;
 
-  /* Her bölge için şehir listesinden ortalama performans hesapla */
-  regions.forEach(region => {
-    const regionName = region.dataset.region || "";
-    const cities = (region.dataset.cities || "").split(",").map(c => c.trim());
+  const palette = {
+    high: "#0B4EA2",
+    good: "#2D7FF9",
+    medium: "#F4A300",
+    low: "#E34B4B",
+    empty: "#E7ECF4"
+  };
 
-    let total = 0, count = 0;
-    cities.forEach(city => {
-      if (cityPerformance[city] && cityPerformance[city].percent) {
-        total += cityPerformance[city].percent;
-        count++;
-      }
-    });
+  regions.forEach((region, index) => {
+    const regionName = region.dataset.region || "Bölge";
+    const cities = (region.dataset.cities || "").split(",").map((c) => c.trim()).filter(Boolean);
+    const percentages = cities
+      .map((city) => cityPerformance && cityPerformance[city] ? Number(cityPerformance[city].percent || 0) : 0)
+      .filter((value) => value > 0);
 
+    const avg = percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : 0;
     const path = region.querySelector(".region-path");
     if (!path) return;
 
-    if (count === 0) {
-      path.style.fill = "#E7ECF4";  /* veri yok */
-    } else {
-      const avg = total / count;
-      if (avg >= 90)       path.style.fill = "#0B4EA2";
-      else if (avg >= 70)  path.style.fill = "#2D7FF9";
-      else if (avg >= 50)  path.style.fill = "#F4A300";
-      else                 path.style.fill = "#E34B4B";
+    let fill = palette.empty;
+    if (percentages.length) {
+      if (avg >= 90) fill = palette.high;
+      else if (avg >= 70) fill = palette.good;
+      else if (avg >= 50) fill = palette.medium;
+      else fill = palette.low;
     }
 
-    /* Tooltip */
-    if (tooltip && wrapper) {
-      region.addEventListener("mouseenter", e => {
-        const label = count > 0
-          ? `${regionName}: %${(total / count).toFixed(1)}`
-          : `${regionName}: Veri yok`;
-        tooltip.textContent = label;
-        tooltip.style.display = "block";
-      });
-      region.addEventListener("mousemove", e => {
-        const rect = wrapper.getBoundingClientRect();
-        tooltip.style.left = (e.clientX - rect.left + 8) + "px";
-        tooltip.style.top  = (e.clientY - rect.top  + 8) + "px";
-      });
-      region.addEventListener("mouseleave", () => {
-        tooltip.style.display = "none";
-      });
-    }
+    path.style.fill = fill;
+    path.style.animation = "none";
+    requestAnimationFrame(() => {
+      path.style.animation = `mapPulse .45s ease ${Math.min(index * 0.04, 0.35)}s both`;
+    });
+
+    if (!tooltip) return;
+    region.addEventListener("mouseenter", () => {
+      tooltip.innerHTML = percentages.length
+        ? `<strong>${regionName}</strong><br>%${avg.toFixed(1)} · ${percentages.length} il verisi`
+        : `<strong>${regionName}</strong><br>Veri yok`;
+      tooltip.style.display = "block";
+    });
+
+    region.addEventListener("mousemove", (event) => {
+      const bounds = wrapper.getBoundingClientRect();
+      tooltip.style.left = `${event.clientX - bounds.left + 12}px`;
+      tooltip.style.top = `${event.clientY - bounds.top + 12}px`;
+    });
+
+    region.addEventListener("mouseleave", () => {
+      tooltip.style.display = "none";
+    });
   });
 }
 
-/* ════════════════════════════════════════════════════════════
-   6. KPI COUNTER ANİMASYON
-   ════════════════════════════════════════════════════════════ */
 function animateCounters() {
-  document.querySelectorAll(".kpi-value").forEach(el => {
+  document.querySelectorAll(".kpi-value").forEach((el, idx) => {
     el.style.opacity = "0";
-    el.style.transform = "translateY(10px)";
-    el.style.transition = "opacity 0.5s ease, transform 0.5s ease";
+    el.style.transform = "translateY(8px)";
+    el.style.transition = "opacity .45s ease, transform .45s ease";
     setTimeout(() => {
       el.style.opacity = "1";
       el.style.transform = "translateY(0)";
-    }, 100 + Math.random() * 300);
+    }, 70 * idx);
   });
 }
 
-/* ════════════════════════════════════════════════════════════
-   7. KPI CARD HOVER – progress bar animasyonu
-   ════════════════════════════════════════════════════════════ */
 function initProgressBars() {
-  document.querySelectorAll(".progress-sm-bar").forEach(bar => {
-    const w = bar.style.width || "0%";
+  const bars = document.querySelectorAll(".progress-sm-bar, .table-progress-bar");
+  bars.forEach((bar) => {
+    const targetWidth = bar.style.width;
     bar.style.width = "0%";
-    setTimeout(() => { bar.style.width = w; }, 400);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        bar.style.width = targetWidth;
+      }, 180);
+    });
   });
 }
 
-/* ════════════════════════════════════════════════════════════
-   BAŞLAT
-   ════════════════════════════════════════════════════════════ */
-document.addEventListener("DOMContentLoaded", function () {
-  const d = getDashboardData();
-  if (!d) return;
+function lazyInitCharts(data) {
+  const initializers = [
+    { id: "monthlyTrendChart", fn: () => initMonthlyTrend(data.monthlyTrend) },
+    { id: "marketShareChart", fn: () => initMarketShare(data.marketShare) },
+    { id: "productDonutChart", fn: () => initProductDonut(data.productDonut) },
+    { id: "gaugeChart", fn: () => initGaugeChart(data.gauge) }
+  ];
 
-  initProductDonut(d.productDonut);
-  initGaugeChart(d.gauge);
-  initMonthlyTrend(d.monthlyTrend);
-  initMarketShare(d.marketShare);
-  initTurkeyMap(d.cityPerformance || {});
+  const observer = new IntersectionObserver((entries, obs) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const match = initializers.find((item) => item.id === entry.target.id);
+      if (match) match.fn();
+      obs.unobserve(entry.target);
+    });
+  }, { threshold: 0.2, rootMargin: "60px" });
+
+  initializers.forEach((item) => {
+    const element = document.getElementById(item.id);
+    if (element) observer.observe(element);
+  });
+}
+
+function initMapPulseStyle() {
+  if (document.getElementById("mapPulseAnimationStyle")) return;
+  const style = document.createElement("style");
+  style.id = "mapPulseAnimationStyle";
+  style.textContent = "@keyframes mapPulse{from{opacity:.2;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}";
+  document.head.appendChild(style);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const data = getDashboardData();
+  if (!data) return;
+  initMapPulseStyle();
+  lazyInitCharts(data);
+  initTurkeyMap(data.cityPerformance || {});
   animateCounters();
   initProgressBars();
+});
+
+window.addEventListener("beforeunload", () => {
+  Object.keys(CHARTS).forEach((key) => destroyChart(key));
 });
