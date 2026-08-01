@@ -1,7 +1,8 @@
 import copy
 import json
 import time
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from flask import current_app
@@ -634,7 +635,7 @@ class PrimeEngine:
     def save_history(self, breakdown, summary, insights, what_if):
         payload = {
             "scenario_id": f"{self.rep_id}-{self.year}-{self.month}-{int(time.time() * 1000)}",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": datetime.now(ZoneInfo("Europe/Istanbul")).isoformat(),
             "representative_id": self.rep_id,
             "year": self.year,
             "month": self.month,
