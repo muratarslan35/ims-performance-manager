@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import login_required
 
 from app.models import Product, Representative
@@ -91,6 +91,11 @@ def _validated_service(data):
     )
 
 
+def _server_error(message, exc):
+    current_app.logger.exception(message, exc_info=exc)
+    return jsonify({"success": False, "message": "İşlem sırasında beklenmeyen bir hata oluştu."}), 500
+
+
 @simulation_bp.route("/", methods=["GET"])
 @login_required
 def index():
@@ -109,7 +114,7 @@ def calculate():
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except Exception as exc:
-        return jsonify({"success": False, "message": str(exc)}), 500
+        return _server_error("Simulation calculate failed", exc)
 
 
 @simulation_bp.route("/history", methods=["POST"])
@@ -122,7 +127,7 @@ def history():
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except Exception as exc:
-        return jsonify({"success": False, "message": str(exc)}), 500
+        return _server_error("Simulation history failed", exc)
 
 
 @simulation_bp.route("/export/pdf", methods=["POST"])
@@ -137,7 +142,7 @@ def export_pdf():
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except Exception as exc:
-        return jsonify({"success": False, "message": str(exc)}), 500
+        return _server_error("Simulation PDF export failed", exc)
 
 
 @simulation_bp.route("/export/excel", methods=["POST"])
@@ -151,7 +156,7 @@ def export_excel():
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except Exception as exc:
-        return jsonify({"success": False, "message": str(exc)}), 500
+        return _server_error("Simulation Excel export failed", exc)
 
 
 @simulation_bp.route("/product/<int:product_id>")

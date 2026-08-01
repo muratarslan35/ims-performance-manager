@@ -672,9 +672,13 @@ class PrimeEngine:
     def export_pdf(self, result, report_type="prime_report"):
         folder = Path(current_app.config["REPORT_FOLDER"]) / "prime_exports"
         folder.mkdir(parents=True, exist_ok=True)
-        file_path = folder / f"{report_type}_{self.rep_id}_{self.year}_{self.month}.pdf"
+        safe_report_type = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "_"
+            for ch in str(report_type or "prime_report")
+        ).strip("_") or "prime_report"
+        file_path = folder / f"{safe_report_type}_{self.rep_id}_{self.year}_{self.month}.pdf"
         lines = [
-            f"Prime Report - {report_type}",
+            f"Prime Report - {safe_report_type}",
             f"Representative: {self.rep_id}",
             f"Period: {self.year}-{self.month:02d}",
             f"Total Prime: {result['breakdown']['total']:.2f}",
@@ -685,7 +689,7 @@ class PrimeEngine:
             f"AI Forecast: {result['ai_forecast']['expected_prime']:.2f}",
         ]
         file_path.write_bytes(self._build_pdf(lines))
-        return {"path": str(file_path), "name": file_path.name, "type": report_type}
+        return {"path": str(file_path), "name": file_path.name, "type": safe_report_type}
 
     def export_excel(self, result):
         folder = Path(current_app.config["REPORT_FOLDER"]) / "prime_exports"
