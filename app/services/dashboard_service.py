@@ -2,6 +2,7 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models import IMSUpload, IMSSummary, Product, RecoverySummary, Representative, Target
+from app.services.ai_analytics_service import AIAnalyticsService
 
 MONTH_NAMES = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"]
 
@@ -224,27 +225,27 @@ class DashboardService:
         uploads = IMSUpload.query.order_by(IMSUpload.uploaded_at.desc()).limit(5).all()
         return {"recent_uploads": uploads}
 
-    def load_ai_scores(self, recovery, overall_stats):
-        total_products = (
-            Product.query.filter_by(is_active=True).count() or 1
-        )
-        risky = recovery.get("critical_products", 0) + recovery.get("risk_products", 0)
-        risk_score = round(min(100, (risky / total_products) * 100))
-        opportunity_score = 100 - risk_score
-        pct = overall_stats.get("overall_percent", 0)
-        goal_probability = round(min(100, pct), 1)
-        total_tl = overall_stats.get("overall_realization_tl", 0)
-        target_tl = overall_stats.get("overall_target_tl", 0)
-        lost = max(0, target_tl - total_tl)
+    def load_ai_analytics(self):
+        """AI Analytics Service'i çalıştırır ve tüm hesaplanan verileri döndürür."""
+        ai = AIAnalyticsService()
+        data = ai.run_all()
+        next_month = data.get("next_month", {})
         return {
             "ai_scores": {
-                "risk_score": risk_score,
-                "opportunity_score": opportunity_score,
-                "goal_probability": goal_probability,
-                "expected_prime": round(total_tl, 0),
-                "lost_prime": round(lost, 0),
-                "additional_prime": round(total_tl * 0.05, 0),
-            }
+                "risk_score": data["risk_score"],
+                "opportunity_score": data["opportunity_score"],
+                "goal_probability": data["goal_probability"],
+                "expected_prime": data["expected_prime"],
+                "lost_prime": data["lost_prime"],
+                "additional_prime": next_month.get("predicted_tl", 0),
+            },
+            "ai_messages": data["daily_summary"],
+            "ai_risky_products": data["risky_products"],
+            "ai_risky_representatives": data["risky_representatives"],
+            "ai_near_target": data["products_close_to_target"],
+            "ai_recommendations": data["action_recommendations"],
+            "ai_management_summary": data["management_summary"],
+            "ai_next_month": next_month,
         }
 
     def run(self):
@@ -259,7 +260,7 @@ class DashboardService:
         city = self.load_city_performance()
         quarter = self.load_active_quarter()
         recent = self.load_recent_uploads()
-        ai_scores = self.load_ai_scores(recovery, overall)
+        ai = self.load_ai_analytics()
 
         return {
             **counts,
@@ -273,10 +274,9 @@ class DashboardService:
             **city,
             **quarter,
             **recent,
-            **ai_scores,
+            **ai,
             "prime_summary": self.load_prime_summary(),
             "quarter_summary": self.load_quarter_summary(),
-            "ai_messages": self.build_ai_messages(recovery),
         }
 
     @classmethod

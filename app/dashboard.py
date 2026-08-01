@@ -163,5 +163,11 @@ def index():
         active_quarter=dashboard["active_quarter"],
         recent_uploads=dashboard["recent_uploads"],
         ai_scores=dashboard["ai_scores"],
+        ai_risky_products=dashboard["ai_risky_products"],
+        ai_risky_representatives=dashboard["ai_risky_representatives"],
+        ai_near_target=dashboard["ai_near_target"],
+        ai_recommendations=dashboard["ai_recommendations"],
+        ai_management_summary=dashboard["ai_management_summary"],
+        ai_next_month=dashboard["ai_next_month"],
 
     )

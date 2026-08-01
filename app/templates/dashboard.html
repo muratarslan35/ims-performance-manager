@@ -281,7 +281,7 @@
       <div class="ai-score-unit">Mevcut veriden tahmin</div>
     </div>
   </div>
-  <div class="ai-panel-sections">
+    <div class="ai-panel-sections">
     <div class="ai-panel-section">
       <div class="ai-section-title"><i class="bi bi-sun-fill"></i> Bugünün Özeti</div>
       <div class="ai-section-body">
@@ -299,13 +299,14 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-exclamation-triangle-fill text-warning"></i> Dikkat Gerektiren Ürünler</div>
         <div class="ai-section-body">
-          {% if critical_products > 0 or risk_products > 0 %}
-            {% if critical_products > 0 %}
-            <div class="ai-insight-row ai-insight-critical"><i class="bi bi-x-circle-fill"></i>{{ critical_products }} ürün kritik durumda</div>
-            {% endif %}
-            {% if risk_products > 0 %}
-            <div class="ai-insight-row ai-insight-warning"><i class="bi bi-exclamation-circle-fill"></i>{{ risk_products }} ürün risk altında</div>
-            {% endif %}
+          {% if ai_risky_products %}
+            {% for p in ai_risky_products[:5] %}
+            <div class="ai-insight-row ai-insight-warning">
+              <i class="bi bi-exclamation-circle-fill"></i>
+              {{ p.product_name }} — %{{ p.realization_percent }}
+              {% if p.risk_reasons %}<small class="text-muted ms-1">({{ p.risk_reasons | join(', ') }})</small>{% endif %}
+            </div>
+            {% endfor %}
           {% else %}
             <div class="ai-insight-row ai-insight-ok"><i class="bi bi-check-circle-fill"></i>Risk tespit edilmedi</div>
           {% endif %}
@@ -315,10 +316,11 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-person-x-fill text-danger-soft"></i> Riskli Temsilciler</div>
         <div class="ai-section-body">
-          {% set risky_reps = top_representatives | selectattr('realization_percent', 'lt', 70) | list if top_representatives else [] %}
-          {% if risky_reps %}
-            {% for r in risky_reps[:3] %}
-            <div class="ai-insight-row ai-insight-warning"><i class="bi bi-person-fill"></i>{{ r.rep_name }} — %{{ r.realization_percent }}</div>
+          {% if ai_risky_representatives %}
+            {% for r in ai_risky_representatives[:3] %}
+            <div class="ai-insight-row ai-insight-warning">
+              <i class="bi bi-person-fill"></i>{{ r.rep_name }} ({{ r.city }}) — %{{ r.realization_percent }}
+            </div>
             {% endfor %}
           {% else %}
             <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-person-check"></i>Riskli temsilci yok</div>
@@ -331,10 +333,11 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-bullseye text-success-soft"></i> Hedefe Yakın Ürünler</div>
         <div class="ai-section-body">
-          {% set near_target = product_performance | selectattr('realization_percent', 'ge', 80) | selectattr('realization_percent', 'lt', 95) | list if product_performance else [] %}
-          {% if near_target %}
-            {% for p in near_target[:3] %}
-            <div class="ai-insight-row ai-insight-near"><i class="bi bi-arrow-up-right-circle-fill"></i>{{ p.product_name }}</div>
+          {% if ai_near_target %}
+            {% for p in ai_near_target[:3] %}
+            <div class="ai-insight-row ai-insight-near">
+              <i class="bi bi-arrow-up-right-circle-fill"></i>{{ p.product_name }} — %{{ p.realization_percent }}
+            </div>
             {% endfor %}
           {% else %}
             <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-search"></i>Veri bekleniyor</div>
@@ -345,17 +348,12 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-lightbulb-fill text-warning"></i> Önerilen Aksiyonlar</div>
         <div class="ai-section-body">
-          {% if not last_upload %}
-          <div class="ai-insight-row ai-insight-action"><i class="bi bi-upload"></i>IMS dosyası yükleyin</div>
-          {% endif %}
-          {% if total_targets == 0 %}
-          <div class="ai-insight-row ai-insight-action"><i class="bi bi-bullseye"></i>Hedef tanımlayın</div>
-          {% endif %}
-          {% if critical_products > 0 %}
-          <div class="ai-insight-row ai-insight-action"><i class="bi bi-exclamation-octagon"></i>Kritik ürünleri inceleyin</div>
-          {% endif %}
-          {% if not last_upload and total_targets == 0 and critical_products == 0 %}
-          <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-check2-all"></i>Aksiyon gerekmez</div>
+          {% if ai_recommendations %}
+            {% for action in ai_recommendations[:4] %}
+            <div class="ai-insight-row ai-insight-action"><i class="bi {{ action.icon }}"></i>{{ action.text }}</div>
+            {% endfor %}
+          {% else %}
+            <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-check2-all"></i>Aksiyon gerekmez</div>
           {% endif %}
         </div>
       </div>
@@ -366,7 +364,13 @@
       <div class="ai-section-body ai-forecast-body">
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Gelecek Ay Tahmini</span>
-          <span class="ai-forecast-value">{% if ai_scores.additional_prime > 0 %}{{ "{:,.0f}".format(ai_scores.additional_prime) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-value">{% if ai_next_month.predicted_tl > 0 %}{{ "{:,.0f}".format(ai_next_month.predicted_tl) }} ₺{% else %}—{% endif %}</span>
+        </div>
+        <div class="ai-forecast-item">
+          <span class="ai-forecast-label">Trend Yönü</span>
+          <span class="ai-forecast-value {% if ai_next_month.trend_direction == 'up' %}text-success-soft{% elif ai_next_month.trend_direction == 'down' %}text-danger-soft{% endif %}">
+            {% if ai_next_month.trend_direction == 'up' %}▲ Yükselen{% elif ai_next_month.trend_direction == 'down' %}▼ Düşen{% else %}→ Sabit{% endif %}
+          </span>
         </div>
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Beklenen Prim</span>
