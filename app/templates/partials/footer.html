@@ -1,101 +1,42 @@
-<footer class="footer footer-transparent border-top bg-white">
+<footer class="app-footer d-print-none" role="contentinfo">
+    <div class="footer-inner">
 
-    <div class="container-xl">
+        <!-- Left: brand -->
+        <div class="footer-brand">
+            <span class="footer-brand-name">Bilim İlaç A.Ş.</span>
+            <span class="footer-brand-sub">IMS Performans Yönetim Sistemi</span>
+        </div>
 
-        <div class="row align-items-center py-3">
-
-            <div class="col-lg-4 text-center text-lg-start mb-3 mb-lg-0">
-
-                <div class="fw-bold text-primary">
-
-                    Bilim İlaç A.Ş.
-
-                </div>
-
-                <small class="text-secondary">
-
-                    IMS Performans Yönetim Sistemi
-
-                </small>
-
+        <!-- Center: meta -->
+        <div class="footer-meta">
+            <div class="footer-meta-item">
+                <span class="footer-meta-label">Sürüm</span>
+                <span class="footer-meta-value">v2.0</span>
             </div>
-
-            <div class="col-lg-4 text-center mb-3 mb-lg-0">
-
-                <div class="d-flex justify-content-center gap-4">
-
-                    <div>
-
-                        <div class="fw-semibold">
-
-                            Sürüm
-
-                        </div>
-
-                        <small class="text-secondary">
-
-                            v2.x
-
-                        </small>
-
-                    </div>
-
-                    <div>
-
-                        <div class="fw-semibold">
-
-                            Ortam
-
-                        </div>
-
-                        <small class="badge bg-success-lt text-success">
-
-                            Üretim
-
-                        </small>
-
-                    </div>
-
-                    <div>
-
-                        <div class="fw-semibold">
-
-                            Durum
-
-                        </div>
-
-                        <small class="badge bg-primary-lt text-primary">
-
-                            Aktif
-
-                        </small>
-
-                    </div>
-
-                </div>
-
+            <div class="footer-meta-item">
+                <span class="footer-meta-label">Ortam</span>
+                <span class="footer-meta-value">
+                    <span class="badge badge-completed">Üretim</span>
+                </span>
             </div>
-
-            <div class="col-lg-4 text-center text-lg-end">
-
-                <div class="fw-semibold">
-
-                    © {{ current_year if current_year else 2026 }}
-
-                    Bilim İlaç A.Ş.
-
-                </div>
-
-                <small class="text-secondary">
-
-                    IMS Performans Yönetim Sistemi • Tüm Hakları Saklıdır.
-
-                </small>
-
+            <div class="footer-meta-item">
+                <span class="footer-meta-label">Sunucu</span>
+                <span class="footer-meta-value">
+                    <span class="badge badge-completed">Aktif</span>
+                </span>
             </div>
+        </div>
 
+        <!-- Right: status + copyright -->
+        <div class="d-flex flex-column align-items-end gap-1">
+            <div class="footer-status">
+                <span class="footer-status-dot" title="Sunucu çevrimiçi"></span>
+                <span class="footer-status-text">Sunucu Çevrimiçi</span>
+            </div>
+            <div class="footer-copy">
+                &copy; {{ current_year if current_year else 2026 }} Bilim İlaç A.Ş. &ndash; Tüm Hakları Saklıdır.
+            </div>
         </div>
 
     </div>
-
 </footer>
