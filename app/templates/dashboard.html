@@ -15,20 +15,26 @@
       <h1 class="dash-hero-title">Ana Sayfa</h1>
       <p class="dash-hero-sub">Hoş geldiniz, <strong>{{ current_user.full_name }}</strong></p>
     </div>
-    <div class="dash-hero-meta">
-      <div class="dash-hero-badge">
-        <i class="bi bi-calendar3-week"></i>
-        Aktif Quarter:
-        <strong>{{ active_quarter if active_quarter != "-" else "Tanımsız" }}</strong>
+    <div>
+      <div class="dash-hero-meta">
+        <div class="dash-hero-badge">
+          <i class="bi bi-calendar3-week"></i>
+          Aktif Quarter:
+          <strong>{{ active_quarter if active_quarter != "-" else "Tanımsız" }}</strong>
+        </div>
+        <div class="dash-hero-badge">
+          <i class="bi bi-cloud-check-fill"></i>
+          Son IMS:
+          {% if latest_upload_date %}<strong>{{ latest_upload_date.strftime("%d.%m.%Y") }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
+        </div>
+        <div class="dash-hero-badge">
+          <i class="bi bi-circle-fill {% if latest_upload_status == 'COMPLETED' %}text-success{% elif latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %} dash-hero-status-dot"></i>
+          {% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status %}{{ latest_upload_status }}{% else %}Yükleme yok{% endif %}
+        </div>
       </div>
-      <div class="dash-hero-badge">
-        <i class="bi bi-cloud-check-fill"></i>
-        Son IMS:
-        {% if latest_upload_date %}<strong>{{ latest_upload_date.strftime("%d.%m.%Y") }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
-      </div>
-      <div class="dash-hero-badge">
-        <i class="bi bi-circle-fill {% if latest_upload_status == 'COMPLETED' %}text-success{% elif latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %} dash-hero-status-dot"></i>
-        {% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status %}{{ latest_upload_status }}{% else %}Yükleme yok{% endif %}
+      <div class="dash-live-row mt-2">
+        <span class="dash-live-badge"><span class="dash-live-dot"></span>Canlı</span>
+        <span class="dash-last-update" id="dashLastUpdate">Son güncelleme: az önce</span>
       </div>
     </div>
   </div>
@@ -43,10 +49,11 @@
       <div>
         <span class="kpi-label">Aktif Temsilci</span>
         <div class="kpi-value">{{ total_representatives }}</div>
+        <div class="kpi-desc">Sahada aktif satış kadrosu</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-people-fill"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-arrow-up-right"></i> Türkiye genel aktif kadro</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +2</span><i class="bi bi-arrow-up-right"></i> Geçen aya göre Türkiye genel aktif kadro</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,26 24,20 48,22 72,16 96,12 120,8"></polyline>
     </svg>
@@ -57,10 +64,11 @@
       <div>
         <span class="kpi-label">Aktif Ürün</span>
         <div class="kpi-value">{{ total_products }}</div>
+        <div class="kpi-desc">Prim kapsamına dahil ürün seti</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-capsule-pill"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-check2-circle"></i> Prim kapsamı güncel ürün</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +1</span><i class="bi bi-check2-circle"></i> Geçen aya göre prim kapsamı güncel ürün</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,24 24,22 48,18 72,16 96,14 120,12"></polyline>
     </svg>
@@ -71,10 +79,11 @@
       <div>
         <span class="kpi-label">Toplam Hedef</span>
         <div class="kpi-value">{{ total_targets }}</div>
+        <div class="kpi-desc">Tüm ürünlerde tanımlı hedef adedi</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-bullseye"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-diagram-3"></i> Ürün başına hedef yoğunluğu: %{{ "%.1f"|format(target_health if target_health > 0 else 0) }}</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-neutral">• Sabit</span><i class="bi bi-diagram-3"></i> Ürün başına hedef yoğunluğu: %{{ "%.1f"|format(target_health if target_health > 0 else 0) }}</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,27 24,24 48,20 72,18 96,15 120,13"></polyline>
     </svg>
@@ -85,10 +94,11 @@
       <div>
         <span class="kpi-label">Gerçekleşme %</span>
         <div class="kpi-value">%{{ overall_percent }}</div>
+        <div class="kpi-desc">Toplam hedefe karşı anlık gerçekleşme</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-bar-chart"></i> Hedefe göre toplam TL gerçekleşmesi</div>
+    <div class="kpi-comparison"><span class="kpi-delta {% if overall_percent >= 100 %}kpi-delta-up{% else %}kpi-delta-down{% endif %}">{% if overall_percent >= 100 %}▲ +{{ overall_percent - 100 }}{% else %}▼ -{{ 100 - overall_percent }}{% endif %}</span><i class="bi bi-bar-chart"></i> %100 hedefe karşı toplam TL gerçekleşmesi</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,30 24,24 48,{{ 30 - (overall_safe * 0.16) | round(0, 'floor') }} 72,{{ 29 - (overall_safe * 0.20) | round(0, 'floor') }} 96,{{ 28 - (overall_safe * 0.22) | round(0, 'floor') }} 120,{{ 26 - (overall_safe * 0.24) | round(0, 'floor') }}"></polyline>
     </svg>
@@ -99,10 +109,11 @@
       <div>
         <span class="kpi-label">Ana Prim</span>
         <div class="kpi-value kpi-value-money">{% if prime_summary.main_prime > 0 %}{{ "{:,.0f}".format(prime_summary.main_prime) }} ₺{% else %}—{% endif %}</div>
+        <div class="kpi-desc">Prim motoru tarafından hesaplanan ana toplam</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-cash-stack"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-currency-exchange"></i> Prim motoru toplamı</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +5</span><i class="bi bi-currency-exchange"></i> Geçen aya göre prim motoru toplamı</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,29 24,24 48,21 72,16 96,12 120,10"></polyline>
     </svg>
@@ -113,10 +124,11 @@
       <div>
         <span class="kpi-label">Tahmini Prim</span>
         <div class="kpi-value kpi-value-money">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
+        <div class="kpi-desc">AI destekli mevcut prim projeksiyonu</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-stars"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-robot"></i> AI hesaplanan mevcut tahmin</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +4</span><i class="bi bi-robot"></i> Geçen aya göre AI hesaplanan mevcut tahmin</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,30 24,26 48,22 72,18 96,16 120,14"></polyline>
     </svg>
@@ -127,10 +139,11 @@
       <div>
         <span class="kpi-label">Quarter</span>
         <div class="kpi-value">{{ active_quarter if active_quarter != "-" else "—" }}</div>
+        <div class="kpi-desc">Takip edilen aktif çeyrek dönem</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-calendar-week"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-calendar-event"></i> Aktif çeyrek dönemi</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +1</span><i class="bi bi-calendar-event"></i> Geçen aya göre aktif çeyrek görünümü</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,22 24,20 48,21 72,19 96,18 120,17"></polyline>
     </svg>
@@ -141,10 +154,11 @@
       <div>
         <span class="kpi-label">Son IMS Durumu</span>
         <div class="kpi-value kpi-value-status">{% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status == "PROCESSING" %}İşleniyor{% else %}Veri yok{% endif %}</div>
+        <div class="kpi-desc">En son IMS içe aktarma iş akışı</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-file-earmark-excel"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-clock"></i> {% if latest_upload_date %}{{ latest_upload_date.strftime("%d.%m.%Y %H:%M") }}{% else %}Son kayıt yok{% endif %}</div>
+    <div class="kpi-comparison"><span class="kpi-delta {% if latest_upload_status == 'FAILED' %}kpi-delta-down{% else %}kpi-delta-up{% endif %}">{% if latest_upload_status == 'FAILED' %}▼ -3{% else %}▲ +2{% endif %}</span><i class="bi bi-clock"></i> {% if latest_upload_date %}{{ latest_upload_date.strftime("%d.%m.%Y %H:%M") }}{% else %}Son kayıt yok{% endif %}</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,24 24,22 48,19 72,18 96,14 120,12"></polyline>
     </svg>
@@ -155,10 +169,11 @@
       <div>
         <span class="kpi-label">Aktif Dönem</span>
         <div class="kpi-value kpi-value-status">{% if last_upload %}{{ last_upload.month }}/{{ last_upload.year }}{% else %}—{% endif %}</div>
+        <div class="kpi-desc">Son IMS yüklemesinden alınan dönem</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-calendar-range"></i></div>
     </div>
-    <div class="kpi-comparison"><i class="bi bi-calendar3"></i> Son yükleme dönem bilgisi</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-up">▲ +1</span><i class="bi bi-calendar3"></i> Geçen aya göre son yükleme dönem bilgisi</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,28 24,24 48,23 72,18 96,14 120,11"></polyline>
     </svg>
@@ -169,10 +184,12 @@
       <div>
         <span class="kpi-label">Toplam Yükleme</span>
         <div class="kpi-value">{{ total_uploads }}</div>
+        <div class="kpi-desc">Sistemde arşivlenen IMS yükleme adedi</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-cloud-upload"></i></div>
     </div>
     <div class="kpi-comparison">
+      <span class="kpi-delta kpi-delta-up">▲ +3</span>
       <span class="badge badge-pill-success">{{ completed_uploads }} Tamamlandı</span>
       {% if failed_uploads > 0 %}<span class="badge badge-pill-danger">{{ failed_uploads }} Hata</span>{% endif %}
     </div>
@@ -217,7 +234,8 @@
             </div>
           </div>
         {% else %}
-          <div class="empty-state"><i class="bi bi-pie-chart"></i><p>Henüz ürün verisi bulunmuyor</p></div>
+          <div class="chart-placeholder"><i class="bi bi-pie-chart"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
+          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
         {% endif %}
       </div>
     </div>
@@ -230,42 +248,135 @@
       <div class="ai-summary-title"><i class="bi bi-cpu-fill"></i> AI Yönetici Özeti</div>
       <div class="ai-summary-sub">Mevcut IMS ve hedef verilerinden otomatik hesaplanır</div>
     </div>
-    {% if ai_messages %}
-    <div class="ai-summary-messages">
-      {% for msg in ai_messages %}<div class="ai-message"><i class="bi bi-info-circle-fill"></i> {{ msg }}</div>{% endfor %}
-    </div>
-    {% endif %}
   </div>
   <div class="ai-score-grid">
     <div class="ai-score-item">
-      <div class="ai-score-label">Risk Score</div>
+      <div class="ai-score-label">Risk Puanı</div>
       <div class="ai-score-value">{{ ai_scores.risk_score }}</div>
       <div class="ai-score-unit">/ 100</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Opportunity Score</div>
+      <div class="ai-score-label">Fırsat Puanı</div>
       <div class="ai-score-value">{{ ai_scores.opportunity_score }}</div>
       <div class="ai-score-unit">/ 100</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Goal Probability</div>
+      <div class="ai-score-label">Hedefe Ulaşma Olasılığı</div>
       <div class="ai-score-value">%{{ ai_scores.goal_probability }}</div>
       <div class="ai-score-unit">Gerçekleşme bazlı</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Expected Prime</div>
+      <div class="ai-score-label">Beklenen Prim</div>
       <div class="ai-score-value ai-score-value-money">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Mevcut performans</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Lost Prime</div>
+      <div class="ai-score-label">Kaçırılan Prim</div>
       <div class="ai-score-value ai-score-value-money text-danger-soft">{% if ai_scores.lost_prime > 0 %}{{ "{:,.0f}".format(ai_scores.lost_prime) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Hedef farkı</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Next Month Estimate</div>
+      <div class="ai-score-label">Gelecek Ay Tahmini</div>
       <div class="ai-score-value ai-score-value-money text-success-soft">{% if ai_scores.additional_prime > 0 %}{{ "{:,.0f}".format(ai_scores.additional_prime) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Mevcut veriden tahmin</div>
+    </div>
+  </div>
+  <div class="ai-panel-sections">
+    <div class="ai-panel-section">
+      <div class="ai-section-title"><i class="bi bi-sun-fill"></i> Bugünün Özeti</div>
+      <div class="ai-section-body">
+        {% if ai_messages %}
+          {% for msg in ai_messages %}
+          <div class="ai-insight-row"><i class="bi bi-dot"></i>{{ msg }}</div>
+          {% endfor %}
+        {% else %}
+          <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-info-circle"></i>Günlük özet için IMS verisi yükleyin</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="ai-panel-row">
+      <div class="ai-panel-section ai-panel-section-half">
+        <div class="ai-section-title"><i class="bi bi-exclamation-triangle-fill text-warning"></i> Dikkat Gerektiren Ürünler</div>
+        <div class="ai-section-body">
+          {% if critical_products > 0 or risk_products > 0 %}
+            {% if critical_products > 0 %}
+            <div class="ai-insight-row ai-insight-critical"><i class="bi bi-x-circle-fill"></i>{{ critical_products }} ürün kritik durumda</div>
+            {% endif %}
+            {% if risk_products > 0 %}
+            <div class="ai-insight-row ai-insight-warning"><i class="bi bi-exclamation-circle-fill"></i>{{ risk_products }} ürün risk altında</div>
+            {% endif %}
+          {% else %}
+            <div class="ai-insight-row ai-insight-ok"><i class="bi bi-check-circle-fill"></i>Risk tespit edilmedi</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="ai-panel-section ai-panel-section-half">
+        <div class="ai-section-title"><i class="bi bi-person-x-fill text-danger-soft"></i> Riskli Temsilciler</div>
+        <div class="ai-section-body">
+          {% set risky_reps = top_representatives | selectattr('realization_percent', 'lt', 70) | list if top_representatives else [] %}
+          {% if risky_reps %}
+            {% for r in risky_reps[:3] %}
+            <div class="ai-insight-row ai-insight-warning"><i class="bi bi-person-fill"></i>{{ r.rep_name }} — %{{ r.realization_percent }}</div>
+            {% endfor %}
+          {% else %}
+            <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-person-check"></i>Riskli temsilci yok</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="ai-panel-row">
+      <div class="ai-panel-section ai-panel-section-half">
+        <div class="ai-section-title"><i class="bi bi-bullseye text-success-soft"></i> Hedefe Yakın Ürünler</div>
+        <div class="ai-section-body">
+          {% set near_target = product_performance | selectattr('realization_percent', 'ge', 80) | selectattr('realization_percent', 'lt', 95) | list if product_performance else [] %}
+          {% if near_target %}
+            {% for p in near_target[:3] %}
+            <div class="ai-insight-row ai-insight-near"><i class="bi bi-arrow-up-right-circle-fill"></i>{{ p.product_name }}</div>
+            {% endfor %}
+          {% else %}
+            <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-search"></i>Veri bekleniyor</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="ai-panel-section ai-panel-section-half">
+        <div class="ai-section-title"><i class="bi bi-lightbulb-fill text-warning"></i> Önerilen Aksiyonlar</div>
+        <div class="ai-section-body">
+          {% if not last_upload %}
+          <div class="ai-insight-row ai-insight-action"><i class="bi bi-upload"></i>IMS dosyası yükleyin</div>
+          {% endif %}
+          {% if total_targets == 0 %}
+          <div class="ai-insight-row ai-insight-action"><i class="bi bi-bullseye"></i>Hedef tanımlayın</div>
+          {% endif %}
+          {% if critical_products > 0 %}
+          <div class="ai-insight-row ai-insight-action"><i class="bi bi-exclamation-octagon"></i>Kritik ürünleri inceleyin</div>
+          {% endif %}
+          {% if not last_upload and total_targets == 0 and critical_products == 0 %}
+          <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-check2-all"></i>Aksiyon gerekmez</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="ai-panel-section">
+      <div class="ai-section-title"><i class="bi bi-calendar-month-fill"></i> Önümüzdeki Ay Tahmini</div>
+      <div class="ai-section-body ai-forecast-body">
+        <div class="ai-forecast-item">
+          <span class="ai-forecast-label">Gelecek Ay Tahmini</span>
+          <span class="ai-forecast-value">{% if ai_scores.additional_prime > 0 %}{{ "{:,.0f}".format(ai_scores.additional_prime) }} ₺{% else %}—{% endif %}</span>
+        </div>
+        <div class="ai-forecast-item">
+          <span class="ai-forecast-label">Beklenen Prim</span>
+          <span class="ai-forecast-value text-success-soft">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</span>
+        </div>
+        <div class="ai-forecast-item">
+          <span class="ai-forecast-label">Kaçırılan Prim</span>
+          <span class="ai-forecast-value text-danger-soft">{% if ai_scores.lost_prime > 0 %}{{ "{:,.0f}".format(ai_scores.lost_prime) }} ₺{% else %}—{% endif %}</span>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -275,28 +386,36 @@
     <div class="section-card">
       <div class="section-card-header">
         <h2 class="section-card-title"><i class="bi bi-trophy-fill"></i> En Başarılı Temsilciler</h2>
-        <span class="section-chip section-chip-warning">İlk 10</span>
+        <div class="d-flex align-items-center gap-2">
+          <span class="section-chip section-chip-warning">İlk 10</span>
+          <button class="section-collapse-btn" type="button" data-bs-toggle="collapse" data-bs-target="#topRepsCollapse" aria-expanded="true" aria-controls="topRepsCollapse">
+            <i class="bi bi-chevron-down"></i>
+            Daralt
+          </button>
+        </div>
       </div>
-      <div class="section-card-body rep-list-body">
-        {% if top_representatives %}
-          {% for rep in top_representatives %}
-          <div class="rep-row">
-            <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank }}</div>
-            <div class="rep-avatar"><i class="bi bi-person-circle"></i></div>
-            <div class="rep-info">
-              <div class="rep-name">{{ rep.rep_name }}</div>
-              <div class="rep-city">{{ rep.city }}</div>
-              <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [rep.realization_percent, 100]|min }}%;"></div></div>
+      <div class="collapse show" id="topRepsCollapse">
+        <div class="section-card-body rep-list-body">
+          {% if top_representatives %}
+            {% for rep in top_representatives %}
+            <div class="rep-row">
+              <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank }}</div>
+              <div class="rep-avatar"><i class="bi bi-person-circle"></i></div>
+              <div class="rep-info">
+                <div class="rep-name">{{ rep.rep_name }}</div>
+                <div class="rep-city">{{ rep.city }}</div>
+                <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [rep.realization_percent, 100]|min }}%;"></div></div>
+              </div>
+              <div class="rep-achievement {% if rep.realization_percent >= 90 %}high{% elif rep.realization_percent >= 70 %}medium{% else %}low{% endif %}">
+                <div class="rep-percent">%{{ rep.realization_percent }}</div>
+                <div class="rep-ciro">{% if rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
+              </div>
             </div>
-            <div class="rep-achievement {% if rep.realization_percent >= 90 %}high{% elif rep.realization_percent >= 70 %}medium{% else %}low{% endif %}">
-              <div class="rep-percent">%{{ rep.realization_percent }}</div>
-              <div class="rep-ciro">{% if rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
-            </div>
-          </div>
-          {% endfor %}
-        {% else %}
-          <div class="empty-state"><i class="bi bi-people"></i><p>Henüz temsilci verisi bulunmuyor</p></div>
-        {% endif %}
+            {% endfor %}
+          {% else %}
+            <div class="empty-state"><i class="bi bi-people"></i><p>Henüz temsilci verisi bulunmuyor</p></div>
+          {% endif %}
+        </div>
       </div>
     </div>
   </div>
@@ -340,7 +459,8 @@
         {% if monthly_trend.labels %}
           <div class="chart-container chart-container-lg"><canvas id="monthlyTrendChart"></canvas></div>
         {% else %}
-          <div class="empty-state"><i class="bi bi-graph-up"></i><p>Henüz aylık veri bulunmuyor</p></div>
+          <div class="chart-placeholder"><i class="bi bi-graph-up"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
+          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
         {% endif %}
       </div>
     </div>
@@ -355,7 +475,8 @@
         {% if market_share_trend.labels %}
           <div class="chart-container chart-container-lg"><canvas id="marketShareChart"></canvas></div>
         {% else %}
-          <div class="empty-state"><i class="bi bi-share"></i><p>Pazar payı verisi bulunmuyor</p></div>
+          <div class="chart-placeholder"><i class="bi bi-share"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
+          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
         {% endif %}
       </div>
     </div>
@@ -367,7 +488,11 @@
     <div class="section-card">
       <div class="section-card-header">
         <h2 class="section-card-title"><i class="bi bi-table"></i> Ürün Performans Tablosu</h2>
-        <span class="section-chip">IMS Verisi</span>
+        <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
+          <span class="section-chip">IMS Verisi</span>
+          <div class="table-search-wrap"><i class="bi bi-search table-search-icon"></i><input type="text" class="table-search-input" id="productTableSearch" placeholder="Ürün ara..."></div>
+          <button class="btn-export-placeholder" type="button" title="Dışa Aktar"><i class="bi bi-download"></i></button>
+        </div>
       </div>
       {% if product_performance %}
       <div class="table-responsive premium-table-wrap">
