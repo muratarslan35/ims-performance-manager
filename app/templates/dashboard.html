@@ -1,1077 +1,559 @@
 {% extends "base.html" %}
 
-{% block title %}
+{% block title %}Ana Sayfa | IMS Performans Yönetim Sistemi{% endblock %}
+{% block page_title %}Ana Sayfa{% endblock %}
 
-Ana Sayfa | IMS Performans Yönetim Sistemi
-
-{% endblock %}
-
-{% block page_title %}
-
-Ana Sayfa
-
+{% block styles %}
+<link href="{{ url_for('static', filename='css/dashboard.css') }}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 
-<div class="row row-cards mb-4">
-
-    <div class="col-xl-2 col-md-4 col-sm-6">
-
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Aktif Ürün
-
-                        </div>
-
-                        <div class="display-5 fw-bold">
-
-                            {{ total_products }}
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-primary-lt">
-
-                        <i class="bi bi-capsule-pill fs-2 text-primary"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 1) HERO HEADER                                             #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="dash-hero mb-4">
+  <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3">
+    <div>
+      <p class="mb-1" style="font-size:12px;opacity:.7;letter-spacing:.1em;text-transform:uppercase;font-weight:700;">Bilim İlaç</p>
+      <h1 class="dash-hero-title">Ana Sayfa</h1>
+      <p class="dash-hero-sub">
+        Hoş geldiniz, <strong>{{ current_user.full_name }}</strong>
+      </p>
     </div>
-
-    <div class="col-xl-2 col-md-4 col-sm-6">
-
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Aktif Temsilci
-
-                        </div>
-
-                        <div class="display-5 fw-bold">
-
-                            {{ total_representatives }}
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-success-lt">
-
-                        <i class="bi bi-people-fill fs-2 text-success"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+    <div class="dash-hero-meta">
+      <div class="dash-hero-badge">
+        <i class="bi bi-calendar3-week"></i>
+        Aktif Quarter:
+        <strong>{{ active_quarter if active_quarter != "-" else "Tanımsız" }}</strong>
+      </div>
+      <div class="dash-hero-badge">
+        <i class="bi bi-cloud-check-fill"></i>
+        Son IMS:
+        {% if latest_upload_date %}<strong>{{ latest_upload_date.strftime("%d.%m.%Y") }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
+      </div>
+      <div class="dash-hero-badge">
+        <i class="bi bi-circle-fill {% if latest_upload_status == 'COMPLETED' %}text-success{% elif latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %}" style="font-size:8px;"></i>
+        {% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status %}{{ latest_upload_status }}{% else %}Yükleme yok{% endif %}
+      </div>
     </div>
+  </div>
+</div>
 
-    <div class="col-xl-2 col-md-4 col-sm-6">
+{# ─────────────────────────────────────────────────────────── #}
+{# 2) KPI KARTLARI                                            #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="kpi-grid mb-4">
 
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Toplam Hedef
-
-                        </div>
-
-                        <div class="display-5 fw-bold">
-
-                            {{ total_targets }}
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-warning-lt">
-
-                        <i class="bi bi-bullseye fs-2 text-warning"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--primary);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Aktif Temsilci</span>
+      <div class="kpi-icon" style="background:rgba(11,78,162,.10);color:var(--primary);"><i class="bi bi-people-fill"></i></div>
     </div>
+    <div class="kpi-value">{{ total_representatives }}</div>
+    <div class="kpi-footer"><i class="bi bi-person-check"></i> Aktif temsilci sayısı</div>
+  </div>
 
-    <div class="col-xl-2 col-md-4 col-sm-6">
-
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Ana Prim
-
-                        </div>
-
-                        <div class="display-6 fw-bold">
-
-                            50.000 ₺
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-blue-lt">
-
-                        <i class="bi bi-cash-stack fs-2 text-primary"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--success);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Aktif Ürün</span>
+      <div class="kpi-icon" style="background:rgba(24,179,104,.10);color:var(--success);"><i class="bi bi-capsule-pill"></i></div>
     </div>
+    <div class="kpi-value">{{ total_products }}</div>
+    <div class="kpi-footer"><i class="bi bi-check2-circle"></i> Prim kapsamındaki ürünler</div>
+  </div>
 
-    <div class="col-xl-2 col-md-4 col-sm-6">
-
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Çeyrek Performansı
-
-                        </div>
-
-                        <div class="display-5 fw-bold">
-
-                            Q2
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-purple-lt">
-
-                        <i class="bi bi-calendar-week fs-2 text-purple"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--warning);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Toplam Hedef</span>
+      <div class="kpi-icon" style="background:rgba(244,163,0,.10);color:var(--warning);"><i class="bi bi-bullseye"></i></div>
     </div>
+    <div class="kpi-value">{{ total_targets }}</div>
+    <div class="kpi-footer"><i class="bi bi-grid-3x3"></i> Toplam hedef satırı</div>
+  </div>
 
-    <div class="col-xl-2 col-md-4 col-sm-6">
-
-        <div class="card dashboard-card border-0 shadow-sm">
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between">
-
-                    <div>
-
-                        <div class="text-secondary">
-
-                            Son IMS
-
-                        </div>
-
-                        <div class="fw-bold">
-
-                            {% if last_upload %}
-
-                            Hazır
-
-                            {% else %}
-
-                            Yok
-
-                            {% endif %}
-
-                        </div>
-
-                    </div>
-
-                    <div class="avatar avatar-lg bg-green-lt">
-
-                        <i class="bi bi-file-earmark-excel fs-2 text-success"></i>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-        </div>
-
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--turquoise);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Gerçekleşme %</span>
+      <div class="kpi-icon" style="background:rgba(0,184,196,.10);color:var(--turquoise);"><i class="bi bi-graph-up-arrow"></i></div>
     </div>
+    <div class="kpi-value">%{{ overall_percent }}</div>
+    <div class="kpi-footer"><i class="bi bi-bar-chart"></i> Toplam TL bazlı</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--purple);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Ana Prim</span>
+      <div class="kpi-icon" style="background:rgba(107,91,255,.10);color:var(--purple);"><i class="bi bi-cash-stack"></i></div>
+    </div>
+    <div class="kpi-value" style="font-size:20px;">{% if prime_summary.main_prime > 0 %}{{ "{:,.0f}".format(prime_summary.main_prime) }} ₺{% else %}—{% endif %}</div>
+    <div class="kpi-footer"><i class="bi bi-currency-exchange"></i> Prim motoru hesabı</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--success);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Tahmini Prim</span>
+      <div class="kpi-icon" style="background:rgba(24,179,104,.10);color:var(--success);"><i class="bi bi-piggy-bank"></i></div>
+    </div>
+    <div class="kpi-value" style="font-size:20px;">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
+    <div class="kpi-footer"><i class="bi bi-stars"></i> AI tahmini</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--purple);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Quarter</span>
+      <div class="kpi-icon" style="background:rgba(107,91,255,.10);color:var(--purple);"><i class="bi bi-calendar-week"></i></div>
+    </div>
+    <div class="kpi-value">{{ active_quarter if active_quarter != "-" else "—" }}</div>
+    <div class="kpi-footer"><i class="bi bi-calendar-event"></i> Aktif çeyrek dönemi</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:{% if latest_upload_status == 'COMPLETED' %}var(--success){% elif latest_upload_status == 'FAILED' %}var(--danger){% else %}var(--warning){% endif %};"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Son IMS Durumu</span>
+      <div class="kpi-icon" style="background:{% if latest_upload_status == 'COMPLETED' %}rgba(24,179,104,.10){% elif latest_upload_status == 'FAILED' %}rgba(227,75,75,.10){% else %}rgba(244,163,0,.10){% endif %};color:{% if latest_upload_status == 'COMPLETED' %}var(--success){% elif latest_upload_status == 'FAILED' %}var(--danger){% else %}var(--warning){% endif %};"><i class="bi bi-file-earmark-excel"></i></div>
+    </div>
+    <div class="kpi-value" style="font-size:18px;">{% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status == "PROCESSING" %}İşleniyor{% else %}Veri yok{% endif %}</div>
+    <div class="kpi-footer"><i class="bi bi-clock"></i> {% if latest_upload_date %}{{ latest_upload_date.strftime("%d.%m.%Y %H:%M") }}{% else %}—{% endif %}</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--orange);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Aktif Dönem</span>
+      <div class="kpi-icon" style="background:rgba(244,124,32,.10);color:var(--orange);"><i class="bi bi-calendar-range"></i></div>
+    </div>
+    <div class="kpi-value" style="font-size:18px;">{% if last_upload %}{{ last_upload.month }}/{{ last_upload.year }}{% else %}—{% endif %}</div>
+    <div class="kpi-footer"><i class="bi bi-calendar3"></i> Son yükleme dönemi</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-card-accent" style="background:var(--info);"></div>
+    <div class="kpi-card-header">
+      <span class="kpi-label">Toplam Yükleme</span>
+      <div class="kpi-icon" style="background:rgba(0,184,196,.10);color:var(--info);"><i class="bi bi-cloud-upload"></i></div>
+    </div>
+    <div class="kpi-value">{{ total_uploads }}</div>
+    <div class="kpi-footer">
+      <span class="badge" style="background:rgba(24,179,104,.12);color:var(--success);">{{ completed_uploads }} Tamamlandı</span>
+      {% if failed_uploads > 0 %}<span class="badge" style="background:rgba(227,75,75,.12);color:var(--danger);">{{ failed_uploads }} Hata</span>{% endif %}
+    </div>
+  </div>
 
 </div>
 
-<div class="row">
-
-    <div class="col-lg-8">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <div class="d-flex justify-content-between align-items-center w-100">
-
-                    <h3 class="card-title">
-
-                        IMS Performans Grafiği
-
-                    </h3>
-
-                    <select class="form-select w-auto">
-
-                        <option>
-
-                            Son 12 Ay
-
-                        </option>
-
-                        <option>
-
-                            Son 6 Ay
-
-                        </option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div
-
-                    id="dashboardPerformanceChart"
-
-                    style="height:380px;"
-
-                >
-
-                </div>
-
-            </div>
-
-        </div>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 3) TÜRKİYE HARİTASI + ÜRÜN DONUT                         #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="row g-4 mb-4">
+  <div class="col-lg-7">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-geo-alt-fill"></i> Türkiye Performans Haritası</h2>
+        <span class="badge" style="background:rgba(11,78,162,.10);color:var(--primary);font-size:11px;">Bölge bazlı</span>
+      </div>
+      <div class="section-card-body">
+        {% include "partials/turkey_map.html" %}
+      </div>
     </div>
+  </div>
 
-    <div class="col-lg-4">
-
-        <div class="card shadow-sm h-100">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Hedef Özeti
-
-                </h3>
-
+  <div class="col-lg-5">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-pie-chart-fill"></i> Ürün Performansı</h2>
+        <span class="badge" style="background:rgba(24,179,104,.10);color:var(--success);font-size:11px;">Toplam Ciro</span>
+      </div>
+      <div class="section-card-body">
+        {% if product_performance %}
+          <div class="chart-container chart-container-md"><canvas id="productDonutChart"></canvas></div>
+          <div class="donut-legend mt-3">
+            {% for p in product_performance %}
+            <div class="donut-legend-item">
+              <div class="donut-legend-label">
+                <div class="donut-legend-dot" id="donut-dot-{{ loop.index0 }}"></div>
+                <span>{{ p.product_name }}</span>
+              </div>
+              <span class="donut-legend-value">{% if p.total_tl > 0 %}{{ "{:,.0f}".format(p.total_tl) }} ₺{% else %}—{% endif %}</span>
             </div>
-
-            <div class="card-body">
-
-                <div id="goalChart">
-
-                </div>
-
-                <hr>
-
-                <div class="d-flex justify-content-between mb-3">
-
-                    <span>
-
-                        Ana Prim
-
-                    </span>
-
-                    <strong>
-
-                        50.000 ₺
-
-                    </strong>
-
-                </div>
-
-                <div class="d-flex justify-content-between mb-3">
-
-                    <span>
-
-                        Ciro Primi
-
-                    </span>
-
-                    <strong>
-
-                        20.000 ₺
-
-                    </strong>
-
-                </div>
-
-                <div class="d-flex justify-content-between">
-
-                    <span>
-
-                        Maksimum
-
-                    </span>
-
-                    <strong>
-
-                        %140
-
-                    </strong>
-
-                </div>
-
+            {% endfor %}
+            <div class="donut-legend-item" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;">
+              <div class="donut-legend-label" style="font-weight:700;color:var(--text);">Toplam</div>
+              <span class="donut-legend-value">{% if total_ciro > 0 %}{{ "{:,.0f}".format(total_ciro) }} ₺{% else %}—{% endif %}</span>
             </div>
-
-        </div>
-
+          </div>
+        {% else %}
+          <div class="empty-state"><i class="bi bi-pie-chart"></i><p>Henüz ürün verisi bulunmuyor</p></div>
+        {% endif %}
+      </div>
     </div>
-
+  </div>
 </div>
 
-<!-- PARÇA 1 BİTTİ -->
-<div class="row mt-4">
-
-    <div class="col-lg-7">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <div class="d-flex justify-content-between align-items-center">
-
-                    <h3 class="card-title">
-
-                        Ürün Performansı
-
-                    </h3>
-
-                    <span class="badge bg-primary">
-
-                        Canlı IMS
-
-                    </span>
-
-                </div>
-
-            </div>
-
-            <div class="table-responsive">
-
-                <table class="table table-hover table-striped align-middle">
-
-                    <thead>
-
-                        <tr>
-
-                            <th>Ürün</th>
-
-                            <th>Gerçekleşme</th>
-
-                            <th>Hedef</th>
-
-                            <th>Durum</th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        <tr>
-
-                            <td>Travazol</td>
-
-                            <td>%112</td>
-
-                            <td>%90</td>
-
-                            <td>
-
-                                <span class="badge bg-success">
-
-                                    Tamamlandı
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>Monurol</td>
-
-                            <td>%104</td>
-
-                            <td>%90</td>
-
-                            <td>
-
-                                <span class="badge bg-success">
-
-                                    Tamamlandı
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>Mixovul</td>
-
-                            <td>%89</td>
-
-                            <td>%90</td>
-
-                            <td>
-
-                                <span class="badge bg-warning">
-
-                                    Kritik
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>Acnemix</td>
-
-                            <td>%73</td>
-
-                            <td>%75</td>
-
-                            <td>
-
-                                <span class="badge bg-danger">
-
-                                    Riskli
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 4) AI YÖNETİCİ ÖZETİ                                      #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="ai-summary-card mb-4">
+  <div class="row align-items-start g-3">
+    <div class="col-md-3">
+      <div class="ai-summary-title"><i class="bi bi-cpu-fill"></i> AI Yönetici Özeti</div>
+      <div class="ai-summary-sub">Mevcut IMS ve hedef verilerinden otomatik hesaplanır</div>
+      {% if ai_messages %}
+      <div class="mt-3">
+        {% for msg in ai_messages %}
+        <div style="font-size:12px;opacity:.85;margin-bottom:6px;display:flex;gap:6px;">
+          <i class="bi bi-info-circle-fill" style="margin-top:2px;flex-shrink:0;"></i> {{ msg }}
         </div>
-
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
-
-    <div class="col-lg-5">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    AI Önerileri
-
-                </h3>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="alert alert-success">
-
-                    Travazol hedefini geçtiği için ana prime olumlu katkı sağlıyor.
-
-                </div>
-
-                <div class="alert alert-warning">
-
-                    Mixovul %90 hedefinin hemen altında.
-
-                </div>
-
-                <div class="alert alert-danger">
-
-                    Acnemix öncelikli aksiyon gerektiriyor.
-
-                </div>
-
-                <div class="alert alert-info mb-0">
-
-                    Quarter sonuna kadar mevcut performans korunursa ana prim oluşacaktır.
-
-                </div>
-
-            </div>
-
+    <div class="col-md-9">
+      <div class="ai-score-grid">
+        <div class="ai-score-item">
+          <div class="ai-score-label">Risk Skoru</div>
+          <div class="ai-score-value">{{ ai_scores.risk_score }}</div>
+          <div class="ai-score-unit">/ 100</div>
         </div>
-
+        <div class="ai-score-item">
+          <div class="ai-score-label">Fırsat Skoru</div>
+          <div class="ai-score-value">{{ ai_scores.opportunity_score }}</div>
+          <div class="ai-score-unit">/ 100</div>
+        </div>
+        <div class="ai-score-item">
+          <div class="ai-score-label">Hedefe Ulaşma Olasılığı</div>
+          <div class="ai-score-value">%{{ ai_scores.goal_probability }}</div>
+          <div class="ai-score-unit">Gerçekleşme bazlı</div>
+        </div>
+        <div class="ai-score-item">
+          <div class="ai-score-label">Beklenen Prim</div>
+          <div class="ai-score-value" style="font-size:16px;">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
+          <div class="ai-score-unit">Gerçekleşen TL</div>
+        </div>
+        <div class="ai-score-item">
+          <div class="ai-score-label">Kayıp Prim</div>
+          <div class="ai-score-value" style="font-size:16px;color:#FF8FA3;">{% if ai_scores.lost_prime > 0 %}{{ "{:,.0f}".format(ai_scores.lost_prime) }} ₺{% else %}—{% endif %}</div>
+          <div class="ai-score-unit">Hedefe göre fark</div>
+        </div>
+        <div class="ai-score-item">
+          <div class="ai-score-label">Tahmini Ek Prim</div>
+          <div class="ai-score-value" style="font-size:16px;color:#A0FFB5;">{% if ai_scores.additional_prime > 0 %}{{ "{:,.0f}".format(ai_scores.additional_prime) }} ₺{% else %}—{% endif %}</div>
+          <div class="ai-score-unit">%5 ek performans tahmini</div>
+        </div>
+      </div>
     </div>
-
+  </div>
 </div>
 
-<div class="row mt-4">
-
-    <div class="col-lg-6">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Son IMS Yüklemeleri
-
-                </h3>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 5) EN BAŞARILI TEMSİLCİLER + 6) GAUGE CHART               #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="row g-4 mb-4">
+  <div class="col-lg-7">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-trophy-fill" style="color:#C8960C;"></i> En Başarılı Temsilciler</h2>
+        <span class="badge" style="background:rgba(200,150,12,.12);color:#C8960C;font-size:11px;">İlk 10</span>
+      </div>
+      <div class="section-card-body" style="padding:16px 22px;">
+        {% if top_representatives %}
+          {% for rep in top_representatives %}
+          <div class="rep-row">
+            <div class="rep-rank {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">{{ rep.rank }}</div>
+            <div class="rep-info">
+              <div class="rep-name">{{ rep.rep_name }}</div>
+              <div class="rep-city">{{ rep.city }}</div>
             </div>
-
-            <div class="table-responsive">
-
-                <table class="table table-hover">
-
-                    <thead>
-
-                        <tr>
-
-                            <th>Dosya</th>
-
-                            <th>Durum</th>
-
-                            <th>Tarih</th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        {% if last_upload %}
-
-                        <tr>
-
-                            <td>
-
-                                {{ last_upload.file_name }}
-
-                            </td>
-
-                            <td>
-
-                                <span class="badge bg-success">
-
-                                    {{ last_upload.status }}
-
-                                </span>
-
-                            </td>
-
-                            <td>
-
-                                {{ last_upload.uploaded_at.strftime("%d.%m.%Y %H:%M") }}
-
-                            </td>
-
-                        </tr>
-
-                        {% else %}
-
-                        <tr>
-
-                            <td colspan="3">
-
-                                IMS kaydı bulunamadı.
-
-                            </td>
-
-                        </tr>
-
-                        {% endif %}
-
-                    </tbody>
-
-                </table>
-
+            <div class="rep-progress-wrap">
+              <div style="font-size:10px;color:var(--text-light);text-align:right;margin-bottom:2px;">%{{ rep.realization_percent }}</div>
+              <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [rep.realization_percent, 100]|min }}%;"></div></div>
             </div>
-
-        </div>
-
+            <div class="rep-percent">%{{ rep.realization_percent }}</div>
+            <div class="rep-ciro">{% if rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state"><i class="bi bi-people"></i><p>Henüz temsilci verisi bulunmuyor</p></div>
+        {% endif %}
+      </div>
     </div>
+  </div>
 
-    <div class="col-lg-6">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Recovery Durumu
-
-                </h3>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="progress progress-lg mb-3">
-
-                    <div
-
-                        class="progress-bar bg-success"
-
-                        style="width:72%;"
-
-                    >
-
-                        %72
-
-                    </div>
-
-                </div>
-
-                <div class="d-flex justify-content-between mb-2">
-
-                    <span>
-
-                        Tamamlanan Ürün
-
-                    </span>
-
-                    <strong>
-
-                        3
-
-                    </strong>
-
-                </div>
-
-                <div class="d-flex justify-content-between mb-2">
-
-                    <span>
-
-                        Riskli Ürün
-
-                    </span>
-
-                    <strong>
-
-                        1
-
-                    </strong>
-
-                </div>
-
-                <div class="d-flex justify-content-between">
-
-                    <span>
-
-                        Quarter
-
-                    </span>
-
-                    <strong>
-
-                        Q2
-
-                    </strong>
-
-                </div>
-
-            </div>
-
+  <div class="col-lg-5">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-speedometer2"></i> Hedefe Göre Gerçekleşme</h2>
+      </div>
+      <div class="section-card-body text-center">
+        <div class="chart-container chart-container-md" style="max-width:280px;margin:0 auto;">
+          <canvas id="gaugeChart"></canvas>
         </div>
-
+        <div class="gauge-center-text">
+          <div class="gauge-value">%{{ overall_percent }}</div>
+          <div class="gauge-label">Gerçekleşme</div>
+        </div>
+        <div class="gauge-stats mt-3">
+          <div class="gauge-stat-item">
+            <div class="gauge-stat-value">{% if overall_realization_tl > 0 %}{{ "{:,.0f}".format(overall_realization_tl) }} ₺{% else %}—{% endif %}</div>
+            <div class="gauge-stat-label">Gerçekleşen</div>
+          </div>
+          <div class="gauge-stat-item">
+            <div class="gauge-stat-value">{% if overall_target_tl > 0 %}{{ "{:,.0f}".format(overall_target_tl) }} ₺{% else %}—{% endif %}</div>
+            <div class="gauge-stat-label">Hedef</div>
+          </div>
+        </div>
+      </div>
     </div>
-
+  </div>
 </div>
 
-<!-- PARÇA 2 BİTTİ -->
-<div class="row mt-4">
-
-    <div class="col-lg-8">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <div class="d-flex justify-content-between align-items-center">
-
-                    <h3 class="card-title">
-
-                        Bölge Performansı
-
-                    </h3>
-
-                    <span class="badge bg-success">
-
-                        Canlı
-
-                    </span>
-
-                </div>
-
-            </div>
-
-            <div class="card-body">
-
-                <div
-
-                    id="regionPerformanceChart"
-
-                    style="height:340px;"
-
-                >
-
-                </div>
-
-            </div>
-
-        </div>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 7) AYLIK CİRO TRENDİ + 10) PAZAR PAYI TRENDİ             #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="row g-4 mb-4">
+  <div class="col-lg-8">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-graph-up"></i> Aylık Ciro Trendi</h2>
+        <span class="badge" style="background:rgba(11,78,162,.10);color:var(--primary);font-size:11px;">Son 12 Ay</span>
+      </div>
+      <div class="section-card-body">
+        {% if monthly_trend.labels %}
+          <div class="chart-container chart-container-lg"><canvas id="monthlyTrendChart"></canvas></div>
+        {% else %}
+          <div class="empty-state"><i class="bi bi-graph-up"></i><p>Henüz aylık veri bulunmuyor</p></div>
+        {% endif %}
+      </div>
     </div>
+  </div>
 
-    <div class="col-lg-4">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Hızlı İşlemler
-
-                </h3>
-
-            </div>
-
-            <div class="card-body d-grid gap-2">
-
-                <a
-
-                    href="{{ url_for('ims.index') }}"
-
-                    class="btn btn-primary"
-
-                >
-
-                    <i class="bi bi-upload me-2"></i>
-
-                    IMS Yükle
-
-                </a>
-
-                <a
-
-                    href="{{ url_for('simulation.index') }}"
-
-                    class="btn btn-success"
-
-                >
-
-                    <i class="bi bi-calculator me-2"></i>
-
-                    Prim Simülasyonu
-
-                </a>
-
-                <a
-
-                    href="{{ url_for('targets.index') }}"
-
-                    class="btn btn-warning"
-
-                >
-
-                    <i class="bi bi-bullseye me-2"></i>
-
-                    Hedef Yönetimi
-
-                </a>
-
-                <a
-
-                    href="{{ url_for('products.index') }}"
-
-                    class="btn btn-info"
-
-                >
-
-                    <i class="bi bi-capsule me-2"></i>
-
-                    Ürün Yönetimi
-
-                </a>
-
-            </div>
-
-        </div>
-
+  <div class="col-lg-4">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-share-fill"></i> Pazar Payı Trendi</h2>
+      </div>
+      <div class="section-card-body">
+        {% if market_share_trend.labels %}
+          <div class="chart-container chart-container-lg"><canvas id="marketShareChart"></canvas></div>
+        {% else %}
+          <div class="empty-state"><i class="bi bi-share"></i><p>Pazar payı verisi bulunmuyor</p></div>
+        {% endif %}
+      </div>
     </div>
-
+  </div>
 </div>
 
-<div class="row mt-4">
-
-    <div class="col-lg-4">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Sistem Durumu
-
-                </h3>
-
-            </div>
-
-            <div class="card-body">
-
-                <div class="d-flex justify-content-between mb-3">
-
-                    <span>
-
-                        IMS
-
-                    </span>
-
-                    <span class="badge bg-success">
-
-                        Aktif
-
-                    </span>
-
+{# ─────────────────────────────────────────────────────────── #}
+{# 8) ÜRÜN PERFORMANS TABLOSU                                 #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="row g-4 mb-4">
+  <div class="col-12">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-table"></i> Ürün Performans Tablosu</h2>
+        <span class="badge" style="background:rgba(11,78,162,.10);color:var(--primary);font-size:11px;">IMS Verisi</span>
+      </div>
+      {% if product_performance %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" style="font-size:13px;">
+          <thead style="background:var(--subtle-bg);">
+            <tr>
+              <th style="padding:12px 22px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-light);">Ürün</th>
+              <th style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-light);">Gerçekleşme</th>
+              <th style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-light);">Hedef (TL)</th>
+              <th style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-light);">Gerçekleşen (TL)</th>
+              <th style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-light);">Durum</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in product_performance %}
+            <tr>
+              <td style="padding:12px 22px;font-weight:600;">{{ p.product_name }}</td>
+              <td style="padding:12px 16px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div style="flex:1;background:var(--border);border-radius:10px;height:6px;min-width:80px;">
+                    <div style="height:100%;width:{{ [p.realization_percent, 100]|min }}%;border-radius:10px;background:{% if p.realization_percent >= 90 %}var(--success){% elif p.realization_percent >= 70 %}var(--primary){% else %}var(--danger){% endif %};"></div>
+                  </div>
+                  <span style="font-weight:700;color:{% if p.realization_percent >= 90 %}var(--success){% elif p.realization_percent >= 70 %}var(--primary){% else %}var(--danger){% endif %};">%{{ p.realization_percent }}</span>
                 </div>
-
-                <div class="d-flex justify-content-between mb-3">
-
-                    <span>
-
-                        Prim Motoru
-
-                    </span>
-
-                    <span class="badge bg-success">
-
-                        Aktif
-
-                    </span>
-
-                </div>
-
-                <div class="d-flex justify-content-between mb-3">
-
-                    <span>
-
-                        Quarter
-
-                    </span>
-
-                    <span class="badge bg-success">
-
-                        Aktif
-
-                    </span>
-
-                </div>
-
-                <div class="d-flex justify-content-between">
-
-                    <span>
-
-                        Recovery
-
-                    </span>
-
-                    <span class="badge bg-success">
-
-                        Aktif
-
-                    </span>
-
-                </div>
-
-            </div>
-
-        </div>
-
+              </td>
+              <td style="padding:12px 16px;color:var(--text-light);">{% if p.target_tl > 0 %}{{ "{:,.0f}".format(p.target_tl) }} ₺{% else %}—{% endif %}</td>
+              <td style="padding:12px 16px;font-weight:600;">{% if p.total_tl > 0 %}{{ "{:,.0f}".format(p.total_tl) }} ₺{% else %}—{% endif %}</td>
+              <td style="padding:12px 16px;">
+                <span class="product-status-badge {% if p.status == 'Tamamlandı' %}status-completed{% elif p.status == 'Devam Ediyor' %}status-ongoing{% else %}status-risky{% endif %}">
+                  <i class="bi {% if p.status == 'Tamamlandı' %}bi-check-circle-fill{% elif p.status == 'Devam Ediyor' %}bi-clock-fill{% else %}bi-exclamation-triangle-fill{% endif %}"></i>
+                  {{ p.status }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="section-card-body"><div class="empty-state"><i class="bi bi-table"></i><p>Henüz ürün performans verisi bulunmuyor</p></div></div>
+      {% endif %}
     </div>
-
-    <div class="col-lg-8">
-
-        <div class="card shadow-sm">
-
-            <div class="card-header">
-
-                <h3 class="card-title">
-
-                    Son Aktiviteler
-
-                </h3>
-
-            </div>
-
-            <div class="table-responsive">
-
-                <table class="table table-hover">
-
-                    <thead>
-
-                        <tr>
-
-                            <th>Tarih</th>
-
-                            <th>İşlem</th>
-
-                            <th>Kullanıcı</th>
-
-                            <th>Durum</th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        <tr>
-
-                            <td>09.07.2026</td>
-
-                            <td>IMS Dosyası Yüklendi</td>
-
-                            <td>{{ current_user.full_name }}</td>
-
-                            <td>
-
-                                <span class="badge bg-success">
-
-                                    Başarılı
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>09.07.2026</td>
-
-                            <td>Prim Simülasyonu</td>
-
-                            <td>{{ current_user.full_name }}</td>
-
-                            <td>
-
-                                <span class="badge bg-primary">
-
-                                    Tamamlandı
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                        <tr>
-
-                            <td>08.07.2026</td>
-
-                            <td>Hedef Güncellemesi</td>
-
-                            <td>{{ current_user.full_name }}</td>
-
-                            <td>
-
-                                <span class="badge bg-warning">
-
-                                    Güncellendi
-
-                                </span>
-
-                            </td>
-
-                        </tr>
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
-        </div>
-
-    </div>
-
+  </div>
 </div>
 
-<!-- PARÇA 3 BİTTİ -->
+{# ─────────────────────────────────────────────────────────── #}
+{# 9) SON IMS YÜKLEMELERİ + 11) UYARILAR                    #}
+{# ─────────────────────────────────────────────────────────── #}
+<div class="row g-4 mb-4">
+  <div class="col-lg-7">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-cloud-upload-fill"></i> Son Yüklenen IMS Dosyaları</h2>
+        <a href="{{ url_for('ims.index') }}" class="btn btn-sm" style="background:rgba(11,78,162,.08);color:var(--primary);border:none;font-size:12px;border-radius:8px;">
+          <i class="bi bi-arrow-right-circle me-1"></i> Tümü
+        </a>
+      </div>
+      <div class="section-card-body" style="padding:16px 22px;">
+        {% if recent_uploads %}
+          {% for upload in recent_uploads %}
+          <div class="upload-row">
+            <div class="upload-icon"><i class="bi bi-file-earmark-excel-fill"></i></div>
+            <div class="upload-info">
+              <div class="upload-filename">{{ upload.file_name }}</div>
+              <div class="upload-meta">
+                <span><i class="bi bi-person me-1"></i>{{ upload.uploaded_by or "—" }}</span>
+                <span><i class="bi bi-clock me-1"></i>{{ upload.uploaded_at.strftime("%d.%m.%Y %H:%M") }}</span>
+                <span><i class="bi bi-calendar-week me-1"></i>{{ upload.quarter }}</span>
+              </div>
+            </div>
+            <div>
+              <span class="badge {% if upload.status == 'COMPLETED' %}bg-success{% elif upload.status == 'FAILED' %}bg-danger{% else %}bg-warning text-dark{% endif %}" style="font-size:10px;">
+                {% if upload.status == "COMPLETED" %}Tamamlandı{% elif upload.status == "FAILED" %}Hata{% elif upload.status == "PROCESSING" %}İşleniyor{% else %}{{ upload.status }}{% endif %}
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state"><i class="bi bi-cloud-upload"></i><p>Henüz IMS yüklemesi bulunmuyor</p></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-bell-fill" style="color:var(--warning);"></i> Uyarılar</h2>
+        {% set total_warnings = critical_products + risk_products + warning_products %}
+        {% if total_warnings > 0 %}<span class="badge bg-danger" style="font-size:11px;">{{ total_warnings }}</span>{% endif %}
+      </div>
+      <div class="section-card-body" style="padding:16px 22px;">
+
+        {% if critical_products > 0 %}
+        <div class="alert-item alert-item-critical">
+          <div class="alert-item-icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+          <div class="alert-item-text">
+            <strong>Kritik Ürün</strong>
+            <span>{{ critical_products }} ürün kritik durumda – acil aksiyon gerekli</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if risk_products > 0 %}
+        <div class="alert-item alert-item-warning">
+          <div class="alert-item-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+          <div class="alert-item-text">
+            <strong>Riskli Ürün</strong>
+            <span>{{ risk_products }} ürün yakından takip edilmeli</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if warning_products > 0 %}
+        <div class="alert-item alert-item-info">
+          <div class="alert-item-icon"><i class="bi bi-eye-fill"></i></div>
+          <div class="alert-item-text">
+            <strong>Takip Seviyesinde</strong>
+            <span>{{ warning_products }} ürün izleme listesinde</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if total_targets == 0 %}
+        <div class="alert-item alert-item-warning">
+          <div class="alert-item-icon"><i class="bi bi-bullseye"></i></div>
+          <div class="alert-item-text">
+            <strong>Eksik Hedef</strong>
+            <span>Sisteme henüz hedef girilmemiş</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if not last_upload %}
+        <div class="alert-item alert-item-warning">
+          <div class="alert-item-icon"><i class="bi bi-cloud-upload"></i></div>
+          <div class="alert-item-text">
+            <strong>IMS Yüklenmedi</strong>
+            <span>Henüz IMS dosyası yüklenmemiş</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if active_quarter != "-" %}
+        <div class="alert-item alert-item-info">
+          <div class="alert-item-icon"><i class="bi bi-calendar-check-fill"></i></div>
+          <div class="alert-item-text">
+            <strong>Aktif Quarter: {{ active_quarter }}</strong>
+            <span>Quarter performansını takip edin</span>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if critical_products == 0 and risk_products == 0 and warning_products == 0 and total_targets > 0 and last_upload %}
+        <div class="alert-item alert-item-success">
+          <div class="alert-item-icon"><i class="bi bi-shield-check-fill"></i></div>
+          <div class="alert-item-text">
+            <strong>Her Şey Yolunda</strong>
+            <span>Sistem normal çalışıyor, risk tespit edilmedi</span>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="mt-4 pt-3" style="border-top:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-light);margin-bottom:10px;">Hızlı İşlemler</div>
+          <a href="{{ url_for('ims.index') }}" class="quick-action-btn" style="background:rgba(11,78,162,.07);color:var(--primary);"><i class="bi bi-upload"></i> IMS Yükle</a>
+          <a href="{{ url_for('simulation.index') }}" class="quick-action-btn" style="background:rgba(24,179,104,.07);color:var(--success);"><i class="bi bi-calculator"></i> Prim Simülasyonu</a>
+          <a href="{{ url_for('targets.index') }}" class="quick-action-btn" style="background:rgba(244,163,0,.07);color:var(--warning);"><i class="bi bi-bullseye"></i> Hedef Yönetimi</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Chart.js için veri aktarımı – JSON #}
+<script id="dashboardData" type="application/json">
+{
+  "productDonut": {
+    "labels": {{ product_performance | map(attribute='product_name') | list | tojson }},
+    "values": {{ product_performance | map(attribute='total_tl') | list | tojson }}
+  },
+  "monthlyTrend": {{ monthly_trend | tojson }},
+  "marketShare": {{ market_share_trend | tojson }},
+  "gauge": {
+    "percent": {{ overall_percent }},
+    "realization": {{ overall_realization_tl }},
+    "target": {{ overall_target_tl }}
+  },
+  "cityPerformance": {{ city_performance | tojson }}
+}
+</script>
 
 {% endblock %}
 
-<!-- DOSYA TAMAMLANDI -->
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
