@@ -3,13 +3,6 @@ from flask import render_template
 
 from flask_login import login_required
 
-from app.models import (
-    Product,
-    Representative,
-    IMSUpload,
-    Target
-)
-
 from app.services.dashboard_service import (
     DashboardService
 )
@@ -156,6 +149,19 @@ def index():
 
             "healthy_products"
 
-        ]
+        ],
+
+        overall_percent=dashboard["overall_percent"],
+        overall_realization_tl=dashboard["overall_realization_tl"],
+        overall_target_tl=dashboard["overall_target_tl"],
+        product_performance=dashboard["product_performance"],
+        total_ciro=dashboard["total_ciro"],
+        top_representatives=dashboard["top_representatives"],
+        monthly_trend=dashboard["monthly_trend"],
+        market_share_trend=dashboard["market_share_trend"],
+        city_performance=dashboard["city_performance"],
+        active_quarter=dashboard["active_quarter"],
+        recent_uploads=dashboard["recent_uploads"],
+        ai_scores=dashboard["ai_scores"],
 
     )

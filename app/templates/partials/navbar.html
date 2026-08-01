@@ -1,238 +1,135 @@
-<nav class="navbar navbar-expand-lg sticky-top d-print-none border-bottom bg-white shadow-sm">
+<header class="app-navbar d-print-none" role="banner">
+    <div class="navbar-inner">
 
-    <div class="container-xl">
-
-        <button
-            class="navbar-toggler"
-            type="button"
-            data-bs-toggle="collapse"
-            data-bs-target="#sidebar-menu">
-
-            <span class="navbar-toggler-icon"></span>
-
-        </button>
-
-        <div class="navbar-nav me-3">
-
-            <div class="nav-item">
-
-                <div class="fw-bold fs-5 text-dark lh-1">
-
-                    BİLİM İLAÇ
-
-                </div>
-
-                <small class="text-secondary fw-semibold" style="font-size:11px;letter-spacing:.04em;">
-
-                    IMS Performans Yönetim Sistemi
-
-                </small>
-
-            </div>
-
-        </div>
-
-        <form
-            class="d-none d-md-flex flex-fill mx-4">
-
-            <div class="input-icon w-100">
-
-                <span class="input-icon-addon">
-
-                    <i class="bi bi-search"></i>
-
+        <!-- Left: hamburger + page info -->
+        <div class="d-flex align-items-center gap-2 flex-shrink-0">
+            <button id="sidebarToggleBtn"
+                    class="navbar-hamburger"
+                    aria-label="Menüyü Aç/Kapat"
+                    aria-expanded="true"
+                    aria-controls="appSidebar">
+                <span class="hamburger-icon" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
                 </span>
+            </button>
 
-                <input
-
-                    type="text"
-
-                    class="form-control"
-
-                    placeholder="Temsilci, ürün, IMS veya rapor ara..."
-
-                >
-
-            </div>
-
-        </form>
-
-        <div class="navbar-nav flex-row align-items-center ms-auto">
-
-            <div class="nav-item me-2">
-
-                <button
-                    class="btn btn-icon btn-outline-secondary">
-
-                    <i class="bi bi-moon-stars-fill"></i>
-
-                </button>
-
-            </div>
-
-            <div class="nav-item me-2">
-
-                <button
-                    class="btn btn-icon btn-outline-secondary position-relative">
-
-                    <i class="bi bi-bell-fill"></i>
-
-                    <span class="badge bg-danger badge-notification">
-
-                        3
-
-                    </span>
-
-                </button>
-
-            </div>
-
-            <div class="nav-item me-3">
-
-                <div class="text-end">
-
-                    <div class="small text-secondary">
-
-                        Son IMS
-
-                    </div>
-
-                    <div class="fw-semibold">
-
-                        {{ latest_upload_date if latest_upload_date else "-" }}
-
-                    </div>
-
+            <div class="navbar-page-info d-none d-md-block">
+                <div class="navbar-page-title">
+                    {% block navbar_page_title %}IMS Performans Yönetim Sistemi{% endblock %}
                 </div>
+                <ol class="navbar-breadcrumb" aria-label="Gezinti yolu">
+                    <li>
+                        <a href="{{ url_for('dashboard.index') }}">Ana Sayfa</a>
+                    </li>
+                    {% block navbar_breadcrumb_extra %}{% endblock %}
+                </ol>
+            </div>
+        </div>
 
+        <!-- Center: global search -->
+        <div class="navbar-center d-none d-lg-block">
+            <form class="navbar-search" role="search" autocomplete="off" onsubmit="return false;">
+                <i class="bi bi-search navbar-search-icon" aria-hidden="true"></i>
+                <input type="search"
+                       class="navbar-search-input"
+                       placeholder="Temsilci, ürün, IMS veya rapor ara..."
+                       aria-label="Global arama">
+            </form>
+        </div>
+
+        <!-- Right controls -->
+        <div class="navbar-right">
+
+            <!-- Theme toggle -->
+            <button id="themeToggleBtn"
+                    class="navbar-icon-btn"
+                    title="Koyu Temaya Geç"
+                    aria-label="Tema Değiştir">
+                <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+            </button>
+
+            <!-- Notifications -->
+            <div class="dropdown">
+                <button class="navbar-icon-btn position-relative"
+                        id="notificationsDropdown"
+                        data-bs-toggle="dropdown"
+                        aria-expanded="false"
+                        aria-haspopup="true"
+                        title="Bildirimler"
+                        aria-label="Bildirimler">
+                    <i class="bi bi-bell-fill" aria-hidden="true"></i>
+                    <span class="notification-badge hidden" aria-label="0 okunmamış bildirim">0</span>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end notifications-dropdown"
+                     aria-labelledby="notificationsDropdown">
+                    <div class="notifications-header">
+                        <span class="fw-bold">Bildirimler</span>
+                        <span class="badge bg-primary-lt">0 Yeni</span>
+                    </div>
+                    <div class="notifications-empty">
+                        <i class="bi bi-bell-slash" aria-hidden="true"></i>
+                        <p>Henüz yeni bildirim bulunmuyor.</p>
+                    </div>
+                </div>
             </div>
 
-            <div class="nav-item dropdown">
+            <!-- Last IMS -->
+            <div class="navbar-info-card d-none d-xl-flex">
+                <div class="navbar-info-label">Son IMS</div>
+                <div class="navbar-info-value">{{ latest_upload_date if latest_upload_date else "—" }}</div>
+            </div>
 
-                              <a
+            <!-- Active Period -->
+            <div class="navbar-info-card d-none d-xl-flex">
+                <div class="navbar-info-label">Aktif Dönem</div>
+                <div class="navbar-info-value">{{ active_period if active_period is defined and active_period else "—" }}</div>
+            </div>
 
-                    href="#"
-
-                    class="nav-link d-flex align-items-center"
-
-                    data-bs-toggle="dropdown"
-
-                >
-
-                    <span class="avatar avatar-md bg-primary text-white">
-
+            <!-- User profile dropdown -->
+            <div class="dropdown">
+                <button class="navbar-user-btn"
+                        id="userDropdown"
+                        data-bs-toggle="dropdown"
+                        aria-expanded="false"
+                        aria-haspopup="true"
+                        aria-label="Kullanıcı menüsü">
+                    <div class="navbar-user-avatar" aria-hidden="true">
                         <i class="bi bi-person-fill"></i>
-
-                    </span>
-
-                    <div class="d-none d-xl-block ms-3 text-start">
-
-                        <div class="fw-semibold">
-
-                            {{ current_user.full_name }}
-
-                        </div>
-
-                        <div class="small text-secondary">
-
-                            {{ current_user.role }}
-
-                        </div>
-
                     </div>
-
-                </a>
-
-                <div class="dropdown-menu dropdown-menu-end shadow">
-
-                    <div class="dropdown-header">
-
-                        Hesabım
-
+                    <div class="d-none d-xl-block">
+                        <div class="navbar-user-name">{{ current_user.full_name }}</div>
+                        <div class="navbar-user-role">{{ current_user.role }}</div>
                     </div>
+                    <i class="bi bi-chevron-down navbar-user-chevron d-none d-xl-block" aria-hidden="true"></i>
+                </button>
 
-                    <div class="dropdown-item-text">
-
-                        <div class="fw-bold">
-
-                            {{ current_user.full_name }}
-
+                <div class="dropdown-menu dropdown-menu-end user-dropdown"
+                     aria-labelledby="userDropdown">
+                    <div class="user-dropdown-header">
+                        <div class="user-dropdown-avatar" aria-hidden="true">
+                            <i class="bi bi-person-fill"></i>
                         </div>
-
-                        <small class="text-secondary">
-
-                            {{ current_user.role }}
-
-                        </small>
-
+                        <div>
+                            <div class="user-dropdown-name">{{ current_user.full_name }}</div>
+                            <div class="user-dropdown-role">{{ current_user.role }}</div>
+                        </div>
                     </div>
-
                     <div class="dropdown-divider"></div>
-
-                    <a
-
-                        class="dropdown-item"
-
-                        href="{{ url_for('dashboard.index') }}"
-
-                    >
-
-                        <i class="bi bi-speedometer2 me-2"></i>
-
-                        Ana Sayfa
-
+                    <a class="dropdown-item" href="{{ url_for('settings.index') }}">
+                        <i class="bi bi-person-fill me-2" aria-hidden="true"></i>Profil
                     </a>
-
-                    <a
-
-                        class="dropdown-item"
-
-                        href="{{ url_for('settings.index') }}"
-
-                    >
-
-                        <i class="bi bi-gear-fill me-2"></i>
-
-                        Sistem Ayarları
-
+                    <a class="dropdown-item" href="{{ url_for('settings.index') }}">
+                        <i class="bi bi-sliders me-2" aria-hidden="true"></i>Hesabım
                     </a>
-
-                    <a
-
-                        class="dropdown-item"
-
-                        href="{{ url_for('simulation.index') }}"
-
-                    >
-
-                        <i class="bi bi-calculator-fill me-2"></i>
-
-                        Prim Simülasyonu
-
-                    </a>
-
                     <div class="dropdown-divider"></div>
-
-                    <a
-
-                        class="dropdown-item text-danger"
-
-                        href="{{ url_for('auth.logout') }}"
-
-                    >
-
-                        <i class="bi bi-box-arrow-right me-2"></i>
-
-                        Güvenli Çıkış
-
+                    <a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}">
+                        <i class="bi bi-box-arrow-right me-2" aria-hidden="true"></i>Güvenli Çıkış
                     </a>
-
                 </div>
-
             </div>
 
         </div>
-
     </div>
-
-</nav>
+</header>
