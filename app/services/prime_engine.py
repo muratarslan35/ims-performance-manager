@@ -61,11 +61,11 @@ class TTLDataCache:
         with self._lock:
             self._cache.clear()
 
-
+CACHE_TTL = 300
 _GLOBAL_CACHE = TTLDataCache()
 _RESULT_CACHE = TTLDataCache(ttl=CACHE_TTL)
 _FILE_LOCK = threading.RLock()
-CACHE_TTL = 300
+
 
 
 class PrimeEngine:
