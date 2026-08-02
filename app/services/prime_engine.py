@@ -31,6 +31,9 @@ class _CachedModel:
                 setattr(self, k, v)
 
 
+CACHE_TTL = 300
+
+
 class TTLDataCache:
     def __init__(self, ttl=CACHE_TTL):
         self.ttl = ttl
@@ -61,11 +64,10 @@ class TTLDataCache:
         with self._lock:
             self._cache.clear()
 
-CACHE_TTL = 300
+
 _GLOBAL_CACHE = TTLDataCache()
 _RESULT_CACHE = TTLDataCache(ttl=CACHE_TTL)
 _FILE_LOCK = threading.RLock()
-
 
 
 class PrimeEngine:
