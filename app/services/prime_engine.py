@@ -1,6 +1,8 @@
 import copy
 import json
 import time
+import threading
+import hashlib
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -10,27 +12,60 @@ from openpyxl import Workbook
 from app.models import IMSSummary, PrimeRule, Product, Setting, Target
 from app.services.ai_analytics_service import AIAnalyticsService
 
-_CACHE = {}
+_AI_SERVICE_INSTANCE = None
+_AI_SERVICE_LOCK = threading.Lock()
+
+def get_ai_service():
+    global _AI_SERVICE_INSTANCE
+    if _AI_SERVICE_INSTANCE is None:
+        with _AI_SERVICE_LOCK:
+            if _AI_SERVICE_INSTANCE is None:
+                _AI_SERVICE_INSTANCE = AIAnalyticsService()
+    return _AI_SERVICE_INSTANCE
+
+
+class _CachedModel:
+    def __init__(self, orm_obj):
+        for k, v in orm_obj.__dict__.items():
+            if not k.startswith('_'):
+                setattr(self, k, v)
+
+
+class TTLDataCache:
+    def __init__(self, ttl=CACHE_TTL):
+        self.ttl = ttl
+        self._cache = {}
+        self._lock = threading.RLock()
+
+    def get(self, key):
+        with self._lock:
+            entry = self._cache.get(key)
+            if not entry:
+                return None
+            value, expires_at = entry
+            if time.time() > expires_at:
+                self._cache.pop(key, None)
+                return None
+            return copy.deepcopy(value)
+
+    def set(self, key, value):
+        with self._lock:
+            if len(self._cache) > 1000:
+                now = time.time()
+                expired = [k for k, v in self._cache.items() if v[1] <= now]
+                for k in expired:
+                    self._cache.pop(k, None)
+            self._cache[key] = (copy.deepcopy(value), time.time() + self.ttl)
+
+    def invalidate(self):
+        with self._lock:
+            self._cache.clear()
+
+
+_GLOBAL_CACHE = TTLDataCache()
+_RESULT_CACHE = TTLDataCache(ttl=CACHE_TTL)
+_FILE_LOCK = threading.RLock()
 CACHE_TTL = 300
-
-
-def _cache_get(key):
-    entry = _CACHE.get(key)
-    if not entry:
-        return None, False
-    value, expires_at = entry
-    if time.time() < expires_at:
-        return copy.deepcopy(value), True
-    _CACHE.pop(key, None)
-    return None, False
-
-
-def _cache_set(key, value):
-    _CACHE[key] = (copy.deepcopy(value), time.time() + CACHE_TTL)
-
-
-def _cache_clear():
-    _CACHE.clear()
 
 
 class PrimeEngine:
@@ -64,6 +99,9 @@ class PrimeEngine:
         self.today = today or date.today()
         self.use_cache = use_cache
         self.overrides = overrides or {}
+        
+        self._calc_cache = {}
+        
         self.settings = self.load_settings()
         self.products = self.load_products()
         self.product_map = {product.id: product for product in self.products}
@@ -71,16 +109,34 @@ class PrimeEngine:
         self.targets_by_period = self.load_targets()
         self.summaries_by_period = self.load_summaries()
 
+    @classmethod
+    def invalidate_global_cache(cls):
+        _GLOBAL_CACHE.invalidate()
+        _RESULT_CACHE.invalidate()
+
     def load_settings(self):
-        settings = {}
-        for item in Setting.query.all():
-            settings[item.setting_key] = item.setting_value
+        key = "settings_all"
+        cached = _GLOBAL_CACHE.get(key)
+        if cached is not None:
+            return cached
+        settings = {item.setting_key: item.setting_value for item in Setting.query.all()}
+        _GLOBAL_CACHE.set(key, settings)
         return settings
 
     def load_products(self):
-        return Product.query.filter_by(is_active=True).order_by(Product.display_order.asc(), Product.id.asc()).all()
+        key = "products_all"
+        cached = _GLOBAL_CACHE.get(key)
+        if cached is not None:
+            return cached
+        products = [_CachedModel(p) for p in Product.query.filter_by(is_active=True).order_by(Product.display_order.asc(), Product.id.asc()).all()]
+        _GLOBAL_CACHE.set(key, products)
+        return products
 
     def load_rules(self):
+        key = f"rules_all_{self.today.isoformat()}"
+        cached = _GLOBAL_CACHE.get(key)
+        if cached is not None:
+            return cached
         query = PrimeRule.query.filter_by(active=True)
         rules = {}
         for rule in query.all():
@@ -90,24 +146,37 @@ class PrimeEngine:
                 continue
             current = rules.get(rule.product_id)
             if current is None or ((rule.valid_from or date.min) >= (current.valid_from or date.min)):
-                rules[rule.product_id] = rule
+                rules[rule.product_id] = _CachedModel(rule)
+        _GLOBAL_CACHE.set(key, rules)
         return rules
 
     def load_targets(self):
+        key = f"targets_{self.rep_id}_{self.year}"
+        cached = _GLOBAL_CACHE.get(key)
+        if cached is not None:
+            return cached
         rows = (
             Target.query.filter_by(representative_id=self.rep_id, year=self.year)
             .filter(Target.month >= 1, Target.month <= 12)
             .all()
         )
-        return {(row.product_id, row.month): row for row in rows}
+        data = {(row.product_id, row.month): _CachedModel(row) for row in rows}
+        _GLOBAL_CACHE.set(key, data)
+        return data
 
     def load_summaries(self):
+        key = f"summaries_{self.rep_id}_{self.year}"
+        cached = _GLOBAL_CACHE.get(key)
+        if cached is not None:
+            return cached
         rows = (
             IMSSummary.query.filter_by(representative_id=self.rep_id, year=self.year)
             .filter(IMSSummary.month >= 1, IMSSummary.month <= 12)
             .all()
         )
-        return {(row.product_id, row.month): row for row in rows}
+        data = {(row.product_id, row.month): _CachedModel(row) for row in rows}
+        _GLOBAL_CACHE.set(key, data)
+        return data
 
     def get_setting(self, key, default=None, cast=float):
         if default is None:
@@ -142,7 +211,10 @@ class PrimeEngine:
         }
 
     def apply_override(self, product, month, record):
-        override = self.overrides.get(product.id)
+        override = (
+            self.overrides.get(product.id)
+            or self.overrides.get(str(product.id))
+        )
         if not override or month != self.month:
             return {**record, "simulation": False, "slider_percent": None}
 
@@ -182,6 +254,10 @@ class PrimeEngine:
 
     def calculate_product(self, product, month=None):
         month = month or self.month
+        cache_key = (product.id, month)
+        if cache_key in self._calc_cache:
+            return self._calc_cache[cache_key]
+
         base = self.month_record(product.id, month)
         adjusted = self.apply_override(product, month, base)
         target_tl = adjusted["target_tl"]
@@ -192,11 +268,11 @@ class PrimeEngine:
         weighted_actual = round(adjusted["actual_tl"] * coeff, 2)
         weighted_target = round(target_tl * coeff, 2)
         rule = self.get_prime_rule(product)
-        required_percent = float(rule.required_percent) if rule else float(product.required_percent or 0)
-        include_in_total = bool(rule.include_in_total_tl) if rule else bool(product.include_total_tl)
-        include_in_prime = bool(rule.include_in_prime) if rule else bool(product.is_prime_product)
+        required_percent = float(rule.required_percent) if rule else float(getattr(product, 'required_percent', 0) or 0)
+        include_in_total = bool(rule.include_in_total_tl) if rule else bool(getattr(product, 'include_total_tl', False))
+        include_in_prime = bool(rule.include_in_prime) if rule else bool(getattr(product, 'is_prime_product', False))
 
-        return {
+        result = {
             "product_id": product.id,
             "product_code": product.product_code,
             "product_name": product.product_name,
@@ -219,6 +295,8 @@ class PrimeEngine:
             "slider_percent": adjusted["slider_percent"],
             "passed": percent >= required_percent if include_in_prime else True,
         }
+        self._calc_cache[cache_key] = result
+        return result
 
     def calculate_monthly_products(self, month=None):
         month = month or self.month
@@ -247,10 +325,12 @@ class PrimeEngine:
         base = self.get_setting("MAIN_PRIME", 50000.0)
         step = max(1.0, self.get_setting("PRIME_STEP", 5.0))
         step_amount = self.get_setting("STEP_AMOUNT", 2500.0)
+        
         if total_percent < minimum:
             return 0.0
+            
         capped = min(total_percent, maximum)
-        level = int((capped - minimum) // step)
+        level = int(round(capped - minimum, 4) // step)
         return round(base + (level * step_amount), 2)
 
     def calculate_ciro_prime(self, total_percent, product_success):
@@ -315,7 +395,7 @@ class PrimeEngine:
             actual_tl = sum(item["actual_tl"] for item in monthly)
             percent = round((actual_tl / target_tl * 100.0), 2) if target_tl > 0 else 0.0
             remaining_tl = round(max(0.0, target_tl - actual_tl), 2)
-            status = "Tamamlandı" if remaining_tl == 0 else ("Takip" if percent >= 85 else "Riskli")
+            status = "Tamamlandı" if remaining_tl <= 0.0 else ("Takip" if percent >= 85 else "Riskli")
             product_entry = {
                 "product_id": product.id,
                 "product": product.product_name,
@@ -339,7 +419,7 @@ class PrimeEngine:
             products.append(product_entry)
 
         total_percent = round((total_actual / total_target * 100.0), 2) if total_target > 0 else 0.0
-        completed = len([item for item in products if item["remaining_tl"] == 0])
+        completed = len([item for item in products if item["remaining_tl"] <= 0.0])
         return {
             "quarter": self.quarter,
             "months": self.months_in_quarter(),
@@ -376,8 +456,8 @@ class PrimeEngine:
                     "remaining_tl": remaining_tl,
                     "risk_score": risk_score,
                     "status": status,
-                    "description": "Hedef kapandı." if remaining_tl == 0 else f"₺{remaining_tl:,.0f} açık bulunuyor.",
-                    "can_close": remaining_tl == 0,
+                    "description": "Hedef kapandı." if remaining_tl <= 0.0 else f"₺{remaining_tl:,.0f} açık bulunuyor.",
+                    "can_close": remaining_tl <= 0.0,
                 }
             )
         recovery_rows.sort(key=lambda item: (item["remaining_tl"] > 0, item["remaining_tl"]), reverse=True)
@@ -534,7 +614,7 @@ class PrimeEngine:
         }
 
     def build_forecast(self, summary, breakdown):
-        ai_service = AIAnalyticsService()
+        ai_service = get_ai_service()
         next_month = ai_service.predict_next_month()
         current_target = max(summary["total_target"], 1.0)
         forecast_percent = round((next_month.get("predicted_tl", 0.0) / current_target * 100.0), 2)
@@ -565,16 +645,17 @@ class PrimeEngine:
     def build_result(self, save_history=True):
         current_products = self.calculate_monthly_products(month=self.month)
         baseline_products = current_products
+        
         if self.overrides:
-            baseline_engine = PrimeEngine(
-                representative_id=self.rep_id,
-                year=self.year,
-                month=self.month,
-                overrides={},
-                today=self.today,
-                use_cache=False,
-            )
-            baseline_products = baseline_engine.calculate_monthly_products(month=self.month)
+            original_overrides = self.overrides
+            self.overrides = {}
+            self._calc_cache = {k: v for k, v in self._calc_cache.items() if k[1] != self.month}
+            baseline_products = self.calculate_monthly_products(month=self.month)
+            self.overrides = original_overrides
+            self._calc_cache = {k: v for k, v in self._calc_cache.items() if k[1] != self.month}
+            for prod in current_products:
+                self._calc_cache[(prod["product_id"], self.month)] = prod
+
         summary = self.summarize_products(current_products)
         quarter = self.build_quarter_analysis()
         recovery = self.build_recovery_analysis(current_products)
@@ -585,6 +666,7 @@ class PrimeEngine:
         comparison = self.build_comparison(breakdown["total"], forecast["expected_prime"], max((item["total_prime"] for item in what_if), default=breakdown["total"]))
         trends = self.build_trends()
         history_entry = self.save_history(breakdown, summary, insights, what_if) if save_history else None
+        
         result = {
             "representative_id": self.rep_id,
             "year": self.year,
@@ -625,7 +707,8 @@ class PrimeEngine:
             "overrides": self.overrides,
             "settings": self.settings,
         }
-        return json.dumps(fingerprint, sort_keys=True, default=str)
+        raw = json.dumps(fingerprint, sort_keys=True, default=str)
+        return hashlib.md5(raw.encode('utf-8')).hexdigest()
 
     def history_file(self):
         folder = Path(current_app.config["REPORT_FOLDER"]) / "prime_simulation_history"
@@ -649,26 +732,30 @@ class PrimeEngine:
             "what_if": what_if,
         }
         history_file = self.history_file()
-        entries = []
-        if history_file.exists():
-            try:
-                entries = json.loads(history_file.read_text(encoding="utf-8"))
-            except Exception:
-                entries = []
-        entries.append(payload)
-        entries = entries[-25:]
-        history_file.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _FILE_LOCK:
+            entries = []
+            if history_file.exists():
+                try:
+                    entries = json.loads(history_file.read_text(encoding="utf-8"))
+                except Exception:
+                    entries = []
+            entries.append(payload)
+            entries = entries[-25:]
+            temp_path = history_file.with_suffix('.tmp')
+            temp_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(history_file)
         return payload
 
     def load_history(self):
         history_file = self.history_file()
-        if not history_file.exists():
-            return []
-        try:
-            entries = json.loads(history_file.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        return list(reversed(entries))
+        with _FILE_LOCK:
+            if not history_file.exists():
+                return []
+            try:
+                entries = json.loads(history_file.read_text(encoding="utf-8"))
+            except Exception:
+                return []
+            return list(reversed(entries))
 
     def export_pdf(self, result, report_type="prime_report"):
         folder = Path(current_app.config["REPORT_FOLDER"]) / "prime_exports"
@@ -689,42 +776,56 @@ class PrimeEngine:
             f"Penalty: {result['breakdown']['penalty']:.2f}",
             f"AI Forecast: {result['ai_forecast']['expected_prime']:.2f}",
         ]
-        file_path.write_bytes(self._build_pdf(lines))
+        
+        pdf_bytes = self._build_pdf(lines)
+        temp_path = file_path.with_suffix('.tmp')
+        with _FILE_LOCK:
+            temp_path.write_bytes(pdf_bytes)
+            temp_path.replace(file_path)
+            
         return {"path": str(file_path), "name": file_path.name, "type": safe_report_type}
 
     def export_excel(self, result):
         folder = Path(current_app.config["REPORT_FOLDER"]) / "prime_exports"
         folder.mkdir(parents=True, exist_ok=True)
         file_path = folder / f"prime_report_{self.rep_id}_{self.year}_{self.month}.xlsx"
+        
         workbook = Workbook()
-        summary_sheet = workbook.active
-        summary_sheet.title = "Summary"
-        summary_sheet.append(["Metric", "Value"])
-        summary_sheet.append(["Total Prime", result["breakdown"]["total"]])
-        summary_sheet.append(["Main Prime", result["breakdown"]["main_prime"]])
-        summary_sheet.append(["Extra Prime", result["breakdown"]["extra_prime"]])
-        summary_sheet.append(["Recovery", result["breakdown"]["recovery"]])
-        summary_sheet.append(["Bonus", result["breakdown"]["bonus"]])
-        summary_sheet.append(["Penalty", result["breakdown"]["penalty"]])
+        try:
+            summary_sheet = workbook.active
+            summary_sheet.title = "Summary"
+            summary_sheet.append(["Metric", "Value"])
+            summary_sheet.append(["Total Prime", result["breakdown"]["total"]])
+            summary_sheet.append(["Main Prime", result["breakdown"]["main_prime"]])
+            summary_sheet.append(["Extra Prime", result["breakdown"]["extra_prime"]])
+            summary_sheet.append(["Recovery", result["breakdown"]["recovery"]])
+            summary_sheet.append(["Bonus", result["breakdown"]["bonus"]])
+            summary_sheet.append(["Penalty", result["breakdown"]["penalty"]])
 
-        products_sheet = workbook.create_sheet("Products")
-        products_sheet.append(["Product", "Target TL", "Actual TL", "Percent", "Gap TL", "Simulation"])
-        for item in result["products"]:
-            products_sheet.append([
-                item["product_name"],
-                item["target_tl"],
-                item["actual_tl"],
-                item["percent"],
-                item["gap_tl"],
-                "Yes" if item["simulation"] else "No",
-            ])
+            products_sheet = workbook.create_sheet("Products")
+            products_sheet.append(["Product", "Target TL", "Actual TL", "Percent", "Gap TL", "Simulation"])
+            for item in result["products"]:
+                products_sheet.append([
+                    item["product_name"],
+                    item["target_tl"],
+                    item["actual_tl"],
+                    item["percent"],
+                    item["gap_tl"],
+                    "Yes" if item["simulation"] else "No",
+                ])
 
-        scenario_sheet = workbook.create_sheet("WhatIf")
-        scenario_sheet.append(["Scenario", "Factor", "Total Percent", "Total Prime"])
-        for item in result["what_if_analysis"]:
-            scenario_sheet.append([item["label"], item["factor"], item["total_percent"], item["total_prime"]])
+            scenario_sheet = workbook.create_sheet("WhatIf")
+            scenario_sheet.append(["Scenario", "Factor", "Total Percent", "Total Prime"])
+            for item in result["what_if_analysis"]:
+                scenario_sheet.append([item["label"], item["factor"], item["total_percent"], item["total_prime"]])
 
-        workbook.save(file_path)
+            temp_path = file_path.with_suffix('.tmp')
+            with _FILE_LOCK:
+                workbook.save(temp_path)
+                temp_path.replace(file_path)
+        finally:
+            workbook.close()
+            
         return {"path": str(file_path), "name": file_path.name, "type": "excel"}
 
     def _build_pdf(self, lines):
@@ -755,12 +856,12 @@ class PrimeEngine:
     def calculate(self, save_history=True):
         key = self.cache_key()
         if self.use_cache:
-            cached, hit = _cache_get(key)
-            if hit:
+            cached = _RESULT_CACHE.get(key)
+            if cached is not None:
                 cached["cache"] = {"hit": True, "ttl_seconds": CACHE_TTL}
                 return cached
         result = self.build_result(save_history=save_history)
         result["cache"] = {"hit": False, "ttl_seconds": CACHE_TTL}
         if self.use_cache:
-            _cache_set(key, result)
-        return copy.deepcopy(result)
+            _RESULT_CACHE.set(key, result)
+        return result
