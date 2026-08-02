@@ -1,45 +1,40 @@
+import os
 import pandas as pd
 
 
 class IMSReader:
 
     def __init__(self, path):
-
         self.path = path
-
-        self.excel = pd.ExcelFile(path)
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(f"Excel dosyası bulunamadı: {path}")
+        
+        try:
+            self.excel = pd.ExcelFile(path)
+        except Exception as exc:
+            raise ValueError(f"Excel dosyası okunamadı veya geçersiz format: {exc}") from exc
 
         self.sheet_names = self.excel.sheet_names
+        self._sheet_cache = {}
 
 
     def get_sheet_names(self):
-
         return self.sheet_names
 
 
     def read_sheet(self, sheet_name):
-
-        return pd.read_excel(
-
-            self.path,
-
-            sheet_name=sheet_name
-
-        )
+        if sheet_name not in self._sheet_cache:
+            try:
+                self._sheet_cache[sheet_name] = self.excel.parse(sheet_name=sheet_name)
+            except Exception as exc:
+                raise ValueError(f"'{sheet_name}' sayfası okunurken hata oluştu: {exc}") from exc
+        return self._sheet_cache[sheet_name]
 
 
     def read_all(self):
-
         sheets = {}
-
         for sheet in self.sheet_names:
-
-            sheets[sheet] = self.read_sheet(
-
-                sheet
-
-            )
-
+            sheets[sheet] = self.read_sheet(sheet)
         return sheets
 
 
