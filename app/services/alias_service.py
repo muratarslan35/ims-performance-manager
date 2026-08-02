@@ -34,16 +34,33 @@ class AliasService:
     _lock = threading.RLock()
     _initialized = False
     _cache_version = 0
+    
     _product_cache = {}
     _product_alias_cache = {}
     _product_match_cache = {}
     _product_raw_cache = {}
     _product_alias_raw_cache = {}
+    
+    _product_accent_cache = {}
+    _product_whitespace_cache = {}
+    _product_punctuation_cache = {}
+    _product_alias_accent_cache = {}
+    _product_alias_whitespace_cache = {}
+    _product_alias_punctuation_cache = {}
+
     _representative_cache = {}
     _representative_alias_cache = {}
     _representative_match_cache = {}
     _representative_raw_cache = {}
     _representative_alias_raw_cache = {}
+    
+    _representative_accent_cache = {}
+    _representative_whitespace_cache = {}
+    _representative_punctuation_cache = {}
+    _representative_alias_accent_cache = {}
+    _representative_alias_whitespace_cache = {}
+    _representative_alias_punctuation_cache = {}
+
     _region_cache = {}
     _province_cache = {}
     _normalize_memo = {}
@@ -61,6 +78,8 @@ class AliasService:
         if value is None:
             return ""
         source = str(value)
+        
+        # Fast path lock-free read
         cached = cls._normalize_memo.get(source)
         if cached is not None:
             return cached
@@ -70,9 +89,12 @@ class AliasService:
         text = text.translate(str.maketrans({"İ": "I", "Ş": "S", "Ğ": "G", "Ü": "U", "Ö": "O", "Ç": "C"}))
         text = re.sub(r"[^A-Z0-9]+", " ", text)
         normalized = re.sub(r"\s+", " ", text).strip()
-        if len(cls._normalize_memo) > 50000:
-            cls._normalize_memo.clear()
-        cls._normalize_memo[source] = normalized
+        
+        # Thread-safe write
+        with cls._lock:
+            if len(cls._normalize_memo) > 50000:
+                cls._normalize_memo.clear()
+            cls._normalize_memo[source] = normalized
         return normalized
 
     @classmethod
@@ -122,106 +144,139 @@ class AliasService:
         return {"matched": matched, "score": round(score, 2), "method": method, "object": obj}
 
     @classmethod
+    def _clear_cache_unlocked(cls):
+        cls._initialized = False
+        
+        cls._product_cache = {}
+        cls._product_alias_cache = {}
+        cls._product_match_cache = {}
+        cls._product_raw_cache = {}
+        cls._product_alias_raw_cache = {}
+        
+        cls._product_accent_cache = {}
+        cls._product_whitespace_cache = {}
+        cls._product_punctuation_cache = {}
+        cls._product_alias_accent_cache = {}
+        cls._product_alias_whitespace_cache = {}
+        cls._product_alias_punctuation_cache = {}
+
+        cls._representative_cache = {}
+        cls._representative_alias_cache = {}
+        cls._representative_match_cache = {}
+        cls._representative_raw_cache = {}
+        cls._representative_alias_raw_cache = {}
+        
+        cls._representative_accent_cache = {}
+        cls._representative_whitespace_cache = {}
+        cls._representative_punctuation_cache = {}
+        cls._representative_alias_accent_cache = {}
+        cls._representative_alias_whitespace_cache = {}
+        cls._representative_alias_punctuation_cache = {}
+
+        cls._region_cache = {}
+        cls._province_cache = {}
+        cls._normalize_memo = {}
+
+    @classmethod
     def clear_cache(cls):
         with cls._lock:
-            cls._initialized = False
-            cls._product_cache = {}
-            cls._product_alias_cache = {}
-            cls._product_match_cache = {}
-            cls._product_raw_cache = {}
-            cls._product_alias_raw_cache = {}
-            cls._representative_cache = {}
-            cls._representative_alias_cache = {}
-            cls._representative_match_cache = {}
-            cls._representative_raw_cache = {}
-            cls._representative_alias_raw_cache = {}
-            cls._region_cache = {}
-            cls._province_cache = {}
-            cls._normalize_memo = {}
-            cls._normalize_memo = {}
+            cls._clear_cache_unlocked()
+
+    @classmethod
+    def _update_tx_caches_unlocked(cls, raw_key, obj, prefix):
+        for transform_func, cache_name in (
+            (cls._accent_key, f"_{prefix}_accent_cache"),
+            (cls._whitespace_key, f"_{prefix}_whitespace_cache"),
+            (cls._punctuation_key, f"_{prefix}_punctuation_cache"),
+        ):
+            cache = getattr(cls, cache_name)
+            t_key = transform_func(raw_key)
+            if t_key:
+                existing = cache.get(t_key)
+                if existing is None or raw_key < existing[0]:
+                    cache[t_key] = (raw_key, obj)
+
+    @classmethod
+    def _load_cache_unlocked(cls):
+        if cls._initialized:
+            return
+
+        for product in Product.query.filter_by(is_active=True).all():
+            for label in (product.product_name, product.product_code, product.ims_name):
+                normalized = cls.normalize(label)
+                raw_key = cls._raw_key(label)
+                if normalized:
+                    cls._product_cache[normalized] = product
+                if raw_key:
+                    cls._product_raw_cache[raw_key] = product
+                    cls._update_tx_caches_unlocked(raw_key, product, "product")
+
+        for alias in ProductAlias.query.all():
+            normalized = cls.normalize(alias.alias_name)
+            raw_key = cls._raw_key(alias.alias_name)
+            if normalized and alias.product and alias.product.is_active:
+                cls._product_alias_cache[normalized] = alias.product
+            if raw_key and alias.product and alias.product.is_active:
+                cls._product_alias_raw_cache[raw_key] = alias.product
+                cls._update_tx_caches_unlocked(raw_key, alias.product, "product_alias")
+
+        for match in ProductMatch.query.all():
+            normalized = cls.normalize(match.ims_name)
+            if normalized and match.product and match.product.is_active:
+                cls._product_match_cache[normalized] = match.product
+
+        for representative in Representative.query.filter_by(active=True).all():
+            for label in (representative.rep_name, representative.rep_code, representative.ims_code):
+                normalized = cls.normalize(label)
+                raw_key = cls._raw_key(label)
+                if normalized:
+                    cls._representative_cache[normalized] = representative
+                if raw_key:
+                    cls._representative_raw_cache[raw_key] = representative
+                    cls._update_tx_caches_unlocked(raw_key, representative, "representative")
+            
+            normalized_region = cls.normalize(representative.region)
+            if normalized_region:
+                cls._region_cache.setdefault(normalized_region, representative.region)
+            normalized_city = cls.normalize(representative.city)
+            if normalized_city:
+                cls._province_cache.setdefault(normalized_city, representative.city)
+
+        for alias in RepresentativeAlias.query.all():
+            normalized = cls.normalize(alias.alias_name)
+            raw_key = cls._raw_key(alias.alias_name)
+            if normalized and alias.representative and alias.representative.active:
+                cls._representative_alias_cache[normalized] = alias.representative
+            if raw_key and alias.representative and alias.representative.active:
+                cls._representative_alias_raw_cache[raw_key] = alias.representative
+                cls._update_tx_caches_unlocked(raw_key, alias.representative, "representative_alias")
+
+        for match in RepresentativeMatch.query.all():
+            normalized = cls.normalize(match.ims_name)
+            if normalized and match.representative and match.representative.active:
+                cls._representative_match_cache[normalized] = match.representative
+
+        cls._statistics.update(
+            product=len({item.id for item in cls._product_cache.values()}),
+            product_alias=len(cls._product_alias_cache),
+            representative=len({item.id for item in cls._representative_cache.values()}),
+            representative_alias=len(cls._representative_alias_cache),
+        )
+        cls._initialized = True
+        cls._cache_version += 1
 
     @classmethod
     def load_cache(cls):
+        if cls._initialized:
+            return
         with cls._lock:
-            if cls._initialized:
-                return
-
-            cls._product_cache = {}
-            cls._product_alias_cache = {}
-            cls._product_match_cache = {}
-            cls._product_raw_cache = {}
-            cls._product_alias_raw_cache = {}
-            cls._representative_cache = {}
-            cls._representative_alias_cache = {}
-            cls._representative_match_cache = {}
-            cls._representative_raw_cache = {}
-            cls._representative_alias_raw_cache = {}
-            cls._region_cache = {}
-            cls._province_cache = {}
-
-            for product in Product.query.filter_by(is_active=True).all():
-                for label in (product.product_name, product.product_code, product.ims_name):
-                    normalized = cls.normalize(label)
-                    raw_key = cls._raw_key(label)
-                    if normalized:
-                        cls._product_cache[normalized] = product
-                    if raw_key:
-                        cls._product_raw_cache[raw_key] = product
-
-            for alias in ProductAlias.query.all():
-                normalized = cls.normalize(alias.alias_name)
-                raw_key = cls._raw_key(alias.alias_name)
-                if normalized and alias.product and alias.product.is_active:
-                    cls._product_alias_cache[normalized] = alias.product
-                if raw_key and alias.product and alias.product.is_active:
-                    cls._product_alias_raw_cache[raw_key] = alias.product
-
-            for match in ProductMatch.query.all():
-                normalized = cls.normalize(match.ims_name)
-                if normalized and match.product and match.product.is_active:
-                    cls._product_match_cache[normalized] = match.product
-
-            for representative in Representative.query.filter_by(active=True).all():
-                for label in (representative.rep_name, representative.rep_code, representative.ims_code):
-                    normalized = cls.normalize(label)
-                    raw_key = cls._raw_key(label)
-                    if normalized:
-                        cls._representative_cache[normalized] = representative
-                    if raw_key:
-                        cls._representative_raw_cache[raw_key] = representative
-                normalized_region = cls.normalize(representative.region)
-                if normalized_region:
-                    cls._region_cache.setdefault(normalized_region, representative.region)
-                normalized_city = cls.normalize(representative.city)
-                if normalized_city:
-                    cls._province_cache.setdefault(normalized_city, representative.city)
-
-            for alias in RepresentativeAlias.query.all():
-                normalized = cls.normalize(alias.alias_name)
-                raw_key = cls._raw_key(alias.alias_name)
-                if normalized and alias.representative and alias.representative.active:
-                    cls._representative_alias_cache[normalized] = alias.representative
-                if raw_key and alias.representative and alias.representative.active:
-                    cls._representative_alias_raw_cache[raw_key] = alias.representative
-
-            for match in RepresentativeMatch.query.all():
-                normalized = cls.normalize(match.ims_name)
-                if normalized and match.representative and match.representative.active:
-                    cls._representative_match_cache[normalized] = match.representative
-
-            cls._statistics.update(
-                product=len({item.id for item in cls._product_cache.values()}),
-                product_alias=len(cls._product_alias_cache),
-                representative=len({item.id for item in cls._representative_cache.values()}),
-                representative_alias=len(cls._representative_alias_cache),
-            )
-            cls._initialized = True
-            cls._cache_version += 1
+            cls._load_cache_unlocked()
 
     @classmethod
     def refresh(cls):
-        cls.clear_cache()
-        cls.load_cache()
+        with cls._lock:
+            cls._clear_cache_unlocked()
+            cls._load_cache_unlocked()
 
     @classmethod
     def _find(
@@ -232,6 +287,8 @@ class AliasService:
         match_cache,
         primary_raw_cache,
         alias_raw_cache,
+        primary_tx_caches,
+        alias_tx_caches,
         minimum_score,
     ):
         cls.load_cache()
@@ -262,38 +319,42 @@ class AliasService:
                 cls._statistics["cache_hits"] += 1
                 return cls.build_match(True, 100, method, obj)
 
+        # Priority 4.5: Transformed exact matches (O(1) lookups)
         transformed_checks = (
-            (cls._accent_key, "ACCENT_INSENSITIVE"),
-            (cls._whitespace_key, "WHITESPACE_NORMALIZED"),
-            (cls._punctuation_key, "PUNCTUATION_NORMALIZED"),
+            (cls._accent_key, "ACCENT_INSENSITIVE", primary_tx_caches[0], alias_tx_caches[0]),
+            (cls._whitespace_key, "WHITESPACE_NORMALIZED", primary_tx_caches[1], alias_tx_caches[1]),
+            (cls._punctuation_key, "PUNCTUATION_NORMALIZED", primary_tx_caches[2], alias_tx_caches[2]),
         )
-        for transform, method_name in transformed_checks:
+        
+        for transform, method_name, primary_tx, alias_tx in transformed_checks:
             transformed_input = transform(value)
-            for cache, suffix in ((primary_raw_cache, ""), (alias_raw_cache, "_ALIAS")):
-                transformed_candidates = sorted(
-                    ((transform(key), obj) for key, obj in cache.items()),
-                    key=lambda item: item[0],
-                )
-                for transformed_key, obj in transformed_candidates:
-                    if transformed_key and transformed_key == transformed_input:
-                        cls._statistics["cache_hits"] += 1
-                        return cls.build_match(True, 100, f"{method_name}{suffix}", obj)
+            if not transformed_input:
+                continue
+                
+            match = primary_tx.get(transformed_input)
+            if match:
+                cls._statistics["cache_hits"] += 1
+                return cls.build_match(True, 100, method_name, match[1])
+                
+            match = alias_tx.get(transformed_input)
+            if match:
+                cls._statistics["cache_hits"] += 1
+                return cls.build_match(True, 100, f"{method_name}_ALIAS", match[1])
 
         # Priority 5: contains match
-        candidates = [
-            (label, obj, "CONTAINS")
-            for label, obj in primary_cache.items()
-            if label in normalized or normalized in label
-        ]
-        candidates.extend(
-            (label, obj, "ALIAS_CONTAINS")
-            for label, obj in alias_cache.items()
-            if label in normalized or normalized in label
-        )
-        if candidates:
-            label, obj, method = max(candidates, key=lambda item: len(item[0]))
+        best_label = None
+        best_obj = None
+        best_method = None
+        for cache, method in ((primary_cache, "CONTAINS"), (alias_cache, "ALIAS_CONTAINS")):
+            for label, obj in cache.items():
+                if label in normalized or normalized in label:
+                    if best_label is None or len(label) > len(best_label):
+                        best_label = label
+                        best_obj = obj
+                        best_method = method
+        if best_obj is not None:
             cls._statistics["cache_hits"] += 1
-            return cls.build_match(True, 100, method, obj)
+            return cls.build_match(True, 100, best_method, best_obj)
 
         # Priority 6: fuzzy similarity >= threshold
         best_label = ""
@@ -301,7 +362,7 @@ class AliasService:
         best_method = "NO_MATCH"
         best_score = 0.0
         for cache, method in ((primary_cache, "SIMILARITY"), (alias_cache, "ALIAS_SIMILARITY")):
-            for label, obj in sorted(cache.items(), key=lambda item: item[0]):
+            for label, obj in cache.items():
                 score = cls.similarity(normalized, label)
                 if score > best_score or (score == best_score and label < best_label):
                     best_label, best_obj, best_method, best_score = label, obj, method, score
@@ -324,6 +385,8 @@ class AliasService:
             cls._product_match_cache,
             cls._product_raw_cache,
             cls._product_alias_raw_cache,
+            (cls._product_accent_cache, cls._product_whitespace_cache, cls._product_punctuation_cache),
+            (cls._product_alias_accent_cache, cls._product_alias_whitespace_cache, cls._product_alias_punctuation_cache),
             cls.SIMILARITY_LIMIT if minimum_score is None else minimum_score,
         )
 
@@ -337,6 +400,8 @@ class AliasService:
             cls._representative_match_cache,
             cls._representative_raw_cache,
             cls._representative_alias_raw_cache,
+            (cls._representative_accent_cache, cls._representative_whitespace_cache, cls._representative_punctuation_cache),
+            (cls._representative_alias_accent_cache, cls._representative_alias_whitespace_cache, cls._representative_alias_punctuation_cache),
             cls.SIMILARITY_LIMIT if minimum_score is None else minimum_score,
         )
 
@@ -468,7 +533,9 @@ class AliasService:
                 existing.confidence_score = max(confidence_score, existing.confidence_score)
                 existing.best_candidate = existing.suggested_match
                 existing.best_score = max(confidence_score, existing.best_score)
+            db.session.flush()
             return existing
+            
         entry = ManualMatchQueue(
             entity_type=entity_type,
             ims_name=raw_value,
@@ -486,6 +553,7 @@ class AliasService:
             status=ManualMatchQueue.STATUS_PENDING,
         )
         db.session.add(entry)
+        db.session.flush()
         return entry
 
     @classmethod
@@ -533,12 +601,28 @@ class AliasService:
         return {"matched": False, "score": round(best_score * 100, 2), "method": "NO_MATCH", "value": best_value}
 
     @classmethod
+    def _enforce_unique_normalized(cls, cache_dict, normalized_value, target_id, raw_value):
+        """Ensure the same normalized alias does not point to two different entities."""
+        if normalized_value in cache_dict and cache_dict[normalized_value].id != target_id:
+            raise ValueError(
+                f"Duplicate protection: The normalized value '{normalized_value}' "
+                f"from '{raw_value}' is already assigned to a different record."
+            )
+
+    @classmethod
     def persist_representative_match(cls, ims_name, representative, method="AUTO", score=100.0, created_by=None):
-        """Persist a representative match to the match table and refresh cache."""
+        """Persist a representative match to the match table and update cache in-place."""
         normalized = cls.normalize(ims_name)
         if not normalized or representative is None:
             return None
-        existing = RepresentativeMatch.query.filter_by(ims_name=ims_name.strip()).first()
+            
+        clean_name = ims_name.strip()
+        cls.load_cache()
+        
+        with cls._lock:
+            cls._enforce_unique_normalized(cls._representative_match_cache, normalized, representative.id, clean_name)
+        
+        existing = RepresentativeMatch.query.filter_by(ims_name=clean_name).first()
         if existing:
             existing.representative_id = representative.id
             existing.match_method = method
@@ -546,23 +630,35 @@ class AliasService:
             existing.created_by = created_by or existing.created_by
         else:
             existing = RepresentativeMatch(
-                ims_name=ims_name.strip(),
+                ims_name=clean_name,
                 representative_id=representative.id,
                 match_method=method,
                 match_score=score,
                 created_by=created_by,
             )
             db.session.add(existing)
-        cls.refresh()
+            
+        db.session.flush()
+        
+        with cls._lock:
+            cls._representative_match_cache[normalized] = representative
+            
         return existing
 
     @classmethod
     def persist_product_match(cls, ims_name, product, method="AUTO", score=100.0, created_by=None):
-        """Persist a product match to the match table and refresh cache."""
+        """Persist a product match to the match table and update cache in-place."""
         normalized = cls.normalize(ims_name)
         if not normalized or product is None:
             return None
-        existing = ProductMatch.query.filter_by(ims_name=ims_name.strip()).first()
+            
+        clean_name = ims_name.strip()
+        cls.load_cache()
+        
+        with cls._lock:
+            cls._enforce_unique_normalized(cls._product_match_cache, normalized, product.id, clean_name)
+            
+        existing = ProductMatch.query.filter_by(ims_name=clean_name).first()
         if existing:
             existing.product_id = product.id
             existing.match_method = method
@@ -570,14 +666,19 @@ class AliasService:
             existing.created_by = created_by or existing.created_by
         else:
             existing = ProductMatch(
-                ims_name=ims_name.strip(),
+                ims_name=clean_name,
                 product_id=product.id,
                 match_method=method,
                 match_score=score,
                 created_by=created_by,
             )
             db.session.add(existing)
-        cls.refresh()
+            
+        db.session.flush()
+        
+        with cls._lock:
+            cls._product_match_cache[normalized] = product
+            
         return existing
 
     @classmethod
@@ -645,28 +746,60 @@ class AliasService:
     def create_product_alias(cls, product, alias_name):
         if product is None or not cls.normalize(alias_name):
             return None
-        existing = ProductAlias.query.filter_by(product_id=product.id, alias_name=alias_name.strip()).first()
+            
+        clean_alias = alias_name.strip()
+        normalized = cls.normalize(clean_alias)
+        raw_key = cls._raw_key(clean_alias)
+        
+        cls.load_cache()
+        with cls._lock:
+            cls._enforce_unique_normalized(cls._product_alias_cache, normalized, product.id, clean_alias)
+        
+        existing = ProductAlias.query.filter_by(product_id=product.id, alias_name=clean_alias).first()
         if existing:
             return existing
-        alias = ProductAlias(product_id=product.id, alias_name=alias_name.strip())
+            
+        alias = ProductAlias(product_id=product.id, alias_name=clean_alias)
         db.session.add(alias)
-        db.session.commit()
-        cls.refresh()
+        db.session.flush()
+        
+        with cls._lock:
+            cls._product_alias_cache[normalized] = product
+            if raw_key:
+                cls._product_alias_raw_cache[raw_key] = product
+                cls._update_tx_caches_unlocked(raw_key, product, "product_alias")
+            
         return alias
 
     @classmethod
     def create_representative_alias(cls, representative, alias_name):
         if representative is None or not cls.normalize(alias_name):
             return None
+            
+        clean_alias = alias_name.strip()
+        normalized = cls.normalize(clean_alias)
+        raw_key = cls._raw_key(clean_alias)
+        
+        cls.load_cache()
+        with cls._lock:
+            cls._enforce_unique_normalized(cls._representative_alias_cache, normalized, representative.id, clean_alias)
+        
         existing = RepresentativeAlias.query.filter_by(
-            representative_id=representative.id, alias_name=alias_name.strip()
+            representative_id=representative.id, alias_name=clean_alias
         ).first()
         if existing:
             return existing
-        alias = RepresentativeAlias(representative_id=representative.id, alias_name=alias_name.strip())
+            
+        alias = RepresentativeAlias(representative_id=representative.id, alias_name=clean_alias)
         db.session.add(alias)
-        db.session.commit()
-        cls.refresh()
+        db.session.flush()
+        
+        with cls._lock:
+            cls._representative_alias_cache[normalized] = representative
+            if raw_key:
+                cls._representative_alias_raw_cache[raw_key] = representative
+                cls._update_tx_caches_unlocked(raw_key, representative, "representative_alias")
+            
         return alias
 
     @classmethod
