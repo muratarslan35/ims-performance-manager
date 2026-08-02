@@ -175,7 +175,7 @@ class IMSImportService:
 
     @staticmethod
     def safe_float(value):
-        if value is None or (isinstance(value, float) and math.isnan(value)):
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
             return 0.0
         if isinstance(value, bool):
             return float(value)
@@ -204,7 +204,7 @@ class IMSImportService:
 
     @staticmethod
     def _value_for_json(value):
-        if value is None or (isinstance(value, float) and math.isnan(value)):
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
             return None
         if isinstance(value, (str, int, float, bool)):
             return value
@@ -244,6 +244,7 @@ class IMSImportService:
 
     def _hidden_rows_by_sheet(self):
         hidden_by_sheet = {}
+        workbook = None
         try:
             workbook = openpyxl_load_workbook(self.file_path, data_only=True, read_only=False)
             for worksheet in workbook.worksheets:
@@ -253,9 +254,12 @@ class IMSImportService:
                     if getattr(dimensions, "hidden", False)
                 }
                 hidden_by_sheet[str(worksheet.title)] = hidden_rows
-            workbook.close()
-        except Exception:  # pragma: no cover - defensive fallback for unsupported workbook metadata
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"ims_import_service: Could not read hidden rows dimensions. {exc}")
             return {}
+        finally:
+            if workbook is not None:
+                workbook.close()
         return hidden_by_sheet
 
     def _sanitize_sheet_dataframe(self, dataframe, hidden_rows=None):
@@ -358,6 +362,7 @@ class IMSImportService:
                 continue
             if dimensions["manager"] is None and any(token in normalized for token in self.MANAGER_HEADERS):
                 dimensions["manager"] = column
+                continue
         return dimensions
 
     def detect_metric_kind(self, sheet_name, dataframe):
@@ -416,7 +421,7 @@ class IMSImportService:
         logger.info("ims_import_stage_metrics %s", self._json_dump(payload))
 
     def parse_metric_value(self, value):
-        if value is None or (isinstance(value, float) and math.isnan(value)):
+        if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
             return 0.0, True
         if isinstance(value, (int, float, bool)):
             return self.safe_float(value), True
@@ -1170,30 +1175,28 @@ class IMSImportService:
     def transform_raw_to_facts(self, year, month, week_number=None):
         """UPSERT IMS facts: update existing rows for the same week/period, insert new ones."""
         raw_records = IMSRawData.query.filter_by(upload_id=self.upload.id, year=year, month=month).all()
-        existing_map = {}
+        
+        # Always populate existing_map to protect against intra-file duplicates even in monthly loads
+        query = IMSFact.query.filter_by(year=year, month=month).filter(IMSFact.report_type.isnot(None))
         if week_number is not None:
-            existing_facts = (
-                IMSFact.query.filter_by(year=year, week_number=week_number)
-                .filter(IMSFact.report_type.isnot(None))
-                .all()
-            )
-            existing_map = {
-                (
-                    fact.representative_id,
-                    fact.product_id,
-                    fact.report_type,
-                ): fact
-                for fact in existing_facts
-            }
+            query = query.filter_by(week_number=week_number)
+        else:
+            query = query.filter_by(week_number=None)
+            
+        existing_facts = query.all()
+        existing_map = {
+            (fact.representative_id, fact.product_id, fact.report_type): fact
+            for fact in existing_facts
+        }
+        
         for raw in raw_records:
             if raw.representative_id is None or raw.product_id is None:
                 self.statistics["skipped_records"] += 1
                 continue
 
-            # Attempt to find an existing fact for this (year, week, rep, product, report_type)
-            existing = None
-            if week_number is not None:
-                existing = existing_map.get((raw.representative_id, raw.product_id, raw.sheet_type))
+            # Check if this fact already exists (either from DB or processed earlier in this loop)
+            key = (raw.representative_id, raw.product_id, raw.sheet_type)
+            existing = existing_map.get(key)
 
             if existing:
                 existing.upload_id = self.upload.id
@@ -1224,8 +1227,7 @@ class IMSImportService:
                     metrics_json=raw.raw_json,
                 )
                 db.session.add(fact)
-                if week_number is not None:
-                    existing_map[(raw.representative_id, raw.product_id, raw.sheet_type)] = fact
+                existing_map[key] = fact
                 self.statistics["facts_inserted"] += 1
 
             self.statistics["fact_records"] += 1
@@ -1252,6 +1254,8 @@ class IMSImportService:
         quarter = self.quarter_for(month)
         targets = Target.query.filter_by(year=year, month=month).all()
         target_map = {(target.representative_id, target.product_id): target for target in targets}
+        
+        summaries_to_insert = []
         for row in rows:
             target = target_map.get((row.representative_id, row.product_id))
             target_unit = target.unit_target if target else 0.0
@@ -1261,7 +1265,7 @@ class IMSImportService:
             realization_percent = (
                 round(realization_actual * 100 / realization_base, 2) if realization_base else 0.0
             )
-            db.session.add(
+            summaries_to_insert.append(
                 IMSSummary(
                     upload_id=self.upload.id,
                     representative_id=row.representative_id,
@@ -1279,6 +1283,10 @@ class IMSImportService:
                     realization_percent=realization_percent,
                 )
             )
+            
+        if summaries_to_insert:
+            db.session.bulk_save_objects(summaries_to_insert)
+
         self.statistics["summary_records"] = len(rows)
         db.session.flush()
 
@@ -1435,11 +1443,13 @@ class IMSImportService:
             db.session.commit()
         except (OSError, ValueError, SQLAlchemyError, Exception) as exc:
             db.session.rollback()
+            logger.error(f"IMS Import Pipeline Failed: {exc}", exc_info=True)
             self.errors.append(str(exc))
             try:
                 self._persist_failure(year, month, week_number=week_number)
             except SQLAlchemyError as persistence_error:
                 db.session.rollback()
+                logger.error(f"Failed to persist IMS upload failure: {persistence_error}", exc_info=True)
                 self.errors.append(f"Hata kaydı yazılamadı: {persistence_error}")
         return self.report()
 
