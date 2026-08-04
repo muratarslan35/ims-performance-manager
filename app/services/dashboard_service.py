@@ -9,6 +9,8 @@ from flask import current_app
 
 from app.extensions import db
 from app.models import IMSUpload, IMSSummary, Product, RecoverySummary, Representative, Target, Setting
+from app.services.period_service import PeriodService
+
 try:
     from app.models import ImportAuditLog, RepresentativeMatch, ProductMatch, ManualMatchQueue
 except ImportError:
@@ -83,11 +85,16 @@ class DashboardService:
 
     def __init__(self, representative_id=None, year=None, month=None, overrides=None):
         today_date = current_app.config.get("CURRENT_DATE") if current_app else None
-        now = datetime.now()
+        
+        # Phase 1: Centralized Reporting Period Initialization
+        self.period = PeriodService.get_active_period(year, month)
+        
         self.rep_id = representative_id
-        self.year = year or now.year
-        self.month = month or now.month
-        self.quarter = ((self.month - 1) // 3) + 1
+        # Backward compatibility preserved
+        self.year = self.period["year"]
+        self.month = self.period["month"]
+        self.quarter = self.period["quarter"]
+        
         self.overrides = overrides or {}
         self._prime_engine = None
         self._prime_result_cache = None
@@ -119,7 +126,7 @@ class DashboardService:
             )
 
     def _sync_cache_ttl(self):
-        """1) GERÇEK DİNAMİK CACHE_TTL: Helper metod ile run-time senkronizasyon."""
+        """GERÇEK DİNAMİK CACHE_TTL: Helper metod ile run-time senkronizasyon."""
         try:
             from flask import has_app_context
             if not has_app_context():
@@ -159,8 +166,10 @@ class DashboardService:
         return default
 
     def _get_cache_key(self, prefix):
-        """Enterprise standard for creating unique cache keys isolated by multi-version attributes."""
-        return f"{prefix}_{self._company_name}_{self.rep_id or 'all'}_{self.year}_{self.month}_{self.quarter}_{self._dashboard_version}_{self._engine_version}_{self._dataset_version}_{self._import_version}"
+        """Enterprise standard for creating unique cache keys supporting weekly IMS isolates."""
+        week_num = self.period.get("week_number", 1)
+        upload_id = self.period.get("upload_id") or "noupload"
+        return f"{prefix}_{self._company_name}_{self.rep_id or 'all'}_{self.year}_{self.month}_{self.quarter}_w{week_num}_u{upload_id}_{self._dashboard_version}_{self._engine_version}_{self._dataset_version}_{self._import_version}"
 
     def _get_prime_result(self):
         start_time = time.time()
@@ -246,7 +255,7 @@ class DashboardService:
                 "processing_uploads": 0,
             }
         
-        # 2) GERÇEK CACHE_AGE: Save creation time independently on Cache MISS
+        # GERÇEK CACHE_AGE: Save creation time independently on Cache MISS
         _DASHBOARD_CACHE.set(f"{cache_key}_ts", time.time())
         _DASHBOARD_CACHE.set(cache_key, data)
         return data
@@ -1131,7 +1140,7 @@ class DashboardService:
         goal_prob_val = float(ai_scores.get("goal_probability", 0))
         risk_inv_val = float(max(0, 100 - ai_scores.get("risk_score", 0)))
 
-        # 2) GERÇEK CACHE_AGE: Fetching actual creation timestamp safely using standard cache_key
+        # Fetching actual creation timestamp safely using standard cache_key
         cache_key_counts = self._get_cache_key("dashboard_counts")
         cache_ts = _DASHBOARD_CACHE.get(f"{cache_key_counts}_ts")
         if not cache_ts:
@@ -1272,6 +1281,7 @@ class DashboardService:
             **exec_summary,
             **kpi_cards,
             **widgets,
+            "active_period": getattr(self, 'period', {}),
             "prime_summary": prime_summary,
             "quarter_summary": quarter_summary,
             "breakdown": prime_res.get("breakdown", {}),
@@ -1312,7 +1322,7 @@ class DashboardService:
 
     @classmethod
     def health(cls):
-        """3) HEALTH() %100 CONTEXT SAFE AND ROBUST"""
+        """HEALTH() %100 CONTEXT SAFE AND ROBUST WITH REPORTING PERIOD"""
         try:
             from flask import current_app, has_app_context
             has_ctx = has_app_context()
@@ -1324,7 +1334,20 @@ class DashboardService:
         dash_ver = eng_ver = dat_ver = imp_ver = "3.2.0"
         c_ttl = CACHE_TTL
 
+        # Context-safe Period Service dependency for Engine checks
+        active_year = datetime.now().year
+        active_month = datetime.now().month
+        active_quarter = ((active_month - 1) // 3) + 1
+
         if has_ctx:
+            try:
+                active_period = PeriodService.get_active_period()
+                active_year = active_period.get("year", active_year)
+                active_month = active_period.get("month", active_month)
+                active_quarter = active_period.get("quarter", active_quarter)
+            except Exception:
+                pass
+
             try:
                 st_dash = Setting.query.filter_by(setting_key="DASHBOARD_VERSION").first()
                 if st_dash: dash_ver = st_dash.setting_value
@@ -1379,13 +1402,13 @@ class DashboardService:
         except Exception:
             cache_status = "Error"
 
-        # Prime Engine Context Safe check
+        # Prime Engine Context Safe check mapped to Active Period
         prime_status = "Unavailable"
         if has_ctx:
             try:
                 rep = Representative.query.filter_by(active=True).first()
                 if rep:
-                    test_engine = PrimeEngine(representative_id=rep.id, year=datetime.now().year, month=datetime.now().month, use_cache=True)
+                    test_engine = PrimeEngine(representative_id=rep.id, year=active_year, month=active_month, use_cache=True)
                     if not test_engine.load_products():
                         prime_status = "Warning"
                     else:
@@ -1397,20 +1420,20 @@ class DashboardService:
         else:
             prime_status = "No Context"
 
-        # Quarter Engine check
+        # Quarter Engine check mapped to Active Period
         quarter_status = "Unavailable"
         if QuarterEngine:
             try:
-                q = QuarterEngine(representative_id=1, year=datetime.now().year, quarter=1)
+                q = QuarterEngine(representative_id=1, year=active_year, quarter=active_quarter)
                 quarter_status = "Healthy"
             except Exception:
                 quarter_status = "Error"
 
-        # Recovery Engine check
+        # Recovery Engine check mapped to Active Period
         recovery_status = "Unavailable"
         if RecoveryEngine:
             try:
-                r = RecoveryEngine(representative_id=1, year=datetime.now().year, month=datetime.now().month)
+                r = RecoveryEngine(representative_id=1, year=active_year, month=active_month)
                 recovery_status = "Healthy"
             except Exception:
                 recovery_status = "Error"
@@ -1557,4 +1580,4 @@ class DashboardService:
             "migration_status": migration_status,
             "alembic_version": alembic_version,
             "last_health_check": datetime.now().isoformat()
-            }
+                    }
