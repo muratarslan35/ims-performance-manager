@@ -26,6 +26,7 @@ from app.models import (
     Target,
 )
 from app.services.alias_service import AliasService
+from app.services.target_import_service import TargetImportService
 
 
 # Regex to extract week number from typical IMS file names.
@@ -1315,6 +1316,15 @@ class IMSImportService:
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
+
+
+        TargetImportService(
+            file_path=self.file_path,
+            upload_id=self.upload.id,
+        ).run(
+            year=year,
+            month=month,
+        )
 
     def write_audit_log(self, year, month, week_number, success):
         """Write an ImportAuditLog record for this import run."""

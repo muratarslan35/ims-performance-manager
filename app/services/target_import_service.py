@@ -437,11 +437,9 @@ class TargetImportService:
         if existing:
             existing.unit_target = unit_target
             existing.tl_target = tl_target
-            existing.upload_id = self.upload_id
             self.statistics["targets_updated"] += 1
         else:
             new_target = Target(
-                upload_id=self.upload_id,
                 representative_id=representative_id,
                 product_id=product_id,
                 year=year,
