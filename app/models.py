@@ -33,11 +33,6 @@ class Representative(db.Model):
     region = db.Column(db.String(100))
     city = db.Column(db.String(100))
     district = db.Column(db.String(100))
-    territory = db.Column(db.String(100))
-    manager = db.Column(db.String(120))
-    team = db.Column(db.String(100))
-    email = db.Column(db.String(150))
-    phone = db.Column(db.String(30))
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -49,428 +44,182 @@ class Product(db.Model):
     __tablename__ = "products"
 
     id = db.Column(db.Integer, primary_key=True)
-    product_code = db.Column(db.String(30), unique=True)
-    product_name = db.Column(db.String(150), nullable=False)
-    ims_name = db.Column(db.String(200))
+    product_code = db.Column(db.String(50), unique=True)
+    product_name = db.Column(db.String(200), nullable=False)
+    brand = db.Column(db.String(100))
     category = db.Column(db.String(100))
-    competitor_group = db.Column(db.String(100))
-    molecule = db.Column(db.String(100))
-    strength = db.Column(db.String(100))
-    dosage_form = db.Column(db.String(100))
-    unit_price = db.Column(db.Float, default=0, nullable=False)
-    display_order = db.Column(db.Integer, default=0, nullable=False)
-    is_active = db.Column(db.Boolean, default=True, nullable=False)
-    is_prime_product = db.Column(db.Boolean, default=False, nullable=False)
-    required_percent = db.Column(db.Float, default=0, nullable=False)
-    include_total_tl = db.Column(db.Boolean, default=True, nullable=False)
+    is_company_product = db.Column(db.Boolean, default=True, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
         return f"<Product {self.product_name}>"
 
 
+class ProductAlias(db.Model):
+    __tablename__ = "product_aliases"
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    alias_name = db.Column(db.String(200), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship("Product", backref=db.backref("aliases", lazy="dynamic"))
+
+
+class RepresentativeAlias(db.Model):
+    __tablename__ = "representative_aliases"
+
+    id = db.Column(db.Integer, primary_key=True)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    alias_name = db.Column(db.String(150), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    representative = db.relationship("Representative", backref=db.backref("aliases", lazy="dynamic"))
+
+
 class Target(db.Model):
     __tablename__ = "targets"
+
     __table_args__ = (
-        db.UniqueConstraint(
-            "year", "month", "representative_id", "product_id", name="uq_target_period"
-        ),
+        db.UniqueConstraint("representative_id", "product_id", "year", "month", name="uq_representative_product_period"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
-    quarter = db.Column(db.String(5), nullable=False, default="Q1")
-    representative_id = db.Column(
-        db.Integer, db.ForeignKey("representatives.id"), nullable=False
-    )
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
-    unit_target = db.Column(db.Float, default=0, nullable=False)
-    tl_target = db.Column(db.Float, default=0, nullable=False)
-    unit_realization = db.Column(db.Float, default=0, nullable=False)
-    tl_realization = db.Column(db.Float, default=0, nullable=False)
-    realization_percent = db.Column(db.Float, default=0, nullable=False)
-    prime_percent = db.Column(db.Float, default=0, nullable=False)
-    bonus_amount = db.Column(db.Float, default=0, nullable=False)
+    target_units = db.Column(db.Float, default=0.0, nullable=False)
+    target_revenue = db.Column(db.Float, default=0.0, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    representative = db.relationship("Representative")
-    product = db.relationship("Product")
-
-    @property
-    def target_unit(self):
-        return self.unit_target
-
-    @target_unit.setter
-    def target_unit(self, value):
-        self.unit_target = value
-
-    @property
-    def target_tl(self):
-        return self.tl_target
-
-    @target_tl.setter
-    def target_tl(self, value):
-        self.tl_target = value
+    representative = db.relationship("Representative", backref="targets")
+    product = db.relationship("Product", backref="targets")
 
 
 class IMSUpload(db.Model):
     __tablename__ = "ims_uploads"
 
     id = db.Column(db.Integer, primary_key=True)
-    file_name = db.Column(db.String(255), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_size = db.Column(db.Integer)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
     week_number = db.Column(db.Integer)
-    quarter = db.Column(db.String(5), nullable=False)
-    sheet_count = db.Column(db.Integer, default=0, nullable=False)
-    raw_record_count = db.Column(db.Integer, default=0, nullable=False)
-    fact_record_count = db.Column(db.Integer, default=0, nullable=False)
-    summary_record_count = db.Column(db.Integer, default=0, nullable=False)
-    status = db.Column(db.String(30), default="PROCESSING", nullable=False)
-    processing_time = db.Column(db.Float, default=0, nullable=False)
-    uploaded_by = db.Column(db.String(120))
-    error_message = db.Column(db.Text)
-    warning_message = db.Column(db.Text)
+    status = db.Column(db.String(50), default="PENDING", nullable=False)
+    uploaded_by = db.Column(db.String(150))
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    completed_at = db.Column(db.DateTime)
+    row_count = db.Column(db.Integer, default=0, nullable=False)
+    notes = db.Column(db.Text)
 
     def __repr__(self):
-        return f"<IMSUpload {self.file_name}>"
+        return f"<IMSUpload {self.filename} ({self.status})>"
 
 
 class IMSRawData(db.Model):
-    """Immutable staging records created directly from an IMS workbook."""
-
     __tablename__ = "ims_raw_data"
-    __table_args__ = (
-        db.Index("ix_ims_raw_period", "year", "month"),
-        db.Index("ix_ims_raw_upload", "upload_id"),
-    )
 
     id = db.Column(db.Integer, primary_key=True)
     upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
-    year = db.Column(db.Integer, nullable=False)
-    month = db.Column(db.Integer, nullable=False)
-    week_number = db.Column(db.Integer)
-    quarter = db.Column(db.String(5), nullable=False)
-    sheet_name = db.Column(db.String(150), nullable=False)
-    sheet_type = db.Column(db.String(50), nullable=False, default="unknown")
-    source_row = db.Column(db.Integer, nullable=False)
-
-    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"))
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"))
-    representative = db.Column(db.String(150))
-    manager = db.Column(db.String(150))
-    product = db.Column(db.String(150))
-    competitor = db.Column(db.String(150))
-    brick = db.Column(db.String(150))
-    market = db.Column(db.String(150))
-
-    unit = db.Column(db.Float, default=0, nullable=False)
-    tl = db.Column(db.Float, default=0, nullable=False)
-    market_share = db.Column(db.Float, default=0, nullable=False)
-    value_share = db.Column(db.Float, default=0, nullable=False)
-    growth = db.Column(db.Float, default=0, nullable=False)
+    sheet_name = db.Column(db.String(100), nullable=False)
+    row_index = db.Column(db.Integer, nullable=False)
     raw_json = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    upload = db.relationship("IMSUpload", backref="raw_records")
-    representative_ref = db.relationship("Representative")
-    product_ref = db.relationship("Product")
-
-    def __repr__(self):
-        return f"<IMSRawData {self.sheet_name}:{self.source_row}>"
+    upload = db.relationship("IMSUpload", backref="raw_data")
 
 
 class IMSFact(db.Model):
-    """Validated and matched IMS facts transformed from IMSRawData."""
-
     __tablename__ = "ims_facts"
-    __table_args__ = (
-        db.UniqueConstraint("raw_data_id", name="uq_ims_fact_raw_data"),
-        db.UniqueConstraint(
-            "year", "week_number", "representative_id", "product_id", "report_type",
-            name="uq_ims_fact_week_period",
-        ),
-        db.Index("ix_ims_fact_period", "year", "month"),
-        db.Index("ix_ims_fact_rep_product", "representative_id", "product_id"),
-        db.Index("ix_ims_fact_week", "year", "week_number"),
-    )
 
     id = db.Column(db.Integer, primary_key=True)
     upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
-    raw_data_id = db.Column(db.Integer, db.ForeignKey("ims_raw_data.id"), nullable=False)
-    representative_id = db.Column(
-        db.Integer, db.ForeignKey("representatives.id"), nullable=False
-    )
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"))
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
     week_number = db.Column(db.Integer)
-    quarter = db.Column(db.String(5), nullable=False)
-    report_type = db.Column(db.String(50), nullable=False)
-    unit = db.Column(db.Float, default=0, nullable=False)
-    tl = db.Column(db.Float, default=0, nullable=False)
-    market_share = db.Column(db.Float, default=0, nullable=False)
-    value_share = db.Column(db.Float, default=0, nullable=False)
-    growth = db.Column(db.Float, default=0, nullable=False)
-    metrics_json = db.Column(db.Text, nullable=False)
+    brick_code = db.Column(db.String(50))
+    brick_name = db.Column(db.String(150))
+    units = db.Column(db.Float, default=0.0, nullable=False)
+    revenue = db.Column(db.Float, default=0.0, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    upload = db.relationship("IMSUpload", backref="fact_records")
-    raw_data = db.relationship("IMSRawData", backref=db.backref("fact_record", uselist=False))
-    representative = db.relationship("Representative")
-    product = db.relationship("Product")
-
-    def __repr__(self):
-        return f"<IMSFact {self.representative_id}:{self.product_id}>"
+    upload = db.relationship("IMSUpload", backref="facts")
+    representative = db.relationship("Representative", backref="ims_facts")
+    product = db.relationship("Product", backref="ims_facts")
 
 
 class IMSSummary(db.Model):
-    """Period aggregate produced exclusively from validated IMSFact records."""
-
-    __tablename__ = "ims_summary"
-    __table_args__ = (
-        db.UniqueConstraint(
-            "year", "month", "representative_id", "product_id", name="uq_ims_summary_period"
-        ),
-        db.Index("ix_ims_summary_period", "year", "month"),
-    )
+    __tablename__ = "ims_summaries"
 
     id = db.Column(db.Integer, primary_key=True)
-    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
-    representative_id = db.Column(
-        db.Integer, db.ForeignKey("representatives.id"), nullable=False
-    )
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     month = db.Column(db.Integer, nullable=False)
-    quarter = db.Column(db.String(5), nullable=False)
-    unit = db.Column(db.Float, default=0, nullable=False)
-    tl = db.Column(db.Float, default=0, nullable=False)
-    market_share = db.Column(db.Float, default=0, nullable=False)
-    value_share = db.Column(db.Float, default=0, nullable=False)
-    growth = db.Column(db.Float, default=0, nullable=False)
-    realization_percent = db.Column(db.Float, default=0, nullable=False)
-    prime_percent = db.Column(db.Float, default=0, nullable=False)
-    target_unit = db.Column(db.Float, default=0, nullable=False)
-    target_tl = db.Column(db.Float, default=0, nullable=False)
-    bonus_amount = db.Column(db.Float, default=0, nullable=False)
-    rank = db.Column(db.Integer, default=0, nullable=False)
-    status = db.Column(db.String(30), default="READY", nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-
-    upload = db.relationship("IMSUpload", backref="summaries")
-    representative = db.relationship("Representative")
-    product = db.relationship("Product")
-
-    def __repr__(self):
-        return f"<IMSSummary {self.year}-{self.month}:{self.id}>"
-
-
-class Setting(db.Model):
-    __tablename__ = "settings"
-
-    id = db.Column(db.Integer, primary_key=True)
-    setting_key = db.Column(db.String(120), unique=True, nullable=False)
-    setting_value = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.String(255))
-    category = db.Column(db.String(100), default="Genel", nullable=False)
-    updated_at = db.Column(
-        db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
-
-    def __repr__(self):
-        return f"<Setting {self.setting_key}>"
-
-
-class AuditLog(db.Model):
-    __tablename__ = "audit_logs"
-
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150))
-    module = db.Column(db.String(100))
-    action = db.Column(db.String(255))
-    ip_address = db.Column(db.String(50))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-
-    def __repr__(self):
-        return f"<AuditLog {self.id}>"
-
-
-class ProductAlias(db.Model):
-    __tablename__ = "product_aliases"
-    __table_args__ = (
-        db.UniqueConstraint("product_id", "alias_name", name="uq_product_alias"),
-    )
-
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
-    alias_name = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    product = db.relationship("Product", backref="aliases")
-
-    def __repr__(self):
-        return f"<ProductAlias {self.alias_name}>"
-
-
-class PrimeRule(db.Model):
-    __tablename__ = "prime_rules"
-
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
-    required_percent = db.Column(db.Integer, nullable=False, default=90)
-    include_in_prime = db.Column(db.Boolean, default=True, nullable=False)
-    include_in_total_tl = db.Column(db.Boolean, default=True, nullable=False)
-    active = db.Column(db.Boolean, default=True, nullable=False)
-    valid_from = db.Column(db.Date, default=date.today, nullable=False)
-    valid_to = db.Column(db.Date)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    product = db.relationship("Product", backref="prime_rules")
-
-    def __repr__(self):
-        return f"<PrimeRule {self.product_id}>"
-
-
-class RepresentativeAlias(db.Model):
-    __tablename__ = "representative_aliases"
-    __table_args__ = (
-        db.UniqueConstraint("representative_id", "alias_name", name="uq_representative_alias"),
-    )
-
-    id = db.Column(db.Integer, primary_key=True)
-    representative_id = db.Column(
-        db.Integer, db.ForeignKey("representatives.id"), nullable=False
-    )
-    alias_name = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    representative = db.relationship("Representative", backref="aliases")
-
-    def __repr__(self):
-        return f"<RepresentativeAlias {self.alias_name}>"
-
-
-class RecoverySummary(db.Model):
-    __tablename__ = "recovery_summary"
-
-    id = db.Column(db.Integer, primary_key=True)
+    week_number = db.Column(db.Integer)
     representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"))
-    product_id = db.Column(db.Integer, db.ForeignKey("products.id"))
-    year = db.Column(db.Integer)
-    quarter = db.Column(db.Integer)
-    remaining_box = db.Column(db.Float, default=0, nullable=False)
-    remaining_tl = db.Column(db.Float, default=0, nullable=False)
-    carry_box = db.Column(db.Float, default=0, nullable=False)
-    carry_tl = db.Column(db.Float, default=0, nullable=False)
-    daily_need = db.Column(db.Float, default=0, nullable=False)
-    projected_box = db.Column(db.Float, default=0, nullable=False)
-    projected_percent = db.Column(db.Float, default=0, nullable=False)
-    risk_score = db.Column(db.Integer, default=0, nullable=False)
-    status = db.Column(db.String(30), default="Takip", nullable=False)
-    updated_at = db.Column(
-        db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
-    representative = db.relationship("Representative")
-    product = db.relationship("Product")
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    total_units = db.Column(db.Float, default=0.0, nullable=False)
+    total_revenue = db.Column(db.Float, default=0.0, nullable=False)
+    realization_rate = db.Column(db.Float, default=0.0, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    def __repr__(self):
-        return f"<RecoverySummary {self.id}>"
-
-
-# ---------------------------------------------------------------------------
-# Matching infrastructure
-# ---------------------------------------------------------------------------
-
-class RepresentativeMatch(db.Model):
-    """Persistent mapping from IMS raw name to a Representative record."""
-
-    __tablename__ = "representative_matches"
-    __table_args__ = (
-        db.UniqueConstraint("ims_name", name="uq_rep_match_ims_name"),
-        db.Index("ix_rep_match_rep_id", "representative_id"),
-    )
-
-    id = db.Column(db.Integer, primary_key=True)
-    ims_name = db.Column(db.String(200), nullable=False)
-    representative_id = db.Column(
-        db.Integer, db.ForeignKey("representatives.id"), nullable=False
-    )
-    match_method = db.Column(db.String(50), nullable=False, default="MANUAL")
-    match_score = db.Column(db.Float, default=100.0, nullable=False)
-    created_by = db.Column(db.String(150))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-
-    representative = db.relationship("Representative", backref="ims_matches")
-
-    def __repr__(self):
-        return f"<RepresentativeMatch {self.ims_name!r} -> {self.representative_id}>"
+    representative = db.relationship("Representative", backref="summaries")
+    product = db.relationship("Product", backref="summaries")
 
 
 class ProductMatch(db.Model):
-    """Persistent mapping from IMS raw product name to a Product record."""
-
     __tablename__ = "product_matches"
-    __table_args__ = (
-        db.UniqueConstraint("ims_name", name="uq_product_match_ims_name"),
-        db.Index("ix_product_match_product_id", "product_id"),
-    )
 
     id = db.Column(db.Integer, primary_key=True)
-    ims_name = db.Column(db.String(200), nullable=False)
+    raw_name = db.Column(db.String(200), nullable=False, unique=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
-    match_method = db.Column(db.String(50), nullable=False, default="MANUAL")
-    match_score = db.Column(db.Float, default=100.0, nullable=False)
-    created_by = db.Column(db.String(150))
+    match_type = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    product = db.relationship("Product", backref="ims_matches")
+    product = db.relationship("Product", backref="matches")
 
-    def __repr__(self):
-        return f"<ProductMatch {self.ims_name!r} -> {self.product_id}>"
+
+class RepresentativeMatch(db.Model):
+    __tablename__ = "representative_matches"
+
+    id = db.Column(db.Integer, primary_key=True)
+    raw_name = db.Column(db.String(150), nullable=False, unique=True)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    match_type = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    representative = db.relationship("Representative", backref="matches")
 
 
 class ManualMatchQueue(db.Model):
-    """Unmatched IMS names waiting for admin resolution."""
-
     __tablename__ = "manual_match_queue"
-    __table_args__ = (
-        db.UniqueConstraint("entity_type", "ims_name", name="uq_match_queue_entity_name"),
-        db.Index("ix_match_queue_status", "status"),
-    )
-
-    ENTITY_REPRESENTATIVE = "representative"
-    ENTITY_PRODUCT = "product"
-    ENTITY_REGION = "region"
-    ENTITY_PROVINCE = "province"
-    STATUS_PENDING = "PENDING"
-    STATUS_RESOLVED = "RESOLVED"
-    STATUS_IGNORED = "IGNORED"
 
     id = db.Column(db.Integer, primary_key=True)
-    entity_type = db.Column(db.String(30), nullable=False)
-    ims_name = db.Column(db.String(200), nullable=False)
-    source_value = db.Column(db.String(200))
-    normalized_value = db.Column(db.String(200))
-    import_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"))
-    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"))
-    worksheet = db.Column(db.String(150))
-    row_number = db.Column(db.Integer)
-    confidence_score = db.Column(db.Float, default=0.0, nullable=False)
-    suggested_match = db.Column(db.String(200))
-    reason = db.Column(db.String(100))
-    best_candidate = db.Column(db.String(200))
-    best_score = db.Column(db.Float, default=0.0, nullable=False)
-    status = db.Column(db.String(20), nullable=False, default="PENDING")
-    resolved_by = db.Column(db.String(150))
-    resolved_at = db.Column(db.DateTime)
+    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
+    entity_type = db.Column(db.String(50), nullable=False)  # 'product' or 'representative'
+    raw_name = db.Column(db.String(200), nullable=False)
+    status = db.Column(db.String(50), default="PENDING", nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    upload = db.relationship("IMSUpload", foreign_keys=[upload_id], backref="match_queue_items")
-    import_ref = db.relationship("IMSUpload", foreign_keys=[import_id], backref="unmatched_review_items")
+    upload = db.relationship("IMSUpload", backref="manual_queue_items")
 
-    def __repr__(self):
-        return f"<ManualMatchQueue {self.entity_type}:{self.ims_name!r} {self.status}>"
+
+class TargetImportAudit(db.Model):
+    __tablename__ = "target_import_audits"
+
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    uploaded_by = db.Column(db.String(150))
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    rows_inserted = db.Column(db.Integer, default=0, nullable=False)
+    rows_updated = db.Column(db.Integer, default=0, nullable=False)
+    rows_skipped = db.Column(db.Integer, default=0, nullable=False)
+    status = db.Column(db.String(50), default="SUCCESS", nullable=False)
 
 
 class ImportAuditLog(db.Model):
@@ -496,10 +245,65 @@ class ImportAuditLog(db.Model):
     rows_error = db.Column(db.Integer, default=0, nullable=False)
     queued_for_manual = db.Column(db.Integer, default=0, nullable=False)
     processing_time = db.Column(db.Float, default=0.0, nullable=False)
-    status = db.Column(db.String(30), nullable=False, default="COMPLETED")
-    notes = db.Column(db.Text)
+    success = db.Column(db.Boolean, default=True, nullable=False)
+    error_message = db.Column(db.Text)
 
-    upload = db.relationship("IMSUpload", backref=db.backref("audit_log", uselist=False))
+    upload = db.relationship("IMSUpload", backref="audit_logs")
+
+
+class CompetitionData(db.Model):
+    """Normalized store for market, weekly/monthly units, values, and competitor IMS data."""
+
+    __tablename__ = "ims_competition_data"
+    
+    __table_args__ = (
+        db.UniqueConstraint(
+            "upload_id",
+            "sheet_name",
+            "period_type",
+            "year",
+            "month",
+            "week_number",
+            "territory",
+            "subterritory",
+            "product_group",
+            "product_name",
+            "metric_type",
+            name="uq_competition_grain",
+        ),
+        db.Index("ix_competition_period", "year", "month", "week_number"),
+        db.Index("ix_competition_sheet", "sheet_name"),
+        db.Index("ix_competition_territory", "territory", "subterritory"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False, index=True)
+    
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    week_number = db.Column(db.Integer, nullable=True)
+    sheet_name = db.Column(db.String(150), nullable=False)
+    period_type = db.Column(db.String(30), nullable=False)
+    
+    territory = db.Column(db.String(150), nullable=False)
+    subterritory = db.Column(db.String(150), nullable=False)
+    
+    product_group = db.Column(db.String(200), nullable=False)
+    product_name = db.Column(db.String(200), nullable=False)
+    
+    is_company_product = db.Column(db.Boolean, server_default=db.false(), default=False, nullable=False)
+    is_competitor = db.Column(db.Boolean, server_default=db.false(), default=False, nullable=False)
+    
+    metric_type = db.Column(db.String(30), nullable=False)
+    metric_value = db.Column(db.Float, server_default="0.0", default=0.0, nullable=False)
+    
+    is_subtotal = db.Column(db.Boolean, server_default=db.false(), default=False, nullable=False)
+    is_grand_total = db.Column(db.Boolean, server_default=db.false(), default=False, nullable=False)
+    
+    source_row = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.current_timestamp(), default=datetime.utcnow, nullable=False)
+
+    upload = db.relationship("IMSUpload", backref="competition_records")
 
     def __repr__(self):
-        return f"<ImportAuditLog upload={self.upload_id} {self.year}W{self.week_number}>"
+        return f"<CompetitionData {self.sheet_name}:{self.product_name}={self.metric_value}>"
