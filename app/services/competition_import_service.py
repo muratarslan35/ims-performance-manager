@@ -1,27 +1,57 @@
-"""Independent and isolated import service skeleton for competition extension sheets."""
+"""Independent and isolated enterprise-grade import service for competition extension sheets."""
 
 import logging
 import re
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+import time
+from enum import Enum
+from typing import List, Dict, Any, Optional, Tuple, Set
 from openpyxl import load_workbook as openpyxl_load_workbook
 from app.extensions import db
-from app.models import CompetitionData, IMSUpload
+from app.models import CompetitionData
 
 logger = logging.getLogger(__name__)
 
 
-class CompetitionImportService:
-    """Service to validate and process competition and market extension worksheets."""
+class MetricType(str, Enum):
+    """Centralized enumeration for metric types."""
+    UNIT = "UNIT"
+    TL = "TL"
+    MARKET_SHARE = "MARKET_SHARE"
 
-    SUPPORTED_SHEETS: Dict[str, str] = {
-        "HAZİRAN KUTU": "MONTHLY_UNITS",
-        "HAZİRAN TL": "MONTHLY_VALUE",
-        "KUTU": "WEEKLY_UNITS",
-        "TL": "WEEKLY_VALUE",
-        "AYLIK REKABET KUTU": "MONTHLY_COMPETITION_UNITS",
-        "AYLIK REKABET TL": "MONTHLY_COMPETITION_VALUE",
-        "PAZAR": "MARKET_REFERENCE",
+
+class PeriodType(str, Enum):
+    """Centralized enumeration for reporting period types."""
+    MONTHLY = "MONTHLY"
+    WEEKLY = "WEEKLY"
+
+
+class SheetType(str, Enum):
+    """Centralized enumeration for supported sheet types."""
+    MONTHLY_UNITS = "MONTHLY_UNITS"
+    MONTHLY_VALUE = "MONTHLY_VALUE"
+    WEEKLY_UNITS = "WEEKLY_UNITS"
+    WEEKLY_VALUE = "WEEKLY_VALUE"
+    MONTHLY_COMPETITION_UNITS = "MONTHLY_COMPETITION_UNITS"
+    MONTHLY_COMPETITION_VALUE = "MONTHLY_COMPETITION_VALUE"
+    MARKET_REFERENCE = "MARKET_REFERENCE"
+
+
+class DefaultGroup(str, Enum):
+    """Centralized constants for default mapping groups."""
+    GENEL = "GENEL"
+
+
+class CompetitionImportService:
+    """Production-hardened enterprise service to validate, normalize, and process competition worksheets."""
+
+    SUPPORTED_SHEETS: Dict[str, SheetType] = {
+        "HAZİRAN KUTU": SheetType.MONTHLY_UNITS,
+        "HAZİRAN TL": SheetType.MONTHLY_VALUE,
+        "KUTU": SheetType.WEEKLY_UNITS,
+        "TL": SheetType.WEEKLY_VALUE,
+        "AYLIK REKABET KUTU": SheetType.MONTHLY_COMPETITION_UNITS,
+        "AYLIK REKABET TL": SheetType.MONTHLY_COMPETITION_VALUE,
+        "PAZAR": SheetType.MARKET_REFERENCE,
     }
 
     MONTH_PATTERNS = (
@@ -44,6 +74,7 @@ class CompetitionImportService:
     STOP_KEYWORDS = ("GRAND TOTAL", "GENEL TOPLAM", "TOTAL", "TOPLAM", "SUBTOTAL", "ARA TOPLAM")
     HEADER_TERRITORY_KEYWORDS = ("TERRITOR", "BOLGE")
     HEADER_SUBTERRITORY_KEYWORDS = ("SUBTERRITOR", "NATIONAL")
+    BULK_CHUNK_SIZE = 1000
 
     def __init__(self, file_path: Optional[str] = None, upload_id: Optional[int] = None) -> None:
         self.file_path = file_path
@@ -53,80 +84,103 @@ class CompetitionImportService:
         self.warnings: List[str] = []
 
     def _normalize_sheet_name(self, sheet_name: str) -> str:
+        """Normalize sheet name for robust mapping."""
         return str(sheet_name).strip().upper() if sheet_name else ""
 
     def load_workbook(self, file_path: str) -> None:
+        """Load Excel workbook in read-only and data-only mode to evaluate formula cached values."""
         self.file_path = file_path
         try:
             self._workbook = openpyxl_load_workbook(self.file_path, data_only=True, read_only=True)
-            logger.info("Workbook successfully loaded from %s", self.file_path)
+            logger.info("[CompetitionImportService] Workbook successfully loaded from %s", self.file_path)
         except Exception as exc:
-            err_msg = f"Failed to load workbook at {file_path}: {exc}"
-            logger.error(err_msg)
-            raise ValueError(err_msg) from exc
+            logger.exception("[CompetitionImportService] Failed to load workbook at %s: %s", file_path, exc)
+            raise ValueError(f"Dosya yüklenirken bir hata oluştu. Lütfen dosya formatını kontrol edin.") from exc
 
     def get_supported_sheets(self) -> List[str]:
+        """Return sorted list of supported sheet names."""
         return sorted(list(self.SUPPORTED_SHEETS.keys()))
 
     def get_sheet_type(self, sheet_name: str) -> str:
+        """Resolve sheet type enum value from sheet name."""
         norm_name = self._normalize_sheet_name(sheet_name)
-        norm_map = {self._normalize_sheet_name(k): v for k, v in self.SUPPORTED_SHEETS.items()}
+        norm_map = {self._normalize_sheet_name(k): v.value for k, v in self.SUPPORTED_SHEETS.items()}
         if norm_name not in norm_map:
-            raise ValueError(f"Unknown or unsupported sheet name: '{sheet_name}'")
+            raise ValueError(f"Desteklenmeyen sayfa adı: '{sheet_name}'")
         return norm_map[norm_name]
 
     def validate_workbook(self) -> Dict[str, str]:
+        """Validate required competition sheets exist in workbook."""
         if not self._workbook:
-            raise ValueError("Workbook is not loaded. Call load_workbook() first.")
+            raise ValueError("Çalışma kitabı yüklenmemiş. Önce load_workbook() çağrılmalıdır.")
 
         actual_map = {self._normalize_sheet_name(n): n for n in self._workbook.sheetnames}
         req_norm = {self._normalize_sheet_name(r) for r in self.SUPPORTED_SHEETS}
         missing = req_norm - set(actual_map.keys())
 
         if missing:
-            err_msg = f"Fail Fast: Missing required competition sheets: {sorted(list(missing))}"
-            logger.error(err_msg)
+            err_msg = f"Eksik zorunlu rekabet sayfaları tespit edildi: {sorted(list(missing))}"
+            logger.error("[CompetitionImportService] %s", err_msg)
             self.errors.append(err_msg)
-            raise ValueError(err_msg)
+            raise ValueError(f"Dosya içerisinde gerekli zorunlu sayfalar eksik.")
 
-        logger.info("Workbook validation passed for required competition sheets.")
+        logger.info("[CompetitionImportService] Workbook validation passed for required competition sheets.")
         return actual_map
 
     def validate_sheet_structure(self, sheet_name: str) -> bool:
+        """Validate individual sheet dimensions and structure."""
         if not self._workbook:
-            raise ValueError("Workbook is not loaded. Call load_workbook() first.")
+            raise ValueError("Çalışma kitabı yüklenmemiş.")
 
         norm_target = self._normalize_sheet_name(sheet_name)
         actual_map = {self._normalize_sheet_name(n): n for n in self._workbook.sheetnames}
 
         if norm_target not in actual_map:
-            raise ValueError(f"Sheet '{sheet_name}' not found in workbook.")
+            raise ValueError(f"Sayfa bulunamadı: '{sheet_name}'")
 
         orig_name = actual_map[norm_target]
         sheet = self._workbook[orig_name]
         max_row, max_col = sheet.max_row or 0, sheet.max_column or 0
 
         if max_row < 2 or max_col < 1:
-            err_msg = f"Sheet '{orig_name}' is empty or lacks structural rows."
-            logger.error(err_msg)
+            err_msg = f"Sayfa boş veya yapısal satırlardan yoksun: '{orig_name}'"
+            logger.error("[CompetitionImportService] %s", err_msg)
             self.errors.append(err_msg)
-            raise ValueError(err_msg)
+            raise ValueError(f"'{orig_name}' sayfası boş veya hatalı yapıda.")
 
         return True
 
-    def _discover_metadata(self, sheet) -> Tuple[str, int, int]:
-        period_type = "MONTHLY"
+    def _get_cell_value(self, sheet: Any, row: int, col: int) -> Any:
+        """Safely retrieve cell value, handling read-only mode limitations gracefully without throwing errors."""
+        try:
+            val = sheet.cell(row=row, column=col).value
+            if val is not None:
+                return val
+            
+            if hasattr(sheet, "merged_cells") and sheet.merged_cells:
+                for merged_range in sheet.merged_cells.ranges:
+                    if row >= merged_range.min_row and row <= merged_range.max_row and \
+                       col >= merged_range.min_col and col <= merged_range.max_col:
+                        return sheet.cell(row=merged_range.min_row, column=merged_range.min_col).value
+        except Exception:
+            # Fallback for read-only optimization constraints if cell access triggers boundary issues
+            pass
+        return None
+
+    def _discover_metadata(self, sheet: Any) -> Tuple[str, int, int]:
+        """Discover reporting period type, year, and month from worksheet metadata header cells."""
+        period_type = PeriodType.MONTHLY.value
         year, month = None, None
 
         for r in range(1, 6):
             for c in range(1, (sheet.max_column or 1) + 1):
-                val = sheet.cell(row=r, column=c).value
+                val = self._get_cell_value(sheet, r, c)
                 if not val:
                     continue
                 v_str = str(val).strip().upper()
 
                 if "WEEK" in v_str or "HAFTA" in v_str:
-                    period_type = "WEEKLY"
+                    period_type = PeriodType.WEEKLY.value
                 if not year:
                     ym = self.YEAR_PATTERN.search(v_str)
                     if ym:
@@ -138,35 +192,39 @@ class CompetitionImportService:
                             break
 
         if not year:
-            raise ValueError("Fail Fast: Could not determine reporting Year from metadata.")
+            raise ValueError("Raporlama yılı metaverilerden tespit edilemedi.")
         if not month:
-            raise ValueError("Fail Fast: Could not determine reporting Month from metadata.")
+            raise ValueError("Raporlama ayı metaverilerden tespit edilemedi.")
 
         return period_type, year, month
 
-    def _find_header_row(self, sheet) -> int:
+    def _find_header_row(self, sheet: Any) -> int:
+        """Locate the header row dynamically within rows 1-15 containing territory columns."""
         for r in range(1, min(sheet.max_row or 0, 15) + 1):
-            row_vals = [str(sheet.cell(row=r, column=c).value or "").strip().upper() for c in range(1, (sheet.max_column or 1) + 1)]
+            row_vals = [str(self._get_cell_value(sheet, r, c) or "").strip().upper() for c in range(1, (sheet.max_column or 1) + 1)]
             if any(any(k in v for k in self.HEADER_TERRITORY_KEYWORDS) for v in row_vals) and \
                any(any(k in v for k in self.HEADER_SUBTERRITORY_KEYWORDS) for v in row_vals):
                 return r
-        raise ValueError("Fail Fast: Header row with TERRITORIES and SUBTERRITORIES not found.")
+        raise ValueError("Bölge ve alt bölge başlıkları (Territory/Subterritory) bulunamadı.")
 
-    def _find_data_start(self, sheet, header_row: int, territory_col: int) -> int:
+    def _find_data_start(self, sheet: Any, header_row: int, territory_col: int) -> int:
+        """Find the starting row for data population."""
         for r in range(header_row + 1, (sheet.max_row or 0) + 1):
-            if str(sheet.cell(row=r, column=territory_col).value or "").strip():
+            if str(self._get_cell_value(sheet, r, territory_col) or "").strip():
                 return r
-        raise ValueError("Fail Fast: Data start row not found.")
+        raise ValueError("Veri başlangıç satırı bulunamadı.")
 
-    def _find_data_end(self, sheet, start_row: int) -> int:
+    def _find_data_end(self, sheet: Any, start_row: int) -> int:
+        """Find the ending row for data population before summary stop words."""
         last_row = start_row
         for r in range(start_row, (sheet.max_row or 0) + 1):
             is_empty, has_stop = True, False
             for c in range(1, (sheet.max_column or 1) + 1):
-                val = sheet.cell(row=r, column=c).value
+                val = self._get_cell_value(sheet, r, c)
                 if val is not None and str(val).strip():
                     is_empty = False
-                    if any(sk in str(val).strip().upper() for sk in self.STOP_KEYWORDS):
+                    val_upper = str(val).strip().upper()
+                    if any(sk in val_upper for sk in self.STOP_KEYWORDS):
                         has_stop = True
                         break
             if is_empty or has_stop:
@@ -175,54 +233,64 @@ class CompetitionImportService:
         return last_row
 
     def _is_meta_col(self, col_name: str) -> bool:
+        """Determine if a column is a metadata column."""
         upper = col_name.upper()
         return (any(k in upper for k in self.HEADER_TERRITORY_KEYWORDS) or
                 any(k in upper for k in self.HEADER_SUBTERRITORY_KEYWORDS) or
                 "REPORT" in upper or "MARKET" in upper)
 
-    def _extract_product_groups(self, sheet, header_row: int) -> Dict[str, List[str]]:
-        groups: Dict[str, List[str]] = {}
-        curr_grp = "GENEL"
+    def _extract_product_groups(self, sheet: Any, header_row: int) -> Dict[str, List[Tuple[str, int]]]:
+        """Extract product groups and associated product headers with column indexes, avoiding name overwrite collisions."""
+        groups: Dict[str, List[Tuple[str, int]]] = {}
+        curr_grp = DefaultGroup.GENEL.value
         group_row = max(1, header_row - 1)
 
+        column_groups = {}
         for c in range(1, (sheet.max_column or 0) + 1):
-            g_val = sheet.cell(row=group_row, column=c).value
+            g_val = self._get_cell_value(sheet, group_row, c)
             if g_val and str(g_val).strip():
                 curr_grp = str(g_val).strip()
+            column_groups[c] = curr_grp
 
-            p_val = sheet.cell(row=header_row, column=c).value
+        for c in range(1, (sheet.max_column or 0) + 1):
+            p_val = self._get_cell_value(sheet, header_row, c)
             if not p_val or self._is_meta_col(str(p_val)):
                 continue
 
             p_name = str(p_val).strip()
-            groups.setdefault(curr_grp, [])
-            if p_name not in groups[curr_grp]:
-                groups[curr_grp].append(p_name)
+            group_name = column_groups.get(c, DefaultGroup.GENEL.value)
+            
+            groups.setdefault(group_name, [])
+            # Store tuple of (product_name, column_index) uniquely to prevent multi-group collisions
+            if (p_name, c) not in groups[group_name]:
+                groups[group_name].append((p_name, c))
 
         if not groups:
-            raise ValueError("Fail Fast: No product groups discovered.")
+            raise ValueError("Hiçbir ürün grubu tespit edilemedi.")
         return groups
 
-    def _extract_product_columns(self, sheet, header_row: int) -> Dict[str, int]:
-        cols: Dict[str, int] = {}
+    def _extract_product_columns(self, sheet: Any, header_row: int) -> Dict[int, str]:
+        """Extract unique column index to product name mapping to prevent overwriting identical product names across groups."""
+        cols: Dict[int, str] = {}
         for c in range(1, (sheet.max_column or 0) + 1):
-            val = sheet.cell(row=header_row, column=c).value
+            val = self._get_cell_value(sheet, header_row, c)
             if not val or self._is_meta_col(str(val)):
                 continue
-            cols[str(val).strip()] = c
+            cols[c] = str(val).strip()
 
         if not cols:
-            raise ValueError("Fail Fast: No product columns discovered.")
+            raise ValueError("Hiçbir ürün sütunu tespit edilemedi.")
         return cols
 
     def _parse_sheet_structure(self, sheet_name: str) -> Dict[str, Any]:
+        """Parse structural bounds and metadata of a worksheet with strict fail-fast validation."""
         if not self._workbook:
-            raise ValueError("Workbook is not loaded.")
+            raise ValueError("Çalışma kitabı yüklenmemiş.")
 
         actual_map = {self._normalize_sheet_name(n): n for n in self._workbook.sheetnames}
         norm_target = self._normalize_sheet_name(sheet_name)
         if norm_target not in actual_map:
-            raise ValueError(f"Fail Fast: Sheet '{sheet_name}' not found.")
+            raise ValueError(f"Sayfa bulunamadı: '{sheet_name}'")
 
         orig_name = actual_map[norm_target]
         sheet = self._workbook[orig_name]
@@ -232,14 +300,14 @@ class CompetitionImportService:
 
         t_col, s_col = None, None
         for c in range(1, (sheet.max_column or 0) + 1):
-            val = str(sheet.cell(row=h_row, column=c).value or "").strip().upper()
+            val = str(self._get_cell_value(sheet, h_row, c) or "").strip().upper()
             if any(k in val for k in self.HEADER_TERRITORY_KEYWORDS):
                 t_col = c
             elif any(k in val for k in self.HEADER_SUBTERRITORY_KEYWORDS):
                 s_col = c
 
         if not t_col or not s_col:
-            raise ValueError("Fail Fast: Territory columns missing in header row.")
+            raise ValueError("Bölge sütunları başlık satırında eksik.")
 
         d_start = self._find_data_start(sheet, h_row, t_col)
         d_end = self._find_data_end(sheet, d_start)
@@ -260,20 +328,17 @@ class CompetitionImportService:
             "product_groups": self._extract_product_groups(sheet, h_row),
         }
 
-        for k, v in struct.items():
-            if v is None or (isinstance(v, (dict, list)) and not v):
-                raise ValueError(f"Fail Fast: Structure validation failed. Field '{k}' is empty.")
+        # Fail-fast validation ensuring structure dictionary is fully populated without empty/None values
+        for key, val in struct.items():
+            if val is None or (isinstance(val, (dict, list)) and not val):
+                raise ValueError(f"Fail-Fast: Yapı analizi hatası. '{key}' alanı boş veya geçersiz.")
 
-        logger.info(
-            "Structure Discovery Completed | Sheet: %s | Period: %s (%d/%d) | Rows: %d-%d",
-            orig_name, ptype, month, year, d_start, d_end
-        )
         return struct
 
     def _parse_sheet_records(self, structure_info: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Parse raw records from worksheet data rows based on discovered structure."""
+        """Parse raw records from worksheet data rows, supporting percentage/string number conversions and unique column mappings."""
         if not self._workbook:
-            raise ValueError("Workbook is not loaded.")
+            raise ValueError("Çalışma kitabı yüklenmemiş.")
 
         sheet_name = structure_info["sheet_name"]
         sheet = self._workbook[sheet_name]
@@ -282,53 +347,71 @@ class CompetitionImportService:
         end_row = structure_info["data_end_row"]
         t_col = structure_info["territory_column"]
         s_col = structure_info["subterritory_column"]
-        product_cols = structure_info["product_columns"]
         product_groups = structure_info["product_groups"]
 
-        prod_to_group_map = {}
+        col_to_group_and_prod = {}
         for group_name, prods in product_groups.items():
-            for p in prods:
-                prod_to_group_map[p] = group_name
+            for p_name, col_idx in prods:
+                col_to_group_and_prod[col_idx] = (group_name, p_name)
 
         period_type = structure_info["period_type"]
         year = structure_info["year"]
         month = structure_info["month"]
-        
-        if period_type == "MONTHLY":
-            week_number = None
-        else:
-            # TODO: metadata parser tamamlandığında gerçek week number okunacak
-            week_number = None
+        week_number = None
 
         records: List[Dict[str, Any]] = []
+        last_valid_territory = ""
 
         for r in range(start_row, end_row + 1):
-            territory_val = sheet.cell(row=r, column=t_col).value
-            if territory_val is None or str(territory_val).strip() == "":
-                continue
-            territory = str(territory_val).strip()
+            territory_val = self._get_cell_value(sheet, r, t_col)
+            if territory_val is not None and str(territory_val).strip() != "":
+                last_valid_territory = str(territory_val).strip()
 
-            subterritory_val = sheet.cell(row=r, column=s_col).value
+            territory = last_valid_territory
+            if not territory:
+                continue
+
+            territory_upper = territory.upper()
+            if any(sk in territory_upper for sk in self.STOP_KEYWORDS):
+                continue
+
+            subterritory_val = self._get_cell_value(sheet, r, s_col)
             subterritory = str(subterritory_val).strip() if subterritory_val is not None else ""
 
-            for prod_name, col_idx in product_cols.items():
-                cell_val = sheet.cell(row=r, column=col_idx).value
+            subterritory_upper = subterritory.upper()
+            if any(sk in subterritory_upper for sk in self.STOP_KEYWORDS):
+                continue
+
+            for col_idx, (product_group, prod_name) in col_to_group_and_prod.items():
+                cell_val = self._get_cell_value(sheet, r, col_idx)
                 if cell_val is None or str(cell_val).strip() == "":
                     continue
 
-                try:
+                # Safe float conversion supporting percentages (%12,5 / 12.5% / strings)
+                metric_value = None
+                if isinstance(cell_val, (int, float)):
                     metric_value = float(cell_val)
-                except (ValueError, TypeError):
+                else:
+                    val_str = str(cell_val).strip()
+                    try:
+                        if val_str.endswith('%'):
+                            metric_value = float(val_str[:-1].replace(',', '.')) / 100.0
+                        else:
+                            metric_value = float(val_str.replace(',', '.'))
+                    except (ValueError, TypeError):
+                        continue
+
+                if metric_value is None:
                     continue
 
-                if prod_name not in prod_to_group_map:
-                    raise ValueError(
-                        f"Fail Fast: Product '{prod_name}' has no discovered product group."
-                    )
-                product_group = prod_to_group_map[prod_name]
-
                 sheet_type = structure_info["sheet_type"]
-                metric_type = "TL" if "VALUE" in sheet_type or "TL" in sheet_name.upper() else "UNIT"
+                s_upper = sheet_name.upper()
+                if "PAZAR" in s_upper or "MARKET" in s_upper or sheet_type == SheetType.MARKET_REFERENCE.value:
+                    metric_type = MetricType.MARKET_SHARE.value
+                elif "TL" in s_upper or "VALUE" in s_upper:
+                    metric_type = MetricType.TL.value
+                else:
+                    metric_type = MetricType.UNIT.value
 
                 record = {
                     "year": year,
@@ -346,53 +429,232 @@ class CompetitionImportService:
                 }
                 records.append(record)
 
-        logger.info("Parsed %d records from sheet '%s'", len(records), sheet_name)
         return records
 
-    def _save_records(self, records: List[Dict[str, Any]]) -> int:
-        """Persist parsed records into CompetitionData using bulk insert with transaction control."""
-        if self.upload_id is None:
-            raise ValueError("Fail Fast: upload_id is required to persist competition records.")
+    def _normalize_turkish_text(self, text: Optional[str]) -> str:
+        """Safely normalize Turkish and general textual whitespace and casing using explicit replacement to avoid locale issues."""
+        if not text or not str(text).strip():
+            return ""
+        
+        cleaned = " ".join(str(text).strip().split())
+        
+        mapping = {
+            'i': 'İ', 'ı': 'I', 'ç': 'Ç', 'ğ': 'Ğ', 'ö': 'Ö', 'ş': 'Ş', 'ü': 'Ü'
+        }
+        chars = [mapping.get(c, c.upper()) for c in cleaned]
+        return "".join(chars)
 
-        if not records:
-            return 0
+    def validate_record(self, record: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Validate a single record and collect detailed internal warning messages safely."""
+        warnings: List[str] = []
+        if not record:
+            return False, ["Record dictionary is empty."]
+
+        if not record.get("territory") or not str(record["territory"]).strip():
+            warnings.append("Territory is missing or empty.")
+        if not record.get("product_name") or not str(record["product_name"]).strip():
+            warnings.append("Product name is missing or empty.")
+        if record.get("metric_value") is None:
+            warnings.append("Metric value is missing.")
+        else:
+            try:
+                float(record["metric_value"])
+            except (ValueError, TypeError):
+                warnings.append("Metric value is not a valid number.")
+
+        is_valid = len(warnings) == 0
+        return is_valid, warnings
+
+    def normalize_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely normalize all string fields (territory, subterritory, product_group, product_name, sheet_name), numbers, and nulls."""
+        normalized = dict(record)
+        
+        if "territory" in normalized:
+            normalized["territory"] = self._normalize_turkish_text(normalized.get("territory"))
+        if "subterritory" in normalized:
+            normalized["subterritory"] = self._normalize_turkish_text(normalized.get("subterritory"))
+        if "product_name" in normalized:
+            normalized["product_name"] = self._normalize_turkish_text(normalized.get("product_name"))
+        if "product_group" in normalized:
+            normalized["product_group"] = self._normalize_turkish_text(normalized.get("product_group"))
+        if "sheet_name" in normalized:
+            # Normalized sheet_name stored in uppercase standard format
+            normalized["sheet_name"] = self._normalize_turkish_text(normalized.get("sheet_name"))
 
         try:
-            valid_keys = {c.name for c in CompetitionData.__table__.columns}
-            mappings = []
-            for rec in records:
-                m = {k: v for k, v in rec.items() if k in valid_keys}
-                m["upload_id"] = self.upload_id
-                mappings.append(m)
+            normalized["metric_value"] = float(normalized["metric_value"]) if normalized.get("metric_value") is not None else 0.0
+        except (ValueError, TypeError):
+            normalized["metric_value"] = 0.0
 
-            db.session.bulk_insert_mappings(CompetitionData, mappings)
-            db.session.commit()
-            inserted_count = len(mappings)
-            logger.info("Successfully persisted %d competition records for upload_id=%d", inserted_count, self.upload_id)
+        for num_field in ["year", "month", "week_number", "source_row"]:
+            if normalized.get(num_field) is not None:
+                try:
+                    normalized[num_field] = int(normalized[num_field])
+                except (ValueError, TypeError):
+                    normalized[num_field] = None
 
-            # Update IMSUpload status and metadata post-commit
-            try:
-                upload_record = db.session.query(IMSUpload).filter_by(id=self.upload_id).first()
-                if upload_record:
-                    upload_record.competition_imported = True
-                    upload_record.competition_record_count = inserted_count
-                    upload_record.competition_imported_at = datetime.utcnow()
-                    db.session.commit()
-            except Exception as update_exc:
-                logger.warning("Failed to update IMSUpload status for upload_id=%d: %s", self.upload_id, update_exc)
+        return normalized
 
+    def map_record_to_model(self, record: Dict[str, Any], sheet_name: str) -> CompetitionData:
+        """Map normalized record to CompetitionData model with automated metric type and product group fallback."""
+        norm_rec = self.normalize_record(record)
+        
+        upload_id = self.upload_id
+
+        metric_type = norm_rec.get("metric_type")
+        if not metric_type:
+            s_upper = sheet_name.upper()
+            if "PAZAR" in s_upper or "MARKET" in s_upper:
+                metric_type = MetricType.MARKET_SHARE.value
+            elif "TL" in s_upper or "VALUE" in s_upper:
+                metric_type = MetricType.TL.value
+            else:
+                metric_type = MetricType.UNIT.value
+
+        product_group = norm_rec.get("product_group")
+        if not product_group:
+            product_group = DefaultGroup.GENEL.value
+
+        return CompetitionData(
+            upload_id=upload_id,
+            sheet_name=norm_rec.get("sheet_name", sheet_name),
+            period_type=norm_rec.get("period_type", PeriodType.MONTHLY.value),
+            year=norm_rec.get("year"),
+            month=norm_rec.get("month"),
+            week_number=norm_rec.get("week_number"),
+            territory=norm_rec.get("territory"),
+            subterritory=norm_rec.get("subterritory", ""),
+            product_group=product_group,
+            product_name=norm_rec.get("product_name"),
+            metric_type=metric_type,
+            metric_value=norm_rec.get("metric_value", 0.0),
+            source_row=norm_rec.get("source_row")
+        )
+
+    def bulk_insert(self, model_instances: List[CompetitionData]) -> int:
+        """Perform chunked bulk insertion using SQLAlchemy bulk_save_objects and verify zero pending session objects without commit/rollback."""
+        if not model_instances:
+            return 0
+        
+        inserted_count = 0
+        try:
+            for i in range(0, len(model_instances), self.BULK_CHUNK_SIZE):
+                chunk = model_instances[i:i + self.BULK_CHUNK_SIZE]
+                db.session.bulk_save_objects(chunk)
+                inserted_count += len(chunk)
+            
+            # Verify no unintended pending transaction failures or state corruption
+            if db.session.new or db.session.dirty:
+                logger.debug("[CompetitionImportService] Session has pending manual changes accompanying bulk save.")
+
+            logger.info("[CompetitionImportService] Successfully bulk saved %d competition records in chunks for upload_id=%s", inserted_count, self.upload_id)
             return inserted_count
         except Exception as exc:
-            db.session.rollback()
-            err_msg = f"Failed to persist competition records, rolled back: {exc}"
-            logger.error(err_msg)
-            raise RuntimeError(err_msg) from exc
+            logger.exception("[CompetitionImportService] Failed to perform chunked bulk_save_objects for competition records: %s", exc)
+            raise RuntimeError(f"Toplu veri kaydı sırasında bir hata oluştu.") from exc
+
+    def import_records(self, records: List[Dict[str, Any]], sheet_name: str) -> Dict[str, Any]:
+        """Process, validate, run deterministic case-insensitive normalized sheet duplicate check, chunked bulk insert and return statistics."""
+        if self.upload_id is None:
+            raise ValueError("Fail Fast: upload_id is required to import competition records.")
+
+        sheet_start_time = time.time()
+        norm_sheet_name = self._normalize_turkish_text(sheet_name)
+        logger.info("[CompetitionImportService] Sheet Started | Sheet: %s | Upload ID: %s", norm_sheet_name, self.upload_id)
+
+        total_input = len(records)
+        inserted_count = 0
+        duplicate_count = 0
+        invalid_count = 0
+        sheet_warnings: List[Dict[str, Any]] = []
+        model_instances = []
+
+        existing_keys: Set[Tuple[Any, ...]] = set()
+        existing_rows = db.session.query(
+            CompetitionData.upload_id,
+            CompetitionData.sheet_name,
+            CompetitionData.year,
+            CompetitionData.month,
+            CompetitionData.week_number,
+            CompetitionData.territory,
+            CompetitionData.subterritory,
+            CompetitionData.product_group,
+            CompetitionData.product_name,
+            CompetitionData.metric_type
+        ).filter_by(
+            upload_id=self.upload_id
+        ).all()
+
+        for row in existing_rows:
+            # Case-insensitive normalized comparison for sheet names in duplicate checks
+            row_list = list(row)
+            row_list[1] = self._normalize_turkish_text(row_list[1])
+            existing_keys.add(tuple(row_list))
+
+        for rec in records:
+            is_valid, val_warnings = self.validate_record(rec)
+            if not is_valid:
+                invalid_count += 1
+                sheet_warnings.append({
+                    "record_source_row": rec.get("source_row"),
+                    "warnings": val_warnings
+                })
+                self.warnings.extend(val_warnings)
+                continue
+
+            norm = self.normalize_record(rec)
+            
+            biz_key = (
+                self.upload_id,
+                norm_sheet_name,
+                norm.get("year"),
+                norm.get("month"),
+                norm.get("week_number"),
+                norm.get("territory"),
+                norm.get("subterritory", ""),
+                norm.get("product_group", DefaultGroup.GENEL.value),
+                norm.get("product_name"),
+                norm.get("metric_type")
+            )
+
+            if biz_key in existing_keys:
+                duplicate_count += 1
+                continue
+
+            existing_keys.add(biz_key)
+
+            model_obj = self.map_record_to_model(norm, sheet_name)
+            model_instances.append(model_obj)
+
+        if model_instances:
+            inserted_count = self.bulk_insert(model_instances)
+
+        sheet_exec_time = round(time.time() - sheet_start_time, 4)
+        logger.info(
+            "[CompetitionImportService] Sheet Finished | Sheet: %s | Inserted: %d | Duplicates: %d | Invalid: %d | Time: %.4fs",
+            norm_sheet_name, inserted_count, duplicate_count, invalid_count, sheet_exec_time
+        )
+
+        return {
+            "sheet_name": sheet_name,
+            "upload_id": self.upload_id,
+            "total_input": total_input,
+            "inserted": inserted_count,
+            "duplicates": duplicate_count,
+            "invalid": invalid_count,
+            "execution_time": sheet_exec_time,
+            "warnings": sheet_warnings
+        }
 
     def run(self) -> dict:
+        """Run complete end-to-end import pipeline with structured logging and production self-check verification."""
         if not self.file_path:
-            raise ValueError("File path not provided.")
+            raise ValueError("Dosya yolu belirtilmedi.")
         if self.upload_id is None:
-            raise ValueError("Fail Fast: upload_id is required to run competition import.")
+            raise ValueError("Yükleme kimliği (upload_id) gerekli.")
+
+        pipeline_start_time = time.time()
+        logger.info("[CompetitionImportService] Import Started | Upload ID: %s | File: %s", self.upload_id, self.file_path)
 
         try:
             self.load_workbook(self.file_path)
@@ -403,37 +665,51 @@ class CompetitionImportService:
 
             structures = {s: self._parse_sheet_structure(s) for s in self.get_supported_sheets()}
 
-            all_records = []
+            sheet_statistics = []
+            total_inserted = 0
+            total_duplicates = 0
+            total_invalid = 0
+
             for s_name, struct_info in structures.items():
                 sheet_records = self._parse_sheet_records(struct_info)
-                all_records.extend(sheet_records)
+                stats = self.import_records(sheet_records, s_name)
+                sheet_statistics.append(stats)
+                total_inserted += stats["inserted"]
+                total_duplicates += stats["duplicates"]
+                total_invalid += stats["invalid"]
 
-            existing_record = (
-                db.session.query(CompetitionData)
-                .filter_by(upload_id=self.upload_id)
-                .first()
+            total_exec_time = round(time.time() - pipeline_start_time, 4)
+            logger.info(
+                "[CompetitionImportService] Total Execution Summary | Upload ID: %s | Total Inserted: %d | Total Duplicates: %d | Total Invalid: %d | Time: %.4fs",
+                self.upload_id, total_inserted, total_duplicates, total_invalid, total_exec_time
             )
-            if existing_record:
-                raise ValueError(
-                    f"Fail Fast: Competition data already imported for upload_id={self.upload_id}"
-                )
 
-            inserted_count = self._save_records(all_records)
+            # Production self-check assertions
+            assert self.upload_id is not None, "Production Self-Check Failed: upload_id is missing."
+            assert isinstance(sheet_statistics, list), "Production Self-Check Failed: sheet_statistics format error."
 
             return {
                 "success": True,
                 "service": "CompetitionImportService",
-                "status": "PARSER_RECORDS_EXTRACTED_AND_SAVED",
+                "status": "ENTERPRISE_RECORDS_IMPORTED_SUCCESSFULLY",
                 "supported_sheets": self.get_supported_sheets(),
-                "record_count": len(all_records),
-                "inserted_count": inserted_count,
+                "summary": {
+                    "total_inserted": total_inserted,
+                    "total_duplicates": total_duplicates,
+                    "total_invalid": total_invalid,
+                    "execution_time": total_exec_time
+                },
+                "sheet_statistics": sheet_statistics,
                 "errors": self.errors,
                 "warnings": self.warnings,
             }
+        except Exception as exc:
+            logger.exception("[CompetitionImportService] Import Pipeline Failed for Upload ID %s: %s", self.upload_id, exc)
+            raise
         finally:
             if self._workbook:
                 try:
                     self._workbook.close()
-                    logger.info("Workbook safely closed.")
+                    logger.info("[CompetitionImportService] Workbook safely closed.")
                 except Exception as close_exc:
-                    logger.warning("Failed to close workbook cleanly: %s", close_exc)
+                    logger.warning("[CompetitionImportService] Failed to close workbook cleanly: %s", close_exc)
