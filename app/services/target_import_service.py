@@ -560,6 +560,7 @@ class TargetImportService:
                     for p_info in products.values():
                         p_id = p_info["product"].id
                         pair_key = (representative_id, p_id)
+
                         row_vals_signature = tuple(self.safe_float(row.iloc[c["index"]]) for c in p_info["columns"])
                         
                         if pair_key in sheet_rep_prod_signatures:

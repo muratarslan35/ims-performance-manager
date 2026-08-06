@@ -2,14 +2,29 @@
 
 import json
 import logging
+logger = logging.getLogger(__name__)
+import logging
+logger = logging.getLogger(__name__)
+import logging
+logger = logging.getLogger(__name__)
 import math
+import logging
+logger = logging.getLogger(__name__)
 import os
+import logging
+logger = logging.getLogger(__name__)
 import re
+import logging
+logger = logging.getLogger(__name__)
 import time
+import logging
+logger = logging.getLogger(__name__)
 from collections import Counter
 from datetime import datetime
 
 import pandas as pd
+import logging
+logger = logging.getLogger(__name__)
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from openpyxl import load_workbook as openpyxl_load_workbook
@@ -659,18 +674,38 @@ class IMSImportService:
                 continue
 
             product = match["object"]
+
+            product_id = getattr(product, "id", None)
+            product_code = getattr(product, "product_code", "") or ""
+            product_name = getattr(product, "product_name", "") or ""
+            ims_name = getattr(product, "ims_name", "") or ""
+
             canonical_labels = {
-                AliasService.normalize(product.product_code),
-                AliasService.normalize(product.product_name),
-                AliasService.normalize(product.ims_name),
+                AliasService.normalize(product_code),
+                AliasService.normalize(product_name),
+                AliasService.normalize(ims_name),
             }
-            canonical_labels = {label for label in canonical_labels if label}
-            if canonical_labels and not any(label in normalized_header for label in canonical_labels):
+            canonical_labels = {
+                label for label in canonical_labels if label
+            }
+
+            if canonical_labels and not any(
+                label in normalized_header
+                for label in canonical_labels
+            ):
                 continue
+
             product_info = products.setdefault(
-                product.id,
-                {"product": product, "columns": []},
+                product_id,
+                {
+                    "product_id": product_id,
+                    "product_code": product_code,
+                    "product_name": product_name,
+                    "ims_name": ims_name,
+                    "columns": [],
+                },
             )
+
             product_info["columns"].append(
                 {
                     "index": column_index,
@@ -678,13 +713,13 @@ class IMSImportService:
                     "metric": self.metric_for_column(header),
                 }
             )
-            metric_pair = (product.id, self.metric_for_column(header))
+            metric_pair = (product_id, self.metric_for_column(header))
             if metric_pair in seen_metric_pairs:
                 self._log_warning(
                     reason="duplicate_product_metric_column",
                     sheet_name="unknown",
                     source_row=0,
-                    product=product.product_name,
+                    product=product_name,
                     header=str(header),
                 )
             seen_metric_pairs.add(metric_pair)
@@ -1015,10 +1050,10 @@ class IMSImportService:
             sheet_type=sheet_type,
             source_row=source_row,
             representative_id=representative_id,
-            product_id=product.id,
+            product_id=product_id,
             representative=representative_name,
             manager=manager,
-            product=product.product_name,
+            product=product_name,
             competitor=competitor,
             market=market,
             unit=metrics["unit"],
@@ -1121,7 +1156,7 @@ class IMSImportService:
                                         sheet_name=sheet["sheet_name"],
                                         source_row=source_row,
                                         representative=representative_name,
-                                        product=product_info["product"].product_name,
+                                        product=product_info["product_name"],
                                         field=column["header"],
                                         value=self._value_for_json(value),
                                     )
@@ -1139,7 +1174,7 @@ class IMSImportService:
                                     sheet_name=sheet["sheet_name"],
                                     source_row=source_row,
                                     representative=representative_name,
-                                    product=product_info["product"].product_name,
+                                    product=product_info["product_name"],
                                 )
                                 continue
 
@@ -1152,7 +1187,7 @@ class IMSImportService:
                                 source_row=source_row,
                                 representative_name=representative_name,
                                 representative_id=representative_id,
-                                product=product_info["product"],
+                                product=product_info["product_name"],
                                 metrics=metrics,
                                 source_values=source_values,
                                 manager=manager_value,

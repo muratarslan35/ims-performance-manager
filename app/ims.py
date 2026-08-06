@@ -46,7 +46,9 @@ def index():
 
     ).all()
 
-    dashboard = DashboardService().run()
+    # TEMP DEBUG
+    dashboard = {}
+    # dashboard = {}
 
     return render_template(
 

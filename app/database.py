@@ -251,10 +251,10 @@ def create_default_products():
                 is_prime_product=item["is_prime_product"],
 
                 required_percent=item["required_percent"],
-
                 include_total_tl=item["include_total_tl"],
+                is_active=True,
 
-                is_active=True
+
 
             )
 
@@ -297,7 +297,6 @@ def create_default_prime_rules():
 
                 include_in_total_tl=product.include_total_tl,
 
-                active=True
 
             )
 
@@ -336,7 +335,6 @@ def create_admin_user():
 
         role="Admin",
 
-        active=True
 
     )
 
