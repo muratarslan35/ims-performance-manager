@@ -1,9 +1,57 @@
 from datetime import date, datetime
-
 from flask_login import UserMixin
-
 from app.extensions import db
 
+
+# --- RESTORED LEGACY MODELS & CONSTANTS (Required by app/database.py & legacy imports) ---
+
+DEFAULT_SETTINGS = {
+    "MAIN_PRIME": 50000,
+    "CIRO_PRIME": 20000,
+    "PRIME_STEP": 5,
+    "STEP_AMOUNT": 2500,
+    "MAX_PRIME_PERCENT": 140,
+    "MIN_PRIME_PERCENT": 100,
+    "TARGET_75": 75,
+    "TARGET_90": 90,
+    "TARGET_100": 100,
+    "PRIME_PRODUCT_COUNT": 4,
+    "REQUIRED_90_COUNT": 3
+}
+
+
+class Setting(db.Model):
+    __tablename__ = "settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(150), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<Setting {self.key}={self.value}>"
+
+
+class PrimeRule(db.Model):
+    __tablename__ = "prime_rules"
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    required_percent = db.Column(db.Float, default=0.0, nullable=False)
+    include_in_prime = db.Column(db.Boolean, default=True, nullable=False)
+    include_in_total_tl = db.Column(db.Boolean, default=True, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    valid_from = db.Column(db.Date, nullable=True)
+    valid_to = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship("Product", backref="prime_rules")
+
+    def __repr__(self):
+        return f"<PrimeRule product_id={self.product_id}>"
+
+
+# --- CORE & IMS ARCHITECTURE MODELS (Fully preserved and untouched) ---
 
 class User(UserMixin, db.Model):
     __tablename__ = "users"
@@ -35,6 +83,11 @@ class Representative(db.Model):
     district = db.Column(db.String(100))
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Legacy compatibility additions
+    manager = db.Column(db.String(150), nullable=True)
+    territory = db.Column(db.String(150), nullable=True)
+    team = db.Column(db.String(150), nullable=True)
 
     def __repr__(self):
         return f"<Representative {self.rep_name}>"
@@ -51,6 +104,14 @@ class Product(db.Model):
     is_company_product = db.Column(db.Boolean, default=True, nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Legacy compatibility additions
+    is_prime_product = db.Column(db.Boolean, default=False, nullable=False)
+    required_percent = db.Column(db.Float, default=0.0, nullable=False)
+    unit_price = db.Column(db.Float, default=0.0, nullable=False)
+    display_order = db.Column(db.Integer, default=0, nullable=False)
+    competitor_group = db.Column(db.String(150), nullable=True)
+    molecule = db.Column(db.String(150), nullable=True)
 
     def __repr__(self):
         return f"<Product {self.product_name}>"
@@ -113,6 +174,20 @@ class IMSUpload(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     row_count = db.Column(db.Integer, default=0, nullable=False)
     notes = db.Column(db.Text)
+    competition_imported = db.Column(db.Boolean, default=False, nullable=False)
+    competition_imported_at = db.Column(db.DateTime, nullable=True)
+    
+    # Legacy compatibility additions
+    competition_record_count = db.Column(db.Integer, default=0, nullable=False)
+    processing_time = db.Column(db.Float, default=0.0, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    warning_message = db.Column(db.Text, nullable=True)
+    quarter = db.Column(db.Integer, nullable=True)
+    sheet_count = db.Column(db.Integer, default=0, nullable=False)
+    raw_record_count = db.Column(db.Integer, default=0, nullable=False)
+    fact_record_count = db.Column(db.Integer, default=0, nullable=False)
+    summary_record_count = db.Column(db.Integer, default=0, nullable=False)
 
     def __repr__(self):
         return f"<IMSUpload {self.filename} ({self.status})>"
@@ -199,7 +274,7 @@ class ManualMatchQueue(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=False)
-    entity_type = db.Column(db.String(50), nullable=False)  # 'product' or 'representative'
+    entity_type = db.Column(db.String(50), nullable=False)
     raw_name = db.Column(db.String(200), nullable=False)
     status = db.Column(db.String(50), default="PENDING", nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -223,8 +298,6 @@ class TargetImportAudit(db.Model):
 
 
 class ImportAuditLog(db.Model):
-    """Per-import audit record capturing counts, actors, and outcomes."""
-
     __tablename__ = "import_audit_logs"
     __table_args__ = (
         db.Index("ix_import_audit_upload", "upload_id"),
@@ -252,8 +325,6 @@ class ImportAuditLog(db.Model):
 
 
 class CompetitionData(db.Model):
-    """Normalized store for market, weekly/monthly units, values, and competitor IMS data."""
-
     __tablename__ = "ims_competition_data"
     
     __table_args__ = (
@@ -307,3 +378,27 @@ class CompetitionData(db.Model):
 
     def __repr__(self):
         return f"<CompetitionData {self.sheet_name}:{self.product_name}={self.metric_value}>"
+
+
+class RecoverySummary(db.Model):
+    __tablename__ = "recovery_summary"
+
+    id = db.Column(db.Integer, primary_key=True)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"))
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"))
+    year = db.Column(db.Integer)
+    quarter = db.Column(db.Integer)
+    remaining_box = db.Column(db.Float, default=0.0)
+    remaining_tl = db.Column(db.Float, default=0.0)
+    carry_box = db.Column(db.Float, default=0.0)
+    carry_tl = db.Column(db.Float, default=0.0)
+    daily_need = db.Column(db.Float, default=0.0)
+    projected_box = db.Column(db.Float, default=0.0)
+    projected_percent = db.Column(db.Float, default=0.0)
+    risk_score = db.Column(db.Float, default=0.0)
+    status = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    representative = db.relationship("Representative", backref="recovery_summaries")
+    product = db.relationship("Product", backref="recovery_summaries")
