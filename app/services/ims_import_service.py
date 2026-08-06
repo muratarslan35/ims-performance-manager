@@ -1020,7 +1020,6 @@ class IMSImportService:
             manager=manager,
             product=product.product_name,
             competitor=competitor,
-            brick=brick,
             market=market,
             unit=metrics["unit"],
             tl=metrics["tl"],

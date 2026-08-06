@@ -118,7 +118,6 @@ class IMSImporter:
                 competitor=record.get(
                     "competitor"
                 ),
-                brick=record.get(
                     "brick"
                 ),
                 unit=record.get(
