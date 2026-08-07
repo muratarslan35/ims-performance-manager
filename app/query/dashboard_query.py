@@ -1,200 +1,81 @@
-"""
 V3 Architecture: Dashboard Query Layer (OLAP)
 =============================================
 Enterprise-grade read-only data access layer for the Dashboard.
-Contains ONLY SQLAlchemy queries. Strictly devoid of business logic,
-formatting, dictionary construction, and DML (INSERT/UPDATE/DELETE/COMMIT).
-Returns strongly typed Dataclasses and SQLAlchemy Rows.
+Strictly devoid of business logic, DTO instantiation, and DML operations.
+Returns heavily optimized, raw SQLAlchemy Rows.
+Integrates with AggregateBuilder and DashboardFilterParams.
 """
 
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
-import decimal
+import hashlib
+from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, desc, asc
-from sqlalchemy.orm import Query
-from sqlalchemy.sql.elements import BinaryExpression
+from sqlalchemy import func, desc, and_
+from sqlalchemy.engine.row import Row
 
 from app.extensions import db
 from app.models import (
-    Product, 
     Representative, 
     Target, 
     IMSSummary
 )
+from app.query.base_query import AggregateBuilder
+from app.query.filters import DashboardFilterParams, DashboardFilter
 
-
-# =============================================================================
-# DATA TRANSFER OBJECTS (DTOs)
-# =============================================================================
-
-@dataclass
-class TopRepresentativeRow:
-    rep_id: int
-    rep_name: str
-    city: str
-    total_tl: float
-    bonus: float
-    target_tl: float
-
-
-@dataclass
-class CityPerformanceRow:
-    city: str
-    total_tl: float
-    target_tl: float
-    rep_count: int
-
-
-@dataclass
-class MarketShareTrendRow:
-    year: int
-    month: int
-    avg_share: float
-
-
-@dataclass
-class HistoryRow:
-    year: int
-    month: int
-    total_tl: float
-    bonus: float
-
-
-# =============================================================================
-# QUERY LAYER
-# =============================================================================
 
 class DashboardQuery:
     """
-    Read-Only Online Analytical Processing (OLAP) Query Layer.
-    Executes heavily optimized group-by queries, utilizes outer joins,
-    and prevents N+1 using specific column selections and eager loading strategies.
+    Strict Read-Only Data Access Layer for Dashboard Service.
+    Executes heavily optimized group-by queries via AggregateBuilder.
+    Returns raw SQLAlchemy Rows to be mapped by the Mapper/Service layer.
     """
 
-    @staticmethod
-    def apply_filters(query: Query, filters: Dict[str, Any]) -> Query:
+    def __init__(self, session=None):
+        self.session = session or db.session
+
+    def _generate_cache_signature(
+        self, 
+        query_name: str, 
+        filters: Optional[DashboardFilterParams], 
+        limit: Optional[int], 
+        offset: Optional[int]
+    ) -> str:
         """
-        Unified filtering mechanism for all Dashboard OLAP queries.
-        Safely applies filters only if they are present in the dictionary.
-        Uses EXISTS (.has()) for related model filtering to avoid JOIN pollution.
+        Standardized cache key generator mechanism for V3 Cache Layer integration.
+        Provides a deterministic signature string representing the exact query state.
+        DashboardCache layer will use this hook to set/get Redis keys.
         """
-        if not filters:
-            return query
-
-        # IMSSummary / Time Filters
-        if "year" in filters:
-            query = query.filter(IMSSummary.year == filters["year"])
-        if "month" in filters:
-            query = query.filter(IMSSummary.month == filters["month"])
-        if "quarter" in filters:
-            query = query.filter(IMSSummary.quarter == filters["quarter"])
-        if "week_number" in filters and hasattr(IMSSummary, "week_number"):
-            query = query.filter(IMSSummary.week_number == filters["week_number"])
-
-        # Identifiers
-        if "representative_id" in filters:
-            query = query.filter(IMSSummary.representative_id == filters["representative_id"])
-        if "product_id" in filters:
-            query = query.filter(IMSSummary.product_id == filters["product_id"])
-
-        # Representative Filters (Requires Representative to be Joined or explicitly filtered via IMSSummary relation)
-        if any(k in filters for k in ["region", "manager", "city", "territory"]):
-            # If Representative is not in the select entities, we use an EXISTS subquery
-            # to filter IMSSummary without breaking GROUP BY cardinality.
-            rep_conditions = []
-            if "region" in filters:
-                rep_conditions.append(Representative.region == filters["region"])
-            if "manager" in filters:
-                rep_conditions.append(Representative.manager == filters["manager"])
-            if "city" in filters:
-                rep_conditions.append(Representative.city == filters["city"])
-            if "territory" in filters:
-                rep_conditions.append(Representative.territory == filters["territory"])
-            
-            query = query.filter(IMSSummary.representative.has(db.and_(*rep_conditions)))
-
-        # Product Filters
-        if "is_prime_product" in filters:
-            query = query.filter(
-                IMSSummary.product.has(Product.is_prime_product == filters["is_prime_product"])
-            )
-
-        return query
-
-    def _build_aggregate_query(
-        self,
-        select_entities: List[Any],
-        group_by_entities: List[Any],
-        joins: Optional[List[Tuple[Any, BinaryExpression, bool]]] = None,
-        filters: Optional[Dict[str, Any]] = None,
-        order_by: Optional[Any] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None
-    ) -> Query:
-        """
-        Common Aggregate Builder to prevent DRY violations across OLAP queries.
-        Constructs standardized GROUP BY queries with dynamic joins, filtering, and pagination.
+        signature_parts = [f"q:{query_name}"]
         
-        Args:
-            select_entities: Columns and aggregate functions to select.
-            group_by_entities: Columns to group by.
-            joins: List of tuples (TargetModel, ON Condition, is_outer_join).
-            filters: Dictionary of filters passed to apply_filters.
-            order_by: SQLAlchemy order_by construct.
-            limit: Pagination limit.
-            offset: Pagination offset.
-        """
-        query = db.session.query(*select_entities)
-
-        # Dynamic Joins
-        if joins:
-            for model, condition, is_outer in joins:
-                if is_outer:
-                    query = query.outerjoin(model, condition)
-                else:
-                    query = query.join(model, condition)
-
-        # Unified Filters
         if filters:
-            query = self.apply_filters(query, filters)
-
-        # Aggregation
-        if group_by_entities:
-            query = query.group_by(*group_by_entities)
-
-        # Sorting & Pagination
-        if order_by is not None:
-            if isinstance(order_by, (list, tuple)):
-                query = query.order_by(*order_by)
-            else:
-                query = query.order_by(order_by)
-
+            for key, value in sorted(filters.__dict__.items()):
+                if value is not None:
+                    signature_parts.append(f"{key}={value}")
+                    
         if limit is not None:
-            query = query.limit(limit)
-
+            signature_parts.append(f"l:{limit}")
         if offset is not None:
-            query = query.offset(offset)
-
-        return query
+            signature_parts.append(f"o:{offset}")
+            
+        raw_signature = "|".join(signature_parts)
+        return hashlib.md5(raw_signature.encode('utf-8')).hexdigest()
 
     def load_top_representatives(
         self, 
-        filters: Optional[Dict[str, Any]] = None, 
+        filters: Optional[DashboardFilterParams] = None, 
         limit: Optional[int] = 10, 
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
-    ) -> List[TopRepresentativeRow]:
+    ) -> Sequence[Row]:
         """
-        Calculates and retrieves top performing representatives.
-        Returns Dataclass array for strict typing.
+        Retrieves top performing representatives based on total realization.
+        Returns raw SQLAlchemy Rows to avoid ORM instantiation overhead.
         """
         default_order = order_by if order_by is not None else desc("total_tl")
         
         joins = [
             (Representative, IMSSummary.representative_id == Representative.id, False),
             (Target, 
-                db.and_(
+                and_(
                     Target.representative_id == Representative.id,
                     Target.year == IMSSummary.year
                 ), 
@@ -211,47 +92,45 @@ class DashboardQuery:
             func.sum(Target.tl_target).label("target_tl")
         ]
 
-        group_cols = [Representative.id, Representative.rep_name, Representative.city]
+        group_cols = [
+            Representative.id, 
+            Representative.rep_name, 
+            Representative.city
+        ]
 
-        query = self._build_aggregate_query(
+        # Standardized Cache Hook integration ready for implementation
+        # cache_key = self._generate_cache_signature("top_reps", filters, limit, offset)
+
+        query = AggregateBuilder.build(
+            session=self.session,
             select_entities=select_cols,
             group_by_entities=group_cols,
             joins=joins,
-            filters=filters,
+            filter_callable=lambda q: DashboardFilter.apply(q, filters),
             order_by=default_order,
             limit=limit,
             offset=offset
         )
 
-        rows = query.all()
-        return [
-            TopRepresentativeRow(
-                rep_id=row[0],
-                rep_name=row[1] or "",
-                city=row[2] or "",
-                total_tl=float(row[3] or 0.0),
-                bonus=float(row[4] or 0.0),
-                target_tl=float(row[5] or 0.0)
-            )
-            for row in rows
-        ]
+        return query.all()
 
     def load_city_performance(
         self, 
-        filters: Optional[Dict[str, Any]] = None, 
+        filters: Optional[DashboardFilterParams] = None, 
         limit: Optional[int] = None, 
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
-    ) -> List[CityPerformanceRow]:
+    ) -> Sequence[Row]:
         """
-        Calculates territory performance aggregated by Representative City.
+        Retrieves territory performance aggregated by Representative City.
+        Returns raw SQLAlchemy Rows.
         """
         default_order = order_by if order_by is not None else desc("total_tl")
 
         joins = [
             (Representative, IMSSummary.representative_id == Representative.id, False),
             (Target, 
-                db.and_(
+                and_(
                     Target.representative_id == Representative.id,
                     Target.year == IMSSummary.year,
                     Target.month == IMSSummary.month
@@ -269,42 +148,39 @@ class DashboardQuery:
 
         group_cols = [Representative.city]
 
-        # Base query configuration
-        query = self._build_aggregate_query(
+        # Apply specific city presence constraint via lambda wrapper around the generic filter
+        def _apply_city_filters(q):
+            q = DashboardFilter.apply(q, filters)
+            return q.filter(Representative.city.isnot(None))
+
+        query = AggregateBuilder.build(
+            session=self.session,
             select_entities=select_cols,
             group_by_entities=group_cols,
             joins=joins,
-            filters=filters,
+            filter_callable=_apply_city_filters,
             order_by=default_order,
             limit=limit,
             offset=offset
         )
 
-        # Extra filter explicitly required for city performance logically
-        query = query.filter(Representative.city.isnot(None))
-
-        rows = query.all()
-        return [
-            CityPerformanceRow(
-                city=row[0],
-                total_tl=float(row[1] or 0.0),
-                target_tl=float(row[2] or 0.0),
-                rep_count=int(row[3] or 0)
-            )
-            for row in rows
-        ]
+        return query.all()
 
     def load_market_share_trend(
         self, 
-        filters: Optional[Dict[str, Any]] = None, 
+        filters: Optional[DashboardFilterParams] = None, 
         limit: Optional[int] = 12, 
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
-    ) -> List[MarketShareTrendRow]:
+    ) -> Sequence[Row]:
         """
-        Calculates the chronological progression of average market share.
+        Retrieves the chronological progression of average market share.
+        Returns raw SQLAlchemy Rows.
         """
-        default_order = order_by if order_by is not None else [desc(IMSSummary.year), desc(IMSSummary.month)]
+        default_order = order_by if order_by is not None else [
+            desc(IMSSummary.year), 
+            desc(IMSSummary.month)
+        ]
 
         select_cols = [
             IMSSummary.year,
@@ -314,37 +190,33 @@ class DashboardQuery:
 
         group_cols = [IMSSummary.year, IMSSummary.month]
 
-        query = self._build_aggregate_query(
+        query = AggregateBuilder.build(
+            session=self.session,
             select_entities=select_cols,
             group_by_entities=group_cols,
-            filters=filters,
+            filter_callable=lambda q: DashboardFilter.apply(q, filters),
             order_by=default_order,
             limit=limit,
             offset=offset
         )
 
-        rows = query.all()
-        return [
-            MarketShareTrendRow(
-                year=row[0],
-                month=row[1],
-                avg_share=float(row[2] or 0.0)
-            )
-            for row in rows
-        ]
+        return query.all()
 
     def load_history(
         self, 
-        filters: Optional[Dict[str, Any]] = None, 
+        filters: Optional[DashboardFilterParams] = None, 
         limit: Optional[int] = 6, 
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
-    ) -> List[HistoryRow]:
+    ) -> Sequence[Row]:
         """
-        Calculates the chronological progression of overall totals and bonuses.
-        Replaces legacy raw SQL executions with highly optimized ORM constructs.
+        Retrieves chronological progression of overall sales performance and bonuses.
+        Returns raw SQLAlchemy Rows.
         """
-        default_order = order_by if order_by is not None else [desc(IMSSummary.year), desc(IMSSummary.month)]
+        default_order = order_by if order_by is not None else [
+            desc(IMSSummary.year), 
+            desc(IMSSummary.month)
+        ]
 
         select_cols = [
             IMSSummary.year,
@@ -355,22 +227,14 @@ class DashboardQuery:
 
         group_cols = [IMSSummary.year, IMSSummary.month]
 
-        query = self._build_aggregate_query(
+        query = AggregateBuilder.build(
+            session=self.session,
             select_entities=select_cols,
             group_by_entities=group_cols,
-            filters=filters,
+            filter_callable=lambda q: DashboardFilter.apply(q, filters),
             order_by=default_order,
             limit=limit,
             offset=offset
         )
 
-        rows = query.all()
-        return [
-            HistoryRow(
-                year=row[0],
-                month=row[1],
-                total_tl=float(row[2] or 0.0),
-                bonus=float(row[3] or 0.0)
-            )
-            for row in rows
-        ]
+        return query.all()
