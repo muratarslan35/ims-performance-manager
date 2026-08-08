@@ -8,6 +8,21 @@
 {% endblock %}
 
 {% block content %}
+{# --- GÜVENLİ DEĞİŞKEN TANIMLAMALARI (NULL-SAFE MATH) --- #}
+{% set active_p = payload.active_period | default({}, true) %}
+{% set active_q = active_p.quarter | default(None, true) %}
+
+{% set total_targets = payload.total_targets | default(0, true) | int %}
+{% set total_products = payload.total_products | default(0, true) | int %}
+{% set safe_divisor = total_products if total_products > 0 else 1 %}
+{% set target_health = ((total_targets / safe_divisor) * 100) | round(1) %}
+
+{% set overall_safe = payload.overall_percent | default(0, true) | float %}
+{% set ps = payload.prime_summary | default({}, true) %}
+{% set ud = payload.upload_details | default({}, true) %}
+{% set ais = payload.ai_scores | default({}, true) %}
+{% set ain = payload.ai_next_month | default({}, true) %}
+
 <div class="dash-hero mb-4">
   <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3">
     <div>
@@ -20,16 +35,16 @@
         <div class="dash-hero-badge">
           <i class="bi bi-calendar3-week"></i>
           Aktif Quarter:
-          <strong>{{ active_quarter if active_quarter != "-" else "Tanımsız" }}</strong>
+          <strong>{{ "Q" ~ active_q if active_q else "Tanımsız" }}</strong>
         </div>
         <div class="dash-hero-badge">
           <i class="bi bi-cloud-check-fill"></i>
           Son IMS:
-          {% if latest_upload_date %}<strong>{{ latest_upload_date[:10] }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
+          {% if payload.latest_upload_date %}<strong>{{ (payload.latest_upload_date | string)[:10] }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
         </div>
         <div class="dash-hero-badge">
-          <i class="bi bi-circle-fill {% if latest_upload_status == 'COMPLETED' %}text-success{% elif latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %} dash-hero-status-dot"></i>
-          {% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status %}{{ latest_upload_status }}{% else %}Yükleme yok{% endif %}
+          <i class="bi bi-circle-fill {% if payload.latest_upload_status == 'COMPLETED' %}text-success{% elif payload.latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %} dash-hero-status-dot"></i>
+          {% if payload.latest_upload_status == "COMPLETED" %}Hazır{% elif payload.latest_upload_status == "FAILED" %}Hata{% elif payload.latest_upload_status %}{{ payload.latest_upload_status }}{% else %}Yükleme yok{% endif %}
         </div>
       </div>
       <div class="dash-live-row mt-2">
@@ -41,14 +56,11 @@
 </div>
 
 <div class="kpi-grid mb-4">
-  {% set overall_safe = overall_percent if overall_percent > 0 else 0 %}
-  {% set target_health = ((total_targets / (total_products if total_products > 0 else 1)) * 100) | round(1) %}
-
   <div class="kpi-card kpi-theme-primary">
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Aktif Temsilci</span>
-        <div class="kpi-value">{{ total_representatives }}</div>
+        <div class="kpi-value">{{ payload.total_representatives | default(0, true) }}</div>
         <div class="kpi-desc">Sahada aktif satış kadrosu</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-people-fill"></i></div>
@@ -83,7 +95,7 @@
       </div>
       <div class="kpi-icon"><i class="bi bi-bullseye"></i></div>
     </div>
-    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-neutral">• Sabit</span><i class="bi bi-diagram-3"></i> Ürün başına hedef yoğunluğu: %{{ "%.1f"|format(target_health if target_health > 0 else 0) }}</div>
+    <div class="kpi-comparison"><span class="kpi-delta kpi-delta-neutral">• Sabit</span><i class="bi bi-diagram-3"></i> Ürün başına hedef yoğunluğu: %{{ "%.1f"|format(target_health) }}</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,27 24,24 48,20 72,18 96,15 120,13"></polyline>
     </svg>
@@ -93,12 +105,12 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Gerçekleşme %</span>
-        <div class="kpi-value">%{{ overall_percent }}</div>
+        <div class="kpi-value">%{{ overall_safe }}</div>
         <div class="kpi-desc">Toplam hedefe karşı anlık gerçekleşme</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
     </div>
-    <div class="kpi-comparison"><span class="kpi-delta {% if overall_percent >= 100 %}kpi-delta-up{% else %}kpi-delta-down{% endif %}">{% if overall_percent >= 100 %}▲ +{{ overall_percent - 100 }}{% else %}▼ -{{ 100 - overall_percent }}{% endif %}</span><i class="bi bi-bar-chart"></i> %100 hedefe karşı toplam TL gerçekleşmesi</div>
+    <div class="kpi-comparison"><span class="kpi-delta {% if overall_safe >= 100 %}kpi-delta-up{% else %}kpi-delta-down{% endif %}">{% if overall_safe >= 100 %}▲ +{{ (overall_safe - 100) | round(1) }}{% else %}▼ -{{ (100 - overall_safe) | round(1) }}{% endif %}</span><i class="bi bi-bar-chart"></i> %100 hedefe karşı toplam TL gerçekleşmesi</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,30 24,24 48,{{ 30 - (overall_safe * 0.16) | round(0, 'floor') }} 72,{{ 29 - (overall_safe * 0.20) | round(0, 'floor') }} 96,{{ 28 - (overall_safe * 0.22) | round(0, 'floor') }} 120,{{ 26 - (overall_safe * 0.24) | round(0, 'floor') }}"></polyline>
     </svg>
@@ -108,7 +120,7 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Ana Prim</span>
-        <div class="kpi-value kpi-value-money">{% if prime_summary.main_prime > 0 %}{{ "{:,.0f}".format(prime_summary.main_prime) }} ₺{% else %}—{% endif %}</div>
+        <div class="kpi-value kpi-value-money">{% if ps.main_prime and ps.main_prime > 0 %}{{ "{:,.0f}".format(ps.main_prime) }} ₺{% else %}—{% endif %}</div>
         <div class="kpi-desc">Prim motoru tarafından hesaplanan ana toplam</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-cash-stack"></i></div>
@@ -123,7 +135,7 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Tahmini Prim</span>
-        <div class="kpi-value kpi-value-money">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
+        <div class="kpi-value kpi-value-money">{% if ps.expected_prime and ps.expected_prime > 0 %}{{ "{:,.0f}".format(ps.expected_prime) }} ₺{% else %}—{% endif %}</div>
         <div class="kpi-desc">AI destekli mevcut prim projeksiyonu</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-stars"></i></div>
@@ -138,7 +150,7 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Quarter</span>
-        <div class="kpi-value">{{ active_quarter if active_quarter != "-" else "—" }}</div>
+        <div class="kpi-value">{{ "Q" ~ active_q if active_q else "—" }}</div>
         <div class="kpi-desc">Takip edilen aktif çeyrek dönem</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-calendar-week"></i></div>
@@ -149,16 +161,16 @@
     </svg>
   </div>
 
-  <div class="kpi-card {% if latest_upload_status == 'COMPLETED' %}kpi-theme-success{% elif latest_upload_status == 'FAILED' %}kpi-theme-danger{% else %}kpi-theme-warning{% endif %}">
+  <div class="kpi-card {% if payload.latest_upload_status == 'COMPLETED' %}kpi-theme-success{% elif payload.latest_upload_status == 'FAILED' %}kpi-theme-danger{% else %}kpi-theme-warning{% endif %}">
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Son IMS Durumu</span>
-        <div class="kpi-value kpi-value-status">{% if latest_upload_status == "COMPLETED" %}Hazır{% elif latest_upload_status == "FAILED" %}Hata{% elif latest_upload_status == "PROCESSING" %}İşleniyor{% else %}Veri yok{% endif %}</div>
+        <div class="kpi-value kpi-value-status">{% if payload.latest_upload_status == "COMPLETED" %}Hazır{% elif payload.latest_upload_status == "FAILED" %}Hata{% elif payload.latest_upload_status == "PROCESSING" %}İşleniyor{% else %}Veri yok{% endif %}</div>
         <div class="kpi-desc">En son IMS içe aktarma iş akışı</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-file-earmark-excel"></i></div>
     </div>
-    <div class="kpi-comparison"><span class="kpi-delta {% if latest_upload_status == 'FAILED' %}kpi-delta-down{% else %}kpi-delta-up{% endif %}">{% if latest_upload_status == 'FAILED' %}▼ -3{% else %}▲ +2{% endif %}</span><i class="bi bi-clock"></i> {% if latest_upload_date %}{{ latest_upload_date.replace('T',' ')[:16] }}{% else %}Son kayıt yok{% endif %}</div>
+    <div class="kpi-comparison"><span class="kpi-delta {% if payload.latest_upload_status == 'FAILED' %}kpi-delta-down{% else %}kpi-delta-up{% endif %}">{% if payload.latest_upload_status == 'FAILED' %}▼ -3{% else %}▲ +2{% endif %}</span><i class="bi bi-clock"></i> {% if payload.latest_upload_date %}{{ (payload.latest_upload_date | string).replace('T',' ')[:16] }}{% else %}Son kayıt yok{% endif %}</div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,24 24,22 48,19 72,18 96,14 120,12"></polyline>
     </svg>
@@ -168,7 +180,7 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Aktif Dönem</span>
-        <div class="kpi-value kpi-value-status">{% if last_upload %}{{ last_upload.month }}/{{ last_upload.year }}{% else %}—{% endif %}</div>
+        <div class="kpi-value kpi-value-status">{% if ud.month %}{{ ud.month }}/{{ ud.year }}{% else %}—{% endif %}</div>
         <div class="kpi-desc">Son IMS yüklemesinden alınan dönem</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-calendar-range"></i></div>
@@ -183,15 +195,15 @@
     <div class="kpi-card-header">
       <div>
         <span class="kpi-label">Toplam Yükleme</span>
-        <div class="kpi-value">{{ total_uploads }}</div>
+        <div class="kpi-value">{{ payload.total_uploads | default(0, true) }}</div>
         <div class="kpi-desc">Sistemde arşivlenen IMS yükleme adedi</div>
       </div>
       <div class="kpi-icon"><i class="bi bi-cloud-upload"></i></div>
     </div>
     <div class="kpi-comparison">
       <span class="kpi-delta kpi-delta-up">▲ +3</span>
-      <span class="badge badge-pill-success">{{ completed_uploads }} Tamamlandı</span>
-      {% if failed_uploads > 0 %}<span class="badge badge-pill-danger">{{ failed_uploads }} Hata</span>{% endif %}
+      <span class="badge badge-pill-success">{{ payload.completed_uploads | default(0, true) }} Tamamlandı</span>
+      {% if payload.failed_uploads and payload.failed_uploads > 0 %}<span class="badge badge-pill-danger">{{ payload.failed_uploads }} Hata</span>{% endif %}
     </div>
     <svg class="kpi-sparkline" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
       <polyline points="0,29 24,26 48,23 72,20 96,16 120,14"></polyline>
@@ -219,18 +231,19 @@
         <span class="section-chip section-chip-success">Toplam Ciro</span>
       </div>
       <div class="section-card-body">
-        {% if product_performance %}
+        {% if payload.products %}
           <div class="chart-container chart-container-md"><canvas id="productDonutChart"></canvas></div>
           <div class="donut-legend mt-3" id="productDonutLegend">
-            {% for p in product_performance %}
+            {% for p in payload.products %}
+            {% set prod_tl = p.realization_tl | default(0, true) %}
             <button type="button" class="donut-legend-item" data-donut-index="{{ loop.index0 }}">
-              <span class="donut-legend-label"><span class="donut-legend-dot" id="donut-dot-{{ loop.index0 }}"></span>{{ p.product_name }}</span>
-              <span class="donut-legend-value">{% if p.total_tl > 0 %}{{ "{:,.0f}".format(p.total_tl) }} ₺{% else %}—{% endif %}</span>
+              <span class="donut-legend-label"><span class="donut-legend-dot" id="donut-dot-{{ loop.index0 }}"></span>{{ p.product_name | default('Unknown') }}</span>
+              <span class="donut-legend-value">{% if prod_tl > 0 %}{{ "{:,.0f}".format(prod_tl) }} ₺{% else %}—{% endif %}</span>
             </button>
             {% endfor %}
             <div class="donut-legend-item donut-legend-total">
               <span class="donut-legend-label">Toplam</span>
-              <span class="donut-legend-value">{% if total_ciro > 0 %}{{ "{:,.0f}".format(total_ciro) }} ₺{% else %}—{% endif %}</span>
+              <span class="donut-legend-value">{% if payload.overall_realization_tl and payload.overall_realization_tl > 0 %}{{ "{:,.0f}".format(payload.overall_realization_tl) }} ₺{% else %}—{% endif %}</span>
             </div>
           </div>
         {% else %}
@@ -252,32 +265,32 @@
   <div class="ai-score-grid">
     <div class="ai-score-item">
       <div class="ai-score-label">Risk Puanı</div>
-      <div class="ai-score-value">{{ ai_scores.risk_score }}</div>
+      <div class="ai-score-value">{{ ais.risk_score | default('0', true) }}</div>
       <div class="ai-score-unit">/ 100</div>
     </div>
     <div class="ai-score-item">
       <div class="ai-score-label">Fırsat Puanı</div>
-      <div class="ai-score-value">{{ ai_scores.opportunity_score }}</div>
+      <div class="ai-score-value">{{ ais.opportunity_score | default('0', true) }}</div>
       <div class="ai-score-unit">/ 100</div>
     </div>
     <div class="ai-score-item">
       <div class="ai-score-label">Hedefe Ulaşma Olasılığı</div>
-      <div class="ai-score-value">%{{ ai_scores.goal_probability }}</div>
+      <div class="ai-score-value">%{{ ais.goal_probability | default('0', true) }}</div>
       <div class="ai-score-unit">Gerçekleşme bazlı</div>
     </div>
     <div class="ai-score-item">
       <div class="ai-score-label">Beklenen Prim</div>
-      <div class="ai-score-value ai-score-value-money">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</div>
+      <div class="ai-score-value ai-score-value-money">{% if ps.expected_prime and ps.expected_prime > 0 %}{{ "{:,.0f}".format(ps.expected_prime) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Mevcut performans</div>
     </div>
     <div class="ai-score-item">
       <div class="ai-score-label">Kaçırılan Prim</div>
-      <div class="ai-score-value ai-score-value-money text-danger-soft">{% if ai_scores.lost_prime > 0 %}{{ "{:,.0f}".format(ai_scores.lost_prime) }} ₺{% else %}—{% endif %}</div>
+      <div class="ai-score-value ai-score-value-money text-danger-soft">{% if ps.lost_prime and ps.lost_prime > 0 %}{{ "{:,.0f}".format(ps.lost_prime) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Hedef farkı</div>
     </div>
     <div class="ai-score-item">
       <div class="ai-score-label">Gelecek Ay Tahmini</div>
-      <div class="ai-score-value ai-score-value-money text-success-soft">{% if ai_scores.additional_prime > 0 %}{{ "{:,.0f}".format(ai_scores.additional_prime) }} ₺{% else %}—{% endif %}</div>
+      <div class="ai-score-value ai-score-value-money text-success-soft">{% if ain.predicted_tl and ain.predicted_tl > 0 %}{{ "{:,.0f}".format(ain.predicted_tl) }} ₺{% else %}—{% endif %}</div>
       <div class="ai-score-unit">Mevcut veriden tahmin</div>
     </div>
   </div>
@@ -285,9 +298,9 @@
     <div class="ai-panel-section">
       <div class="ai-section-title"><i class="bi bi-sun-fill"></i> Bugünün Özeti</div>
       <div class="ai-section-body">
-        {% if ai_messages %}
-          {% for msg in ai_messages %}
-          <div class="ai-insight-row"><i class="bi bi-dot"></i>{{ msg }}</div>
+        {% if payload.ai_messages %}
+          {% for msg in payload.ai_messages %}
+          <div class="ai-insight-row"><i class="bi bi-dot"></i>{{ msg | string }}</div>
           {% endfor %}
         {% else %}
           <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-info-circle"></i>Günlük özet için IMS verisi yükleyin</div>
@@ -299,11 +312,11 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-exclamation-triangle-fill text-warning"></i> Dikkat Gerektiren Ürünler</div>
         <div class="ai-section-body">
-          {% if ai_risky_products %}
-            {% for p in ai_risky_products[:5] %}
+          {% if payload.ai_risky_products %}
+            {% for p in payload.ai_risky_products[:5] %}
             <div class="ai-insight-row ai-insight-warning">
               <i class="bi bi-exclamation-circle-fill"></i>
-              {{ p.product_name }} — %{{ p.realization_percent }}
+              {{ p.product_name | default('Unknown') }} — %{{ p.realization_percent | default(0, true) }}
               {% if p.risk_reasons %}<small class="text-muted ms-1">({{ p.risk_reasons | join(', ') }})</small>{% endif %}
             </div>
             {% endfor %}
@@ -316,10 +329,10 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-person-x-fill text-danger-soft"></i> Riskli Temsilciler</div>
         <div class="ai-section-body">
-          {% if ai_risky_representatives %}
-            {% for r in ai_risky_representatives[:3] %}
+          {% if payload.ai_risky_representatives %}
+            {% for r in payload.ai_risky_representatives[:3] %}
             <div class="ai-insight-row ai-insight-warning">
-              <i class="bi bi-person-fill"></i>{{ r.rep_name }} ({{ r.city }}) — %{{ r.realization_percent }}
+              <i class="bi bi-person-fill"></i>{{ r.rep_name | default('Unknown') }} ({{ r.city | default('-') }}) — %{{ r.realization_percent | default(0, true) }}
             </div>
             {% endfor %}
           {% else %}
@@ -333,10 +346,10 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-bullseye text-success-soft"></i> Hedefe Yakın Ürünler</div>
         <div class="ai-section-body">
-          {% if ai_near_target %}
-            {% for p in ai_near_target[:3] %}
+          {% if payload.ai_near_target %}
+            {% for p in payload.ai_near_target[:3] %}
             <div class="ai-insight-row ai-insight-near">
-              <i class="bi bi-arrow-up-right-circle-fill"></i>{{ p.product_name }} — %{{ p.realization_percent }}
+              <i class="bi bi-arrow-up-right-circle-fill"></i>{{ p.product_name | default('Unknown') }} — %{{ p.realization_percent | default(0, true) }}
             </div>
             {% endfor %}
           {% else %}
@@ -348,9 +361,9 @@
       <div class="ai-panel-section ai-panel-section-half">
         <div class="ai-section-title"><i class="bi bi-lightbulb-fill text-warning"></i> Önerilen Aksiyonlar</div>
         <div class="ai-section-body">
-          {% if ai_recommendations %}
-            {% for action in ai_recommendations[:4] %}
-            <div class="ai-insight-row ai-insight-action"><i class="bi {{ action.icon }}"></i>{{ action.text }}</div>
+          {% if payload.ai_recommendation %}
+            {% for action in payload.ai_recommendation[:4] %}
+            <div class="ai-insight-row ai-insight-action"><i class="bi {{ action.icon | default('bi-check') }}"></i>{{ action.text | default('') }}</div>
             {% endfor %}
           {% else %}
             <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-check2-all"></i>Aksiyon gerekmez</div>
@@ -364,21 +377,21 @@
       <div class="ai-section-body ai-forecast-body">
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Gelecek Ay Tahmini</span>
-          <span class="ai-forecast-value">{% if ai_next_month.predicted_tl > 0 %}{{ "{:,.0f}".format(ai_next_month.predicted_tl) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-value">{% if ain.predicted_tl and ain.predicted_tl > 0 %}{{ "{:,.0f}".format(ain.predicted_tl) }} ₺{% else %}—{% endif %}</span>
         </div>
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Trend Yönü</span>
-          <span class="ai-forecast-value {% if ai_next_month.trend_direction == 'up' %}text-success-soft{% elif ai_next_month.trend_direction == 'down' %}text-danger-soft{% endif %}">
-            {% if ai_next_month.trend_direction == 'up' %}▲ Yükselen{% elif ai_next_month.trend_direction == 'down' %}▼ Düşen{% else %}→ Sabit{% endif %}
+          <span class="ai-forecast-value {% if ain.trend_direction == 'up' %}text-success-soft{% elif ain.trend_direction == 'down' %}text-danger-soft{% endif %}">
+            {% if ain.trend_direction == 'up' %}▲ Yükselen{% elif ain.trend_direction == 'down' %}▼ Düşen{% else %}→ Sabit{% endif %}
           </span>
         </div>
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Beklenen Prim</span>
-          <span class="ai-forecast-value text-success-soft">{% if ai_scores.expected_prime > 0 %}{{ "{:,.0f}".format(ai_scores.expected_prime) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-value text-success-soft">{% if ps.expected_prime and ps.expected_prime > 0 %}{{ "{:,.0f}".format(ps.expected_prime) }} ₺{% else %}—{% endif %}</span>
         </div>
         <div class="ai-forecast-item">
           <span class="ai-forecast-label">Kaçırılan Prim</span>
-          <span class="ai-forecast-value text-danger-soft">{% if ai_scores.lost_prime > 0 %}{{ "{:,.0f}".format(ai_scores.lost_prime) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-value text-danger-soft">{% if ps.lost_prime and ps.lost_prime > 0 %}{{ "{:,.0f}".format(ps.lost_prime) }} ₺{% else %}—{% endif %}</span>
         </div>
       </div>
     </div>
@@ -400,19 +413,21 @@
       </div>
       <div class="collapse show" id="topRepsCollapse">
         <div class="section-card-body rep-list-body">
-          {% if top_representatives %}
-            {% for rep in top_representatives %}
+          {% if payload.top_representatives %}
+            {% for rep in payload.top_representatives %}
             <div class="rep-row">
-              <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank }}</div>
+              <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank | default(loop.index, true) }}</div>
               <div class="rep-avatar"><i class="bi bi-person-circle"></i></div>
               <div class="rep-info">
-                <div class="rep-name">{{ rep.rep_name }}</div>
-                <div class="rep-city">{{ rep.city }}</div>
-                <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [rep.realization_percent, 100]|min }}%;"></div></div>
+                <div class="rep-name">{{ rep.rep_name | default('Unknown') }}</div>
+                <div class="rep-city">{{ rep.city | default('-') }}</div>
+                {% set r_pct = rep.realization_percent | default(0, true) %}
+                <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [r_pct, 100]|min }}%;"></div></div>
               </div>
-              <div class="rep-achievement {% if rep.realization_percent >= 90 %}high{% elif rep.realization_percent >= 70 %}medium{% else %}low{% endif %}">
-                <div class="rep-percent">%{{ rep.realization_percent }}</div>
-                <div class="rep-ciro">{% if rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
+              {% set r_pct = rep.realization_percent | default(0, true) %}
+              <div class="rep-achievement {% if r_pct >= 90 %}high{% elif r_pct >= 70 %}medium{% else %}low{% endif %}">
+                <div class="rep-percent">%{{ r_pct }}</div>
+                <div class="rep-ciro">{% if rep.total_tl and rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
               </div>
             </div>
             {% endfor %}
@@ -434,16 +449,16 @@
           <canvas id="gaugeChart"></canvas>
         </div>
         <div class="gauge-center-text">
-          <div class="gauge-value">%{{ overall_percent }}</div>
+          <div class="gauge-value">%{{ overall_safe }}</div>
           <div class="gauge-label">Gerçekleşme</div>
         </div>
         <div class="gauge-stats mt-3">
           <div class="gauge-stat-item">
-            <div class="gauge-stat-value">{% if overall_realization_tl > 0 %}{{ "{:,.0f}".format(overall_realization_tl) }} ₺{% else %}—{% endif %}</div>
+            <div class="gauge-stat-value">{% if payload.overall_realization_tl and payload.overall_realization_tl > 0 %}{{ "{:,.0f}".format(payload.overall_realization_tl) }} ₺{% else %}—{% endif %}</div>
             <div class="gauge-stat-label">Gerçekleşen</div>
           </div>
           <div class="gauge-stat-item">
-            <div class="gauge-stat-value">{% if overall_target_tl > 0 %}{{ "{:,.0f}".format(overall_target_tl) }} ₺{% else %}—{% endif %}</div>
+            <div class="gauge-stat-value">{% if payload.overall_target_tl and payload.overall_target_tl > 0 %}{{ "{:,.0f}".format(payload.overall_target_tl) }} ₺{% else %}—{% endif %}</div>
             <div class="gauge-stat-label">Hedef</div>
           </div>
         </div>
@@ -460,7 +475,7 @@
         <span class="section-chip">Son 12 Ay</span>
       </div>
       <div class="section-card-body">
-        {% if monthly_trend.labels %}
+        {% if payload.simulation_history %}
           <div class="chart-container chart-container-lg"><canvas id="monthlyTrendChart"></canvas></div>
         {% else %}
           <div class="chart-placeholder"><i class="bi bi-graph-up"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
@@ -476,7 +491,7 @@
         <h2 class="section-card-title"><i class="bi bi-share-fill"></i> Pazar Payı Trendi</h2>
       </div>
       <div class="section-card-body">
-        {% if market_share_trend.labels %}
+        {% if payload.market_share_trend and payload.market_share_trend.labels %}
           <div class="chart-container chart-container-lg"><canvas id="marketShareChart"></canvas></div>
         {% else %}
           <div class="chart-placeholder"><i class="bi bi-share"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
@@ -498,7 +513,7 @@
           <button class="btn-export-placeholder" type="button" title="Dışa Aktar"><i class="bi bi-download"></i></button>
         </div>
       </div>
-      {% if product_performance %}
+      {% if payload.products %}
       <div class="table-responsive premium-table-wrap">
         <table class="table premium-table align-middle mb-0">
           <thead>
@@ -511,23 +526,26 @@
             </tr>
           </thead>
           <tbody>
-            {% for p in product_performance %}
+            {% for p in payload.products %}
+            {% set p_pct = p.realization_percent | default(0, true) %}
+            {% set p_tl = p.realization_tl | default(0, true) %}
+            {% set p_status = p.status | default('-', true) %}
             <tr>
-              <td class="product-name-cell">{{ p.product_name }}</td>
+              <td class="product-name-cell">{{ p.product_name | default('Unknown') }}</td>
               <td>
                 <div class="table-progress-wrap">
                   <div class="table-progress-track">
-                    <div class="table-progress-bar {% if p.realization_percent >= 90 %}high{% elif p.realization_percent >= 70 %}medium{% else %}low{% endif %}" style="width:{{ [p.realization_percent, 100]|min }}%;"></div>
+                    <div class="table-progress-bar {% if p_pct >= 90 %}high{% elif p_pct >= 70 %}medium{% else %}low{% endif %}" style="width:{{ [p_pct, 100]|min }}%;"></div>
                   </div>
-                  <span class="table-progress-value">%{{ p.realization_percent }}</span>
+                  <span class="table-progress-value">%{{ p_pct }}</span>
                 </div>
               </td>
-              <td class="text-muted">{% if p.target_tl > 0 %}{{ "{:,.0f}".format(p.target_tl) }} ₺{% else %}—{% endif %}</td>
-              <td class="fw-semibold">{% if p.total_tl > 0 %}{{ "{:,.0f}".format(p.total_tl) }} ₺{% else %}—{% endif %}</td>
+              <td class="text-muted">{% if p.target_tl and p.target_tl > 0 %}{{ "{:,.0f}".format(p.target_tl) }} ₺{% else %}—{% endif %}</td>
+              <td class="fw-semibold">{% if p_tl > 0 %}{{ "{:,.0f}".format(p_tl) }} ₺{% else %}—{% endif %}</td>
               <td>
-                <span class="product-status-badge {% if p.status == 'Tamamlandı' %}status-completed{% elif p.status == 'Devam Ediyor' %}status-ongoing{% else %}status-risky{% endif %}">
-                  <i class="bi {% if p.status == 'Tamamlandı' %}bi-check-circle-fill{% elif p.status == 'Devam Ediyor' %}bi-clock-fill{% else %}bi-exclamation-triangle-fill{% endif %}"></i>
-                  {{ p.status }}
+                <span class="product-status-badge {% if p_status == 'Tamamlandı' %}status-completed{% elif p_status == 'Devam Ediyor' %}status-ongoing{% else %}status-risky{% endif %}">
+                  <i class="bi {% if p_status == 'Tamamlandı' %}bi-check-circle-fill{% elif p_status == 'Devam Ediyor' %}bi-clock-fill{% else %}bi-exclamation-triangle-fill{% endif %}"></i>
+                  {{ p_status }}
                 </span>
               </td>
             </tr>
@@ -543,129 +561,107 @@
 </div>
 
 <div class="row g-4 mb-4">
-  <div class="col-lg-7">
+  <div class="col-12">
     <div class="section-card">
       <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-cloud-upload-fill"></i> Son Yüklenen IMS Dosyaları</h2>
-        <a href="{{ url_for('ims.index') }}" class="section-link-btn"><i class="bi bi-arrow-right-circle me-1"></i> Tümü</a>
-      </div>
-      <div class="section-card-body uploads-body">
-        {% if recent_uploads %}
-          {% for upload in recent_uploads %}
-          <a href="{{ url_for('ims.index') }}" class="upload-row clickable-row">
-            <div class="upload-icon"><i class="bi bi-file-earmark-excel-fill"></i></div>
-            <div class="upload-info">
-              <div class="upload-filename">{{ upload.file_name }}</div>
-              <div class="upload-meta">
-                <span><i class="bi bi-person me-1"></i>{{ upload.uploaded_by or "—" }}</span>
-                <span><i class="bi bi-clock me-1"></i>{{ upload.uploaded_at.replace('T',' ')[:16] }}</span>
-                <span><i class="bi bi-calendar-week me-1"></i>{{ upload.quarter }}</span>
-              </div>
-            </div>
-            <div>
-              <span class="upload-status-badge {% if upload.status == 'COMPLETED' %}status-completed{% elif upload.status == 'FAILED' %}status-failed{% else %}status-processing{% endif %}">
-                {% if upload.status == "COMPLETED" %}Tamamlandı{% elif upload.status == "FAILED" %}Hata{% elif upload.status == "PROCESSING" %}İşleniyor{% else %}{{ upload.status }}{% endif %}
-              </span>
-            </div>
-          </a>
-          {% endfor %}
-        {% else %}
-          <div class="empty-state"><i class="bi bi-cloud-upload"></i><p>Henüz IMS yüklemesi bulunmuyor</p></div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="col-lg-5">
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-bell-fill text-warning"></i> Uyarılar</h2>
+        <h2 class="section-card-title"><i class="bi bi-bell-fill text-warning"></i> Uyarılar ve Aksiyonlar</h2>
+        
+        {% set critical_products = payload.critical_products | default(0, true) | int %}
+        {% set risk_products = payload.risk_products | default(0, true) | int %}
+        {% set warning_products = payload.warning_products | default(0, true) | int %}
         {% set total_warnings = critical_products + risk_products + warning_products %}
+        
         {% if total_warnings > 0 %}<span class="badge bg-danger">{{ total_warnings }}</span>{% endif %}
       </div>
       <div class="section-card-body alerts-body">
-        {% if critical_products > 0 %}
-        <div class="alert-item alert-item-critical">
-          <div class="alert-item-icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
-          <div class="alert-item-text">
-            <strong>Kritik Ürün</strong>
-            <span>{{ critical_products }} ürün kritik durumda – acil aksiyon gerekli</span>
-            <small>Öncelik: Yüksek</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if risk_products > 0 %}
-        <div class="alert-item alert-item-warning">
-          <div class="alert-item-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
-          <div class="alert-item-text">
-            <strong>Riskli Ürün</strong>
-            <span>{{ risk_products }} ürün yakından takip edilmeli</span>
-            <small>Öncelik: Orta</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if warning_products > 0 %}
-        <div class="alert-item alert-item-info">
-          <div class="alert-item-icon"><i class="bi bi-eye-fill"></i></div>
-          <div class="alert-item-text">
-            <strong>Takip Seviyesinde</strong>
-            <span>{{ warning_products }} ürün izleme listesinde</span>
-            <small>Öncelik: İzleme</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if total_targets == 0 %}
-        <div class="alert-item alert-item-warning">
-          <div class="alert-item-icon"><i class="bi bi-bullseye"></i></div>
-          <div class="alert-item-text">
-            <strong>Eksik Hedef</strong>
-            <span>Sisteme henüz hedef girilmemiş</span>
-            <small>Durum zamanı: Şimdi</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if not last_upload %}
-        <div class="alert-item alert-item-warning">
-          <div class="alert-item-icon"><i class="bi bi-cloud-upload"></i></div>
-          <div class="alert-item-text">
-            <strong>IMS Yüklenmedi</strong>
-            <span>Henüz IMS dosyası yüklenmemiş</span>
-            <small>Durum zamanı: Şimdi</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if active_quarter != "-" %}
-        <div class="alert-item alert-item-info">
-          <div class="alert-item-icon"><i class="bi bi-calendar-check-fill"></i></div>
-          <div class="alert-item-text">
-            <strong>Aktif Quarter: {{ active_quarter }}</strong>
-            <span>Quarter performansını takip edin</span>
-            <small>Plan: Güncel dönem</small>
-          </div>
-        </div>
-        {% endif %}
-
-        {% if critical_products == 0 and risk_products == 0 and warning_products == 0 and total_targets > 0 and last_upload %}
-        <div class="alert-item alert-item-success">
-          <div class="alert-item-icon"><i class="bi bi-shield-check-fill"></i></div>
-          <div class="alert-item-text">
-            <strong>Her Şey Yolunda</strong>
-            <span>Sistem normal çalışıyor, risk tespit edilmedi</span>
-            <small>Durum zamanı: Güncel</small>
-          </div>
-        </div>
-        {% endif %}
-
-        <div class="quick-actions-wrap">
-          <div class="quick-actions-title">Hızlı İşlemler</div>
-          <a href="{{ url_for('ims.index') }}" class="quick-action-btn quick-action-primary"><i class="bi bi-upload"></i> IMS Yükle</a>
-          <a href="{{ url_for('simulation.index') }}" class="quick-action-btn quick-action-success"><i class="bi bi-calculator"></i> Prim Simülasyonu</a>
-          <a href="{{ url_for('targets.index') }}" class="quick-action-btn quick-action-warning"><i class="bi bi-bullseye"></i> Hedef Yönetimi</a>
+        <div class="row g-3">
+            <div class="col-md-8">
+                {% if critical_products > 0 %}
+                <div class="alert-item alert-item-critical">
+                  <div class="alert-item-icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Kritik Ürün</strong>
+                    <span>{{ critical_products }} ürün kritik durumda – acil aksiyon gerekli</span>
+                    <small>Öncelik: Yüksek</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if risk_products > 0 %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Riskli Ürün</strong>
+                    <span>{{ risk_products }} ürün yakından takip edilmeli</span>
+                    <small>Öncelik: Orta</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if warning_products > 0 %}
+                <div class="alert-item alert-item-info">
+                  <div class="alert-item-icon"><i class="bi bi-eye-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Takip Seviyesinde</strong>
+                    <span>{{ warning_products }} ürün izleme listesinde</span>
+                    <small>Öncelik: İzleme</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if total_targets == 0 %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-bullseye"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Eksik Hedef</strong>
+                    <span>Sisteme henüz hedef girilmemiş</span>
+                    <small>Durum zamanı: Şimdi</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if not payload.last_upload %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-cloud-upload"></i></div>
+                  <div class="alert-item-text">
+                    <strong>IMS Yüklenmedi</strong>
+                    <span>Henüz IMS dosyası yüklenmemiş</span>
+                    <small>Durum zamanı: Şimdi</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if active_q %}
+                <div class="alert-item alert-item-info">
+                  <div class="alert-item-icon"><i class="bi bi-calendar-check-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Aktif Quarter: Q{{ active_q }}</strong>
+                    <span>Quarter performansını takip edin</span>
+                    <small>Plan: Güncel dönem</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if critical_products == 0 and risk_products == 0 and warning_products == 0 and total_targets > 0 and payload.last_upload %}
+                <div class="alert-item alert-item-success">
+                  <div class="alert-item-icon"><i class="bi bi-shield-check-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Her Şey Yolunda</strong>
+                    <span>Sistem normal çalışıyor, risk tespit edilmedi</span>
+                    <small>Durum zamanı: Güncel</small>
+                  </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="col-md-4">
+                <div class="quick-actions-wrap h-100 d-flex flex-column">
+                  <div class="quick-actions-title mb-3">Hızlı İşlemler</div>
+                  <a href="{{ url_for('ims.index') }}" class="quick-action-btn quick-action-primary w-100 mb-2"><i class="bi bi-upload"></i> IMS Yükle</a>
+                  <a href="{{ url_for('simulation.index') }}" class="quick-action-btn quick-action-success w-100 mb-2"><i class="bi bi-calculator"></i> Prim Simülasyonu</a>
+                  <a href="{{ url_for('targets.index') }}" class="quick-action-btn quick-action-warning w-100"><i class="bi bi-bullseye"></i> Hedef Yönetimi</a>
+                </div>
+            </div>
         </div>
       </div>
     </div>
@@ -675,17 +671,34 @@
 <script id="dashboardData" type="application/json">
 {
   "productDonut": {
-    "labels": {{ product_performance | map(attribute='product_name') | list | tojson }},
-    "values": {{ product_performance | map(attribute='total_tl') | list | tojson }}
+    "labels": {{ payload.products | default([], true) | map(attribute='product_name') | list | tojson }},
+    "values": [
+      {% for p in payload.products | default([], true) %}
+        {{ p.realization_tl | default(0, true) }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
   },
-  "monthlyTrend": {{ monthly_trend | tojson }},
-  "marketShare": {{ market_share_trend | tojson }},
+  "monthlyTrend": {
+    {% set hist = payload.simulation_history | default([], true) %}
+    "labels": [
+      {% for h in hist | reverse %}
+        "{{ (h.simulation_date | string)[:7] }}"{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ],
+    "values": [
+      {% for h in hist | reverse %}
+        {% set hsum = h.summary | default({}, true) %}
+        {{ hsum.total_realization | default(0, true) }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  },
+  "marketShare": {{ payload.market_share_trend | default({"labels": [], "values": []}, true) | tojson }},
   "gauge": {
-    "percent": {{ overall_percent }},
-    "realization": {{ overall_realization_tl }},
-    "target": {{ overall_target_tl }}
+    "percent": {{ overall_safe }},
+    "realization": {{ payload.overall_realization_tl | default(0, true) }},
+    "target": {{ payload.overall_target_tl | default(0, true) }}
   },
-  "cityPerformance": {{ city_performance | tojson }}
+  "cityPerformance": {{ payload.city_performance | default({}, true) | tojson }}
 }
 </script>
 
@@ -694,3 +707,5 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
+
+
