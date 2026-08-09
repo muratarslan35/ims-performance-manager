@@ -217,6 +217,36 @@ Faz 1: gerçek Excel importu, hedef importu, rekabet importu ve temel veri büt�
 
 Faz 2: ID/eşleştirme ayrıntıları ve hedefli dashboard/route/AI gerçek payload smoke testleri. Önce dashboard veri sözleşmesi incelenecek; tamamlanmış import tekrar çalıştırılmayacak.
 
+### 2026-08-09 — Dashboard veri akışı denetimi ve düzeltmesi
+
+### DOSYA: `app/services/ims_import_service.py`
+
+- DURUM: TAMAMLANDI
+- SORUN: Birleştirilmiş Excel üst başlıklarındaki TL/KUTU bilgisi ürün kolonlarına aktarılmadığı için satış TL alanı sıfırdı. Aynı temsilci/ürün için birden çok brick satırı Fact'e yazılırken son satır öncekileri eziyordu.
+- YAPILAN: Başlık grupları dinamik olarak yatay taşındı; TL/KUTU semantiği Excel ay/hafta ifadesinden otomatik çözülüyor. RAW satırları Fact grain'inde toplanarak UPSERT ediliyor.
+- TEST: Gerçek 24. hafta dosyasıyla izole import PASS: 8.849 RAW, 1.186 Fact, 594 Summary, 91.070 Competition; Fact TL toplamı 66.778.367,82.
+
+### DOSYA: `app/query/dashboard_query.py`, `app/services/dashboard_service.py`, `app/builders/dashboard_payload_builder.py`
+
+- DURUM: TAMAMLANDI
+- YAPILAN: Global dashboard artık temsilci id=0 ile boş PrimeEngine çağrısı yapmıyor; aggregate query ile KPI ve ürün kartlarını üretiyor. Pazar payı trendi `ims_summary` yerine PP rekabet kaynağından okunuyor. AI domain alanları V3 `ai_*` payload contract'ına null-safe eşleniyor. Top temsilci hedef join'i dönem+ürün grain'ine daraltıldı.
+- TEST: Gerçek DB payload: satış 66.778.367,82 TL; altı ürün dolu; PP trendi %33,88; AI alanları tip doğru; brick özeti 789 AUTO. `dashboard.html` render PASS (58.236 byte).
+
+## Excel import durumu (son)
+
+- Kaynak: `Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx`; 16 sheet.
+- Mevcut DB'ye veri silmeden ikinci import uygulandı: upload=2, 8.849 yeni RAW denetim kaydı, 1.087 Fact update + 99 insert, 594 Summary, 91.070 rekabet kaydı.
+- Yedek: `backups/ipm_before_dashboard_data_fix_20260809_*.db`.
+- Hedef verisi uyarısı: Bu Excel'de ayrı hedef sheet'i yoktur. DB'deki 42 eski hedef satırı toplam 1.926,45 TL olduğundan 66,8M satışla aynı ölçekte değildir; hedef/gerçekleşme yüzdeleri karar desteği için kullanılmamalıdır. Kaynak hedef dosyası sağlanmadan hedef değeri tahmin edilmemelidir.
+
+## Son tamamlanan aşama
+
+Faz 2 dashboard veri kaynağı, import aggregation ve AI payload contract düzeltmesi tamamlandı.
+
+## Sonraki yapılacak aşama
+
+Değişiklikleri Git commit/push ve sunucu deploy'una aktar; uygulama başlatıldıktan sonra oturumlu tarayıcıyla dashboard menü/Chart.js görsel smoke testini tamamla. Ayrı hedef kaynak dosyası geldiğinde 42 eski hedef satırını ilgili dönem için upsert et.
+
 ### 2026-08-09 — Dinamik dosya şeması düzeltmesi
 
 - `CompetitionImportService` artık belirli aylara veya sabit sayfa listesine bağlı değildir; `REKABET` etiketi ve TL/KUTU/PP semantiğiyle sayfaları dinamik seçer.

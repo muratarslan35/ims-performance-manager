@@ -14,6 +14,8 @@ from sqlalchemy.engine.row import Row
 
 from app.extensions import db
 from app.models import (
+    CompetitionData,
+    Product,
     Representative, 
     Target, 
     IMSSummary
@@ -77,7 +79,9 @@ class DashboardQuery:
             (Target, 
                 and_(
                     Target.representative_id == Representative.id,
-                    Target.year == IMSSummary.year
+                    Target.product_id == IMSSummary.product_id,
+                    Target.year == IMSSummary.year,
+                    Target.month == IMSSummary.month,
                 ), 
                 True
             )
@@ -113,6 +117,34 @@ class DashboardQuery:
         )
 
         return query.all()
+
+    def load_period_performance(self, filters: Optional[DashboardFilterParams] = None) -> Optional[Row]:
+        """Returns the unjoined period totals used by the global dashboard."""
+        query = self.session.query(
+            func.coalesce(func.sum(IMSSummary.tl), 0.0).label("realization_tl"),
+            func.coalesce(func.sum(IMSSummary.target_tl), 0.0).label("target_tl"),
+        )
+        return DashboardFilter.apply(query, filters).one()
+
+    def load_product_performance(
+        self, filters: Optional[DashboardFilterParams] = None
+    ) -> Sequence[Row]:
+        """Returns product-level totals without multiplying target rows in a join."""
+        query = (
+            self.session.query(
+                Product.id.label("product_id"),
+                Product.product_name.label("product_name"),
+                func.coalesce(func.sum(IMSSummary.tl), 0.0).label("realization_tl"),
+                func.coalesce(func.sum(IMSSummary.target_tl), 0.0).label("target_tl"),
+            )
+            .join(Product, Product.id == IMSSummary.product_id)
+        )
+        return (
+            DashboardFilter.apply(query, filters)
+            .group_by(Product.id, Product.product_name)
+            .order_by(desc("realization_tl"))
+            .all()
+        )
 
     def load_city_performance(
         self, 
@@ -177,30 +209,28 @@ class DashboardQuery:
         Retrieves the chronological progression of average market share.
         Returns raw SQLAlchemy Rows.
         """
-        default_order = order_by if order_by is not None else [
-            desc(IMSSummary.year), 
-            desc(IMSSummary.month)
-        ]
-
-        select_cols = [
-            IMSSummary.year,
-            IMSSummary.month,
-            func.avg(IMSSummary.market_share).label("avg_share")
-        ]
-
-        group_cols = [IMSSummary.year, IMSSummary.month]
-
-        query = AggregateBuilder.build(
-            session=self.session,
-            select_entities=select_cols,
-            group_by_entities=group_cols,
-            filter_callable=lambda q: DashboardFilter.apply(q, filters),
-            order_by=default_order,
-            limit=limit,
-            offset=offset
+        # Market-share is supplied by the dedicated competition PP sheets;
+        # IMSSummary intentionally contains no PP value for brick sales.
+        query = self.session.query(
+            CompetitionData.year,
+            CompetitionData.month,
+            func.avg(CompetitionData.metric_value).label("avg_share"),
+        ).filter(
+            CompetitionData.metric_type == "MARKET_SHARE",
+            CompetitionData.is_subtotal.is_(False),
+            CompetitionData.is_grand_total.is_(False),
         )
-
-        return query.all()
+        if filters and filters.year is not None:
+            query = query.filter(CompetitionData.year == filters.year)
+        if filters and filters.month is not None:
+            query = query.filter(CompetitionData.month == filters.month)
+        return (
+            query.group_by(CompetitionData.year, CompetitionData.month)
+            .order_by(order_by or desc(CompetitionData.year), desc(CompetitionData.month))
+            .limit(limit)
+            .offset(offset or 0)
+            .all()
+        )
 
     def load_history(
         self, 

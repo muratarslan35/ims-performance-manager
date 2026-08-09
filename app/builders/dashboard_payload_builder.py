@@ -118,7 +118,27 @@ class DashboardPayloadBuilder:
         return self._safe_execute_setter("set_brick_assignments", action)
 
     def set_ai_data(self, ai_data: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
-        return self._safe_execute_setter("set_ai_data", lambda: self._safe_merge(ai_data))
+        def action() -> None:
+            data = ai_data or {}
+            # AIAnalyticsService exposes domain names while dashboard.html is
+            # deliberately kept on the V3 ``ai_*`` presentation contract.
+            # Publish both forms for legacy consumers, but always provide
+            # null-safe V3 values so a valid import never renders empty cards.
+            self._safe_merge(data)
+            self._safe_merge({
+                "ai_scores": {
+                    "risk_score": data.get("risk_score", 0),
+                    "opportunity_score": data.get("opportunity_score", 0),
+                    "goal_probability": data.get("goal_probability", 0),
+                },
+                "ai_messages": data.get("daily_summary") or [],
+                "ai_next_month": data.get("next_month") or {},
+                "ai_risky_products": data.get("risky_products") or [],
+                "ai_risky_representatives": data.get("risky_representatives") or [],
+                "ai_near_target": data.get("products_close_to_target") or [],
+                "ai_recommendation": data.get("action_recommendations") or [],
+            })
+        return self._safe_execute_setter("set_ai_data", action)
 
     def set_prime_metrics(self, prime_data: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         """Injects complex Engine outputs and resolves root API keys safely."""

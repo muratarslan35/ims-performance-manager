@@ -158,6 +158,7 @@ class DashboardService:
             "counts": self.repository.load_counts(),
             "last_upload": self.repository.load_last_upload(),
             "recent_uploads": self.repository.load_recent_uploads(5),
+            "brick_assignments": self.repository.load_brick_assignments(self.year, self.month),
             "match_summary": {
                 "pending": self.repository.load_pending_manual_match_count(),
                 "resolved_reps": self.repository.load_resolved_representative_match_count(),
@@ -171,7 +172,9 @@ class DashboardService:
             "top_reps": self.query_layer.load_top_representatives(filters=filters),
             "city_perf": self.query_layer.load_city_performance(filters=filters),
             "market_trend": self.query_layer.load_market_share_trend(filters=filters),
-            "history": self.query_layer.load_history(filters=filters)
+            "history": self.query_layer.load_history(filters=filters),
+            "period_performance": self.query_layer.load_period_performance(filters=filters),
+            "product_performance": self.query_layer.load_product_performance(filters=filters),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -189,6 +192,31 @@ class DashboardService:
     def _load_ai(self) -> Dict[str, Any]:
         service = self.engine_factory.create_ai_service()
         return service.run_all() if service else {}
+
+    @staticmethod
+    def _global_prime_metrics(period_row: Any, product_rows: List[Any]) -> Dict[str, Any]:
+        """Adapt aggregate query rows to the V3 prime/dashboard contract."""
+        realization_tl = float(getattr(period_row, "realization_tl", 0.0) or 0.0)
+        target_tl = float(getattr(period_row, "target_tl", 0.0) or 0.0)
+        products = []
+        for row in product_rows or []:
+            actual = float(getattr(row, "realization_tl", 0.0) or 0.0)
+            target = float(getattr(row, "target_tl", 0.0) or 0.0)
+            percent = round(actual * 100 / target, 2) if target else 0.0
+            products.append({
+                "product_id": getattr(row, "product_id", None),
+                "product_name": getattr(row, "product_name", "-"),
+                "realization_tl": round(actual, 2),
+                "target_tl": round(target, 2),
+                "realization_percent": percent,
+                "status": "Tamamlandı" if percent >= 100 else "Devam Ediyor" if percent >= 70 else "Riskli",
+            })
+        return {
+            "total_realization": round(realization_tl, 2),
+            "total_target": round(target_tl, 2),
+            "total_tl_percent": round(realization_tl * 100 / target_tl, 2) if target_tl else 0.0,
+            "products": products,
+        }
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
@@ -251,6 +279,18 @@ class DashboardService:
         mapped_city_perf = self.mapper.map_city_performance(query_data.get("city_perf", []))
         mapped_market_trend = self.mapper.map_market_trend(query_data.get("market_trend", []))
         mapped_history = self.mapper.map_history(query_data.get("history", []))
+        mapped_bricks = [{"representative_id": row.representative_id, "representative_name": row.representative.rep_name if row.representative else "", "brick": row.brick, "territory": row.territory, "city": row.city, "source": row.source} for row in repo_data.get("brick_assignments", [])]
+        if self.rep_id is None:
+            # PrimeEngine is representative-scoped; id 0 is not a global
+            # representative.  Use the query layer's aggregate rows for the
+            # dashboard-wide KPI and product cards instead of showing zeros.
+            prime_data = {
+                **prime_data,
+                **self._global_prime_metrics(
+                    query_data.get("period_performance"),
+                    query_data.get("product_performance", []),
+                ),
+            }
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_MAPPER_MS, (time.time() - t_mapper) * 1000)
 
         # 4. Delegate Formatting
@@ -275,6 +315,7 @@ class DashboardService:
                .set_city_performance(fmt_city_perf) \
                .set_market_trend(fmt_market_trend) \
                .set_history(fmt_history) \
+               .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \
                .set_prime_metrics(prime_data) \
                .set_prime_summary(fmt_prime) \

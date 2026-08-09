@@ -342,10 +342,27 @@ class IMSImportService:
         used_headers = {}
         header_rows = [row_index for row_index in range(max(0, header_row - 2), header_row + 1)]
 
+        # IMS exports use merged group headers (for example ``Haziran TL``
+        # above several product columns).  Pandas leaves the continuation
+        # cells empty, so preserve the group label horizontally before
+        # building each product header.  This keeps the metric semantic
+        # (TL/KUTU/PP) without hard-coding a month or column number.
+        contextual_headers = {}
+        for row_index in header_rows[:-1]:
+            current_label = ""
+            for column_index in range(dataframe.shape[1]):
+                value = self.clean_text(dataframe.iloc[row_index, column_index])
+                if value:
+                    current_label = self.normalize_header(value)
+                contextual_headers[(row_index, column_index)] = current_label
+
         for column_index in range(dataframe.shape[1]):
             parts = []
             for row_index in header_rows:
-                token = self.normalize_header(dataframe.iloc[row_index, column_index])
+                if row_index == header_row:
+                    token = self.normalize_header(self.clean_text(dataframe.iloc[row_index, column_index]))
+                else:
+                    token = contextual_headers[(row_index, column_index)]
                 if token and token not in parts:
                     parts.append(token)
 
@@ -699,8 +716,6 @@ class IMSImportService:
             if header == representative_column:
                 continue
             normalized_header = AliasService.normalize(header)
-            if any(token in normalized_header for token in self.PRODUCT_HEADER_NOISE_TOKENS):
-                continue
             match = AliasService.find_product(header)
             if not match["matched"] or match["method"] not in self.STRICT_PRODUCT_MATCH_METHODS:
                 continue
@@ -1277,23 +1292,52 @@ class IMSImportService:
             for fact in existing_facts
         }
         
+        # A workbook contains one RAW row for every brick.  Facts are scoped
+        # to representative/product/report type, therefore writing each RAW
+        # row directly caused the final brick encountered to overwrite all
+        # previous bricks.  Aggregate first, retaining the latest raw id only
+        # as the traceability pointer.
+        aggregates = {}
         for raw in raw_records:
             if raw.representative_id is None or raw.product_id is None:
                 self.statistics["skipped_records"] += 1
                 continue
-
-            # Check if this fact already exists (either from DB or processed earlier in this loop)
             key = (raw.representative_id, raw.product_id, raw.sheet_type)
+            aggregate = aggregates.setdefault(key, {
+                "raw": raw,
+                "unit": 0.0,
+                "tl": 0.0,
+                "market_share_total": 0.0,
+                "value_share_total": 0.0,
+                "growth_total": 0.0,
+                "count": 0,
+            })
+            aggregate["raw"] = raw
+            aggregate["unit"] += raw.unit or 0.0
+            aggregate["tl"] += raw.tl or 0.0
+            aggregate["market_share_total"] += raw.market_share or 0.0
+            aggregate["value_share_total"] += raw.value_share or 0.0
+            aggregate["growth_total"] += raw.growth or 0.0
+            aggregate["count"] += 1
+
+        for key, aggregate in aggregates.items():
+            raw = aggregate["raw"]
             existing = existing_map.get(key)
+            count = aggregate["count"]
+            unit = aggregate["unit"]
+            tl = aggregate["tl"]
+            market_share = aggregate["market_share_total"] / count
+            value_share = aggregate["value_share_total"] / count
+            growth = aggregate["growth_total"] / count
 
             if existing:
                 existing.upload_id = self.upload.id
                 existing.raw_data_id = raw.id
-                existing.unit = raw.unit
-                existing.tl = raw.tl
-                existing.market_share = raw.market_share
-                existing.value_share = raw.value_share
-                existing.growth = raw.growth
+                existing.unit = unit
+                existing.tl = tl
+                existing.market_share = market_share
+                existing.value_share = value_share
+                existing.growth = growth
                 existing.metrics_json = raw.raw_json
                 self.statistics["facts_updated"] += 1
             else:
@@ -1307,11 +1351,11 @@ class IMSImportService:
                     week_number=week_number,
                     quarter=raw.quarter,
                     report_type=raw.sheet_type,
-                    unit=raw.unit,
-                    tl=raw.tl,
-                    market_share=raw.market_share,
-                    value_share=raw.value_share,
-                    growth=raw.growth,
+                    unit=unit,
+                    tl=tl,
+                    market_share=market_share,
+                    value_share=value_share,
+                    growth=growth,
                     metrics_json=raw.raw_json,
                 )
                 db.session.add(fact)
