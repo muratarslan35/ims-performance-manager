@@ -111,7 +111,7 @@ class PrimeEngineBaseTestCase(unittest.TestCase):
             "SLIDER_MAX_PERCENT": "150",
         }
         db.session.add_all([
-            Setting(setting_key=key, setting_value=value, description="Test")
+            Setting(setting_key=key, setting_value=value, category="Prim", description="Test")
             for key, value in settings.items()
         ])
         db.session.commit()

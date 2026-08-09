@@ -52,6 +52,7 @@ def ensure_prime_settings():
             Setting(
                 setting_key=key,
                 setting_value=value,
+                category="Prim",
                 description="Sistem Varsayılanı",
             )
         )
