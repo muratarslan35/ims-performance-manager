@@ -245,6 +245,7 @@
 .map-region:hover .region-path { filter: brightness(1.04); transform: translateY(-1px); }
 .map-region-selected .region-path { stroke: #0b4ea2; stroke-width: 3.5; filter: drop-shadow(0 2px 8px rgba(11,78,162,.4)); }
 .region-label { font-size: 10px; font-weight: 700; fill: rgba(13, 37, 74, 0.78); text-anchor: middle; pointer-events: none; }
+.map-region-subtitle { font-size: 7px; font-weight: 700; letter-spacing: .04em; }
 
 .turkey-map-legend {
   display: grid;
@@ -285,6 +286,7 @@
   font-weight: 600;
   white-space: nowrap;
 }
+.map-tooltip small { display:block; max-width:260px; margin-top:6px; color:#6b8098; line-height:1.35; }
 
 .chart-container { position: relative; width: 100%; }
 .chart-container-md { height: 280px; }

@@ -295,12 +295,11 @@ function initTurkeyMap(regionRealization) {
     empty: "#E7ECF4"
   };
   let selectedRegion = null;
-  const codesByMap = { "map-marmara": ["101", "201", "301"], "map-ege": ["401"], "map-akdeniz": ["701", "802"], "map-ic-anadolu": ["501", "801"], "map-karadeniz": ["601", "602"], "map-guneydogu": ["901"], "map-dogu-anadolu": [] };
   const byCode = Object.fromEntries((regionRealization || []).map((item) => [String(item.code), item]));
 
   regions.forEach((region, index) => {
     const regionName = region.dataset.region || "Bölge";
-    const metrics = (codesByMap[region.id] || []).map((code) => byCode[code]).filter(Boolean);
+    const metrics = String(region.dataset.codes || "").split(",").map((code) => byCode[code.trim()]).filter(Boolean);
     const percentages = metrics.map((item) => Number(item.percent || 0)).filter((value) => value > 0);
 
     const avg = percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : 0;
@@ -336,7 +335,7 @@ function initTurkeyMap(regionRealization) {
       tooltip.innerHTML = percentages.length
         ? `<strong>${regionName}</strong><br>%${avg.toFixed(1)} · ${percentages.length} il verisi`
         : `<strong>${regionName}</strong><br>Veri yok`;
-      if (metrics.length) tooltip.innerHTML = `<strong>${regionName}</strong><br>${metrics.map((item) => `${item.code} ${item.city}: %${item.percent}`).join("<br>")}`;
+      if (metrics.length) tooltip.innerHTML = `<strong>${regionName}</strong><br>${metrics.map((item) => `${item.code} ${item.city}: %${item.percent}`).join("<br>")}${region.dataset.cities ? `<small>Kapsam: ${region.dataset.cities}</small>` : ""}`;
       tooltip.style.display = "block";
     });
 
