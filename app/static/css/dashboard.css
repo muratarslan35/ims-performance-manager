@@ -347,6 +347,7 @@
 .ai-panel-section-half {}
 .ai-section-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; opacity: .9; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
 .ai-section-body { display: flex; flex-direction: column; gap: 5px; }
+.ai-insight-row b{margin-left:auto;white-space:nowrap;font-size:11px;color:#fff}.ai-insight-row span{min-width:0}.ai-insight-row small{opacity:.76}
 .ai-insight-row { font-size: 12px; opacity: .88; display: flex; align-items: center; gap: 6px; }
 .ai-insight-critical { color: #ffc4cf; }
 .ai-insight-warning { color: #ffd97a; }

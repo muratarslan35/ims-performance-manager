@@ -261,6 +261,12 @@ class DashboardQuery:
             .group_by(CompetitionData.product_group).order_by(desc("market_tl")).all()
         )
 
+    def load_competitor_product_rows(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
+        if not filters or filters.year is None or filters.month is None: return []
+        upload_id=self.session.query(IMSUpload.id).filter(IMSUpload.year==filters.year,IMSUpload.month==filters.month,IMSUpload.status=="COMPLETED").order_by(desc(IMSUpload.completed_at),desc(IMSUpload.id)).limit(1).scalar()
+        if not upload_id: return []
+        return self.session.query(CompetitionData.territory,CompetitionData.product_group,CompetitionData.product_name,func.sum(CompetitionData.metric_value).label("sales_tl")).filter(CompetitionData.upload_id==upload_id,CompetitionData.metric_type=="TL",CompetitionData.is_subtotal.is_(False),CompetitionData.is_grand_total.is_(False),~func.upper(CompetitionData.product_name).like("%GRAND%"),~func.upper(CompetitionData.product_name).like("%SUBTOTAL%")).group_by(CompetitionData.territory,CompetitionData.product_group,CompetitionData.product_name).all()
+
     def load_history(
         self, 
         filters: Optional[DashboardFilterParams] = None, 

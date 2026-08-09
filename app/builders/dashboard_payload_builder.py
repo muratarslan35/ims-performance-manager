@@ -112,6 +112,9 @@ class DashboardPayloadBuilder:
     def set_region_realization(self, regions: Optional[list]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_region_realization", lambda: self._payload.__setitem__("region_realization", regions or []))
 
+    def set_competitor_ai(self, insight: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
+        return self._safe_execute_setter("set_competitor_ai", lambda: self._payload.__setitem__("competitor_ai", insight or {"top_products": [], "hot_regions": []}))
+
     def set_history(self, history: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_history", lambda: self._safe_merge(history))
 

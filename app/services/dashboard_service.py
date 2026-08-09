@@ -177,6 +177,7 @@ class DashboardService:
             "period_performance": self.query_layer.load_period_performance(filters=filters),
             "product_performance": self.query_layer.load_product_performance(filters=filters),
             "competition": self.query_layer.load_competition_overview(filters=filters),
+            "competitor_products": self.query_layer.load_competitor_product_rows(filters=filters),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -243,6 +244,18 @@ class DashboardService:
             tt,ta=float(getattr(row,"tl_target",0) or 0),float(getattr(row,"tl_actual",0) or 0); ut,ua=float(getattr(row,"unit_target",0) or 0),float(getattr(row,"unit_actual",0) or 0)
             result.append({"code":str(getattr(row,"region","") or "-"),"city":str(getattr(row,"city","") or ""),"tl_target":round(tt,2),"tl_actual":round(ta,2),"unit_target":round(ut,2),"unit_actual":round(ua,2),"percent":round(ta*100/tt,1) if tt else 0.0})
         return result
+
+    @staticmethod
+    def _competitor_ai(rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
+        own={"".join(ch for ch in str(getattr(item,"product_name","") or "").upper() if ch.isalnum()) for item in product_rows or []}; national,regional={},{}
+        for row in rows or []:
+            product=str(getattr(row,"product_name","") or "").strip(); key="".join(ch for ch in product.upper() if ch.isalnum())
+            if not product or any(name and name in key for name in own): continue
+            value=float(getattr(row,"sales_tl",0) or 0)
+            if value<=0: continue
+            group,territory=str(getattr(row,"product_group","") or "Pazar"),str(getattr(row,"territory","") or "-"); national[(group,product)]=national.get((group,product),0)+value
+            if territory not in regional or value>regional[territory]["sales_tl"]: regional[territory]={"territory":territory,"product_name":product,"product_group":group,"sales_tl":round(value,2)}
+        return {"top_products":[{"product_group":group,"product_name":product,"sales_tl":round(value,2)} for (group,product),value in sorted(national.items(),key=lambda item:item[1],reverse=True)[:5]],"hot_regions":sorted(regional.values(),key=lambda item:item["sales_tl"],reverse=True)[:6]}
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
@@ -329,6 +342,7 @@ class DashboardService:
         fmt_recovery = self.formatter.format_recovery(recovery_data, ai_data)
         fmt_prime = self.formatter.format_prime_summary(prime_data, ai_data)
         competition_overview = self._competition_overview(query_data.get("competition", []), query_data.get("product_performance", []))
+        competitor_ai = self._competitor_ai(query_data.get("competitor_products", []), query_data.get("product_performance", []))
         region_realization = self._region_realization(query_data.get("region_perf", []))
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_FORMATTER_MS, (time.time() - t_formatter) * 1000)
 
@@ -344,6 +358,7 @@ class DashboardService:
                .set_market_trend(fmt_market_trend) \
                .set_competition_analysis(competition_overview) \
                .set_region_realization(region_realization) \
+               .set_competitor_ai(competitor_ai) \
                .set_history(fmt_history) \
                .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \

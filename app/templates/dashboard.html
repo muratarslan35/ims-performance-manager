@@ -269,6 +269,7 @@
 </div>
 
 <div class="ai-summary-card mb-4">
+  {% set competitor_ai = payload.competitor_ai | default({"top_products": [], "hot_regions": []}, true) %}
   <div class="ai-summary-head">
     <div>
       <div class="ai-summary-title"><i class="bi bi-cpu-fill"></i> AI Yönetici Özeti</div>
@@ -320,6 +321,8 @@
         {% endif %}
       </div>
     </div>
+
+    <div class="ai-panel-row"><div class="ai-panel-section ai-panel-section-half"><div class="ai-section-title"><i class="bi bi-flag-fill text-warning"></i> Türkiye Geneli Rakip Ürün Sinyalleri</div><div class="ai-section-body">{% for item in competitor_ai.top_products %}<div class="ai-insight-row ai-insight-warning"><i class="bi bi-capsule"></i><span>{{ item.product_name }} <small>· {{ item.product_group }}</small></span><b>{{ "{:,.0f}".format(item.sales_tl) }} ₺</b></div>{% else %}<div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-info-circle"></i>Rakip ürün verisi bekleniyor</div>{% endfor %}</div></div><div class="ai-panel-section ai-panel-section-half"><div class="ai-section-title"><i class="bi bi-geo-alt-fill text-danger-soft"></i> Bölgesel Rakip Yoğunluğu</div><div class="ai-section-body">{% for item in competitor_ai.hot_regions %}<div class="ai-insight-row ai-insight-warning"><i class="bi bi-pin-map"></i><span>{{ item.territory }} · {{ item.product_name }}</span><b>{{ "{:,.0f}".format(item.sales_tl) }} ₺</b></div>{% else %}<div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-info-circle"></i>Bölgesel rakip verisi bekleniyor</div>{% endfor %}</div></div></div>
 
     <div class="ai-panel-row">
       <div class="ai-panel-section ai-panel-section-half">
