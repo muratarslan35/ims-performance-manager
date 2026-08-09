@@ -73,3 +73,7 @@ Place or make available the existing local `instance/ipm.db` and a local Python 
 The 24th-week workbook was rechecked for target columns. It contains TL target data but no explicit box/unit target data. The values previously displayed in the target list were calculated from TL target divided by current product price, which is not a valid target source.
 
 Corrective action: the importer no longer derives `unit_target`; the 2026/06 server values in `targets.unit_target` and `ims_summary.target_unit` were reset to zero in a single transaction, preserving all records and the TL target total (131,153,092.33). The target UI now groups goals under one collapsed representative row and labels the unavailable box target accurately. Server-side authenticated render test: HTTP 200. Commit `71dd358` was pushed and deployed.
+
+## 2026-08-09 Approved box-target calculation
+
+Business rule was clarified: the price-master conversion is desired. A shared calculation service now persists `TL target / product unit price` (two decimals) to both `targets.unit_target` and the matching `ims_summary.target_unit`. It is applied during each BAKIYE import and can be re-run from the protected target-screen calculation action after prices change. The active server period was recalculated without deleting data: 594 targets, no missing prices, zero target/summary formula mismatches, and total calculated target of 1,185,398.56 boxes. Commit `5c06c5e` is deployed.

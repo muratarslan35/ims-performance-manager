@@ -264,6 +264,16 @@ Target box value correction and representative accordion deployment completed.
 
 If a workbook containing an explicit box target is supplied, map that source column to `Target.unit_target`; until then leave it as unavailable rather than deriving it from the product price.
 
+### 2026-08-09 - Approved box-target calculation rule
+
+- [x] Decision updated: box targets are intentionally derived from the approved product price master: `unit_target = tl_target / product.unit_price`, rounded to two decimals.
+- [x] `app/services/target_box_calculation_service.py` - Added one shared, transaction-safe calculation service for `targets.unit_target` and the linked `ims_summary.target_unit`.
+- [x] `app/services/ims_import_service.py` - BAKIYE imports now apply the shared formula after each TL target is read.
+- [x] `app/routes/targets.py` / `targets.html` - Added the protected "Kutu Hedeflerini Hesapla" action and shows the persisted calculated box value in each collapsed representative row.
+- [x] Server data - 594 targets recalculated; missing product price=0, target formula mismatch=0, summary formula mismatch=0, total unit target=1,185,398.56.
+- [x] Server route render - HTTP 200; accordion, calculation action and formula note present.
+- Commit/deploy: `5c06c5e feat(targets): calculate persisted box targets from prices` pushed and deployed; application restarted.
+
 ### 2026-08-09 — Dinamik dosya şeması düzeltmesi
 
 - `CompetitionImportService` artık belirli aylara veya sabit sayfa listesine bağlı değildir; `REKABET` etiketi ve TL/KUTU/PP semantiğiyle sayfaları dinamik seçer.
