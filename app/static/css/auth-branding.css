@@ -1,0 +1,33 @@
+/* Use the supplied Bilim İlaç artwork without resizing or recolouring it. */
+.auth-identity-panel {
+  min-height: 600px;
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  background: #0a2456;
+}
+
+.auth-identity-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(3, 18, 57, .12), rgba(3, 18, 57, .02) 58%, rgba(3, 18, 57, .30));
+}
+
+.auth-identity-logo {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: none;
+}
+
+@media (max-width: 800px) {
+  .auth-identity-panel { min-height: 190px; }
+  .auth-identity-logo { object-position: center 48%; }
+}

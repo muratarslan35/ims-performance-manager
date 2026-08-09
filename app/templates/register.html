@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 
+{% block styles %}
+<link href="{{ url_for('static', filename='css/auth-branding.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block title %}Hesap Oluştur | BİLİM İLAÇ IMS{% endblock %}
 
 {% block content %}
 <div class="auth-shell">
     <div class="auth-layout">
     <aside class="auth-identity-panel" aria-label="Bilim İlaç">
-        <img src="{{ url_for('static', filename='img/bilim-ilac-white.svg') }}" alt="Bilim İlaç" class="auth-identity-logo">
+        <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" alt="Bilim İlaç" class="auth-identity-logo">
     </aside>
     <section class="auth-card">
 
