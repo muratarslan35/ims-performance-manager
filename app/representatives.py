@@ -403,7 +403,9 @@ def save_assignment(id):
     representative = Representative.query.get_or_404(id)
     try:
         year, month, brick = int(request.form["year"]), int(request.form["month"]), request.form["brick"].strip()
-        assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
+        assignment = RepresentativeBrickAssignment.query.filter_by(
+            year=year, month=month, brick=brick, representative_id=representative.id
+        ).first()
         if assignment is None:
             assignment = RepresentativeBrickAssignment(year=year, month=month, brick=brick)
             db.session.add(assignment)

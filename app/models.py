@@ -137,11 +137,11 @@ class RepresentativeAlias(db.Model):
 
 
 class RepresentativeBrickAssignment(db.Model):
-    """One accountable representative for a brick in a reporting period."""
+    """Period-scoped brick membership; a brick may legitimately have co-workers."""
 
     __tablename__ = "representative_brick_assignments"
     __table_args__ = (
-        db.UniqueConstraint("year", "month", "brick", name="uq_rep_brick_period"),
+        db.UniqueConstraint("year", "month", "brick", "representative_id", name="uq_rep_brick_member_period"),
         db.Index("ix_rep_brick_assignment_rep_period", "representative_id", "year", "month"),
     )
 
@@ -158,8 +158,6 @@ class RepresentativeBrickAssignment(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     representative = db.relationship("Representative", backref=db.backref("brick_assignments", lazy="dynamic"))
-
-    representative = db.relationship("Representative", backref=db.backref("aliases", lazy="dynamic"))
 
 
 class Target(db.Model):

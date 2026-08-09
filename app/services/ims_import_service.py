@@ -1435,8 +1435,26 @@ class IMSImportService:
         IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
 
-    def sync_brick_assignments(self, year, month):
-        """Create AUTO assignments from this upload without replacing MANUAL moves."""
+    def _upsert_auto_brick_assignment(self, representative_id, year, month, brick, territory=None, city=None):
+        """Add one membership without replacing a manually maintained member row."""
+        assignment = RepresentativeBrickAssignment.query.filter_by(
+            representative_id=representative_id, year=year, month=month, brick=brick
+        ).first()
+        if assignment is None:
+            db.session.add(RepresentativeBrickAssignment(
+                representative_id=representative_id, year=year, month=month,
+                quarter=self.quarter_for(month), brick=brick, territory=territory,
+                city=city, source="AUTO",
+            ))
+            return
+        if assignment.source != "MANUAL":
+            if territory and not assignment.territory:
+                assignment.territory = territory
+            if city and not assignment.city:
+                assignment.city = city
+
+    def sync_brick_assignments(self, year, month, prepared_sheets=None):
+        """Create AUTO memberships from the upload, retaining valid shared bricks."""
         rows = (
             db.session.query(IMSRawData.representative_id, IMSRawData.brick, IMSRawData.territory, IMSRawData.province)
             .filter_by(upload_id=self.upload.id, year=year, month=month)
@@ -1445,17 +1463,26 @@ class IMSImportService:
             .all()
         )
         for representative_id, brick, territory, city in rows:
-            assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
-            if assignment is None:
-                db.session.add(RepresentativeBrickAssignment(
-                    representative_id=representative_id, year=year, month=month,
-                    quarter=self.quarter_for(month), brick=brick, territory=territory,
-                    city=city, source="AUTO",
-                ))
-            elif assignment.source != "MANUAL":
-                assignment.representative_id = representative_id
-                assignment.territory = territory
-                assignment.city = city
+            self._upsert_auto_brick_assignment(representative_id, year, month, brick, territory, city)
+
+        # 1. and 2. TTS columns sometimes list two people working the same
+        # brick.  Sales remain attributed to the primary row to avoid double
+        # counting, while both distinct master IDs are stored as members.
+        for sheet in prepared_sheets or []:
+            if sheet.get("sheet_type") != "brick_sales" or not sheet.get("brick_column"):
+                continue
+            rep_columns = sheet.get("representative_columns") or [sheet["representative_column"]]
+            for _, row in sheet["dataframe"].iterrows():
+                brick = self.clean_text(row[sheet["brick_column"]])
+                if not brick:
+                    continue
+                for column in rep_columns:
+                    rep_name = self.clean_text(row[column])
+                    if not self._is_probable_representative_name(rep_name):
+                        continue
+                    match = self.resolve_representative_match(rep_name)
+                    if match["matched"]:
+                        self._upsert_auto_brick_assignment(match["object"].id, year, month, brick)
 
     def backfill_brick_assignments_from_workbook(self, year, month):
         """Populate assignments from a legacy upload without duplicating RAW data."""
@@ -1467,20 +1494,15 @@ class IMSImportService:
                 continue
             for _, row in sheet["dataframe"].iterrows():
                 brick = self.clean_text(row[sheet["brick_column"]])
-                rep_name = self.clean_text(row[sheet["representative_column"]])
-                if not brick or not self._is_probable_representative_name(rep_name):
+                if not brick:
                     continue
-                match = AliasService.find_representative(rep_name)
-                if not match["matched"]:
-                    continue
-                assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
-                if assignment is None:
-                    db.session.add(RepresentativeBrickAssignment(
-                        representative_id=match["object"].id, year=year, month=month,
-                        quarter=self.quarter_for(month), brick=brick, source="AUTO",
-                    ))
-                elif assignment.source != "MANUAL":
-                    assignment.representative_id = match["object"].id
+                for column in sheet.get("representative_columns") or [sheet["representative_column"]]:
+                    rep_name = self.clean_text(row[column])
+                    if not self._is_probable_representative_name(rep_name):
+                        continue
+                    match = AliasService.find_representative(rep_name)
+                    if match["matched"]:
+                        self._upsert_auto_brick_assignment(match["object"].id, year, month, brick)
 
     def process_workbook(self, year, month, week_number=None):
         sheets = self.analyze_workbook()
@@ -1493,7 +1515,7 @@ class IMSImportService:
             self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self._flush_raw_batch()
-        self.sync_brick_assignments(year, month)
+        self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
 

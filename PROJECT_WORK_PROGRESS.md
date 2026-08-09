@@ -281,3 +281,11 @@ Değişiklikleri Git commit/push ve sunucu deploy'una aktar; uygulama başlatıl
 - Rekabet: 91.070 kayıt; TL=45.090, KUTU=45.090, TTS=450, PP=440; boş bölge/brick ve dönem uyumsuzluğu 0.
 - 789 assignment brickinin tamamı CompetitionData brickiyle birebir eşleşti. Atamalar kodlu bölge/il ile backfill edildi; 789/789 kodlu bölge, 789/789 il, 99/99 temsilci ili dolu.
 - Bölge kodları Excel kaynaklıdır: 101, 201, 301, 401, 501, 601, 602, 701, 801, 802, 901. Dönem–brick duplicate=0.
+
+### 2026-08-09 — Ortak brick üyeliği ve uzun temsilci adları
+
+- `representative_brick_assignments` tek sorumlu kuralı migration-first olarak çoklu üyelik kuralına çevrildi: benzersizlik artık `yıl + ay + brick + representative_id` düzeyinde.
+- Gerçek Excel’de iki geçerli TTS adı taşıyan 9 brick bulundu. Satış/fact yalnızca birincil satış sahibi üzerinden hesaplanmaya devam eder; ikinci kişi ayrıca aynı brickin üyesi olarak saklanır ve çift sayım yapılmaz.
+- Backfill sonucu: 789 benzersiz brick, 798 temsilci–brick üyeliği. Örnek `ADANA AKINCILAR+KISLA`: MERT HIKMET DAG ve GOKHAN ONAL; `IZM BAYRAKLI`: YIGIT PLAV ve SUDE OZBAYKAL.
+- Uzun ad doğrulaması: Excel’deki 99 geçerli temsilcinin tamamı master ID ile eşleşti; eşleşmeyen yok. En uzun ad `MUHAMMET ALPARSLAN SAFAK` (24 karakter); rep_code çakışması veya `AUTO-` prefix yok.
+- Migration head: `h3c4d5e6f7a8`; Python derleme ve gerçek DB backfill PASS.
