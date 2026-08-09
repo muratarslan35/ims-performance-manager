@@ -218,3 +218,17 @@ def test_dashboard_returns_200_for_authenticated_user(app):
         f"Expected 200 from /dashboard/, got {response.status_code}. "
         "Possible schema mismatch (missing IMSUpload columns)."
     )
+
+
+def test_profile_page_and_user_menu_are_available_after_login(app):
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    profile = client.get("/profile")
+    dashboard = client.get("/dashboard/", follow_redirects=True)
+
+    assert profile.status_code == 200
+    assert b"Profil Bilgileri" in profile.data
+    assert b"Sifre" not in profile.data  # Turkish UTF-8 labels must remain encoded.
+    assert b"/profile" in dashboard.data
+    assert b"Hesaptan" in dashboard.data
