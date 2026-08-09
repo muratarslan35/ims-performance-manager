@@ -1,4 +1,4 @@
-V3 Architecture: Base Query Layer
+"""V3 Architecture: Base Query Layer
 =================================
 Generic Enterprise OLAP Query Builder.
 Standardizes SELECT, JOIN, GROUP BY, Pagination, and Eager Loading.

@@ -84,12 +84,13 @@ class TargetImportService:
         "BILGI",
         "BİLGİ",
     }
-
-    def __init__(self, file_path: str, upload_id: int):
+    MAX_WARNINGS_PER_SHEET = 100
+    def __init__(self, file_path: str, upload_id: int, workbook: dict | None = None):
         self.file_path = str(file_path)
         self.upload_id = upload_id
         self.started = time.monotonic()
         self.workbook = {}
+        self._preloaded_workbook = workbook
         self.errors = []
         self.warnings = []
         self.statistics = {
@@ -155,6 +156,16 @@ class TargetImportService:
         return "" if AliasService.normalize(text) in {"", "NAN", "NONE"} else text
 
     def _log_warning(self, reason: str, sheet_name: str, source_row: int, **context) -> None:
+        sheet_warnings = self._sheet_warnings.setdefault(sheet_name, [])
+        if len(sheet_warnings) >= self.MAX_WARNINGS_PER_SHEET:
+            if len(sheet_warnings) == self.MAX_WARNINGS_PER_SHEET:
+                sheet_warnings.append(json.dumps({
+                    "reason": "warnings_suppressed",
+                    "sheet_name": sheet_name,
+                    "source_row": source_row,
+                    "message": f"Further warnings suppressed after {self.MAX_WARNINGS_PER_SHEET} rows.",
+                }))
+            return
         payload = {
             "reason": reason,
             "sheet_name": sheet_name,
@@ -166,12 +177,16 @@ class TargetImportService:
         }
         payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         self.warnings.append(payload_json)
-        self._sheet_warnings.setdefault(sheet_name, []).append(payload_json)
+        sheet_warnings.append(payload_json)
         self.statistics["warnings_count"] += 1
         logger.warning("target_import_warning %s", payload_json)
 
     def load_workbook(self) -> dict:
         """Load workbook once, keeping reference without redundant dataframe copies."""
+        if self._preloaded_workbook is not None:
+            self.workbook = self._preloaded_workbook
+            self._sheet_raw_frames = self._preloaded_workbook
+            return self.workbook
         try:
             raw_workbook = pd.read_excel(self.file_path, sheet_name=None, header=None)
         except Exception as exc:
@@ -296,6 +311,11 @@ class TargetImportService:
         """Evaluate sheet name and multi-row content against scoring rules to determine if it is a target sheet."""
         score = 0
         normalized_name = AliasService.normalize(sheet_name)
+        # A generic sales/realisation layout can contain a cell named HEDEF.
+        # Unless it is the compact layout handled above, require the sheet's
+        # own semantic label to identify it as a target source.
+        if "HEDEF" not in normalized_name and "TARGET" not in normalized_name:
+            return False
         
         for kw in self.TARGET_SHEET_KEYWORDS:
             if AliasService.normalize(kw) in normalized_name:
@@ -311,17 +331,34 @@ class TargetImportService:
             score += 3
         if any(p in normalized_text for p in self.PRODUCT_GROUP_HEADERS):
             score += 2
-        if "HEDEF" in normalized_text or "TARGET" in normalized_text:
+        has_target_marker = "HEDEF" in normalized_text or "TARGET" in normalized_text
+        if has_target_marker:
             score += 3
         if "TL" in normalized_text or "CIRO" in normalized_text or "VALUES REPORT" in normalized_text:
             score += 2
         if "KUTU" in normalized_text or "ADET" in normalized_text or "UNITS REPORT" in normalized_text:
             score += 2
 
-        is_target = score >= 6
+        # Sales/realization sheets also contain representative, TL and unit
+        # labels. They must not be parsed as targets without an explicit
+        # target marker, otherwise the same workbook is needlessly processed
+        # twice and conflicting target rows are produced.
+        is_target = has_target_marker and score >= 6
         if not is_target and score > 0:
             self._log_warning("sheet_below_target_threshold", sheet_name, 0, score=score)
         return is_target
+
+    def _is_compact_target_layout(self, dataframe: pd.DataFrame) -> bool:
+        """Detect a target table from its cells, independent of sheet/month name."""
+        if len(dataframe.index) < 3 or len(dataframe.columns) < 3:
+            return False
+        title = AliasService.normalize(" ".join(str(value) for value in dataframe.iloc[0].values if value is not None))
+        product_matches = sum(
+            AliasService.find_product(self.clean_text(value))["matched"]
+            for value in dataframe.iloc[1].values[2:]
+            if self.clean_text(value)
+        )
+        return ("HEDEF" in title or "TARGET" in title) and product_matches >= 2
 
     def _detect_representative_column(self, dataframe: pd.DataFrame):
         for column in dataframe.columns:
@@ -511,8 +548,50 @@ class TargetImportService:
         self._upsert_target(target_map, pending_targets, representative_id, product_id, year, month, quarter, unit_target, tl_target)
         return True
 
+    def _process_tts_target_sheet(self, sheet_name, raw_df, year, month, quarter, target_map, pending_targets):
+        """Parse the workbook's compact ``HAZİRAN HEDEF`` layout.
+
+        Its representative names are in column B and product names in row 2;
+        there is no textual representative header, so generic header discovery
+        cannot safely identify it.
+        """
+        self.statistics["target_sheets"] += 1
+        if len(raw_df.index) < 3 or len(raw_df.columns) < 3:
+            self._log_warning("target_layout_too_small", sheet_name, 0)
+            return
+        product_columns = []
+        for column_index in range(2, len(raw_df.columns)):
+            product_name = self.clean_text(raw_df.iloc[1, column_index])
+            if not product_name or AliasService.normalize(product_name) in {"TOPLAM", "TOTAL"}:
+                continue
+            match = self._resolve_product_match(product_name)
+            if match["matched"]:
+                product_columns.append((column_index, match["object"].id))
+        for row_index in range(2, len(raw_df.index)):
+            rep_name = self.clean_text(raw_df.iloc[row_index, 1])
+            if not self._is_probable_representative_name(rep_name):
+                self.statistics["targets_skipped"] += 1
+                continue
+            rep_match = self._resolve_representative_match(rep_name)
+            if not rep_match["matched"]:
+                self.statistics["targets_skipped"] += 1
+                self._log_warning("representative_not_matched", sheet_name, row_index + 1, representative=rep_name)
+                continue
+            for column_index, product_id in product_columns:
+                value = self.safe_float(raw_df.iloc[row_index, column_index])
+                if value:
+                    self._upsert_target(
+                        target_map, pending_targets, rep_match["object"].id,
+                        product_id, year, month, quarter, 0.0, value,
+                    )
+        self.parser_decisions.append({"sheet_name": sheet_name, "parse_mode": "tts_target_compact", "product_columns": len(product_columns)})
+
     def _process_sheet(self, sheet_name: str, raw_df: pd.DataFrame, year: int, month: int, quarter: str, target_map: dict, pending_targets: list) -> None:
         """Process a single worksheet for targets with O(1) sheet warnings and precise duplicate classification."""
+        if self._is_compact_target_layout(raw_df):
+            self._process_tts_target_sheet(sheet_name, raw_df, year, month, quarter, target_map, pending_targets)
+            return
+
         if not self._is_target_sheet(sheet_name, raw_df):
             return
 

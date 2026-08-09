@@ -1,4 +1,4 @@
-V3 Architecture: Query Filters Layer
+"""V3 Architecture: Query Filters Layer
 ====================================
 Unified, type-safe filtering mechanism for all OLAP queries.
 Uses dataclasses for strict typing and IDE autocomplete.

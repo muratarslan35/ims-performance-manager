@@ -9,7 +9,7 @@ from flask import url_for
 from flask_login import login_required
 
 from app.extensions import db
-from app.models import Representative
+from app.models import Representative, RepresentativeBrickAssignment
 
 
 representatives_bp = Blueprint(
@@ -390,13 +390,31 @@ def view(
 
     )
 
-    return render_template(
+    latest = RepresentativeBrickAssignment.query.order_by(RepresentativeBrickAssignment.year.desc(), RepresentativeBrickAssignment.month.desc()).first()
+    year = request.args.get("year", type=int) or (latest.year if latest else None)
+    month = request.args.get("month", type=int) or (latest.month if latest else None)
+    assignments = RepresentativeBrickAssignment.query.filter_by(representative_id=id, year=year, month=month).order_by(RepresentativeBrickAssignment.brick).all() if year and month else []
+    return render_template("representative_detail.html", representative=representative, assignments=assignments, year=year, month=month)
 
-        "representative_detail.html",
 
-        representative=representative
-
-    )
+@representatives_bp.route("/view/<int:id>/assignments", methods=["POST"])
+@login_required
+def save_assignment(id):
+    representative = Representative.query.get_or_404(id)
+    try:
+        year, month, brick = int(request.form["year"]), int(request.form["month"]), request.form["brick"].strip()
+        assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
+        if assignment is None:
+            assignment = RepresentativeBrickAssignment(year=year, month=month, brick=brick)
+            db.session.add(assignment)
+        assignment.representative_id, assignment.source = representative.id, "MANUAL"
+        assignment.quarter = f"Q{((month - 1) // 3) + 1}"
+        db.session.commit()
+        flash("Dönemsel brick ataması kaydedildi.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("representatives.view", id=id, year=request.form.get("year"), month=request.form.get("month")))
 
 
 @representatives_bp.route(

@@ -135,6 +135,30 @@ class RepresentativeAlias(db.Model):
     alias_name = db.Column(db.String(150), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+
+class RepresentativeBrickAssignment(db.Model):
+    """One accountable representative for a brick in a reporting period."""
+
+    __tablename__ = "representative_brick_assignments"
+    __table_args__ = (
+        db.UniqueConstraint("year", "month", "brick", name="uq_rep_brick_period"),
+        db.Index("ix_rep_brick_assignment_rep_period", "representative_id", "year", "month"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    quarter = db.Column(db.String(5), nullable=True)
+    brick = db.Column(db.String(150), nullable=False)
+    territory = db.Column(db.String(150), nullable=True)
+    city = db.Column(db.String(100), nullable=True)
+    source = db.Column(db.String(20), nullable=False, default="AUTO")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    representative = db.relationship("Representative", backref=db.backref("brick_assignments", lazy="dynamic"))
+
     representative = db.relationship("Representative", backref=db.backref("aliases", lazy="dynamic"))
 
 
@@ -161,6 +185,24 @@ class Target(db.Model):
 
     representative = db.relationship("Representative", backref="targets")
     product = db.relationship("Product", backref="targets")
+
+    @property
+    def target_unit(self):
+        """Compatibility alias used by existing target templates."""
+        return self.unit_target or 0
+
+    @target_unit.setter
+    def target_unit(self, value):
+        self.unit_target = value or 0
+
+    @property
+    def target_tl(self):
+        """Compatibility alias used by existing target templates."""
+        return self.tl_target or 0
+
+    @target_tl.setter
+    def target_tl(self, value):
+        self.tl_target = value or 0
 
 
 class IMSUpload(db.Model):
@@ -208,6 +250,9 @@ class IMSRawData(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=True)
     representative = db.Column(db.String(150), nullable=True)
     manager = db.Column(db.String(150), nullable=True)
+    territory = db.Column(db.String(150), nullable=True)
+    brick = db.Column(db.String(150), nullable=True)
+    province = db.Column(db.String(100), nullable=True)
     product = db.Column(db.String(200), nullable=True)
     competitor = db.Column(db.String(200), nullable=True)
     market = db.Column(db.String(150), nullable=True)
@@ -320,6 +365,15 @@ class ManualMatchQueue(db.Model):
         db.UniqueConstraint("entity_type", "ims_name", name="uq_manual_match_entity"),
         db.Index("ix_match_queue_status", "status"),
     )
+
+    STATUS_PENDING = "PENDING"
+    STATUS_RESOLVED = "RESOLVED"
+    STATUS_IGNORED = "IGNORED"
+
+    ENTITY_REPRESENTATIVE = "REPRESENTATIVE"
+    ENTITY_PRODUCT = "PRODUCT"
+    ENTITY_REGION = "REGION"
+    ENTITY_PROVINCE = "PROVINCE"
 
     id = db.Column(db.Integer, primary_key=True)
     entity_type = db.Column(db.String(50), nullable=False)

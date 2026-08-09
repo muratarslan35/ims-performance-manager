@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ representative.rep_name }} — Brick Ayarları{% endblock %}
+{% block page_title %}{{ representative.rep_name }}{% endblock %}
+{% block content %}
+<div class="card mb-3"><div class="card-body">
+  <div><strong>{{ representative.rep_name }}</strong> · {{ representative.city or 'İl bilgisi yok' }} · {{ representative.rep_code }}</div>
+  <p class="text-secondary mb-0">Dönem: {{ year or '—' }}/{{ month or '—' }}. Manuel atamalar sonraki Excel importunda korunur.</p>
+</div></div>
+<div class="card mb-3"><div class="card-header"><h3 class="card-title">Sorumlu Brickler</h3></div><div class="table-responsive"><table class="table card-table"><thead><tr><th>Brick</th><th>Bölge</th><th>İl</th><th>Kaynak</th></tr></thead><tbody>
+{% for item in assignments %}<tr><td>{{ item.brick }}</td><td>{{ item.territory or '—' }}</td><td>{{ item.city or '—' }}</td><td><span class="badge bg-{{ 'warning' if item.source == 'MANUAL' else 'secondary' }}">{{ item.source }}</span></td></tr>{% else %}<tr><td colspan="4" class="text-secondary">Bu dönem için henüz brick ataması yok. Yeni Excel importu otomatik oluşturur.</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><div class="card-header"><h3 class="card-title">Brick Ata / Devral</h3></div><div class="card-body"><form method="post" action="{{ url_for('representatives.save_assignment', id=representative.id) }}" class="row g-2"><div class="col-md-2"><input class="form-control" name="year" type="number" value="{{ year or '' }}" required></div><div class="col-md-2"><input class="form-control" name="month" type="number" min="1" max="12" value="{{ month or '' }}" required></div><div class="col-md-6"><input class="form-control" name="brick" placeholder="Örn. IZMIR KARŞIYAKA" required></div><div class="col-md-2"><button class="btn btn-primary w-100">Kaydet</button></div></form></div></div>
+{% endblock %}

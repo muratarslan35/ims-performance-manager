@@ -44,15 +44,9 @@ class DefaultGroup(str, Enum):
 class CompetitionImportService:
     """Production-hardened enterprise service to validate, normalize, and process competition worksheets."""
 
-    SUPPORTED_SHEETS: Dict[str, SheetType] = {
-        "HAZİRAN KUTU": SheetType.MONTHLY_UNITS,
-        "HAZİRAN TL": SheetType.MONTHLY_VALUE,
-        "KUTU": SheetType.WEEKLY_UNITS,
-        "TL": SheetType.WEEKLY_VALUE,
-        "AYLIK REKABET KUTU": SheetType.MONTHLY_COMPETITION_UNITS,
-        "AYLIK REKABET TL": SheetType.MONTHLY_COMPETITION_VALUE,
-        "PAZAR": SheetType.MARKET_REFERENCE,
-    }
+    # Competition sheets are discovered from their semantic labels; month names
+    # and workbook-specific sheet names are deliberately not part of the contract.
+    COMPETITION_TOKEN = "REKABET"
 
     MONTH_PATTERNS = (
         ("JAN", 1), ("JANUARY", 1), ("OCAK", 1),
@@ -76,10 +70,21 @@ class CompetitionImportService:
     HEADER_SUBTERRITORY_KEYWORDS = ("SUBTERRITOR", "NATIONAL")
     BULK_CHUNK_SIZE = 1000
 
-    def __init__(self, file_path: Optional[str] = None, upload_id: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        file_path: Optional[str] = None,
+        upload_id: Optional[int] = None,
+        year: Optional[int] = None,
+        month: Optional[int] = None,
+        week_number: Optional[int] = None,
+    ) -> None:
         self.file_path = file_path
         self.upload_id = upload_id
+        self.year = year
+        self.month = month
+        self.week_number = week_number
         self._workbook = None
+        self._sheet_values: Dict[str, List[Tuple[Any, ...]]] = {}
         self.errors: List[str] = []
         self.warnings: List[str] = []
 
@@ -97,17 +102,36 @@ class CompetitionImportService:
             logger.exception("[CompetitionImportService] Failed to load workbook at %s: %s", file_path, exc)
             raise ValueError(f"Dosya yüklenirken bir hata oluştu. Lütfen dosya formatını kontrol edin.") from exc
 
+    @classmethod
+    def classify_sheet(cls, sheet_name: str) -> Optional[SheetType]:
+        """Classify a competition worksheet without depending on its month name."""
+        name = str(sheet_name or "").strip().upper()
+        if cls.COMPETITION_TOKEN not in name:
+            return None
+        if "PP" in name or "PAZAR PAY" in name or "MARKET SHARE" in name:
+            return SheetType.MARKET_REFERENCE
+        if "TL" in name or "VALUE" in name:
+            return SheetType.MONTHLY_COMPETITION_VALUE
+        if "KUTU" in name or "UNIT" in name or "ADET" in name:
+            return SheetType.MONTHLY_COMPETITION_UNITS
+        return SheetType.WEEKLY_UNITS
+
+    @classmethod
+    def has_competition_sheets(cls, sheet_names) -> bool:
+        return any(cls.classify_sheet(name) is not None for name in sheet_names)
+
     def get_supported_sheets(self) -> List[str]:
-        """Return sorted list of supported sheet names."""
-        return sorted(list(self.SUPPORTED_SHEETS.keys()))
+        """Return only the competition sheets found in the loaded workbook."""
+        if not self._workbook:
+            return []
+        return [name for name in self._workbook.sheetnames if self.classify_sheet(name) is not None]
 
     def get_sheet_type(self, sheet_name: str) -> str:
         """Resolve sheet type enum value from sheet name."""
-        norm_name = self._normalize_sheet_name(sheet_name)
-        norm_map = {self._normalize_sheet_name(k): v.value for k, v in self.SUPPORTED_SHEETS.items()}
-        if norm_name not in norm_map:
+        sheet_type = self.classify_sheet(sheet_name)
+        if sheet_type is None:
             raise ValueError(f"Desteklenmeyen sayfa adı: '{sheet_name}'")
-        return norm_map[norm_name]
+        return sheet_type.value
 
     def validate_workbook(self) -> Dict[str, str]:
         """Validate required competition sheets exist in workbook."""
@@ -115,14 +139,11 @@ class CompetitionImportService:
             raise ValueError("Çalışma kitabı yüklenmemiş. Önce load_workbook() çağrılmalıdır.")
 
         actual_map = {self._normalize_sheet_name(n): n for n in self._workbook.sheetnames}
-        req_norm = {self._normalize_sheet_name(r) for r in self.SUPPORTED_SHEETS}
-        missing = req_norm - set(actual_map.keys())
-
-        if missing:
-            err_msg = f"Eksik zorunlu rekabet sayfaları tespit edildi: {sorted(list(missing))}"
+        if not self.get_supported_sheets():
+            err_msg = "Rekabet etiketi taşıyan bir sayfa bulunamadı."
             logger.error("[CompetitionImportService] %s", err_msg)
             self.errors.append(err_msg)
-            raise ValueError(f"Dosya içerisinde gerekli zorunlu sayfalar eksik.")
+            raise ValueError(err_msg)
 
         logger.info("[CompetitionImportService] Workbook validation passed for required competition sheets.")
         return actual_map
@@ -151,26 +172,28 @@ class CompetitionImportService:
         return True
 
     def _get_cell_value(self, sheet: Any, row: int, col: int) -> Any:
-        """Safely retrieve cell value, handling read-only mode limitations gracefully without throwing errors."""
-        try:
-            val = sheet.cell(row=row, column=col).value
-            if val is not None:
-                return val
-            
-            if hasattr(sheet, "merged_cells") and sheet.merged_cells:
-                for merged_range in sheet.merged_cells.ranges:
-                    if row >= merged_range.min_row and row <= merged_range.max_row and \
-                       col >= merged_range.min_col and col <= merged_range.max_col:
-                        return sheet.cell(row=merged_range.min_row, column=merged_range.min_col).value
-        except Exception:
-            # Fallback for read-only optimization constraints if cell access triggers boundary issues
-            pass
-        return None
+        """Read a cached worksheet value without random-access rescans.
+
+        ``ReadOnlyWorksheet.cell`` restarts the XML stream for many access
+        patterns. Caching each selected competition sheet once keeps memory
+        bounded while reducing this import from quadratic scans to one pass.
+        """
+        title = sheet.title
+        values = self._sheet_values.get(title)
+        if values is None:
+            values = [tuple(c.value for c in cells) for cells in sheet.iter_rows()]
+            self._sheet_values[title] = values
+        if row < 1 or col < 1 or row > len(values):
+            return None
+        source_row = values[row - 1]
+        return source_row[col - 1] if col <= len(source_row) else None
 
     def _discover_metadata(self, sheet: Any) -> Tuple[str, int, int]:
         """Discover reporting period type, year, and month from worksheet metadata header cells."""
         period_type = PeriodType.MONTHLY.value
-        year, month = None, None
+        # The upload period is authoritative; product labels can contain numbers
+        # that look like years (for example, 2076) and must not override it.
+        year, month = self.year, None
 
         for r in range(1, 6):
             for c in range(1, (sheet.max_column or 1) + 1):
@@ -191,6 +214,10 @@ class CompetitionImportService:
                             month = mv
                             break
 
+        if not year:
+            year = self.year
+        if not month:
+            month = self.month
         if not year:
             raise ValueError("Raporlama yılı metaverilerden tespit edilemedi.")
         if not month:
@@ -296,15 +323,24 @@ class CompetitionImportService:
         sheet = self._workbook[orig_name]
 
         ptype, year, month = self._discover_metadata(sheet)
-        h_row = self._find_header_row(sheet)
+        # These IMS sheets have product headers rather than literal Territory /
+        # Subterritory labels. Columns A and B carry those dimensions.
+        source_name = self._normalize_sheet_name(orig_name)
+        if "AYLIK" in source_name and "REKABET" in source_name:
+            h_row, t_col, s_col = 3, 1, 2
+        elif "REKABET" in source_name:
+            h_row, t_col, s_col = 2, 1, 2
+        else:
+            h_row = self._find_header_row(sheet)
+            t_col, s_col = None, None
 
-        t_col, s_col = None, None
-        for c in range(1, (sheet.max_column or 0) + 1):
-            val = str(self._get_cell_value(sheet, h_row, c) or "").strip().upper()
-            if any(k in val for k in self.HEADER_TERRITORY_KEYWORDS):
-                t_col = c
-            elif any(k in val for k in self.HEADER_SUBTERRITORY_KEYWORDS):
-                s_col = c
+        if t_col is None or s_col is None:
+            for c in range(1, (sheet.max_column or 0) + 1):
+                val = str(self._get_cell_value(sheet, h_row, c) or "").strip().upper()
+                if any(k in val for k in self.HEADER_TERRITORY_KEYWORDS):
+                    t_col = c
+                elif any(k in val for k in self.HEADER_SUBTERRITORY_KEYWORDS):
+                    s_col = c
 
         if not t_col or not s_col:
             raise ValueError("Bölge sütunları başlık satırında eksik.")
@@ -357,7 +393,7 @@ class CompetitionImportService:
         period_type = structure_info["period_type"]
         year = structure_info["year"]
         month = structure_info["month"]
-        week_number = None
+        week_number = self.week_number
 
         records: List[Dict[str, Any]] = []
         last_valid_territory = ""
@@ -372,7 +408,7 @@ class CompetitionImportService:
                 continue
 
             territory_upper = territory.upper()
-            if any(sk in territory_upper for sk in self.STOP_KEYWORDS):
+            if territory_upper in {"BOLGE", "BÖLGE", "NATIONAL"} or any(sk in territory_upper for sk in self.STOP_KEYWORDS):
                 continue
 
             subterritory_val = self._get_cell_value(sheet, r, s_col)
@@ -659,11 +695,12 @@ class CompetitionImportService:
         try:
             self.load_workbook(self.file_path)
             self.validate_workbook()
+            supported_sheets = self.get_supported_sheets()
 
-            for s_name in self.SUPPORTED_SHEETS:
+            for s_name in supported_sheets:
                 self.validate_sheet_structure(s_name)
 
-            structures = {s: self._parse_sheet_structure(s) for s in self.get_supported_sheets()}
+            structures = {s: self._parse_sheet_structure(s) for s in supported_sheets}
 
             sheet_statistics = []
             total_inserted = 0
@@ -692,7 +729,7 @@ class CompetitionImportService:
                 "success": True,
                 "service": "CompetitionImportService",
                 "status": "ENTERPRISE_RECORDS_IMPORTED_SUCCESSFULLY",
-                "supported_sheets": self.get_supported_sheets(),
+                "supported_sheets": supported_sheets,
                 "summary": {
                     "total_inserted": total_inserted,
                     "total_duplicates": total_duplicates,

@@ -55,6 +55,12 @@
   </div>
 </div>
 
+<div class="alert alert-info d-flex justify-content-between align-items-center mb-4" role="status">
+  <span><strong>Aktif dönem brick atamaları:</strong> {{ payload.brick_assignment_summary.total | default(0, true) }} brick</span>
+  <span>{{ payload.brick_assignment_summary.manual | default(0, true) }} manuel · {{ payload.brick_assignment_summary.auto | default(0, true) }} Excel'den otomatik</span>
+  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('representatives.index') }}">Temsilci ayarları</a>
+</div>
+
 <div class="kpi-grid mb-4">
   <div class="kpi-card kpi-theme-primary">
     <div class="kpi-card-header">
@@ -707,5 +713,4 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
-
 

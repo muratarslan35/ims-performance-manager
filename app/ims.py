@@ -147,7 +147,7 @@ def upload():
 
             month=month,
 
-            clear_before_import=True
+            clear_before_import=False
 
         )
 

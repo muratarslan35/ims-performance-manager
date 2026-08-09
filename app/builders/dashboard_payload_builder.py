@@ -106,6 +106,17 @@ class DashboardPayloadBuilder:
     def set_history(self, history: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_history", lambda: self._safe_merge(history))
 
+    def set_brick_assignments(self, assignments: Optional[list]) -> 'DashboardPayloadBuilder':
+        def action() -> None:
+            rows = assignments or []
+            self._payload["brick_assignments"] = rows
+            self._payload["brick_assignment_summary"] = {
+                "total": len(rows),
+                "manual": sum(1 for row in rows if row.get("source") == "MANUAL"),
+                "auto": sum(1 for row in rows if row.get("source") == "AUTO"),
+            }
+        return self._safe_execute_setter("set_brick_assignments", action)
+
     def set_ai_data(self, ai_data: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_ai_data", lambda: self._safe_merge(ai_data))
 

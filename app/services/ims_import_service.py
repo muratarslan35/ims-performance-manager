@@ -38,9 +38,11 @@ from app.models import (
     ImportAuditLog,
     ManualMatchQueue,
     Representative,
+    RepresentativeBrickAssignment,
     Target,
 )
 from app.services.alias_service import AliasService
+from app.services.competition_import_service import CompetitionImportService
 from app.services.target_import_service import TargetImportService
 
 
@@ -67,6 +69,14 @@ class IMSImportService:
         "REKABET TL": "competition_tl",
         "REKABET KUTU": "competition_box",
         "REKABET PP": "competition_pp",
+    }
+    MONTH_TOKENS = {
+        "OCAK": 1, "JANUARY": 1, "JAN": 1, "ŞUBAT": 2, "FEBRUARY": 2, "FEB": 2,
+        "MART": 3, "MARCH": 3, "MAR": 3, "NİSAN": 4, "APRIL": 4, "APR": 4,
+        "MAYIS": 5, "MAY": 5, "HAZİRAN": 6, "JUNE": 6, "JUN": 6,
+        "TEMMUZ": 7, "JULY": 7, "JUL": 7, "AĞUSTOS": 8, "AUGUST": 8, "AUG": 8,
+        "EYLÜL": 9, "SEPTEMBER": 9, "SEP": 9, "EKİM": 10, "OCTOBER": 10, "OCT": 10,
+        "KASIM": 11, "NOVEMBER": 11, "NOV": 11, "ARALIK": 12, "DECEMBER": 12, "DEC": 12,
     }
     REPRESENTATIVE_HEADERS = {
         "TEMSILCI",
@@ -128,6 +138,8 @@ class IMSImportService:
         "PP": "competition_pp",
     }
     TOTAL_LABELS = {"NATIONAL", "TOPLAM", "GRAND TOTAL", "TOTAL", "GENEL TOPLAM"}
+    WRITE_BATCH_SIZE = 1000
+    MAX_SKIPPED_LOGS_PER_SHEET = 100
     NOISE_ROW_TOKENS = {
         "NOT",
         "NOTE",
@@ -169,9 +181,12 @@ class IMSImportService:
             "rows_error": 0,
         }
         self.skipped_logs = []
+        self._skipped_log_counts = {}
         self.parser_decisions = []
         self._representative_match_cache = {}
         self._product_match_cache = {}
+        self._pending_raw_records = 0
+        self._raw_batch = []
 
     @staticmethod
     def extract_week_number(file_name):
@@ -257,6 +272,16 @@ class IMSImportService:
         self.workbook = workbook
         self.statistics["sheet_count"] = len(self.workbook)
         return self.workbook
+
+    def detect_workbook_month(self):
+        """Read the reporting month from workbook labels, not a sheet name."""
+        for dataframe in (self.workbook or {}).values():
+            preview = dataframe.iloc[:5, :10].fillna("").astype(str).to_numpy().ravel()
+            text = " ".join(preview).upper()
+            for token, detected_month in self.MONTH_TOKENS.items():
+                if re.search(r"(?<![A-ZÇĞİÖŞÜ])" + re.escape(token) + r"(?![A-ZÇĞİÖŞÜ])", text):
+                    return detected_month
+        return None
 
     def _hidden_rows_by_sheet(self):
         hidden_by_sheet = {}
@@ -424,6 +449,11 @@ class IMSImportService:
         return None
 
     def _log_skipped_row(self, reason, sheet_name, source_row, **context):
+        count = self._skipped_log_counts.get(sheet_name, 0)
+        if count >= self.MAX_SKIPPED_LOGS_PER_SHEET:
+            self._skipped_log_counts[sheet_name] = count + 1
+            return
+        self._skipped_log_counts[sheet_name] = count + 1
         payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
         self.skipped_logs.append(payload)
         logger.warning("ims_import_skipped_row %s", self._json_dump(payload))
@@ -577,7 +607,9 @@ class IMSImportService:
 
         self.statistics["unmatched_representatives"] += 1
         normalized = AliasService.normalize(name)
-        base_code = f"AUTO-{re.sub(r'[^A-Z0-9]+', '', normalized)[:18] or 'REP'}"
+        # Master representative codes are stable, readable identifiers derived
+        # from the Excel name; legacy AUTO- prefixes must never be introduced.
+        base_code = re.sub(r'[^A-Z0-9]+', '', normalized)[:18] or "REP"
         candidate_code = base_code
         suffix = 1
         while Representative.query.filter_by(rep_code=candidate_code).first() is not None:
@@ -1033,46 +1065,65 @@ class IMSImportService:
         representative_name,
         representative_id,
         product,
+        product_id=None,
         metrics,
         source_values,
         manager=None,
+        territory=None,
         brick=None,
+        province=None,
         market=None,
         competitor=None,
     ):
-        raw = IMSRawData(
-            upload_id=self.upload.id,
-            year=year,
-            month=month,
-            week_number=week_number,
-            quarter=self.quarter_for(month),
-            sheet_name=sheet_name,
-            sheet_type=sheet_type,
-            source_row=source_row,
-            representative_id=representative_id,
-            product_id=product_id,
-            representative=representative_name,
-            manager=manager,
-            product=product_name,
-            competitor=competitor,
-            market=market,
-            unit=metrics["unit"],
-            tl=metrics["tl"],
-            market_share=metrics["market_share"],
-            value_share=metrics["value_share"],
-            growth=metrics["growth"],
-            raw_json=self._json_dump(
-                {
-                    "representative": representative_name,
-                    "product": product.product_name,
-                    "metrics": metrics,
-                    "source_values": source_values,
-                }
-            ),
-        )
-        db.session.add(raw)
+        resolved_product_id = product_id if product_id is not None else getattr(product, "id", None)
+        if resolved_product_id is None:
+            raise ValueError("Raw IMS record requires a resolved product_id.")
+        product_name = getattr(product, "product_name", product)
+        self._raw_batch.append({
+            "upload_id": self.upload.id,
+            "year": year,
+            "month": month,
+            "week_number": week_number,
+            "quarter": self.quarter_for(month),
+            "sheet_name": sheet_name,
+            "sheet_type": sheet_type,
+            "source_row": source_row,
+            "representative_id": representative_id,
+            "product_id": resolved_product_id,
+            "representative": representative_name,
+            "manager": manager,
+            "territory": territory,
+            "brick": brick,
+            "province": province,
+            "product": product_name,
+            "competitor": competitor,
+            "market": market,
+            "unit": metrics["unit"],
+            "tl": metrics["tl"],
+            "market_share": metrics["market_share"],
+            "value_share": metrics["value_share"],
+            "growth": metrics["growth"],
+            "raw_json": self._json_dump({
+                "representative": representative_name,
+                "product": product_name,
+                "metrics": metrics,
+                "source_values": source_values,
+            }),
+            "created_at": datetime.utcnow(),
+        })
+        self._pending_raw_records += 1
+        if self._pending_raw_records >= self.WRITE_BATCH_SIZE:
+            self._flush_raw_batch()
         self.statistics["raw_records"] += 1
-        return raw
+        return None
+
+    def _flush_raw_batch(self):
+        """Write RAW rows in bounded batches without retaining ORM instances."""
+        if not self._raw_batch:
+            return
+        db.session.bulk_insert_mappings(IMSRawData, self._raw_batch)
+        self._raw_batch.clear()
+        self._pending_raw_records = 0
 
     def stage_raw_data(self, prepared_sheets, year, month, week_number=None):
         for sheet in prepared_sheets:
@@ -1188,9 +1239,11 @@ class IMSImportService:
                                 representative_name=representative_name,
                                 representative_id=representative_id,
                                 product=product_info["product_name"],
+                                product_id=product_info["product_id"],
                                 metrics=metrics,
                                 source_values=source_values,
                                 manager=manager_value,
+                                territory=territory_value,
                                 brick=territory_value,
                             )
                     self.statistics["processed_rows"] += 1
@@ -1205,7 +1258,7 @@ class IMSImportService:
                     continue
             self.statistics["processed_sheets"] += 1
 
-        db.session.flush()
+        self._flush_raw_batch()
 
     def transform_raw_to_facts(self, year, month, week_number=None):
         """UPSERT IMS facts: update existing rows for the same week/period, insert new ones."""
@@ -1338,6 +1391,53 @@ class IMSImportService:
         IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
 
+    def sync_brick_assignments(self, year, month):
+        """Create AUTO assignments from this upload without replacing MANUAL moves."""
+        rows = (
+            db.session.query(IMSRawData.representative_id, IMSRawData.brick, IMSRawData.territory, IMSRawData.province)
+            .filter_by(upload_id=self.upload.id, year=year, month=month)
+            .filter(IMSRawData.representative_id.isnot(None), IMSRawData.brick.isnot(None))
+            .distinct()
+            .all()
+        )
+        for representative_id, brick, territory, city in rows:
+            assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
+            if assignment is None:
+                db.session.add(RepresentativeBrickAssignment(
+                    representative_id=representative_id, year=year, month=month,
+                    quarter=self.quarter_for(month), brick=brick, territory=territory,
+                    city=city, source="AUTO",
+                ))
+            elif assignment.source != "MANUAL":
+                assignment.representative_id = representative_id
+                assignment.territory = territory
+                assignment.city = city
+
+    def backfill_brick_assignments_from_workbook(self, year, month):
+        """Populate assignments from a legacy upload without duplicating RAW data."""
+        if not self.workbook:
+            self.load_workbook()
+        for source in self.analyze_workbook():
+            sheet = self.prepare_sheet(source)
+            if not sheet or sheet.get("sheet_type") != "brick_sales" or not sheet.get("brick_column"):
+                continue
+            for _, row in sheet["dataframe"].iterrows():
+                brick = self.clean_text(row[sheet["brick_column"]])
+                rep_name = self.clean_text(row[sheet["representative_column"]])
+                if not brick or not self._is_probable_representative_name(rep_name):
+                    continue
+                match = AliasService.find_representative(rep_name)
+                if not match["matched"]:
+                    continue
+                assignment = RepresentativeBrickAssignment.query.filter_by(year=year, month=month, brick=brick).first()
+                if assignment is None:
+                    db.session.add(RepresentativeBrickAssignment(
+                        representative_id=match["object"].id, year=year, month=month,
+                        quarter=self.quarter_for(month), brick=brick, source="AUTO",
+                    ))
+                elif assignment.source != "MANUAL":
+                    assignment.representative_id = match["object"].id
+
     def process_workbook(self, year, month, week_number=None):
         sheets = self.analyze_workbook()
         prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
@@ -1348,6 +1448,8 @@ class IMSImportService:
             normalized_rows = self.merge_normalized_sheets(normalized_sheets)
             self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
+        self._flush_raw_batch()
+        self.sync_brick_assignments(year, month)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
 
@@ -1355,10 +1457,27 @@ class IMSImportService:
         TargetImportService(
             file_path=self.file_path,
             upload_id=self.upload.id,
+            workbook=self.workbook,
         ).run(
             year=year,
             month=month,
         )
+
+        available_sheets = (self.workbook or {}).keys()
+        if CompetitionImportService.has_competition_sheets(available_sheets):
+            competition_result = CompetitionImportService(
+                file_path=self.file_path,
+                upload_id=self.upload.id,
+                year=year,
+                month=month,
+                week_number=week_number,
+            ).run()
+            competition_summary = competition_result.get("summary", {})
+            self.statistics["competition_records"] = competition_summary.get("total_inserted", 0)
+            self.statistics["competition_duplicates"] = competition_summary.get("total_duplicates", 0)
+            self.statistics["competition_invalid"] = competition_summary.get("total_invalid", 0)
+        else:
+            self.warnings.append("Rekabet etiketi taşıyan bir sayfa bulunamadığı için rekabet importu atlandı.")
 
     def write_audit_log(self, year, month, week_number, success):
         """Write an ImportAuditLog record for this import run."""
@@ -1451,8 +1570,14 @@ class IMSImportService:
         try:
             self.validate()
             AliasService.warmup()
-            self.create_upload(year, month, week_number=week_number)
             self.load_workbook()
+            detected_month = self.detect_workbook_month()
+            if detected_month and detected_month != month:
+                self.warnings.append(
+                    f"Form ayı ({month}) Excel üst bilgisinden algılanan ayla ({detected_month}) değiştirildi."
+                )
+                month = detected_month
+            self.create_upload(year, month, week_number=week_number)
             workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
             self._log_stage_metrics("workbook_rows_read", workbook_rows_read=workbook_rows_read)
             if clear_before_import and week_number is None:

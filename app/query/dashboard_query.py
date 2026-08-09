@@ -1,4 +1,4 @@
-V3 Architecture: Dashboard Query Layer (OLAP)
+"""V3 Architecture: Dashboard Query Layer (OLAP)
 =============================================
 Enterprise-grade read-only data access layer for the Dashboard.
 Strictly devoid of business logic, DTO instantiation, and DML operations.

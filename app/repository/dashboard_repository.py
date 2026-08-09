@@ -21,7 +21,8 @@ from app.models import (
     Target, 
     IMSUpload, 
     IMSSummary,
-    Setting
+    Setting,
+    RepresentativeBrickAssignment,
 )
 
 # V3 mimarisinde opsiyonel olabilecek tablolar için güvenli içe aktarma
@@ -76,6 +77,9 @@ class DashboardRepository:
     def load_recent_uploads(self, limit: int = 5) -> List[IMSUpload]:
         """Sisteme yüklenen son N adet IMS Upload kaydını döndürür."""
         return self.session.query(IMSUpload).order_by(desc(IMSUpload.uploaded_at)).limit(limit).all()
+
+    def load_brick_assignments(self, year: int, month: int) -> List[Any]:
+        return self.session.query(RepresentativeBrickAssignment).filter_by(year=year, month=month).all()
 
     def load_upload(self, upload_id: int) -> Optional[IMSUpload]:
         """Belirtilen ID'ye sahip upload kaydını getirir."""
@@ -154,13 +158,13 @@ class DashboardRepository:
         """Çözümlenmiş temsilci eşleştirme kayıtlarının sayısını getirir."""
         if not RepresentativeMatch:
             return 0
-        return self.session.query(RepresentativeMatch).filter_by(status="RESOLVED").count()
+        return self.session.query(RepresentativeMatch).count()
 
     def load_resolved_product_match_count(self) -> int:
         """Çözümlenmiş ürün eşleştirme kayıtlarının sayısını getirir."""
         if not ProductMatch:
             return 0
-        return self.session.query(ProductMatch).filter_by(status="RESOLVED").count()
+        return self.session.query(ProductMatch).count()
 
     def load_pending_manual_matches(self, limit: Optional[int] = None) -> List[Any]:
         """Manuel eşleştirme bekleyen (PENDING) ham kayıtları listeler."""

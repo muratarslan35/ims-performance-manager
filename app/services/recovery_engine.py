@@ -150,6 +150,10 @@ class RecoveryEngine:
 
         }
 
+    def get_product_data(self, product_id):
+        """Return the selected quarter's monthly target/actual series."""
+        return [self.get_month_data(product_id, month) for month in self.months]
+
     def analyze_product(
 
         self,
@@ -158,11 +162,7 @@ class RecoveryEngine:
 
     ):
 
-        months = self.get_product_data(
-
-            product_id
-
-        )
+        months = self.get_product_data(product_id)
 
         carry_box = 0
 
