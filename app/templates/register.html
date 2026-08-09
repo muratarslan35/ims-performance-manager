@@ -36,6 +36,16 @@
                 <input id="phone" name="phone" type="tel" class="form-control" autocomplete="tel" placeholder="+90 5XX XXX XX XX" value="{{ request.form.get('phone', '') }}">
             </div>
 
+            <div class="mb-3">
+                <label class="form-label" for="region">Bölge</label>
+                <select id="region" name="region" class="form-select" required>
+                    <option value="">Bölge seçiniz</option>
+                    {% for region, city in regions %}
+                    <option value="{{ region }}" {% if request.form.get('region') == region %}selected{% endif %}>{{ region }} {{ city }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label class="form-label" for="password">Şifre</label>

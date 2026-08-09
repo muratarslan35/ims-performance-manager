@@ -20,7 +20,7 @@ from werkzeug.security import generate_password_hash
 
 from app.extensions import db
 
-from app.models import User
+from app.models import Representative, User
 
 auth_bp = Blueprint(
     "auth",
@@ -139,15 +139,26 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
 
+    regions = (
+        db.session.query(Representative.region, Representative.city)
+        .filter(Representative.region.isnot(None), Representative.city.isnot(None))
+        .distinct()
+        .order_by(Representative.region.asc(), Representative.city.asc())
+        .all()
+    )
+
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         email = request.form.get("email", "").strip().lower()
         phone = request.form.get("phone", "").strip()
+        selected_region = request.form.get("region", "").strip()
         password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
 
-        if not full_name or not email or not password or not password_confirm:
+        if not full_name or not email or not password or not password_confirm or not selected_region:
             flash("Lütfen tüm zorunlu alanları doldurun.", "warning")
+        elif selected_region not in {region for region, _ in regions}:
+            flash("Lütfen listeden geçerli bir bölge seçin.", "warning")
         elif len(full_name) < 3:
             flash("Ad soyad en az 3 karakter olmalıdır.", "warning")
         elif "@" not in email or "." not in email.rsplit("@", 1)[-1]:
@@ -172,20 +183,25 @@ def register():
             # contact data is updated only on an exact normalized name match.
             # This prevents a similar-looking name from changing another
             # representative's card.
-            from app.models import Representative
             from app.services.alias_service import AliasService
             normalized_name = AliasService.normalize(full_name)
             matches = [rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name) == normalized_name]
-            if len(matches) == 1:
-                matches[0].email = email
+            representative = matches[0] if len(matches) == 1 and matches[0].region == selected_region else None
+            if representative is None and not matches:
+                suggestion = AliasService.find_representative(full_name)
+                candidate = suggestion.get("object") if suggestion.get("matched") else None
+                if candidate is not None and candidate.region == selected_region:
+                    representative = candidate
+            if representative is not None:
+                representative.email = email
                 if phone:
-                    matches[0].phone = phone
+                    representative.phone = phone
             db.session.commit()
             login_user(user, remember=True)
             flash("Hesabınız oluşturuldu. Hoş geldiniz!", "success")
             return redirect(url_for("main.dashboard"))
 
-    return render_template("register.html")
+    return render_template("register.html", regions=regions)
 
 
 @auth_bp.route("/forgot-password", methods=["GET", "POST"])
