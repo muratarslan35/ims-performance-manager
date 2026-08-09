@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 180" role="img" aria-labelledby="title">
+  <title>Bilim İlaç</title>
+  <g fill="#fff">
+    <path d="M24 43 88 6l64 37v74l-64 37-64-37zm64-17L51 47v52l37 21 37-21V47z"/>
+    <path d="M61 72h53v20H61zM61 97h33v19H61z"/>
+    <path d="M164 50h27v77h-27zm0-31h27v22h-27zM208 50h27v77h-27zm0-31h27v22h-27zM252 50h27v77h-27zm0-31h27v22h-27z"/>
+    <path d="M294 50h25v14c8-11 19-17 34-17 28 0 45 19 45 42v38h-27V93c0-14-7-23-20-23-15 0-24 10-24 27v30h-27zm117 0h25v14c8-11 19-17 34-17 28 0 45 19 45 42v38h-27V93c0-14-7-23-20-23-15 0-24 10-24 27v30h-27z"/>
+    <path d="M188 149h14v20h-14zm47 0h14v20h-14zm47 0h14v20h-14zm47 0h14v20h-14zm47 0h14v20h-14z"/>
+    <text x="164" y="166" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="15">İLAÇ</text>
+  </g>
+</svg>

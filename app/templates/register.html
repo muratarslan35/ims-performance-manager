@@ -4,15 +4,11 @@
 
 {% block content %}
 <div class="auth-shell">
+    <div class="auth-layout">
+    <aside class="auth-identity-panel" aria-label="Bilim İlaç">
+        <img src="{{ url_for('static', filename='img/bilim-ilac-white.svg') }}" alt="Bilim İlaç" class="auth-identity-logo">
+    </aside>
     <section class="auth-card">
-        <div class="auth-brand-hero">
-            <div class="auth-brand-logo auth-brand-mark" aria-label="Bilim İlaç"><span class="brand-b">B</span><span class="brand-orbit"></span></div>
-            <div>
-                <p class="auth-eyebrow">BİLİM İLAÇ</p>
-                <h1 class="auth-headline">IMS Performans Yönetim Sistemi</h1>
-                <p class="auth-tagline">Bilimsel Paydaş · Veriden Güç Alan Kararlar</p>
-            </div>
-        </div>
 
         <h2 class="auth-welcome">Hesabınızı oluşturun</h2>
         <p class="auth-subtitle">Performans verilerinize güvenle erişmek için bilgilerinizi tamamlayın.</p>
@@ -65,5 +61,6 @@
 
         <p class="auth-footer">Zaten hesabınız var mı? <a href="{{ url_for('auth.login') }}">Giriş Yapın</a></p>
     </section>
+    </div>
 </div>
 {% endblock %}

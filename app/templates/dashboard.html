@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Ana Sayfa | IMS Performans Yönetim Sistemi{% endblock %}
-{% block page_title %}Ana Sayfa{% endblock %}
+{% block page_title %}Yönetici Dashboard{% endblock %}
 
 {% block styles %}
 <link href="{{ url_for('static', filename='css/dashboard.css') }}" rel="stylesheet">
@@ -26,11 +26,11 @@
 <div class="dash-hero mb-4">
   <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3">
     <div>
-      <p class="dash-hero-brand">Bilim İlaç</p>
-      <h1 class="dash-hero-title">Ana Sayfa</h1>
+      <img src="{{ url_for('static', filename='img/bilim-ilac-white.svg') }}" class="dash-bilim-logo" alt="Bilim İlaç">
+      <h1 class="dash-hero-title">Türkiye Performans Özeti</h1>
       <p class="dash-hero-sub">Hoş geldiniz, <strong>{{ current_user.full_name }}</strong></p>
     </div>
-    <div>
+    <div class="dash-hero-side">
       <div class="dash-hero-meta">
         <div class="dash-hero-badge">
           <i class="bi bi-calendar3-week"></i>

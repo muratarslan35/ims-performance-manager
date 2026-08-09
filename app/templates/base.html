@@ -92,6 +92,7 @@ IMS Performans Yönetim Sistemi
 
         {% include "partials/navbar.html" %}
 
+        {% if request.endpoint != 'dashboard.index' %}
         <div class="page-header d-print-none">
 
             <div class="container-xl">
@@ -155,6 +156,7 @@ IMS Performans Yönetim Sistemi
             </div>
 
         </div>
+        {% endif %}
 
         <div class="page-body">
 
