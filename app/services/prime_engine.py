@@ -70,6 +70,12 @@ _RESULT_CACHE = TTLDataCache(ttl=CACHE_TTL)
 _FILE_LOCK = threading.RLock()
 
 
+def _cache_clear():
+    """Compatibility hook used by the legacy wrapper and regression tests."""
+    _GLOBAL_CACHE.invalidate()
+    _RESULT_CACHE.invalidate()
+
+
 class PrimeEngine:
     DEFAULT_SETTINGS = {
         "MAIN_PRIME": 50000.0,
