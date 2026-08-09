@@ -1422,6 +1422,68 @@ class IMSImportService:
         self.statistics["summary_records"] = len(rows)
         db.session.flush()
 
+    def apply_balance_summary(self, year, month):
+        """Use the workbook's BAKİYE report as the authoritative MTD TL view.
+
+        Unlike the brick-sales extract, this report already reconciles monthly
+        target, IMS-date sales and remaining balance at representative/product
+        grain.  It therefore supplies the values used by target, recovery,
+        prime and dashboard calculations.
+        """
+        sheet_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
+        if not sheet_name:
+            return
+        frame = self.workbook[sheet_name]
+        header_row = next((i for i in range(min(12, len(frame))) if "HEDEF" in " ".join(AliasService.normalize(v) for v in frame.iloc[i]) and "CIKIS" in " ".join(AliasService.normalize(v) for v in frame.iloc[i])), None)
+        if header_row is None or header_row + 1 >= len(frame):
+            self.warnings.append(f"{sheet_name}: hedef/çıkış başlığı bulunamadı.")
+            return
+        sections, current = {}, ""
+        for column in range(frame.shape[1]):
+            label = self.clean_text(frame.iloc[header_row, column])
+            normalized_label = AliasService.normalize(label)
+            if any(token in normalized_label for token in ("HEDEF", "CIKIS", "BAKIYE")):
+                current = normalized_label
+            sections[column] = current
+        targets = {(t.representative_id, t.product_id): t for t in Target.query.filter_by(year=year, month=month).all()}
+        summaries = {(s.representative_id, s.product_id): s for s in IMSSummary.query.filter_by(year=year, month=month).all()}
+        for _, row in frame.iloc[header_row + 1:].iterrows():
+            rep_name = self.clean_text(row.iloc[1])
+            if not self._is_probable_representative_name(rep_name):
+                continue
+            rep_match = self.resolve_representative_match(rep_name)
+            if not rep_match["matched"]:
+                continue
+            rep_id = rep_match["object"].id
+            values = {}
+            for column in range(frame.shape[1]):
+                product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))
+                if not product_match["matched"]:
+                    continue
+                product_id = product_match["object"].id
+                metric = self.safe_float(row.iloc[column])
+                section = sections[column]
+                if "HEDEF" in section:
+                    values.setdefault(product_id, {})["target"] = metric
+                elif "CIKIS" in section:
+                    values.setdefault(product_id, {})["actual"] = metric
+            for product_id, item in values.items():
+                if "target" not in item and "actual" not in item:
+                    continue
+                target = targets.get((rep_id, product_id))
+                if target is None:
+                    target = Target(year=year, month=month, quarter=self.quarter_for(month), representative_id=rep_id, product_id=product_id)
+                    db.session.add(target); targets[(rep_id, product_id)] = target
+                target.tl_target = item.get("target", target.tl_target or 0.0)
+                target.tl_realization = item.get("actual", target.tl_realization or 0.0)
+                target.realization_percent = round(target.tl_realization * 100 / target.tl_target, 2) if target.tl_target else 0.0
+                summary = summaries.get((rep_id, product_id))
+                if summary is not None:
+                    summary.tl = target.tl_realization
+                    summary.target_tl = target.tl_target
+                    summary.realization_percent = target.realization_percent
+        db.session.flush()
+
     def clear_week(self, year, week_number):
         """Remove all IMS data for a specific week (used only as a fallback)."""
         IMSFact.query.filter_by(year=year, week_number=week_number).delete(synchronize_session=False)
@@ -1526,6 +1588,7 @@ class IMSImportService:
         )
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
+        self.apply_balance_summary(year, month)
 
         available_sheets = (self.workbook or {}).keys()
         if CompetitionImportService.has_competition_sheets(available_sheets):
