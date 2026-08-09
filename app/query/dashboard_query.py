@@ -233,6 +233,13 @@ class DashboardQuery:
             .all()
         )
 
+    def load_region_performance(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
+        """Non-duplicated target/IMS realization by Excel region code."""
+        query = self.session.query(Representative.region.label("region"), Representative.city.label("city"), func.coalesce(func.sum(Target.unit_target), 0.0).label("unit_target"), func.coalesce(func.sum(IMSSummary.unit), 0.0).label("unit_actual"), func.coalesce(func.sum(Target.tl_target), 0.0).label("tl_target"), func.coalesce(func.sum(IMSSummary.tl), 0.0).label("tl_actual"), func.count(Representative.id.distinct()).label("representative_count")).join(Representative, Representative.id == Target.representative_id).outerjoin(IMSSummary, and_(IMSSummary.representative_id == Target.representative_id, IMSSummary.product_id == Target.product_id, IMSSummary.year == Target.year, IMSSummary.month == Target.month)).filter(Representative.region.isnot(None))
+        if filters and filters.year is not None: query = query.filter(Target.year == filters.year)
+        if filters and filters.month is not None: query = query.filter(Target.month == filters.month)
+        return query.group_by(Representative.region, Representative.city).order_by(Representative.region.asc()).all()
+
     def load_competition_overview(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
         """Aggregate competition metrics from the latest completed workbook only."""
         if not filters or filters.year is None or filters.month is None:

@@ -281,7 +281,7 @@ function initGaugeChart(data) {
   });
 }
 
-function initTurkeyMap(cityPerformance) {
+function initTurkeyMap(regionRealization) {
   const wrapper = document.getElementById("turkeyMapWrapper");
   const regions = document.querySelectorAll(".map-region");
   const tooltip = document.getElementById("mapTooltip");
@@ -295,13 +295,13 @@ function initTurkeyMap(cityPerformance) {
     empty: "#E7ECF4"
   };
   let selectedRegion = null;
+  const codesByMap = { "map-marmara": ["101", "201", "301"], "map-ege": ["401"], "map-akdeniz": ["701", "802"], "map-ic-anadolu": ["501", "801"], "map-karadeniz": ["601", "602"], "map-guneydogu": ["901"], "map-dogu-anadolu": [] };
+  const byCode = Object.fromEntries((regionRealization || []).map((item) => [String(item.code), item]));
 
   regions.forEach((region, index) => {
     const regionName = region.dataset.region || "Bölge";
-    const cities = (region.dataset.cities || "").split(",").map((c) => c.trim()).filter(Boolean);
-    const percentages = cities
-      .map((city) => cityPerformance && cityPerformance[city] ? Number(cityPerformance[city].percent || 0) : 0)
-      .filter((value) => value > 0);
+    const metrics = (codesByMap[region.id] || []).map((code) => byCode[code]).filter(Boolean);
+    const percentages = metrics.map((item) => Number(item.percent || 0)).filter((value) => value > 0);
 
     const avg = percentages.length ? percentages.reduce((sum, value) => sum + value, 0) / percentages.length : 0;
     const path = region.querySelector(".region-path");
@@ -336,6 +336,7 @@ function initTurkeyMap(cityPerformance) {
       tooltip.innerHTML = percentages.length
         ? `<strong>${regionName}</strong><br>%${avg.toFixed(1)} · ${percentages.length} il verisi`
         : `<strong>${regionName}</strong><br>Veri yok`;
+      if (metrics.length) tooltip.innerHTML = `<strong>${regionName}</strong><br>${metrics.map((item) => `${item.code} ${item.city}: %${item.percent}`).join("<br>")}`;
       tooltip.style.display = "block";
     });
 
@@ -437,7 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!data) return;
   initMapPulseStyle();
   lazyInitCharts(data);
-  initTurkeyMap(data.cityPerformance || {});
+  initTurkeyMap(data.regionRealization || []);
   animateCounters();
   initProgressBars();
 });

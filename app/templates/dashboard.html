@@ -230,6 +230,7 @@
       </div>
       <div class="section-card-body">
         {% include "partials/turkey_map.html" %}
+        <div class="region-realization-list mt-3">{% for region in payload.region_realization | default([], true) %}<div class="region-realization-item"><strong>{{ region.code }} {{ region.city }}</strong><span>{{ "{:,.0f}".format(region.tl_actual) }} ₺ · {{ "{:,.0f}".format(region.unit_actual) }} kutu</span><b class="{% if region.percent >= 90 %}good{% elif region.percent >= 70 %}watch{% else %}risk{% endif %}">%{{ region.percent }}</b></div>{% endfor %}</div>
       </div>
     </div>
   </div>
@@ -709,6 +710,7 @@
     "target": {{ payload.overall_target_tl | default(0, true) }}
   },
   "cityPerformance": {{ payload.city_performance | default({}, true) | tojson }},
+  "regionRealization": {{ payload.region_realization | default([], true) | tojson }},
   "competitionAnalysis": {{ payload.competition_analysis | default({"groups": []}, true) | tojson }}
 }
 </script>

@@ -109,6 +109,9 @@ class DashboardPayloadBuilder:
             self._payload["competition_analysis"] = {"market_total_tl": data.get("market_total_tl", 0.0), "company_total_tl": data.get("company_total_tl", 0.0), "competitor_total_tl": data.get("competitor_total_tl", 0.0), "company_share_percent": data.get("company_share_percent", 0.0), "groups": data.get("groups", [])}
         return self._safe_execute_setter("set_competition_analysis", action)
 
+    def set_region_realization(self, regions: Optional[list]) -> 'DashboardPayloadBuilder':
+        return self._safe_execute_setter("set_region_realization", lambda: self._payload.__setitem__("region_realization", regions or []))
+
     def set_history(self, history: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_history", lambda: self._safe_merge(history))
 

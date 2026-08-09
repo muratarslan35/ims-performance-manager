@@ -171,6 +171,7 @@ class DashboardService:
         return {
             "top_reps": self.query_layer.load_top_representatives(filters=filters),
             "city_perf": self.query_layer.load_city_performance(filters=filters),
+            "region_perf": self.query_layer.load_region_performance(filters=filters),
             "market_trend": self.query_layer.load_market_share_trend(filters=filters),
             "history": self.query_layer.load_history(filters=filters),
             "period_performance": self.query_layer.load_period_performance(filters=filters),
@@ -232,6 +233,14 @@ class DashboardService:
             groups.append({"product_group": group_name, "company_product": getattr(matched, "product_name", "Eşleşen IMS ürünü yok"), "company_sales_tl": round(company_sales, 2), "market_sales_tl": round(market_sales, 2), "competitor_sales_tl": round(max(market_sales-company_sales, 0.0), 2), "company_share_percent": round(company_sales*100/market_sales, 2) if market_sales else 0.0, "reported_market_share_percent": round(float(getattr(row, "market_share", 0.0) or 0.0), 2)})
         groups.sort(key=lambda item: item["market_sales_tl"], reverse=True)
         return {"market_total_tl": round(market_total, 2), "company_total_tl": round(company_total, 2), "competitor_total_tl": round(max(market_total-company_total, 0.0), 2), "company_share_percent": round(company_total*100/market_total, 2) if market_total else 0.0, "groups": groups}
+
+    @staticmethod
+    def _region_realization(rows: List[Any]) -> List[Dict[str, Any]]:
+        result=[]
+        for row in rows or []:
+            tt,ta=float(getattr(row,"tl_target",0) or 0),float(getattr(row,"tl_actual",0) or 0); ut,ua=float(getattr(row,"unit_target",0) or 0),float(getattr(row,"unit_actual",0) or 0)
+            result.append({"code":str(getattr(row,"region","") or "-"),"city":str(getattr(row,"city","") or ""),"tl_target":round(tt,2),"tl_actual":round(ta,2),"unit_target":round(ut,2),"unit_actual":round(ua,2),"percent":round(ta*100/tt,1) if tt else 0.0})
+        return result
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
@@ -318,6 +327,7 @@ class DashboardService:
         fmt_recovery = self.formatter.format_recovery(recovery_data, ai_data)
         fmt_prime = self.formatter.format_prime_summary(prime_data, ai_data)
         competition_overview = self._competition_overview(query_data.get("competition", []), query_data.get("product_performance", []))
+        region_realization = self._region_realization(query_data.get("region_perf", []))
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_FORMATTER_MS, (time.time() - t_formatter) * 1000)
 
         # 5. Delegate Payload Assembly (Immutable Mode Supported)
@@ -331,6 +341,7 @@ class DashboardService:
                .set_city_performance(fmt_city_perf) \
                .set_market_trend(fmt_market_trend) \
                .set_competition_analysis(competition_overview) \
+               .set_region_realization(region_realization) \
                .set_history(fmt_history) \
                .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \
