@@ -403,19 +403,11 @@ Temsilci Yönetimi
 
                 <tr>
 
-                    <th>Rep Kodu</th>
-
-                    <th>IMS</th>
-
                     <th>Ad Soyad</th>
 
                     <th>Bölge</th>
 
-                    <th>İl</th>
-
                     <th>Bölge No</th>
-
-                    <th>Müdür</th>
 
                     <th>Takım</th>
 
@@ -439,18 +431,6 @@ Temsilci Yönetimi
 
                     <td>
 
-                        {{ representative.rep_code }}
-
-                    </td>
-
-                    <td>
-
-                        {{ representative.ims_code }}
-
-                    </td>
-
-                    <td>
-
                         <button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#bricks-{{ representative.id }}" aria-expanded="false">
                             {{ representative.rep_name }} <i class="bi bi-chevron-down small"></i>
                         </button>
@@ -466,25 +446,13 @@ Temsilci Yönetimi
 
                     <td>
 
-                        {{ representative.region }}
-
-                    </td>
-
-                    <td>
-
-                        {{ representative.city }}
+                        {{ representative.region }} {{ representative.city }}
 
                     </td>
 
                     <td>
 
                         {{ representative.territory }}
-
-                    </td>
-
-                    <td>
-
-                        {{ representative.manager }}
 
                     </td>
 
