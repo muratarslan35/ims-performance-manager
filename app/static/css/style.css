@@ -1558,5 +1558,6 @@ hr{
 /* PARÇA 5 BİTTİ */
 
 /* DOSYA TAMAMLANDI */
+.navbar-right .dropdown:has(#notificationsDropdown){display:none}
 
 #appSidebar .sidebar-nav-item:has(a[href="/prime"]), #appSidebar .sidebar-nav-item:has(a[href="/quarter"]), #appSidebar .sidebar-nav-item:has(a[href="/recovery"]), #appSidebar .sidebar-nav-item:has(a[href="/reports"]) { display:none; }

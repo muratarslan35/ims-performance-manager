@@ -250,6 +250,31 @@ def reset_password(token):
 
     return render_template("reset_password.html")
 
+@auth_bp.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    from app.services.alias_service import AliasService
+    regions=db.session.query(Representative.region,Representative.city).filter(Representative.region.isnot(None),Representative.city.isnot(None)).distinct().order_by(Representative.region.asc(),Representative.city.asc()).all()
+    representative=next((rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name)==AliasService.normalize(current_user.full_name)),None)
+    if request.method=="POST":
+        if request.form.get("action")=="password":
+            current_password,password,confirm=request.form.get("current_password",""),request.form.get("password",""),request.form.get("password_confirm","")
+            if not check_password_hash(current_user.password,current_password): flash("Mevcut şifre doğrulanamadı.","danger")
+            elif len(password)<8 or password!=confirm: flash("Yeni şifre en az 8 karakter olmalı ve tekrarıyla aynı olmalıdır.","warning")
+            else: current_user.password=generate_password_hash(password);db.session.commit();flash("Şifreniz güncellendi.","success")
+        else:
+            full_name,email,phone,region=request.form.get("full_name","").strip(),request.form.get("email","").strip().lower(),request.form.get("phone","").strip(),request.form.get("region","").strip();duplicate=User.query.filter(User.email==email,User.id!=current_user.id).first()
+            if not full_name or not email: flash("Ad soyad ve e-posta zorunludur.","warning")
+            elif duplicate: flash("Bu e-posta başka bir hesapta kullanılıyor.","danger")
+            elif region and region not in {code for code,_ in regions}: flash("Geçerli bir bölge seçin.","warning")
+            else:
+                current_user.full_name,current_user.email,current_user.phone=full_name,email,phone or None
+                if representative is not None:
+                    representative.email,representative.phone=email,phone or representative.phone
+                    if region: representative.region,representative.city=region,next((city for code,city in regions if code==region),representative.city)
+                db.session.commit();flash("Profil bilgileriniz güncellendi.","success")
+    return render_template("profile.html",regions=regions,representative=representative)
+
 
 @auth_bp.route("/logout")
 @login_required

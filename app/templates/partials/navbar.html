@@ -117,11 +117,14 @@
                         </div>
                     </div>
                     <div class="dropdown-divider"></div>
-                    <a class="dropdown-item" href="{{ url_for('settings.index') }}">
-                        <i class="bi bi-person-fill me-2" aria-hidden="true"></i>Profil
+                    <a class="dropdown-item" href="{{ url_for('auth.profile') }}">
+                        <i class="bi bi-person-fill me-2" aria-hidden="true"></i>Profil Bilgileri
                     </a>
-                    <a class="dropdown-item" href="{{ url_for('settings.index') }}">
-                        <i class="bi bi-sliders me-2" aria-hidden="true"></i>Hesabım
+                    <a class="dropdown-item" href="{{ url_for('auth.profile') }}#password">
+                        <i class="bi bi-key-fill me-2" aria-hidden="true"></i>Şifre Değiştir
+                    </a>
+                    <a class="dropdown-item" href="{{ url_for('auth.profile') }}#region">
+                        <i class="bi bi-geo-alt-fill me-2" aria-hidden="true"></i>Bölge Güncelle
                     </a>
                     <div class="dropdown-divider"></div>
                     <a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}">
