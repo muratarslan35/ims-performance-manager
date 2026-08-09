@@ -111,7 +111,7 @@ class DashboardQuery:
             select_entities=select_cols,
             group_by_entities=group_cols,
             joins=joins,
-            filter_callable=lambda q: DashboardFilter.apply(q, filters),
+            filter_callable=lambda q: DashboardFilter.apply(q, filters).filter(~Representative.rep_code.like("UNASSIGNED%")),
             order_by=default_order,
             limit=limit,
             offset=offset

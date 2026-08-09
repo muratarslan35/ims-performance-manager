@@ -174,6 +174,7 @@ class IMSImportService:
             "summary_records": 0,
             "matched_products": 0,
             "matched_representatives": 0,
+            "vacancy_records": 0,
             "unmatched_representatives": 0,
             "unmatched_products": 0,
             "unmatched_regions": 0,
@@ -602,6 +603,35 @@ class IMSImportService:
             return False
         return bool(re.search(r"[A-ZÇĞİÖŞÜ]", normalized))
 
+    def _is_vacancy_representative(self, text):
+        """Identify explicit empty-headcount rows without matching place names such as Bostancı."""
+        return "BOS" in set(AliasService.normalize(text).split())
+
+    def _region_context(self, value, fallback_city=None):
+        location = self.clean_text(value)
+        match = re.match(r"^(\d{3})\s+(.+)$", location)
+        if match:
+            return match.group(1), match.group(2).strip()
+        return None, self.clean_text(fallback_city) or None
+
+    def _ensure_vacancy_representative(self, region_value=None, city=None):
+        """Store vacant brick activity under an inactive region-owned placeholder."""
+        region, location_city = self._region_context(region_value, city)
+        code = f"UNASSIGNED{region or 'GENERAL'}"
+        representative = Representative.query.filter_by(rep_code=code).first()
+        if representative is None:
+            representative = Representative(
+                rep_code=code,
+                rep_name=f"ATANMAMIŞ · {region or 'GENEL'} {location_city or ''}".strip(),
+                region=region,
+                city=location_city,
+                active=False,
+            )
+            db.session.add(representative)
+            db.session.flush()
+        self.statistics["vacancy_records"] += 1
+        return representative.id
+
     def _ensure_representative(self, name, *, territory=None, manager=None, region=None, city=None):
         match = self.resolve_representative_match(name)
         if match["matched"]:
@@ -854,6 +884,8 @@ class IMSImportService:
             "representative_column": representative_column,
             "representative_columns": representative_columns or [representative_column],
             "brick_column": dimensions["brick"],
+            "region_column": dimensions["region"],
+            "province_column": dimensions["province"],
             "manager_column": dimensions["manager"],
             "auto_create_representatives": auto_create_representatives,
             "products": products,
@@ -1150,6 +1182,8 @@ class IMSImportService:
             representative_columns = sheet.get("representative_columns") or [sheet["representative_column"]]
             representative_column = representative_columns[0]
             brick_column = sheet.get("brick_column")
+            region_column = sheet.get("region_column")
+            province_column = sheet.get("province_column")
             manager_column = sheet.get("manager_column")
             auto_create_representatives = bool(sheet.get("auto_create_representatives"))
 
@@ -1176,11 +1210,16 @@ class IMSImportService:
                         continue
 
                     territory_value = self.clean_text(row[brick_column]) if brick_column else None
+                    region_value = self.clean_text(row[region_column]) if region_column else None
+                    province_value = self.clean_text(row[province_column]) if province_column else None
                     manager_value = self.clean_text(row[manager_column]) if manager_column else None
                     source_row = dataframe_index + sheet["header_row"] + 2
 
                     for representative_name in representative_values:
-                        if not self._is_probable_representative_name(representative_name):
+                        if self._is_vacancy_representative(representative_name):
+                            representative_id = self._ensure_vacancy_representative(region_value, province_value)
+                            existed = True
+                        elif not self._is_probable_representative_name(representative_name):
                             self.statistics["skipped_records"] += 1
                             self._log_skipped_row(
                                 reason="aggregate_or_invalid_representative",
@@ -1189,14 +1228,15 @@ class IMSImportService:
                                 representative=representative_name,
                             )
                             continue
-                        representative_id, existed = self._resolve_representative(
-                            representative_name=representative_name,
-                            allow_auto_create=auto_create_representatives,
-                            sheet_name=sheet["sheet_name"],
-                            source_row=source_row,
-                            territory=territory_value,
-                            manager=manager_value,
-                        )
+                        else:
+                            representative_id, existed = self._resolve_representative(
+                                representative_name=representative_name,
+                                allow_auto_create=auto_create_representatives,
+                                sheet_name=sheet["sheet_name"],
+                                source_row=source_row,
+                                territory=territory_value,
+                                manager=manager_value,
+                            )
                         if representative_id is None:
                             continue
                         if not existed:
@@ -1452,19 +1492,23 @@ class IMSImportService:
         products_by_id = {product.id: product for product in Product.query.all()}
         for _, row in frame.iloc[header_row + 1:].iterrows():
             rep_name = self.clean_text(row.iloc[1])
-            if not self._is_probable_representative_name(rep_name):
-                continue
-            rep_match = self.resolve_representative_match(rep_name)
-            if not rep_match["matched"]:
-                continue
-            rep_id = rep_match["object"].id
             # The first column is the Excel hierarchy label (e.g.
             # ``101 ISTANBUL``).  Preserve its code for ordering and its city
             # name for display, without replacing the representative's brick.
             location = self.clean_text(row.iloc[0])
             location_match = re.match(r"^(\d{3})\s+(.+)$", location)
-            if location_match:
+            if self._is_vacancy_representative(rep_name):
+                rep_id = self._ensure_vacancy_representative(location)
+                representative = Representative.query.get(rep_id)
+            else:
+                if not self._is_probable_representative_name(rep_name):
+                    continue
+                rep_match = self.resolve_representative_match(rep_name)
+                if not rep_match["matched"]:
+                    continue
+                rep_id = rep_match["object"].id
                 representative = rep_match["object"]
+            if location_match:
                 representative.region = location_match.group(1)
                 representative.city = location_match.group(2).strip()
             values = {}
