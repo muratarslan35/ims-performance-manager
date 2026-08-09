@@ -128,13 +128,10 @@ class PrimeEngine:
         _RESULT_CACHE.invalidate()
 
     def load_settings(self):
-        key = "settings_all"
-        cached = _GLOBAL_CACHE.get(key)
-        if cached is not None:
-            return cached
-        settings = {item.setting_key: item.setting_value for item in Setting.query.all()}
-        _GLOBAL_CACHE.set(key, settings)
-        return settings
+        # Settings are few and may be changed from the Settings screen while
+        # the process is running.  Reading them per engine avoids serving a
+        # stale entitlement rule or payout after a configuration update.
+        return {item.setting_key: item.setting_value for item in Setting.query.all()}
 
     def load_products(self):
         key = "products_all"
