@@ -227,7 +227,8 @@ class DashboardFormatter:
                     "bonus_amount": self._safe_round(item.get("bonus_amount"), 0)
                 })
             
-            formatted.sort(key=lambda x: x["realization_percent"], reverse=True)
+            # National leaderboard: preserve the IMS TL revenue ranking.
+            formatted.sort(key=lambda x: x["total_tl"], reverse=True)
             for i, item in enumerate(formatted):
                 item["rank"] = i + 1
                 
