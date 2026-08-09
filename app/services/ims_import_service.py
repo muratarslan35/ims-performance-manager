@@ -614,9 +614,26 @@ class IMSImportService:
             return match.group(1), match.group(2).strip()
         return None, self.clean_text(fallback_city) or None
 
-    def _ensure_vacancy_representative(self, region_value=None, city=None):
+    def _find_vacancy_placeholder(self, vacancy_name):
+        """Match a source vacancy label (e.g. IZM BOS BRICK) to its BAKIYE region."""
+        ignored = {"BOS", "KADRO", "BRICK"}
+        source = " ".join(token for token in AliasService.normalize(vacancy_name).split() if token not in ignored)
+        if not source:
+            return None
+        for representative in Representative.query.filter(Representative.rep_code.like("UNASSIGNED%")).all():
+            city = AliasService.normalize(representative.city or "")
+            if city and (city.startswith(source) or source.startswith(city)):
+                return representative
+        return None
+
+    def _ensure_vacancy_representative(self, region_value=None, city=None, vacancy_name=None):
         """Store vacant brick activity under an inactive region-owned placeholder."""
         region, location_city = self._region_context(region_value, city)
+        if not region and vacancy_name:
+            matched = self._find_vacancy_placeholder(vacancy_name)
+            if matched is not None:
+                self.statistics["vacancy_records"] += 1
+                return matched.id
         code = f"UNASSIGNED{region or 'GENERAL'}"
         representative = Representative.query.filter_by(rep_code=code).first()
         if representative is None:
@@ -631,6 +648,26 @@ class IMSImportService:
             db.session.flush()
         self.statistics["vacancy_records"] += 1
         return representative.id
+
+    def bootstrap_vacancy_representatives_from_balance(self):
+        """Create region placeholders before brick rows are parsed, using BAKIYE's hierarchy."""
+        sheet_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
+        if not sheet_name:
+            return
+        frame = self.workbook[sheet_name]
+        for _, row in frame.iterrows():
+            if len(row) < 2:
+                continue
+            vacancy_name = self.clean_text(row.iloc[1])
+            if self._is_vacancy_representative(vacancy_name):
+                self._ensure_vacancy_representative(self.clean_text(row.iloc[0]), vacancy_name=vacancy_name)
+
+    @staticmethod
+    def _remove_legacy_general_vacancy_facts(year, month):
+        """Facts are derived data; rebuild old generic vacancy facts from the current upload."""
+        generic = Representative.query.filter_by(rep_code="UNASSIGNEDGENERAL").first()
+        if generic is not None:
+            IMSFact.query.filter_by(year=year, month=month, representative_id=generic.id).delete(synchronize_session=False)
 
     def _ensure_representative(self, name, *, territory=None, manager=None, region=None, city=None):
         match = self.resolve_representative_match(name)
@@ -1217,7 +1254,7 @@ class IMSImportService:
 
                     for representative_name in representative_values:
                         if self._is_vacancy_representative(representative_name):
-                            representative_id = self._ensure_vacancy_representative(region_value, province_value)
+                            representative_id = self._ensure_vacancy_representative(region_value, province_value, representative_name)
                             existed = True
                         elif not self._is_probable_representative_name(representative_name):
                             self.statistics["skipped_records"] += 1
@@ -1498,7 +1535,7 @@ class IMSImportService:
             location = self.clean_text(row.iloc[0])
             location_match = re.match(r"^(\d{3})\s+(.+)$", location)
             if self._is_vacancy_representative(rep_name):
-                rep_id = self._ensure_vacancy_representative(location)
+                rep_id = self._ensure_vacancy_representative(location, vacancy_name=rep_name)
                 representative = Representative.query.get(rep_id)
             else:
                 if not self._is_probable_representative_name(rep_name):
@@ -1630,6 +1667,7 @@ class IMSImportService:
     def process_workbook(self, year, month, week_number=None):
         sheets = self.analyze_workbook()
         prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
+        self.bootstrap_vacancy_representatives_from_balance()
         normalized_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") == "normalized"]
         wide_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") != "normalized"]
         if normalized_sheets:
@@ -1647,6 +1685,7 @@ class IMSImportService:
             year=year,
             month=month,
         )
+        self._remove_legacy_general_vacancy_facts(year, month)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
         self.apply_balance_summary(year, month)
