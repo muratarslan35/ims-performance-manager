@@ -224,14 +224,16 @@ class DashboardService:
     def _competition_overview(competition_rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
         """Build a transparent IMS-versus-market comparison for executives."""
         products, groups, company_total, market_total = list(product_rows or []), [], 0.0, 0.0
+        product_order = ("TRAVAZOL", "MONUROL", "ACNEMIX", "MIXOVUL", "STIDERM", "BRIMODER", "FENTIVAG")
         for row in competition_rows or []:
             group_name = str(getattr(row, "product_group", "") or "Pazar grubu").strip()
             key = "".join(ch for ch in group_name.upper() if ch.isalnum())
             matched = next((p for p in products if "".join(ch for ch in str(getattr(p, "product_name", "") or "").upper() if ch.isalnum()) in key), None)
             company_sales, market_sales = float(getattr(matched, "realization_tl", 0.0) or 0.0), float(getattr(row, "market_tl", 0.0) or 0.0)
             company_total += company_sales; market_total += market_sales
-            groups.append({"product_group": group_name, "company_product": getattr(matched, "product_name", "Eşleşen IMS ürünü yok"), "company_sales_tl": round(company_sales, 2), "market_sales_tl": round(market_sales, 2), "competitor_sales_tl": round(max(market_sales-company_sales, 0.0), 2), "company_share_percent": round(company_sales*100/market_sales, 2) if market_sales else 0.0, "reported_market_share_percent": round(float(getattr(row, "market_share", 0.0) or 0.0), 2)})
-        groups.sort(key=lambda item: item["market_sales_tl"], reverse=True)
+            display_product = next((name.title() for name in product_order if name in key), group_name)
+            groups.append({"product_group": group_name, "display_product": display_product, "company_product": getattr(matched, "product_name", "Eşleşen IMS ürünü yok"), "company_sales_tl": round(company_sales, 2), "market_sales_tl": round(market_sales, 2), "competitor_sales_tl": round(max(market_sales-company_sales, 0.0), 2), "company_share_percent": round(company_sales*100/market_sales, 2) if market_sales else 0.0, "reported_market_share_percent": round(float(getattr(row, "market_share", 0.0) or 0.0), 2)})
+        groups.sort(key=lambda item: product_order.index(item["display_product"].upper()) if item["display_product"].upper() in product_order else len(product_order))
         return {"market_total_tl": round(market_total, 2), "company_total_tl": round(company_total, 2), "competitor_total_tl": round(max(market_total-company_total, 0.0), 2), "company_share_percent": round(company_total*100/market_total, 2) if market_total else 0.0, "groups": groups}
 
     @staticmethod
