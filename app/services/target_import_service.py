@@ -560,7 +560,18 @@ class TargetImportService:
             self._log_warning("target_layout_too_small", sheet_name, 0)
             return
         product_columns = []
+        # The merged ``HAZİRAN HEDEF`` label begins one column before the
+        # first product (column B), so seed the horizontal carry from there.
+        active_section = AliasService.normalize(self.clean_text(raw_df.iloc[0, 1]))
         for column_index in range(2, len(raw_df.columns)):
+            # Hedef, Çıkış and REAL% product blocks coexist on this compact
+            # sheet.  Carry Excel's merged section label rightward and use
+            # only the actual target block, never the later percentage data.
+            section_label = self.clean_text(raw_df.iloc[0, column_index])
+            if section_label:
+                active_section = AliasService.normalize(section_label)
+            if "HEDEF" not in active_section and "TARGET" not in active_section:
+                continue
             product_name = self.clean_text(raw_df.iloc[1, column_index])
             if not product_name or AliasService.normalize(product_name) in {"TOPLAM", "TOTAL"}:
                 continue

@@ -1516,10 +1516,6 @@ class IMSImportService:
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self._flush_raw_batch()
         self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
-        self.transform_raw_to_facts(year, month, week_number=week_number)
-        self.rebuild_summary(year, month)
-
-
         TargetImportService(
             file_path=self.file_path,
             upload_id=self.upload.id,
@@ -1528,6 +1524,8 @@ class IMSImportService:
             year=year,
             month=month,
         )
+        self.transform_raw_to_facts(year, month, week_number=week_number)
+        self.rebuild_summary(year, month)
 
         available_sheets = (self.workbook or {}).keys()
         if CompetitionImportService.has_competition_sheets(available_sheets):
