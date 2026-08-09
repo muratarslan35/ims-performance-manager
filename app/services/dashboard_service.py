@@ -175,6 +175,7 @@ class DashboardService:
             "history": self.query_layer.load_history(filters=filters),
             "period_performance": self.query_layer.load_period_performance(filters=filters),
             "product_performance": self.query_layer.load_product_performance(filters=filters),
+            "competition": self.query_layer.load_competition_overview(filters=filters),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -217,6 +218,20 @@ class DashboardService:
             "total_tl_percent": round(realization_tl * 100 / target_tl, 2) if target_tl else 0.0,
             "products": products,
         }
+
+    @staticmethod
+    def _competition_overview(competition_rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
+        """Build a transparent IMS-versus-market comparison for executives."""
+        products, groups, company_total, market_total = list(product_rows or []), [], 0.0, 0.0
+        for row in competition_rows or []:
+            group_name = str(getattr(row, "product_group", "") or "Pazar grubu").strip()
+            key = "".join(ch for ch in group_name.upper() if ch.isalnum())
+            matched = next((p for p in products if "".join(ch for ch in str(getattr(p, "product_name", "") or "").upper() if ch.isalnum()) in key), None)
+            company_sales, market_sales = float(getattr(matched, "realization_tl", 0.0) or 0.0), float(getattr(row, "market_tl", 0.0) or 0.0)
+            company_total += company_sales; market_total += market_sales
+            groups.append({"product_group": group_name, "company_product": getattr(matched, "product_name", "Eşleşen IMS ürünü yok"), "company_sales_tl": round(company_sales, 2), "market_sales_tl": round(market_sales, 2), "competitor_sales_tl": round(max(market_sales-company_sales, 0.0), 2), "company_share_percent": round(company_sales*100/market_sales, 2) if market_sales else 0.0, "reported_market_share_percent": round(float(getattr(row, "market_share", 0.0) or 0.0), 2)})
+        groups.sort(key=lambda item: item["market_sales_tl"], reverse=True)
+        return {"market_total_tl": round(market_total, 2), "company_total_tl": round(company_total, 2), "competitor_total_tl": round(max(market_total-company_total, 0.0), 2), "company_share_percent": round(company_total*100/market_total, 2) if market_total else 0.0, "groups": groups}
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
@@ -302,6 +317,7 @@ class DashboardService:
         fmt_history = self.formatter.format_history(mapped_history, prime_data)
         fmt_recovery = self.formatter.format_recovery(recovery_data, ai_data)
         fmt_prime = self.formatter.format_prime_summary(prime_data, ai_data)
+        competition_overview = self._competition_overview(query_data.get("competition", []), query_data.get("product_performance", []))
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_FORMATTER_MS, (time.time() - t_formatter) * 1000)
 
         # 5. Delegate Payload Assembly (Immutable Mode Supported)
@@ -314,6 +330,7 @@ class DashboardService:
                .set_top_reps(fmt_top_reps) \
                .set_city_performance(fmt_city_perf) \
                .set_market_trend(fmt_market_trend) \
+               .set_competition_analysis(competition_overview) \
                .set_history(fmt_history) \
                .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \

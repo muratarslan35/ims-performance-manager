@@ -103,6 +103,12 @@ class DashboardPayloadBuilder:
     def set_market_trend(self, trend: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_market_trend", lambda: self._safe_merge(trend))
 
+    def set_competition_analysis(self, analysis: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
+        def action() -> None:
+            data = analysis or {}
+            self._payload["competition_analysis"] = {"market_total_tl": data.get("market_total_tl", 0.0), "company_total_tl": data.get("company_total_tl", 0.0), "competitor_total_tl": data.get("competitor_total_tl", 0.0), "company_share_percent": data.get("company_share_percent", 0.0), "groups": data.get("groups", [])}
+        return self._safe_execute_setter("set_competition_analysis", action)
+
     def set_history(self, history: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
         return self._safe_execute_setter("set_history", lambda: self._safe_merge(history))
 

@@ -594,6 +594,7 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
 .empty-state { text-align: center; color: #6d7f95; padding: 28px 12px; }
 .empty-state i { font-size: 32px; opacity: .45; margin-bottom: 8px; display: block; }
 .empty-state p { margin: 0; font-size: 13px; }
+.executive-market-panel { background:linear-gradient(135deg,#0b274b,#123e70); color:#fff; border-radius:18px; padding:26px; box-shadow:0 14px 35px rgba(12,45,83,.16); }.executive-market-head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:22px}.executive-market-head h2{margin:5px 0 6px;font-size:22px;font-weight:800}.executive-market-head p{margin:0;color:#c6d8ed;font-size:13px}.executive-eyebrow{color:#85d4ff;font-size:10px;letter-spacing:.12em;font-weight:800}.executive-market-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}.executive-market-kpis>div{padding:14px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(255,255,255,.07)}.executive-market-kpis span{display:block;color:#bdd2e9;font-size:11px;margin-bottom:5px}.executive-market-kpis strong{font-size:17px}.market-chart-box{height:310px;padding:14px;border-radius:12px;background:#fff}.market-table-wrap{max-height:338px;border-radius:12px;background:#fff}.market-table{font-size:12px;color:#183756}.market-table thead{position:sticky;top:0;background:#eff6ff;z-index:1}.market-table th{white-space:nowrap;color:#52718f;font-size:10px;text-transform:uppercase}.market-table td,.market-table th{padding:10px 12px}.market-share-badge{display:inline-block;border-radius:999px;padding:3px 7px;background:#e4f2ff;color:#0b4ea2;font-weight:800}.market-source-note{margin:16px 0 0;color:#c6d8ed;font-size:11px}
 
 @media (max-width: 1600px) { .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -603,6 +604,7 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
   .ai-panel-row { grid-template-columns: 1fr; }
   .chart-container-lg { height: 300px; }
   .turkey-map-legend { grid-template-columns: repeat(3, minmax(0, auto)); }
+  .executive-market-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 640px) {
   .dash-hero { padding: 20px; }
@@ -619,5 +621,6 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
   .chart-container-lg { height: 260px; }
   .gauge-value { font-size: 28px; }
   .turkey-map-legend { grid-template-columns: repeat(2, minmax(0, auto)); }
+  .executive-market-panel{padding:18px}.executive-market-head{display:block}.executive-market-kpis{grid-template-columns:1fr}
 }
 @media(max-width:640px){ .ai-panel-row{grid-template-columns:1fr;} }

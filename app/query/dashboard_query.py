@@ -9,12 +9,13 @@ Integrates with AggregateBuilder and DashboardFilterParams.
 import hashlib
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, desc, and_
+from sqlalchemy import func, desc, and_, case
 from sqlalchemy.engine.row import Row
 
 from app.extensions import db
 from app.models import (
     CompetitionData,
+    IMSUpload,
     Product,
     Representative, 
     Target, 
@@ -230,6 +231,27 @@ class DashboardQuery:
             .limit(limit)
             .offset(offset or 0)
             .all()
+        )
+
+    def load_competition_overview(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
+        """Aggregate competition metrics from the latest completed workbook only."""
+        if not filters or filters.year is None or filters.month is None:
+            return []
+        latest_upload_id = (
+            self.session.query(IMSUpload.id)
+            .filter(IMSUpload.year == filters.year, IMSUpload.month == filters.month, IMSUpload.status == "COMPLETED")
+            .order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        )
+        if not latest_upload_id:
+            return []
+        return (
+            self.session.query(
+                CompetitionData.product_group.label("product_group"),
+                func.coalesce(func.sum(case((CompetitionData.metric_type == "TL", CompetitionData.metric_value), else_=0.0)), 0.0).label("market_tl"),
+                func.avg(case((CompetitionData.metric_type == "MARKET_SHARE", CompetitionData.metric_value), else_=None)).label("market_share"),
+            )
+            .filter(CompetitionData.upload_id == latest_upload_id, CompetitionData.is_subtotal.is_(False), CompetitionData.is_grand_total.is_(False), CompetitionData.metric_type.in_(("TL", "MARKET_SHARE")))
+            .group_by(CompetitionData.product_group).order_by(desc("market_tl")).all()
         )
 
     def load_history(

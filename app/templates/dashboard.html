@@ -217,6 +217,10 @@
   </div>
 </div>
 
+{% set competition = payload.competition_analysis | default({}, true) %}
+<div class="executive-market-panel mb-4"><div class="executive-market-head"><div><span class="executive-eyebrow">TÜRKİYE GENELİ · REKABET İZLEME</span><h2><i class="bi bi-bar-chart-line-fill"></i> Pazar ve Rakip Analizi</h2><p>Son tamamlanan IMS yüklemesindeki rekabet TL/PP sayfaları ile şirket IMS satışlarının yönetici görünümü.</p></div><span class="section-chip">Aktif dönem</span></div>
+{% if competition.groups %}<div class="executive-market-kpis"><div><span>Pazar büyüklüğü</span><strong>{{ "{:,.0f}".format(competition.market_total_tl | default(0, true)) }} ₺</strong></div><div><span>Şirket IMS satışı</span><strong>{{ "{:,.0f}".format(competition.company_total_tl | default(0, true)) }} ₺</strong></div><div><span>Rakip satış alanı</span><strong>{{ "{:,.0f}".format(competition.competitor_total_tl | default(0, true)) }} ₺</strong></div><div><span>Hesaplanan şirket payı</span><strong>%{{ competition.company_share_percent | default(0, true) }}</strong></div></div><div class="row g-4"><div class="col-xl-5"><div class="market-chart-box"><canvas id="competitionMarketChart"></canvas></div></div><div class="col-xl-7"><div class="table-responsive market-table-wrap"><table class="table market-table align-middle mb-0"><thead><tr><th>Pazar grubu</th><th>Şirket ürünü</th><th>Şirket IMS</th><th>Pazar TL</th><th>Rakip alanı</th><th>Pay</th></tr></thead><tbody>{% for group in competition.groups %}<tr><td class="fw-semibold">{{ group.product_group }}</td><td>{{ group.company_product }}</td><td>{{ "{:,.0f}".format(group.company_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.market_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.competitor_sales_tl | default(0, true)) }} ₺</td><td><span class="market-share-badge">%{{ group.company_share_percent | default(0, true) }}</span></td></tr>{% endfor %}</tbody></table></div></div></div><p class="market-source-note"><i class="bi bi-info-circle"></i> Pazar TL rekabet sayfasından, şirket satışı IMS özetinden alınır. Rakip satış alanı iki veri seti arasındaki farktır.</p>{% else %}<div class="empty-state"><i class="bi bi-bar-chart-line"></i><p>Aktif dönem için rekabet TL verisi bulunmuyor.</p></div>{% endif %}</div>
+
 <div class="row g-4 mb-4">
   <div class="col-lg-7">
     <div class="section-card">
@@ -704,7 +708,8 @@
     "realization": {{ payload.overall_realization_tl | default(0, true) }},
     "target": {{ payload.overall_target_tl | default(0, true) }}
   },
-  "cityPerformance": {{ payload.city_performance | default({}, true) | tojson }}
+  "cityPerformance": {{ payload.city_performance | default({}, true) | tojson }},
+  "competitionAnalysis": {{ payload.competition_analysis | default({"groups": []}, true) | tojson }}
 }
 </script>
 
@@ -713,4 +718,3 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
-

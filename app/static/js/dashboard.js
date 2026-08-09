@@ -351,6 +351,13 @@ function initTurkeyMap(cityPerformance) {
   });
 }
 
+function initCompetitionMarket(data) {
+  const canvas = document.getElementById("competitionMarketChart"), groups = data && Array.isArray(data.groups) ? data.groups.slice(0, 8) : [];
+  if (!canvas || typeof Chart === "undefined" || !groups.length) return;
+  destroyChart("competitionMarket");
+  CHARTS.competitionMarket = new Chart(canvas, { type: "bar", data: { labels: groups.map(g => g.product_group), datasets: [{ label: "Şirket IMS", data: groups.map(g => g.company_sales_tl || 0), backgroundColor: "#0B4EA2", borderRadius: 5 }, { label: "Rakip satış alanı", data: groups.map(g => g.competitor_sales_tl || 0), backgroundColor: "#F4A300", borderRadius: 5 }] }, options: { indexAxis: "y", responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "top", labels: { usePointStyle: true, boxWidth: 8 } }, tooltip: { ...defaultTooltip(), callbacks: { label(ctx) { return ` ${ctx.dataset.label}: ${numberTR(ctx.parsed.x, " ₺")}`; } } } }, scales: { x: { stacked: true, ticks: { callback(v) { return `${Math.round(Number(v) / 1000000)} Mn ₺`; } }, grid: { color: "rgba(13, 43, 83, .06)" } }, y: { stacked: true, grid: { display: false } } } } });
+}
+
 function animateCounters() {
   document.querySelectorAll(".kpi-value").forEach((el, idx) => {
     el.style.opacity = "0";
@@ -381,6 +388,7 @@ function lazyInitCharts(data) {
     { id: "monthlyTrendChart", fn: () => initMonthlyTrend(data.monthlyTrend) },
     { id: "marketShareChart", fn: () => initMarketShare(data.marketShare) },
     { id: "productDonutChart", fn: () => initProductDonut(data.productDonut) },
+    { id: "competitionMarketChart", fn: () => initCompetitionMarket(data.competitionAnalysis) },
     { id: "gaugeChart", fn: () => initGaugeChart(data.gauge) }
   ];
 
