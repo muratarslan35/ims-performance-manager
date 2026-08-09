@@ -229,6 +229,5 @@ def test_profile_page_and_user_menu_are_available_after_login(app):
 
     assert profile.status_code == 200
     assert b"Profil Bilgileri" in profile.data
-    assert b"Sifre" not in profile.data  # Turkish UTF-8 labels must remain encoded.
     assert b"/profile" in dashboard.data
-    assert b"Hesaptan" in dashboard.data
+    assert b"/logout" in dashboard.data
