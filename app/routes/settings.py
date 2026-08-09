@@ -36,6 +36,9 @@ PRIME_SETTING_DEFAULTS = {
     "TARGET_75": "75",
     "TARGET_90": "90",
     "TARGET_100": "100",
+    "PRIME_PRODUCT_COUNT": "4",
+    "REQUIRED_90_COUNT": "3",
+    "REQUIRED_75_COUNT": "1",
 }
 
 

@@ -94,6 +94,9 @@ class PrimeEngineBaseTestCase(unittest.TestCase):
             "MAX_PRIME_PERCENT": "140",
             "MIN_PRIME_PERCENT": "100",
             "TOTAL_PERCENT_REQUIRED": "100",
+            "PRIME_PRODUCT_COUNT": "3",
+            "REQUIRED_90_COUNT": "2",
+            "REQUIRED_75_COUNT": "1",
             "ALLOW_CIRO_WITHOUT_PRODUCT": "1",
             "RECOVERY_EFFECT_RATE": "2",
             "QUARTER_EFFECT_RATE": "10",
@@ -212,6 +215,41 @@ class TestBuildOverrides(PrimeEngineBaseTestCase):
 
 
 class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
+    def test_monthly_entitlement_allows_any_one_product_at_75_percent(self):
+        engine = self.create_engine()
+        engine.settings.update({
+            "PRIME_PRODUCT_COUNT": "4",
+            "REQUIRED_90_COUNT": "3",
+            "REQUIRED_75_COUNT": "1",
+            "TARGET_75": "75",
+            "TARGET_90": "90",
+        })
+        products = [
+            {"product_name": name, "include_in_prime": True, "percent": percent}
+            for name, percent in [("Travazol", 92), ("Monurol", 90), ("Mixovul", 91), ("Acnemix", 76)]
+        ]
+        entitlement = engine.evaluate_monthly_entitlement(products)
+        self.assertTrue(entitlement["product_success"])
+        self.assertEqual([item["product_name"] for item in entitlement["below_standard_products"]], ["Acnemix"])
+
+    def test_monthly_entitlement_rejects_two_products_below_90_percent(self):
+        engine = self.create_engine()
+        engine.settings.update({"PRIME_PRODUCT_COUNT": "4", "REQUIRED_90_COUNT": "3", "REQUIRED_75_COUNT": "1"})
+        products = [
+            {"product_name": name, "include_in_prime": True, "percent": percent}
+            for name, percent in [("Travazol", 92), ("Monurol", 80), ("Mixovul", 89), ("Acnemix", 95)]
+        ]
+        self.assertFalse(engine.evaluate_monthly_entitlement(products)["product_success"])
+
+    def test_monthly_entitlement_rejects_a_product_below_75_percent(self):
+        engine = self.create_engine()
+        engine.settings.update({"PRIME_PRODUCT_COUNT": "4", "REQUIRED_90_COUNT": "3", "REQUIRED_75_COUNT": "1"})
+        products = [
+            {"product_name": name, "include_in_prime": True, "percent": percent}
+            for name, percent in [("Travazol", 92), ("Monurol", 90), ("Mixovul", 91), ("Acnemix", 74)]
+        ]
+        self.assertFalse(engine.evaluate_monthly_entitlement(products)["product_success"])
+
     def test_base_total_percent_is_calculated(self):
         result = self.calculate()
         self.assertAlmostEqual(result["total_tl_percent"], 95.16, places=2)

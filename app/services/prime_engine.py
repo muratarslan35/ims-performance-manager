@@ -79,6 +79,11 @@ class PrimeEngine:
         "MAX_PRIME_PERCENT": 140.0,
         "MIN_PRIME_PERCENT": 100.0,
         "TOTAL_PERCENT_REQUIRED": 100.0,
+        "PRIME_PRODUCT_COUNT": 4.0,
+        "REQUIRED_90_COUNT": 3.0,
+        "REQUIRED_75_COUNT": 1.0,
+        "TARGET_75": 75.0,
+        "TARGET_90": 90.0,
         "ALLOW_CIRO_WITHOUT_PRODUCT": 1.0,
         "RECOVERY_EFFECT_RATE": 2.0,
         "QUARTER_EFFECT_RATE": 10.0,
@@ -309,16 +314,71 @@ class PrimeEngine:
         total_actual = sum(item["actual_tl"] for item in products if item["include_in_total_tl"])
         total_percent = round((total_actual / total_target * 100.0), 2) if total_target > 0 else 0.0
         required_total = self.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
-        passed = [item for item in products if item["include_in_prime"] and item["passed"]]
-        failed = [item for item in products if item["include_in_prime"] and not item["passed"]]
+        entitlement = self.evaluate_monthly_entitlement(products)
+        passed = entitlement["passed_products"]
+        failed = entitlement["failed_products"]
         return {
             "total_target": round(total_target, 2),
             "total_realization": round(total_actual, 2),
             "total_tl_percent": total_percent,
             "passed_products": passed,
             "failed_products": failed,
-            "product_success": len(failed) == 0,
+            "product_success": entitlement["product_success"],
             "total_success": total_percent >= required_total,
+            "prime_eligible": bool(entitlement["product_success"] and total_percent >= required_total),
+            "entitlement": entitlement,
+        }
+
+    def evaluate_monthly_entitlement(self, products):
+        """Apply the flexible four-product monthly entitlement rule.
+
+        The 75% allowance belongs to monthly performance, not to a fixed
+        product: all configured prime products must be at least 75%, and at
+        least three of the four must be at least 90%.
+        """
+        prime_products = [item for item in products if item["include_in_prime"]]
+        configured_count = max(1, int(self.get_setting("PRIME_PRODUCT_COUNT", 4.0)))
+        minimum_percent = self.get_setting("TARGET_75", 75.0)
+        standard_percent = self.get_setting("TARGET_90", 90.0)
+        allowed_below_standard = max(0, int(self.get_setting("REQUIRED_75_COUNT", 1.0)))
+        required_standard = max(0, int(self.get_setting("REQUIRED_90_COUNT", configured_count - allowed_below_standard)))
+
+        below_minimum = [item for item in prime_products if item["percent"] < minimum_percent]
+        below_standard = [item for item in prime_products if minimum_percent <= item["percent"] < standard_percent]
+        standard_or_above = [item for item in prime_products if item["percent"] >= standard_percent]
+        configuration_complete = len(prime_products) == configured_count
+        product_success = (
+            configuration_complete
+            and not below_minimum
+            and len(below_standard) <= allowed_below_standard
+            and len(standard_or_above) >= required_standard
+        )
+
+        blocked_reasons = []
+        if not configuration_complete:
+            blocked_reasons.append("Dört ana ürün yapılandırması eksik.")
+        if below_minimum:
+            blocked_reasons.append("%75 altındaki ürünler: " + ", ".join(item["product_name"] for item in below_minimum))
+        if len(below_standard) > allowed_below_standard:
+            blocked_reasons.append("%90 altındaki ürün sayısı izin verilen sınırı aşıyor.")
+        if len(standard_or_above) < required_standard:
+            blocked_reasons.append("En az üç ana ürünün %90 ve üzeri olması gerekiyor.")
+
+        return {
+            "required_product_count": configured_count,
+            "actual_product_count": len(prime_products),
+            "minimum_percent": minimum_percent,
+            "standard_percent": standard_percent,
+            "allowed_below_standard": allowed_below_standard,
+            "required_standard_count": required_standard,
+            "configuration_complete": configuration_complete,
+            "passed_products": standard_or_above + below_standard,
+            "failed_products": below_minimum,
+            "below_minimum_products": below_minimum,
+            "below_standard_products": below_standard,
+            "standard_or_above_products": standard_or_above,
+            "product_success": product_success,
+            "blocked_reasons": blocked_reasons,
         }
 
     def calculate_main_prime(self, total_percent):
@@ -337,11 +397,9 @@ class PrimeEngine:
 
     def calculate_ciro_prime(self, total_percent, product_success):
         minimum = self.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
-        if total_percent < minimum:
+        if total_percent < minimum or not product_success:
             return 0.0
-        if product_success or int(self.get_setting("ALLOW_CIRO_WITHOUT_PRODUCT", 1.0)) == 1:
-            return round(self.get_setting("CIRO_PRIME", 20000.0), 2)
-        return 0.0
+        return round(self.get_setting("CIRO_PRIME", 20000.0), 2)
 
     def calculate_bonus(self, summary, products):
         db_bonus = sum(item["bonus_amount"] for item in products)
@@ -466,13 +524,14 @@ class PrimeEngine:
         return recovery_rows
 
     def build_breakdown(self, monthly_products, baseline_products, summary, quarter):
-        main_prime = self.calculate_main_prime(summary["total_tl_percent"]) if summary["product_success"] else 0.0
-        ciro_prime = self.calculate_ciro_prime(summary["total_tl_percent"], summary["product_success"])
-        quarter_effect = self.calculate_quarter_component(quarter["total_percent"])
-        product_effect = self.calculate_product_component(monthly_products)
-        recovery_prime = self.calculate_recovery_component(monthly_products, baseline_products=baseline_products)
-        bonus = self.calculate_bonus(summary, monthly_products)
-        penalty = self.calculate_penalty(summary)
+        eligible = summary["prime_eligible"]
+        main_prime = self.calculate_main_prime(summary["total_tl_percent"]) if eligible else 0.0
+        ciro_prime = self.calculate_ciro_prime(summary["total_tl_percent"], eligible)
+        quarter_effect = self.calculate_quarter_component(quarter["total_percent"]) if eligible else 0.0
+        product_effect = self.calculate_product_component(monthly_products) if eligible else 0.0
+        recovery_prime = self.calculate_recovery_component(monthly_products, baseline_products=baseline_products) if eligible else 0.0
+        bonus = self.calculate_bonus(summary, monthly_products) if eligible else 0.0
+        penalty = self.calculate_penalty(summary) if eligible else 0.0
         extra_prime = round(ciro_prime + quarter_effect + product_effect, 2)
         total = round(main_prime + extra_prime + recovery_prime + bonus - penalty, 2)
         return {
@@ -575,7 +634,11 @@ class PrimeEngine:
                     "label": f"{self.year}-{month:02d}",
                     "target_tl": summary["total_target"],
                     "actual_tl": summary["total_realization"],
-                    "prime": round(self.calculate_main_prime(summary["total_tl_percent"]) + self.calculate_ciro_prime(summary["total_tl_percent"], summary["product_success"]), 2),
+                    "prime": round(
+                        self.calculate_main_prime(summary["total_tl_percent"]) + self.calculate_ciro_prime(summary["total_tl_percent"], summary["prime_eligible"])
+                        if summary["prime_eligible"] else 0.0,
+                        2,
+                    ),
                     "percent": summary["total_tl_percent"],
                 }
             )
@@ -683,6 +746,8 @@ class PrimeEngine:
             "ciro_prime": breakdown["ciro_prime"],
             "total_prime": breakdown["total"],
             "product_success": summary["product_success"],
+            "prime_eligible": summary["prime_eligible"],
+            "entitlement": summary["entitlement"],
             "success": breakdown["total"] > 0,
             "status": "Ana Prim" if breakdown["main_prime"] > 0 else ("Ciro Primi" if breakdown["ciro_prime"] > 0 else "Beklemede"),
             "message": "Tüm prim koşulları sağlandı." if summary["product_success"] and summary["total_success"] else "Bazı prim koşulları eksik.",
