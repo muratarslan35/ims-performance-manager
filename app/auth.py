@@ -142,6 +142,7 @@ def register():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         email = request.form.get("email", "").strip().lower()
+        phone = request.form.get("phone", "").strip()
         password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
 
@@ -161,11 +162,24 @@ def register():
             user = User(
                 full_name=full_name,
                 email=email,
+                phone=phone or None,
                 password=generate_password_hash(password),
                 role="Representative",
                 active=True,
             )
             db.session.add(user)
+            # Registration owns account credentials; master representative
+            # contact data is updated only on an exact normalized name match.
+            # This prevents a similar-looking name from changing another
+            # representative's card.
+            from app.models import Representative
+            from app.services.alias_service import AliasService
+            normalized_name = AliasService.normalize(full_name)
+            matches = [rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name) == normalized_name]
+            if len(matches) == 1:
+                matches[0].email = email
+                if phone:
+                    matches[0].phone = phone
             db.session.commit()
             login_user(user, remember=True)
             flash("Hesabınız oluşturuldu. Hoş geldiniz!", "success")
