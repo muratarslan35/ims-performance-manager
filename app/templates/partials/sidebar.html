@@ -27,6 +27,13 @@
             </li>
 
             <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint == 'main.market_analysis' %}active{% endif %}" href="{{ url_for('main.market_analysis') }}">
+                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-globe2"></i></span>
+                    <span class="sidebar-nav-label">Türkiye Pazar Analizi</span>
+                </a>
+            </li>
+
+            <li class="sidebar-nav-item">
                 <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('ims.') %}active{% endif %}"
                    href="{{ url_for('ims.index') }}">
                     <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-cloud-upload-fill"></i></span>

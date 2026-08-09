@@ -5,6 +5,7 @@ from flask import url_for
 
 from flask_login import current_user
 from flask_login import login_required
+from app.services.dashboard_service import DashboardService
 
 
 main_bp = Blueprint(
@@ -28,6 +29,11 @@ def dashboard():
     return redirect(
         url_for("dashboard.index")
     )
+
+@main_bp.route("/market-analysis")
+@login_required
+def market_analysis():
+    return render_template("market_analysis.html", payload=DashboardService().run())
 
 
 @main_bp.route("/prime")

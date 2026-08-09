@@ -1558,3 +1558,5 @@ hr{
 /* PARÇA 5 BİTTİ */
 
 /* DOSYA TAMAMLANDI */
+
+#appSidebar .sidebar-nav-item:has(a[href="/prime"]), #appSidebar .sidebar-nav-item:has(a[href="/quarter"]), #appSidebar .sidebar-nav-item:has(a[href="/recovery"]), #appSidebar .sidebar-nav-item:has(a[href="/reports"]) { display:none; }
