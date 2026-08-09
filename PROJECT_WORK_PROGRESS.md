@@ -309,6 +309,24 @@ If a workbook containing an explicit box target is supplied, map that source col
 - 789 assignment brickinin tamamı CompetitionData brickiyle birebir eşleşti. Atamalar kodlu bölge/il ile backfill edildi; 789/789 kodlu bölge, 789/789 il, 99/99 temsilci ili dolu.
 - Bölge kodları Excel kaynaklıdır: 101, 201, 301, 401, 501, 601, 602, 701, 801, 802, 901. Dönem–brick duplicate=0.
 
+### 2026-08-09 — Aylık prim hakedişi kapısı
+
+- [x] `app/services/prime_engine.py` — Aylık prim kuralı ürün adına sabitlenmeden tanımlandı: dört ana ürünün tamamı en az %75, en az üçü %90 ve üzeri; ayrıca toplam TL realizasyonu en az %100 olmalıdır.
+- [x] Prim/ciro/bonus/recovery/ürün bileşenleri bu aylık hakediş kapısı sağlanmadığında ödeme üretmez. Ayar değişiklikleri eski cache sonucu kullanılmadan her hesap motoru oluşturulduğunda yeniden okunur.
+- [x] `app/routes/settings.py` — Eksik prim ayarları `category="Prim"` ile oluşturulur; zorunlu kategori hatası giderildi.
+- [x] Uyumluluk — Eski `app.prime_engine` sarmalayıcısının kullandığı `_cache_clear` geri eklendi.
+- [x] Test — Sunucu venv üzerinde `tests.test_prime_engine_service`: 65/65 PASS.
+- [x] Gerçek Haziran verisi — Aktif dört ana ürün Travazol, Monurol, Mixovul, Acnemix olarak doğrulandı. Örnek temsilcilerde toplam TL %42,38–%70,39 aralığında ve en az bir ürün %75 altında olduğu için aylık hakediş doğru biçimde oluşmadı.
+- [x] Commit/deploy — `48c1add`, `cb3ae71`, `f08433b`, `e310c5f` GitHub'a gönderildi ve sunucuya çekildi; uygulama `/login` HTTP 200 ile çalışıyor.
+
+## Son tamamlanan aşama
+
+Aylık dört ürün + toplam TL prim hakedişi kuralı üretime alındı.
+
+## Sonraki yapılacak aşama
+
+Üç aylık Q dönemi için aynı esnek ürün kuralının üç aylık kümülatif hedef/gerçekleşen verisine nasıl uygulanacağı ve Q ödemesinin aylık ödemeden bağımsız katsayı/tutar sözleşmesi netleştirildikten sonra uygulanacak. Mevcut Haziran verisinde Q2'nin Nisan ve Mayıs verileri bulunmadığından dönem tamamlanmadan Q hakedişi üretilmemelidir.
+
 ### 2026-08-09 — Ortak brick üyeliği ve uzun temsilci adları
 
 - `representative_brick_assignments` tek sorumlu kuralı migration-first olarak çoklu üyelik kuralına çevrildi: benzersizlik artık `yıl + ay + brick + representative_id` düzeyinde.
