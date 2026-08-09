@@ -247,6 +247,23 @@ Faz 2 dashboard veri kaynağı, import aggregation ve AI payload contract düzel
 
 Değişiklikleri Git commit/push ve sunucu deploy'una aktar; uygulama başlatıldıktan sonra oturumlu tarayıcıyla dashboard menü/Chart.js görsel smoke testini tamamla. Ayrı hedef kaynak dosyası geldiğinde 42 eski hedef satırını ilgili dönem için upsert et.
 
+### 2026-08-09 - Target box value correction
+
+- [x] `app/services/ims_import_service.py` - Removed the derived `TL target / unit price` box-target calculation. The current workbook provides TL targets only; it does not contain a box-target field.
+- [x] `app/routes/targets.py` and `app/templates/targets.html` - Targets now render as one collapsed row per representative. Opening a representative shows that person's product-level TL targets; opening another closes the previous row.
+- [x] `app/static/css/style.css` - Added the scoped accordion presentation; the old flat target table is hidden.
+- [x] Server DB correction - In one SQLite transaction, reset only 2026/06 derived `targets.unit_target` and `ims_summary.target_unit` values to zero; no rows were deleted and TL target total remains 131,153,092.33.
+- [x] Server validation - Python compilation passed; authenticated target-route render returned HTTP 200 and includes the accordion/source label without the former fabricated box figure.
+- Commit/deploy: `71dd358 fix(targets): preserve source box targets and group rep goals` pushed and pulled on the server.
+
+## Son tamamlanan aşama
+
+Target box value correction and representative accordion deployment completed.
+
+## Sonraki yapılacak aşama
+
+If a workbook containing an explicit box target is supplied, map that source column to `Target.unit_target`; until then leave it as unavailable rather than deriving it from the product price.
+
 ### 2026-08-09 — Dinamik dosya şeması düzeltmesi
 
 - `CompetitionImportService` artık belirli aylara veya sabit sayfa listesine bağlı değildir; `REKABET` etiketi ve TL/KUTU/PP semantiğiyle sayfaları dinamik seçer.
