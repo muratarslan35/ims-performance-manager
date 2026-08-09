@@ -65,6 +65,14 @@ def index():
 
     ).all()
 
+    grouped = {}
+    for target in targets:
+        group = grouped.setdefault(target.representative_id, {"representative": target.representative, "targets": []})
+        group["targets"].append(target)
+    target_groups = list(grouped.values())
+    for group in target_groups: group["targets"].sort(key=lambda item: (item.product.display_order, item.product.product_name))
+    target_groups.sort(key=lambda item: ((item["representative"].region or "999"), item["representative"].city or "", item["representative"].rep_name))
+
     return render_template(
 
         "targets.html",
@@ -73,7 +81,8 @@ def index():
 
         representatives=representatives,
 
-        products=products
+        products=products,
+        target_groups=target_groups
 
     )
 

@@ -1559,5 +1559,6 @@ hr{
 
 /* DOSYA TAMAMLANDI */
 .navbar-right .dropdown:has(#notificationsDropdown){display:none}
+.legacy-target-list{display:none}.target-accordion-card .accordion-button{gap:8px;background:#fff}.target-accordion-card .accordion-button:not(.collapsed){color:#0b4ea2;background:#f4f8ff;box-shadow:none}.target-accordion-card .accordion-button:focus{box-shadow:none}.target-accordion-card th{font-size:11px;text-transform:uppercase;color:#71849a;background:#f8fafc}
 
 #appSidebar .sidebar-nav-item:has(a[href="/prime"]), #appSidebar .sidebar-nav-item:has(a[href="/quarter"]), #appSidebar .sidebar-nav-item:has(a[href="/recovery"]), #appSidebar .sidebar-nav-item:has(a[href="/reports"]) { display:none; }
