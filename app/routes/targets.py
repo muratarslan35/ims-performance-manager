@@ -16,6 +16,7 @@ from app.models import (
     Product,
     IMSSummary
 )
+from app.services.target_box_calculation_service import TargetBoxCalculationService
 
 
 targets_bp = Blueprint(
@@ -85,6 +86,20 @@ def index():
         target_groups=target_groups
 
     )
+
+
+@targets_bp.route("/recalculate-box-targets", methods=["POST"])
+@login_required
+def recalculate_box_targets():
+    """Apply TL target / current unit price to every stored target record."""
+    try:
+        changed = TargetBoxCalculationService.synchronize()
+        db.session.commit()
+        flash(f"Kutu hedefleri ürün birim fiyatlarına göre güncellendi ({changed} hedef kaydı).", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"Kutu hedefi hesaplanamadı: {exc}", "danger")
+    return redirect(url_for("targets.index"))
 
 @targets_bp.route("/analysis")
 @login_required

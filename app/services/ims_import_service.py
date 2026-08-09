@@ -37,6 +37,7 @@ from app.models import (
     IMSUpload,
     ImportAuditLog,
     ManualMatchQueue,
+    Product,
     Representative,
     RepresentativeBrickAssignment,
     Target,
@@ -44,6 +45,7 @@ from app.models import (
 from app.services.alias_service import AliasService
 from app.services.competition_import_service import CompetitionImportService
 from app.services.target_import_service import TargetImportService
+from app.services.target_box_calculation_service import TargetBoxCalculationService
 
 
 # Regex to extract week number from typical IMS file names.
@@ -1447,6 +1449,7 @@ class IMSImportService:
             sections[column] = current
         targets = {(t.representative_id, t.product_id): t for t in Target.query.filter_by(year=year, month=month).all()}
         summaries = {(s.representative_id, s.product_id): s for s in IMSSummary.query.filter_by(year=year, month=month).all()}
+        products_by_id = {product.id: product for product in Product.query.all()}
         for _, row in frame.iloc[header_row + 1:].iterrows():
             rep_name = self.clean_text(row.iloc[1])
             if not self._is_probable_representative_name(rep_name):
@@ -1484,12 +1487,17 @@ class IMSImportService:
                     target = Target(year=year, month=month, quarter=self.quarter_for(month), representative_id=rep_id, product_id=product_id)
                     db.session.add(target); targets[(rep_id, product_id)] = target
                 target.tl_target = item.get("target", target.tl_target or 0.0)
+                target.unit_target = TargetBoxCalculationService.unit_target(
+                    target.tl_target,
+                    products_by_id.get(product_id).unit_price if products_by_id.get(product_id) else 0,
+                )
                 target.tl_realization = item.get("actual", target.tl_realization or 0.0)
                 target.realization_percent = round(target.tl_realization * 100 / target.tl_target, 2) if target.tl_target else 0.0
                 summary = summaries.get((rep_id, product_id))
                 if summary is not None:
                     summary.tl = target.tl_realization
                     summary.target_tl = target.tl_target
+                    summary.target_unit = target.unit_target
                     summary.realization_percent = target.realization_percent
         db.session.flush()
 
