@@ -451,11 +451,9 @@ Temsilci Yönetimi
 
                     <td>
 
-                        <strong>
-
-                            {{ representative.rep_name }}
-
-                        </strong>
+                        <button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#bricks-{{ representative.id }}" aria-expanded="false">
+                            {{ representative.rep_name }} <i class="bi bi-chevron-down small"></i>
+                        </button>
 
                     </td>
 
@@ -565,6 +563,16 @@ Temsilci Yönetimi
 
                     </td>
 
+                </tr>
+
+                <tr class="collapse bg-light" id="bricks-{{ representative.id }}">
+                    <td colspan="10" class="py-3 px-4">
+                        <div class="small text-secondary mb-2">{{ assignment_period[0] if assignment_period else '' }}/{{ assignment_period[1] if assignment_period else '' }} dönemi sorumlu brickleri</div>
+                        {% set bricks = assignments_by_rep.get(representative.id, []) %}
+                        {% if bricks %}
+                          <div class="d-flex flex-wrap gap-2">{% for assignment in bricks %}<span class="badge bg-primary-lt text-primary">{{ assignment.brick }}</span>{% endfor %}</div>
+                        {% else %}<span class="text-secondary">Bu dönem için brick ataması bulunmuyor.</span>{% endif %}
+                    </td>
                 </tr>
 
                 {% endfor %}

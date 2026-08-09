@@ -1455,6 +1455,15 @@ class IMSImportService:
             if not rep_match["matched"]:
                 continue
             rep_id = rep_match["object"].id
+            # The first column is the Excel hierarchy label (e.g.
+            # ``101 ISTANBUL``).  Preserve its code for ordering and its city
+            # name for display, without replacing the representative's brick.
+            location = self.clean_text(row.iloc[0])
+            location_match = re.match(r"^(\d{3})\s+(.+)$", location)
+            if location_match:
+                representative = rep_match["object"]
+                representative.region = location_match.group(1)
+                representative.city = location_match.group(2).strip()
             values = {}
             for column in range(frame.shape[1]):
                 product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))

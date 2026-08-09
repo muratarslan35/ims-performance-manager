@@ -31,17 +31,28 @@ representatives_bp = Blueprint(
 @login_required
 def index():
 
+    latest = RepresentativeBrickAssignment.query.order_by(
+        RepresentativeBrickAssignment.year.desc(), RepresentativeBrickAssignment.month.desc()
+    ).first()
+    assignments_by_rep = {}
+    if latest:
+        rows = RepresentativeBrickAssignment.query.filter_by(year=latest.year, month=latest.month).order_by(
+            RepresentativeBrickAssignment.brick.asc()
+        ).all()
+        for assignment in rows:
+            assignments_by_rep.setdefault(assignment.representative_id, []).append(assignment)
+
     representatives = Representative.query.order_by(
-
-        Representative.rep_name.asc()
-
+        Representative.region.asc().nullslast(), Representative.city.asc(), Representative.rep_name.asc()
     ).all()
 
     return render_template(
 
         "representatives.html",
 
-        representatives=representatives
+        representatives=representatives,
+        assignments_by_rep=assignments_by_rep,
+        assignment_period=(latest.year, latest.month) if latest else None,
 
     )
 
