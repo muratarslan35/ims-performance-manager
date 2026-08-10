@@ -1,5 +1,13 @@
 # IMS Performance Manager — Çalışma Checkpointi
 
+## Q period premium dashboard (2026-08-10)
+
+- [x] `app/services/prime_engine.py` — Monthly payments are mutually exclusive: 20,000 TL ciro premium for total TL >=100% without product eligibility, or main premium for eligible product performance. Main premium is 50,000 TL at 100%, +2,500 TL per 5 points, capped at 70,000 TL at 140%.
+- [x] `app/services/quarter_entitlement_service.py` — Read-only Q report combines monthly gross premiums with four-main-product 75/90/100 TL and unit carry balances.
+- [x] `app/routes/__init__.py`, `app/templates/quarter.html`, `app/templates/partials/sidebar.html` — `/quarter` is now a dedicated Q Dönem Analizi screen in the sidebar.
+- [-] Targeted production checks PASS: %110=55,000 TL; %140=70,000 TL; ciro at %100=20,000 TL; Q service and template render passed. `/quarter` login redirect returns 302 and the server is listening on port 8000.
+- [x] Commit/deploy: `e8f2ae8` pushed and deployed.
+
 ## Representative code follow-up (2026-08-09)
 
 - `app/services/ims_import_service.py` no longer creates `AUTO-` representative codes. New master codes are derived from the normalized Excel name, for example `ENGIN YAPAK` -> `ENGINYAPAK`.
