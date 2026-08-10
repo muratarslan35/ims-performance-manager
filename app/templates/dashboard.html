@@ -28,7 +28,7 @@
     <div>
       <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" class="dash-bilim-logo" alt="Bilim İlaç">
       <h1 class="dash-hero-title">Türkiye Performans Özeti</h1>
-      <p class="dash-hero-sub">Hoş geldiniz, <strong>{{ current_user.full_name }}</strong></p>
+      <p class="dash-hero-sub">Hoş geldiniz, <strong>{{ current_user.full_name }}</strong> · Türkiye geneli yönetici görünümü</p>
     </div>
     <div class="dash-hero-side">
       <div class="dash-hero-meta">
@@ -53,12 +53,6 @@
       </div>
     </div>
   </div>
-</div>
-
-<div class="alert alert-info d-flex justify-content-between align-items-center mb-4" role="status">
-  <span><strong>Aktif dönem brick atamaları:</strong> {{ payload.brick_assignment_summary.total | default(0, true) }} brick</span>
-  <span>{{ payload.brick_assignment_summary.manual | default(0, true) }} manuel · {{ payload.brick_assignment_summary.auto | default(0, true) }} Excel'den otomatik</span>
-  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('representatives.index') }}">Temsilci ayarları</a>
 </div>
 
 {% set executive_regions = payload.region_realization | default([], true) %}{% set executive = namespace(region_count=0, risk_regions=0) %}{% for region in executive_regions %}{% set executive.region_count = executive.region_count + 1 %}{% if (region.percent | default(0, true)) < 70 %}{% set executive.risk_regions = executive.risk_regions + 1 %}{% endif %}{% endfor %}{% set market = payload.competition_analysis | default({}, true) %}{% set national = payload.executive_metrics | default({}, true) %}{% set national_target = national.target_tl | default(payload.overall_target_tl, true) %}{% set national_actual = national.actual_tl | default(payload.overall_realization_tl, true) %}{% set national_percent = national.realization_percent | default(overall_safe, true) %}

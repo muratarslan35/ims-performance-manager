@@ -1,15 +1,16 @@
 /* Brand treatment shared by the expanded and collapsed application shell. */
 .sidebar-brand-art {
-  width: 148px;
-  height: 48px;
-  object-fit: cover;
-  object-position: center 48%;
-  border-radius: 9px;
-  box-shadow: 0 5px 14px rgba(0, 0, 0, .24);
+  width: 142px;
+  height: 46px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .sidebar-brand-text { display: none; }
 .sidebar-header { min-height: 82px; padding: 17px 18px; }
+.sidebar-tagline { margin: auto 18px 15px; padding: 13px 14px; border: 1px solid rgba(255,255,255,.14); border-radius: 12px; background: linear-gradient(135deg,rgba(255,255,255,.10),rgba(114,210,116,.10)); color: rgba(255,255,255,.80); font-size: 12px; line-height: 1.15; letter-spacing: .04em; }
+.sidebar-tagline span { display:block; font-weight:600; }
+.sidebar-tagline strong { display:block; margin-top:3px; color:#fff; font-size:17px; letter-spacing:.01em; }
 
 .navbar-collapsed-brand { display: none; }
 body.sidebar-collapsed .navbar-collapsed-brand {
