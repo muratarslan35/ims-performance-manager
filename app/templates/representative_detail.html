@@ -13,10 +13,10 @@
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">TL gerçekleşen</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">{{ '{:,.0f}'.format(totals.target_tl) }} ₺ hedef</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">TL realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kutu gerçekleşen</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_unit) }}</div><div class="small text-secondary">{{ '{:,.0f}'.format(totals.target_unit) }} kutu hedef</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Sorumlu brick</div><div class="h2 mb-1">{{ assignments|length }}</div><div class="small text-secondary">{{ representative.region or 'Dönemsel' }} bölge ataması</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam TL hedefi</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.target_tl) }} ₺</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">Seçili IMS dönemine kadar</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kalan TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.remaining_tl) }} ₺</div><div class="small text-secondary">Hedefe ulaşmak için kalan</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
 </div>
 
 <div class="row g-4">
@@ -30,9 +30,9 @@
   </div>
   <div class="col-xl-5">
     <div class="card h-100">
-      <div class="card-header d-flex justify-content-between align-items-center"><h2 class="card-title mb-0">Sorumlu brickler</h2><span class="badge bg-primary-lt text-primary">{{ assignments|length }}</span></div>
+      <div class="card-header"><h2 class="card-title mb-0">Sorumlu brickler</h2></div>
       <div class="list-group list-group-flush">
-      {% for item in assignments %}<div class="list-group-item"><div class="fw-semibold">{{ item.brick }}</div><small class="text-secondary">{{ item.territory or representative.region or '-' }} · {{ item.city or representative.city or '-' }} · {{ item.source }}</small></div>{% else %}<div class="list-group-item text-secondary py-4">Bu dönem için brick ataması bulunmuyor.</div>{% endfor %}
+      {% for item in assignments %}<div class="list-group-item"><div class="fw-semibold">{{ item.brick }}</div></div>{% else %}<div class="list-group-item text-secondary py-4">Bu dönem için brick ataması bulunmuyor.</div>{% endfor %}
       </div>
     </div>
   </div>

@@ -44,7 +44,14 @@ def index():
         for assignment in rows:
             assignments_by_rep.setdefault(assignment.representative_id, []).append(assignment)
 
-    representatives = Representative.query.order_by(
+    # The general unassigned placeholder duplicates brick portfolios which are
+    # already shown under their regional unassigned representative records.
+    representatives = Representative.query.filter(
+        ~(
+            (Representative.active.is_(False))
+            & (Representative.rep_name.ilike("ATANMAMIŞ · GENEL%"))
+        )
+    ).order_by(
         Representative.region.asc().nullslast(), Representative.city.asc(), Representative.rep_name.asc()
     ).all()
 
@@ -432,6 +439,7 @@ def view(
         totals["target_unit"] += target_unit
         totals["actual_unit"] += actual_unit
     totals = {key: round(value, 2) for key, value in totals.items()}
+    totals["remaining_tl"] = round(max(totals["target_tl"] - totals["actual_tl"], 0.0), 2)
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     return render_template("representative_detail.html", representative=representative, assignments=assignments, products=product_rows, totals=totals, year=year, month=month)
 
