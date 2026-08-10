@@ -7,35 +7,38 @@
 <style>
   .quarter-hero { background:linear-gradient(125deg,#123b70,#1e6ed2); color:#fff; border-radius:18px; padding:28px; margin-bottom:22px; }
   .quarter-hero p { margin:0; opacity:.86; }
-  .quarter-card { border:0; border-radius:16px; box-shadow:0 8px 22px rgba(23,48,71,.08); height:100%; }
+  .quarter-card { border:0; border-radius:16px; box-shadow:0 8px 22px rgba(23,48,71,.08); height:100%; overflow:hidden; }
   .quarter-card .card-body { padding:22px; }
   .quarter-value { font-size:1.65rem; font-weight:750; color:#163f6f; }
-  .status-pill { display:inline-block; border-radius:999px; padding:5px 10px; font-size:.78rem; font-weight:700; }
-  .status-main { background:#d9f5e7; color:#087443; }.status-ciro { background:#fff1cc; color:#9a6200; }.status-none { background:#fbe2e2; color:#b72c2c; }
-  .quarter-table th { background:#183b66; color:#fff; white-space:nowrap; font-size:.78rem; }
-  .quarter-table td { vertical-align:middle; }
+  .status-pill, .condition-pill { display:inline-block; border-radius:999px; padding:6px 10px; font-size:.75rem; font-weight:700; white-space:nowrap; }
+  .status-main, .condition-ok { background:#d9f5e7; color:#087443; }
+  .status-ciro { background:#fff1cc; color:#9a6200; }
+  .status-none, .condition-fail { background:#fbe2e2; color:#b72c2c; }
+  .quarter-table { border-collapse:separate; border-spacing:0; }
+  .quarter-table th { background:#183b66; color:#fff; white-space:nowrap; font-size:.75rem; letter-spacing:.035em; padding:14px 18px; border:0; }
+  .quarter-table td { vertical-align:middle; padding:15px 18px; border-color:#e7eef5; }
+  .quarter-table tbody tr:nth-child(even) { background:#f8fbfe; }
+  .quarter-table tbody tr:hover { background:#edf6ff; }
+  .metric-cell { font-weight:700; color:#163f6f; white-space:nowrap; }
+  .submetric { color:#7d8b9e; font-size:.76rem; margin-top:3px; display:block; }
   .prime-product { color:#0754ad; font-weight:700; }
 </style>
 
 <div class="quarter-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
   <div>
-    <div class="text-uppercase small fw-bold opacity-75">Prim &amp; Telafi Merkezi</div>
+    <div class="text-uppercase small fw-bold opacity-75">Prim ve Telafi Merkezi</div>
     <h2 class="mb-1">Q Dönem Analizi</h2>
-    <p>Aylık 20.000 ₺ ciro primi, 50.000 ₺ ana prim ve ürün bazlı üç aylık telafiyi birlikte izleyin.</p>
+    <p>Aylık ciro, ana prim ve üç aylık ürün telafisini tek görünümde yönetin.</p>
   </div>
   {% if selected_representative %}<div class="text-end"><div class="small opacity-75">Seçili temsilci</div><strong>{{ selected_representative.rep_name }}</strong></div>{% endif %}
 </div>
 
-<div class="card quarter-card mb-4">
-  <div class="card-body">
-    <form class="row g-3 align-items-end" method="get">
-      <div class="col-md-5"><label class="form-label">Temsilci</label><select class="form-select" name="representative_id" required><option value="">Temsilci seçiniz</option>{% for rep in representatives %}<option value="{{ rep.id }}" {% if selected_representative and selected_representative.id == rep.id %}selected{% endif %}>{{ rep.rep_name }}{% if rep.region %} · {{ rep.region }}{% endif %}</option>{% endfor %}</select></div>
-      <div class="col-md-2"><label class="form-label">Yıl</label><input class="form-control" type="number" name="year" value="{{ selected_year }}" min="2020" max="2100"></div>
-      <div class="col-md-2"><label class="form-label">Dönem</label><select class="form-select" name="quarter">{% for q in range(1,5) %}<option value="{{ q }}" {% if q == selected_quarter %}selected{% endif %}>Q{{ q }}</option>{% endfor %}</select></div>
-      <div class="col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-calculator me-1"></i>Q Hesabını Göster</button></div>
-    </form>
-  </div>
-</div>
+<div class="card quarter-card mb-4"><div class="card-body"><form class="row g-3 align-items-end" method="get">
+  <div class="col-md-5"><label class="form-label">Temsilci <span class="text-muted fw-normal">({{ representatives|length }} aktif)</span></label><select class="form-select" name="representative_id" required><option value="">Temsilci seçiniz</option>{% for rep in representatives %}<option value="{{ rep.id }}" {% if selected_representative and selected_representative.id == rep.id %}selected{% endif %}>{{ rep.rep_name }}{% if rep.region %} · {{ rep.region }}{% endif %}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><label class="form-label">Yıl</label><input class="form-control" type="number" name="year" value="{{ selected_year }}" min="2020" max="2100"></div>
+  <div class="col-md-2"><label class="form-label">Dönem</label><select class="form-select" name="quarter">{% for q in range(1,5) %}<option value="{{ q }}" {% if q == selected_quarter %}selected{% endif %}>Q{{ q }}</option>{% endfor %}</select></div>
+  <div class="col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-calculator me-1"></i>Q Hesabını Göster</button></div>
+</form></div></div>
 
 {% if report %}
 <div class="row g-3 mb-4">
@@ -45,9 +48,9 @@
   <div class="col-md-3"><div class="card quarter-card"><div class="card-body"><div class="small text-muted">Aylık Brüt Hakkediş Toplamı</div><div class="quarter-value">{{ "{:,.0f}".format(report.summary.gross_prime) }} ₺</div><div class="small text-muted">{{ report.summary.main_prime_months }} ana prim · {{ report.summary.ciro_prime_months }} ciro primi</div></div></div></div>
 </div>
 
-<div class="card quarter-card mb-4"><div class="card-header bg-white border-0 pt-4 px-4"><h4 class="mb-1">Aylık prim hakkedişi</h4><p class="text-muted mb-0 small">Ana prim ürün koşulu sağlandığında uygulanır; ürün koşulu yoksa toplam TL %100+ için yalnız ciro primi gösterilir.</p></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Ay</th><th>TL Hedef</th><th>Gerçekleşen</th><th>TL REA</th><th>Ürün koşulu</th><th>Hakkediş türü</th><th>Brüt prim</th><th>Not</th></tr></thead><tbody>{% for row in report.months %}<tr><td class="fw-bold">{{ row.label }}</td><td>{{ "{:,.0f}".format(row.target_tl) }} ₺</td><td>{{ "{:,.0f}".format(row.actual_tl) }} ₺</td><td>%{{ "%.1f"|format(row.total_percent) }}</td><td>{% if row.product_success %}<span class="text-success fw-bold">Sağlandı</span>{% else %}<span class="text-danger fw-bold">Sağlanmadı</span>{% endif %}</td><td><span class="status-pill {% if row.main_prime %}status-main{% elif row.ciro_prime %}status-ciro{% else %}status-none{% endif %}">{{ row.entitlement_type }}</span></td><td class="fw-bold">{{ "{:,.0f}".format(row.gross_prime) }} ₺</td><td class="small text-muted">{{ row.blocked_reasons|join(' ') if row.blocked_reasons else 'Koşullar sağlandı.' }}</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card quarter-card mb-4"><div class="card-header bg-white border-0 pt-4 px-4"><div class="d-flex justify-content-between align-items-center"><div><h4 class="mb-1">Aylık prim hakkedişi</h4><p class="text-muted mb-0 small">Aylık hakediş özeti</p></div><span class="badge text-bg-light border">{{ report.months|length }} ay</span></div></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Dönem</th><th class="text-end">TL hedef</th><th class="text-end">Gerçekleşen</th><th class="text-center">TL rea.</th><th class="text-center">Ürün koşulu</th><th>Prim türü</th><th class="text-end">Brüt hakkediş</th></tr></thead><tbody>{% for row in report.months %}<tr><td class="fw-bold">{{ row.label }}</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.target_tl) }} ₺</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.actual_tl) }} ₺</td><td class="text-center metric-cell">%{{ "%.1f"|format(row.total_percent) }}</td><td class="text-center"><span class="condition-pill {% if row.product_success %}condition-ok{% else %}condition-fail{% endif %}">{% if row.product_success %}Sağlandı{% else %}Sağlanmadı{% endif %}</span></td><td><span class="status-pill {% if row.main_prime %}status-main{% elif row.ciro_prime %}status-ciro{% else %}status-none{% endif %}">{{ row.entitlement_type }}</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gross_prime) }} ₺</td></tr>{% endfor %}</tbody></table></div></div>
 
-<div class="card quarter-card"><div class="card-header bg-white border-0 pt-4 px-4"><h4 class="mb-1">Q ürün telafi bakiyesi</h4><p class="text-muted mb-0 small">Yalnız dört ana ürün karar koşuluna dahildir. Kalan kutu, Q toplam hedefi üzerinden %75 / %90 / %100 seviyesine erişmek için gereken miktardır.</p></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Ürün</th><th>Q TL REA</th><th>%75 kalan</th><th>%90 kalan</th><th>%100 kalan</th><th>Q gerçekleşen kutu</th></tr></thead><tbody>{% for row in report.products %}<tr><td class="prime-product">{{ row.product }}</td><td>%{{ "%.1f"|format(row.percent) }}</td><td>{{ "{:,.0f}".format(row.gap_75.unit) }} adet<br><small class="text-muted">{{ "{:,.0f}".format(row.gap_75.tl) }} ₺</small></td><td>{{ "{:,.0f}".format(row.gap_90.unit) }} adet<br><small class="text-muted">{{ "{:,.0f}".format(row.gap_90.tl) }} ₺</small></td><td>{{ "{:,.0f}".format(row.gap_100.unit) }} adet<br><small class="text-muted">{{ "{:,.0f}".format(row.gap_100.tl) }} ₺</small></td><td>{{ "{:,.0f}".format(row.actual_unit) }} adet</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card quarter-card"><div class="card-header bg-white border-0 pt-4 px-4"><div class="d-flex justify-content-between align-items-center"><div><h4 class="mb-1">Q ürün telafi bakiyesi</h4><p class="text-muted mb-0 small">Dört ana ürün için üç aylık hedefe göre gereken kutu ve TL miktarı</p></div><span class="badge text-bg-primary">Q{{ report.quarter }}</span></div></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Ürün</th><th class="text-center">Q TL rea.</th><th class="text-end">%75 seviyesi</th><th class="text-end">%90 seviyesi</th><th class="text-end">%100 seviyesi</th><th class="text-end">Gerçekleşen kutu</th></tr></thead><tbody>{% for row in report.products %}<tr><td class="prime-product">{{ row.product }}</td><td class="text-center metric-cell">%{{ "%.1f"|format(row.percent) }}</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_75.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_75.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_90.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_90.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_100.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_100.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.actual_unit) }} adet</td></tr>{% endfor %}</tbody></table></div></div>
 {% else %}
 <div class="card quarter-card"><div class="card-body text-center py-5 text-muted"><i class="bi bi-calendar2-week fs-1 d-block mb-2"></i>Bir temsilci ve Q dönemi seçerek aylık prim ve telafi analizini görüntüleyin.</div></div>
 {% endif %}
