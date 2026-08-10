@@ -327,6 +327,16 @@ Aylık dört ürün + toplam TL prim hakedişi kuralı üretime alındı.
 
 Üç aylık Q dönemi için aynı esnek ürün kuralının üç aylık kümülatif hedef/gerçekleşen verisine nasıl uygulanacağı ve Q ödemesinin aylık ödemeden bağımsız katsayı/tutar sözleşmesi netleştirildikten sonra uygulanacak. Mevcut Haziran verisinde Q2'nin Nisan ve Mayıs verileri bulunmadığından dönem tamamlanmadan Q hakedişi üretilmemelidir.
 
+### 2026-08-10 — Dashboard kabuğu ve temsilci arama akışı
+
+- [x] `app/__init__.py` — Navbar için aktif IMS dönemi ve son tamamlanan yükleme context'i eklendi; üst kartlar artık boş değildir.
+- [x] `sidebar.html`, `navbar.html`, `shell-enhancements.css` — Orijinal Bilim İlaç görseli açılmış sol menüde ve menü kapalıyken üst navbar'da konumlandı.
+- [x] `global-search.js`, `representatives.py` — Üst arama gerçek temsilci ve brick sonuçlarını getirir, seçimi dönemsel temsilci performans ekranına yönlendirir.
+- [x] `representative_detail.html` — Temsilci bazında TL/kutu hedefi, IMS gerçekleşeni, realizasyon ve brick kapsamı birlikte gösterilir.
+- [x] `layout.js` — Sağ üst kullanıcı menüsü Bootstrap CDN durumundan bağımsız açılır; profil, şifre, bölge ve çıkış bağlantıları kullanılabilir.
+- [x] Test: sunucu venv üzerinde auth/search regresyonu 12/12 PASS. Canlı doğrulama: `SERKAN OZGU` araması `/representatives/view/30?year=2026&month=6` ekranına yönlendi; kullanıcı menüsü açıldı; aktif dönem `2026/06 · 24 . Hafta`, son IMS `09.08.2026` göründü.
+- [x] Commit/deploy: `900c21b`, `be05f0d`, `fe3b7a6` GitHub'a gönderildi ve güncel Flask süreci ile yayına alındı.
+
 ### 2026-08-09 — Ortak brick üyeliği ve uzun temsilci adları
 
 - `representative_brick_assignments` tek sorumlu kuralı migration-first olarak çoklu üyelik kuralına çevrildi: benzersizlik artık `yıl + ay + brick + representative_id` düzeyinde.
