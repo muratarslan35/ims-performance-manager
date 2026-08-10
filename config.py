@@ -1,8 +1,32 @@
 import os
+import secrets
 import warnings
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+
+def _development_secret_key():
+    """Return a persistent local development key without committing a secret."""
+    key_path = BASE_DIR / "instance" / ".secret_key"
+    try:
+        if key_path.exists():
+            value = key_path.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        value = secrets.token_urlsafe(48)
+        fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(value + "\n")
+        return value
+    except FileExistsError:
+        return key_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        warnings.warn("Kalıcı geliştirme SECRET_KEY oluşturulamadı: %s" % exc, stacklevel=2)
+        return secrets.token_urlsafe(48)
 
 _SECRET_KEY_ENV = os.environ.get("SECRET_KEY")
 _APP_ENV = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "development")).lower()
@@ -13,12 +37,7 @@ if _IS_PRODUCTION and not _SECRET_KEY_ENV:
         "SECRET_KEY environment variable must be set when APP_ENV is production."
     )
 
-if not _SECRET_KEY_ENV and not _IS_PRODUCTION:
-    warnings.warn(
-        "SECRET_KEY environment variable is not set. "
-        "A temporary key is used – set SECRET_KEY in production!",
-        stacklevel=2,
-    )
+_SECRET_KEY = _SECRET_KEY_ENV or (_development_secret_key() if not _IS_PRODUCTION else None)
 
 
 class Config:
@@ -27,7 +46,7 @@ class Config:
     # Uygulama
     # ------------------------------------------------------------------
 
-    SECRET_KEY = _SECRET_KEY_ENV or "dev-only-insecure-key-change-in-production"
+    SECRET_KEY = _SECRET_KEY
     APP_ENV = _APP_ENV
     STRICT_SCHEMA_VALIDATION = _IS_PRODUCTION
 
