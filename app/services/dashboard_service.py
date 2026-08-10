@@ -176,6 +176,7 @@ class DashboardService:
             "history": self.query_layer.load_history(filters=filters),
             "period_performance": self.query_layer.load_period_performance(filters=filters),
             "product_performance": self.query_layer.load_product_performance(filters=filters),
+            "national_metrics": self.query_layer.load_national_dashboard_metrics(filters=filters),
             "competition": self.query_layer.load_competition_overview(filters=filters),
             "competitor_products": self.query_layer.load_competitor_product_rows(filters=filters),
         }
@@ -366,6 +367,7 @@ class DashboardService:
                .set_prime_summary(fmt_prime) \
                .set_quarter_summary(quarter_data) \
                .set_active_period(self.year, self.month, self.quarter) \
+               .set_executive_metrics(query_data.get("national_metrics", {})) \
                .set_performance(time.time() - global_start) \
                .set_cache_info(False, DashboardConstants.CACHE_TTL_DEFAULT)
                

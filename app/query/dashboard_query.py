@@ -20,6 +20,7 @@ from app.models import (
     Representative, 
     Target, 
     IMSSummary
+    , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
@@ -126,6 +127,45 @@ class DashboardQuery:
             func.coalesce(func.sum(IMSSummary.target_tl), 0.0).label("target_tl"),
         )
         return DashboardFilter.apply(query, filters).one()
+
+    def load_national_dashboard_metrics(self, filters: Optional[DashboardFilterParams] = None) -> dict:
+        """Return reconciled National totals captured from the source workbook."""
+        if not filters or filters.year is None or filters.month is None:
+            return {}
+        upload_id = self.session.query(IMSUpload.id).filter(
+            IMSUpload.year == filters.year, IMSUpload.month == filters.month,
+            IMSUpload.status == "COMPLETED"
+        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        if not upload_id:
+            return {}
+        balance_rows = self.session.query(
+            Product.id, Product.product_name, IMSRawData.unit, IMSRawData.tl
+        ).join(Product, Product.id == IMSRawData.product_id).filter(
+            IMSRawData.upload_id == upload_id,
+            IMSRawData.sheet_type == "dashboard_balance_national"
+        ).all()
+        if not balance_rows:
+            return {}
+        unit_by_product = dict(self.session.query(
+            IMSRawData.product_id, IMSRawData.unit
+        ).filter(IMSRawData.upload_id == upload_id, IMSRawData.sheet_type == "dashboard_weekly_units").all())
+        products = [{
+            "product_id": row[0], "product_name": row[1],
+            "target_tl": round(float(row[2] or 0), 2),
+            "actual_tl": round(float(row[3] or 0), 2),
+            "unit_actual": round(float(unit_by_product.get(row[0], 0) or 0), 2),
+        } for row in balance_rows]
+        target = sum(item["target_tl"] for item in products)
+        actual = sum(item["actual_tl"] for item in products)
+        for item in products:
+            item["realization_percent"] = round(item["actual_tl"] * 100 / item["target_tl"], 1) if item["target_tl"] else 0.0
+        return {
+            "source": "BAKİYE / TTS HAFTALIK ÇIKIŞLARI · NATIONAL",
+            "target_tl": round(target, 2), "actual_tl": round(actual, 2),
+            "realization_percent": round(actual * 100 / target, 2) if target else 0.0,
+            "unit_actual": round(sum(item["unit_actual"] for item in products), 2),
+            "products": products,
+        }
 
     def load_product_performance(
         self, filters: Optional[DashboardFilterParams] = None

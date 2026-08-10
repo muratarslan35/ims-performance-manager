@@ -1582,6 +1582,80 @@ class IMSImportService:
                     summary.realization_percent = target.realization_percent
         db.session.flush()
 
+    def persist_national_dashboard_metrics(self, year, month):
+        """Persist the workbook's National KPI rows for the executive dashboard.
+
+        Detailed brick rows remain the source for representative reporting.  The
+        National rows in BAKIYE and TTS HAFTALIK ÇIKIŞLARI are already Excel's
+        reconciled period totals, so retaining them separately prevents a
+        dashboard aggregation from double-counting shared bricks or totals.
+        """
+        if not self.upload or not self.workbook:
+            return
+
+        def upsert(sheet_name, sheet_type, product_id, unit, tl, metadata):
+            record = IMSRawData.query.filter_by(
+                upload_id=self.upload.id, sheet_type=sheet_type, product_id=product_id
+            ).first()
+            values = dict(
+                year=year, month=month, quarter=self.quarter_for(month),
+                week_number=self.upload.week_number, sheet_name=sheet_name,
+                sheet_type=sheet_type, source_row=0, product_id=product_id,
+                representative="NATIONAL", unit=float(unit or 0), tl=float(tl or 0),
+                raw_json=json.dumps(metadata, ensure_ascii=False),
+            )
+            if record:
+                for key, value in values.items():
+                    setattr(record, key, value)
+            else:
+                db.session.add(IMSRawData(upload_id=self.upload.id, **values))
+
+        balance_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
+        if balance_name:
+            frame = self.workbook[balance_name]
+            header_row = next((i for i in range(min(12, len(frame))) if "HEDEF" in " ".join(AliasService.normalize(v) for v in frame.iloc[i]) and "CIKIS" in " ".join(AliasService.normalize(v) for v in frame.iloc[i])), None)
+            if header_row is not None and header_row + 1 < len(frame):
+                sections, current = {}, ""
+                for column in range(frame.shape[1]):
+                    label = AliasService.normalize(self.clean_text(frame.iloc[header_row, column]))
+                    if any(token in label for token in ("HEDEF", "CIKIS", "BAKIYE")):
+                        current = label
+                    sections[column] = current
+                national = frame.iloc[header_row + 1]
+                metric_values = {}
+                for column, section in sections.items():
+                    product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))
+                    if not product_match["matched"]:
+                        continue
+                    product_id = product_match["object"].id
+                    values = metric_values.setdefault(product_id, {"target_tl": 0.0, "actual_tl": 0.0})
+                    if "HEDEF" in section:
+                        values["target_tl"] = self.safe_float(national.iloc[column])
+                    elif "CIKIS" in section:
+                        values["actual_tl"] = self.safe_float(national.iloc[column])
+                for product_id, values in metric_values.items():
+                    upsert(balance_name, "dashboard_balance_national", product_id, values["target_tl"], values["actual_tl"], values)
+
+        weekly_name = next((name for name in self.workbook if "HAFTALIK" in AliasService.normalize(name) and "CIKIS" in AliasService.normalize(name)), None)
+        if weekly_name:
+            frame = self.workbook[weekly_name]
+            if len(frame) >= 3:
+                sections, current = {}, ""
+                for column in range(frame.shape[1]):
+                    label = AliasService.normalize(self.clean_text(frame.iloc[0, column]))
+                    if label:
+                        current = label
+                    sections[column] = current
+                national = frame.iloc[2]
+                for column, section in sections.items():
+                    if "KUTU" not in section:
+                        continue
+                    product_match = self.resolve_product_match(self.clean_text(frame.iloc[1, column]))
+                    if product_match["matched"]:
+                        unit = self.safe_float(national.iloc[column])
+                        upsert(weekly_name, "dashboard_weekly_units", product_match["object"].id, unit, 0.0, {"unit_actual": unit})
+        db.session.flush()
+
     def clear_week(self, year, week_number):
         """Remove all IMS data for a specific week (used only as a fallback)."""
         IMSFact.query.filter_by(year=year, week_number=week_number).delete(synchronize_session=False)
@@ -1689,6 +1763,7 @@ class IMSImportService:
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
         self.apply_balance_summary(year, month)
+        self.persist_national_dashboard_metrics(year, month)
 
         available_sheets = (self.workbook or {}).keys()
         if CompetitionImportService.has_competition_sheets(available_sheets):

@@ -193,6 +193,13 @@ class DashboardPayloadBuilder:
             }
         return self._safe_execute_setter("set_active_period", action)
 
+    def set_executive_metrics(self, metrics: Optional[Dict[str, Any]]) -> 'DashboardPayloadBuilder':
+        """Publish the workbook-reconciled National KPI contract separately."""
+        return self._safe_execute_setter(
+            "set_executive_metrics",
+            lambda: self._payload.__setitem__("executive_metrics", metrics or {})
+        )
+
     def set_performance(self, exec_time: float) -> 'DashboardPayloadBuilder':
         def action() -> None:
             self._payload[DashboardConstants.KEY_PERFORMANCE] = {
