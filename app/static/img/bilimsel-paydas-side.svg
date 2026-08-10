@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 86" role="img" aria-label="Bilimsel Paydaş">
+  <path fill="#75D86F" d="M12 15h16l12 14v18L28 60H12l12-13-12-13z"/>
+  <path fill="#fff" d="M42 15h16l12 14v18L58 60H42l12-13-12-13z" opacity=".88"/>
+  <text x="82" y="38" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700">bilimsel</text>
+  <text x="82" y="66" fill="#75D86F" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="700">paydaş</text>
+</svg>

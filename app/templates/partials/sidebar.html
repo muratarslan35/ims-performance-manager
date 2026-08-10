@@ -1,12 +1,10 @@
 <aside id="appSidebar" class="app-sidebar" role="navigation" aria-label="Ana Menü">
 
     <div class="sidebar-header">
-        <a class="sidebar-brand" href="{{ url_for('dashboard.index') }}" tabindex="-1">
-            <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" class="sidebar-brand-art" alt="Bilim İlaç">
-            <div class="sidebar-brand-text">
-                <span class="sidebar-brand-name">BİLİM İLAÇ</span>
-                <span class="sidebar-brand-subtitle">IMS Performans Yönetim Sistemi</span>
-            </div>
+        <a class="sidebar-brand sidebar-brand-suite" href="{{ url_for('dashboard.index') }}" tabindex="-1">
+            <img src="{{ url_for('static', filename='img/bilim-ilac-white.svg') }}" class="sidebar-brand-art" alt="Bilim İlaç">
+            <span class="sidebar-brand-divider" aria-hidden="true"></span>
+            <img src="{{ url_for('static', filename='img/bilimsel-paydas-side.svg') }}" class="sidebar-partner-art" alt="Bilimsel Paydaş">
         </a>
         <button id="sidebarCloseBtn" class="sidebar-close-btn d-lg-none" aria-label="Menüyü Kapat">
             <i class="bi bi-x-lg"></i>
@@ -128,9 +126,9 @@
         </ul>
     </nav>
 
-    <div class="sidebar-tagline" aria-label="Bilimsel Paydaş">
-        <span>Bilimsel</span>
-        <strong>Paydaş</strong>
+    <div class="sidebar-tagline" aria-label="Zirveleri Sevdiğimiz Doğrudur">
+        <i class="bi bi-stars" aria-hidden="true"></i>
+        <span>Zirveleri Sevdiğimiz<br><strong>Doğrudur</strong></span>
     </div>
 
     <div class="sidebar-footer">

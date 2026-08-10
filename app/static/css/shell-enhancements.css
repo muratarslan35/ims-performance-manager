@@ -1,19 +1,19 @@
-/* Brand treatment shared by the expanded and collapsed application shell. */
-.sidebar-brand-art {
-  display: block;
-  width: 148px;
-  max-width: 100%;
-  height: 48px;
-  object-fit: cover;
-  object-position: center 48%;
-  border-radius: 8px;
-}
-
-.sidebar-brand-text { display: none; }
-.sidebar-header { min-height: 82px; padding: 17px 18px; }
-.sidebar-tagline { flex:0 0 auto; margin:0 16px 12px; padding:12px 13px 11px; border-left:3px solid #75d86f; border-radius:0 11px 11px 0; background:linear-gradient(90deg,rgba(255,255,255,.10),rgba(255,255,255,.025)); color:rgba(255,255,255,.72); font-size:10px; font-weight:700; line-height:1.1; letter-spacing:.14em; text-transform:uppercase; }
-.sidebar-tagline span { display:block; }
-.sidebar-tagline strong { display:block; margin-top:5px; color:#fff; font-size:16px; font-weight:800; letter-spacing:.02em; text-transform:none; }
+/* Sidebar-only corporate identity: reference palette #142B39 / #1E468F / #75D86F. */
+.app-sidebar { background:linear-gradient(165deg,#142b39 0%,#153e4c 47%,#142b39 100%); }
+.app-sidebar::before { content:""; position:absolute; inset:88px 0 70px; pointer-events:none; opacity:.22; background:linear-gradient(145deg,transparent 29%,rgba(117,216,111,.42) 29.4%,transparent 30%),linear-gradient(35deg,transparent 63%,rgba(255,255,255,.18) 63.3%,transparent 64%); background-size:170px 170px; }
+.sidebar-header { position:relative; z-index:1; min-height:88px; padding:18px 16px; border-color:rgba(255,255,255,.14); }
+.sidebar-brand-suite { width:100%; gap:9px; min-width:0; }
+.sidebar-brand-art { display:block; width:82px; height:35px; object-fit:contain; object-position:left center; flex:0 0 auto; }
+.sidebar-brand-divider { width:1px; height:32px; background:rgba(255,255,255,.30); flex:0 0 auto; }
+.sidebar-partner-art { width:105px; height:38px; min-width:0; object-fit:contain; object-position:left center; }
+.sidebar-brand-text { display:none; }
+.sidebar-nav,.sidebar-tagline,.sidebar-footer { position:relative; z-index:1; }
+.sidebar-nav-link { margin:2px 9px; border-radius:8px; font-size:13px; }
+.sidebar-nav-link.active { background:rgba(255,255,255,.15); box-shadow:inset 3px 0 0 #75d86f,0 6px 15px rgba(0,0,0,.12); }
+.sidebar-section-label { color:rgba(255,255,255,.52); }
+.sidebar-tagline { flex:0 0 auto; display:flex; align-items:center; gap:9px; margin:0 15px 13px; padding:12px 10px; border-left:3px solid #75d86f; border-radius:0 8px 8px 0; background:rgba(10,35,51,.43); color:#dbeef1; font-size:12px; font-weight:600; line-height:1.25; }
+.sidebar-tagline i { color:#75d86f; font-size:17px; }
+.sidebar-tagline strong { color:#fff; font-weight:800; }
 
 .navbar-collapsed-brand { display: none; }
 body.sidebar-collapsed .navbar-collapsed-brand {
