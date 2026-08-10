@@ -1622,13 +1622,18 @@ class IMSImportService:
             self.warnings.append(f"{sheet_name}: TTS ürün başlığı bulunamadı.")
             return {"rows": 0, "matched_representatives": 0, "updated_values": 0}
 
-        sections, current_section = {}, ""
+        # A TTS sheet may also append a single-week block after the cumulative
+        # period block.  The representative screen is MTD, so retain the first
+        # TL and first KUTU ÇIKIŞI blocks (for example ``1-14 HAZİRAN``) only.
+        sections, current_section, selected_metrics = {}, "", set()
         for column in range(frame.shape[1]):
             label = AliasService.normalize(self.clean_text(frame.iloc[header_row - 1, column]))
             if "TL" in label and "CIKIS" in label:
-                current_section = "tl"
+                current_section = "tl" if "tl" not in selected_metrics else ""
+                selected_metrics.add("tl")
             elif ("KUTU" in label or "UNIT" in label) and "CIKIS" in label:
-                current_section = "unit"
+                current_section = "unit" if "unit" not in selected_metrics else ""
+                selected_metrics.add("unit")
             sections[column] = current_section
 
         product_columns = {}
