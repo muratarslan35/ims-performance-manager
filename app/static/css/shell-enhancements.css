@@ -1,0 +1,60 @@
+/* Brand treatment shared by the expanded and collapsed application shell. */
+.sidebar-brand-art {
+  width: 148px;
+  height: 48px;
+  object-fit: cover;
+  object-position: center 48%;
+  border-radius: 9px;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, .24);
+}
+
+.sidebar-brand-text { display: none; }
+.sidebar-header { min-height: 82px; padding: 17px 18px; }
+
+.navbar-collapsed-brand { display: none; }
+body.sidebar-collapsed .navbar-collapsed-brand {
+  display: inline-flex;
+  width: 124px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(11, 78, 162, .18);
+}
+.navbar-collapsed-brand img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 48%;
+}
+
+.navbar-right .dropdown { position: relative; z-index: 1051; }
+.navbar-user-btn { cursor: pointer; }
+.user-dropdown { z-index: 1052; min-width: 230px; }
+
+.navbar-search { position: relative; }
+.global-search-results {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 1060;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card, #fff);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, .16);
+}
+.global-search-results.is-open { display: block; }
+.global-search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+.global-search-item:hover, .global-search-item:focus { background: var(--subtle-bg); color: var(--primary); }
+.global-search-item i { color: var(--primary); }
+.global-search-item small { display: block; color: var(--text-light); }
+.global-search-empty { padding: 12px; color: var(--text-light); font-size: 13px; }

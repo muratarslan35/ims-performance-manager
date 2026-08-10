@@ -76,6 +76,8 @@ IMS Performans Yönetim Sistemi
     rel="stylesheet"
 >
 
+<link href="{{ url_for('static', filename='css/shell-enhancements.css') }}" rel="stylesheet">
+
 {% block styles %}
 
 {% endblock %}
@@ -292,6 +294,8 @@ IMS Performans Yönetim Sistemi
     src="{{ url_for('static', filename='js/layout.js') }}"
 >
 </script>
+
+<script src="{{ url_for('static', filename='js/global-search.js') }}"></script>
 
 <script>
 

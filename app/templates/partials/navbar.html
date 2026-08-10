@@ -15,6 +15,10 @@
                 </span>
             </button>
 
+            <a class="navbar-collapsed-brand" href="{{ url_for('dashboard.index') }}" aria-label="Bilim İlaç ana sayfa">
+                <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" alt="Bilim İlaç">
+            </a>
+
             <div class="navbar-page-info d-none d-md-block">
                 <div class="navbar-page-title">
                     {% block navbar_page_title %}IMS Performans Yönetim Sistemi{% endblock %}
@@ -30,12 +34,15 @@
 
         <!-- Center: global search -->
         <div class="navbar-center d-none d-lg-block">
-            <form class="navbar-search" role="search" autocomplete="off" onsubmit="return false;">
+            <form class="navbar-search" role="search" autocomplete="off" action="{{ url_for('representatives.index') }}" method="get">
                 <i class="bi bi-search navbar-search-icon" aria-hidden="true"></i>
                 <input type="search"
                        class="navbar-search-input"
+                       id="globalRepresentativeSearch"
+                       name="q"
                        placeholder="Temsilci, ürün, IMS veya rapor ara..."
                        aria-label="Global arama">
+                <div id="globalSearchResults" class="global-search-results" role="listbox" aria-label="Arama sonuçları"></div>
             </form>
         </div>
 

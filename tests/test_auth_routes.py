@@ -231,3 +231,27 @@ def test_profile_page_and_user_menu_are_available_after_login(app):
     assert b"Profil Bilgileri" in profile.data
     assert b"/profile" in dashboard.data
     assert b"/logout" in dashboard.data
+
+
+def test_global_representative_search_is_authenticated_and_returns_json(app):
+    from app.extensions import db
+    from app.models import Representative, User
+
+    with app.app_context():
+        representative = Representative(rep_code="SEARCH-001", rep_name="Arama Temsilcisi", region="101", city="İstanbul", active=True)
+        db.session.add(representative)
+        db.session.commit()
+        user = User.query.filter_by(email="test@example.com").first()
+        user_id = user.id
+
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["_user_id"] = str(user_id)
+        session["_fresh"] = True
+    response = client.get("/representatives/search?q=Arama")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["results"]
+    assert payload["results"][0]["title"] == "Arama Temsilcisi"
+    assert "/representatives/view/" in payload["results"][0]["url"]

@@ -24,6 +24,27 @@ from app.dashboard import dashboard_bp
 from app.representatives import representatives_bp
 from app.simulation import simulation_bp
 
+
+def register_template_context(app):
+    """Expose the current IMS period consistently to the application shell."""
+    @app.context_processor
+    def shell_context():
+        try:
+            from app.models import IMSUpload
+            from app.services.period_service import PeriodService
+
+            period = PeriodService.get_active_period()
+            upload = (
+                IMSUpload.query.filter_by(status="COMPLETED")
+                .order_by(IMSUpload.uploaded_at.desc())
+                .first()
+            )
+            period_label = f"{period['year']}/{int(period['month']):02d} · {period.get('week_number') or '-'} . Hafta"
+            upload_label = upload.uploaded_at.strftime("%d.%m.%Y") if upload and upload.uploaded_at else "—"
+            return {"active_period": period_label, "latest_upload_date": upload_label}
+        except Exception:
+            return {"active_period": "—", "latest_upload_date": "—"}
+
 def register_extensions(app):
 
     db.init_app(app)
@@ -136,6 +157,8 @@ def create_app(config_object=Config):
     create_directories(app)
 
     register_extensions(app)
+
+    register_template_context(app)
 
     register_blueprints(app)
 

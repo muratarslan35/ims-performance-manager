@@ -1,13 +1,40 @@
 {% extends "base.html" %}
-{% block title %}{{ representative.rep_name }} — Brick Ayarları{% endblock %}
-{% block page_title %}{{ representative.rep_name }}{% endblock %}
+{% block title %}{{ representative.rep_name }} | Temsilci Performansı{% endblock %}
+{% block page_title %}Temsilci Performansı{% endblock %}
+
 {% block content %}
-<div class="card mb-3"><div class="card-body">
-  <div><strong>{{ representative.rep_name }}</strong> · {{ representative.city or 'İl bilgisi yok' }} · {{ representative.rep_code }}</div>
-  <p class="text-secondary mb-0">Dönem: {{ year or '—' }}/{{ month or '—' }}. Manuel atamalar sonraki Excel importunda korunur.</p>
-</div></div>
-<div class="card mb-3"><div class="card-header"><h3 class="card-title">Sorumlu Brickler</h3></div><div class="table-responsive"><table class="table card-table"><thead><tr><th>Brick</th><th>Bölge</th><th>İl</th><th>Kaynak</th></tr></thead><tbody>
-{% for item in assignments %}<tr><td>{{ item.brick }}</td><td>{{ item.territory or '—' }}</td><td>{{ item.city or '—' }}</td><td><span class="badge bg-{{ 'warning' if item.source == 'MANUAL' else 'secondary' }}">{{ item.source }}</span></td></tr>{% else %}<tr><td colspan="4" class="text-secondary">Bu dönem için henüz brick ataması yok. Yeni Excel importu otomatik oluşturur.</td></tr>{% endfor %}
-</tbody></table></div></div>
-<div class="card"><div class="card-header"><h3 class="card-title">Brick Ata / Devral</h3></div><div class="card-body"><form method="post" action="{{ url_for('representatives.save_assignment', id=representative.id) }}" class="row g-2"><div class="col-md-2"><input class="form-control" name="year" type="number" value="{{ year or '' }}" required></div><div class="col-md-2"><input class="form-control" name="month" type="number" min="1" max="12" value="{{ month or '' }}" required></div><div class="col-md-6"><input class="form-control" name="brick" placeholder="Örn. IZMIR KARŞIYAKA" required></div><div class="col-md-2"><button class="btn btn-primary w-100">Kaydet</button></div></form></div></div>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <a href="{{ url_for('representatives.index') }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Temsilcilere dön</a>
+    <h1 class="h2 mb-1">{{ representative.rep_name }}</h1>
+    <p class="text-secondary mb-0"><span class="badge bg-primary-lt text-primary me-1">{{ representative.region or 'Bölge yok' }}</span>{{ representative.city or 'İl bilgisi yok' }}{% if representative.territory %} · {{ representative.territory }}{% endif %}</p>
+  </div>
+  <div class="text-end text-secondary small">Aktif dönem<br><strong class="text-dark">{{ year }}/{{ '%02d'|format(month) }}</strong></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">TL gerçekleşen</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">{{ '{:,.0f}'.format(totals.target_tl) }} ₺ hedef</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">TL realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kutu gerçekleşen</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_unit) }}</div><div class="small text-secondary">{{ '{:,.0f}'.format(totals.target_unit) }} kutu hedef</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Sorumlu brick</div><div class="h2 mb-1">{{ assignments|length }}</div><div class="small text-secondary">{{ representative.region or 'Dönemsel' }} bölge ataması</div></div></div></div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    <div class="card h-100">
+      <div class="card-header"><h2 class="card-title mb-0">Ürün hedefi ve IMS durumu</h2></div>
+      <div class="table-responsive"><table class="table table-vcenter card-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">TL hedef</th><th class="text-end">IMS TL</th><th class="text-end">Kutu hedef</th><th class="text-end">IMS kutu</th><th class="text-end">Realizasyon</th></tr></thead><tbody>
+      {% for item in products %}<tr><td class="fw-semibold">{{ item.product.product_name }}</td><td class="text-end">{{ '{:,.0f}'.format(item.target_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.target_unit) }}</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_unit) }}</td><td class="text-end"><span class="badge bg-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}-lt text-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ item.percent }}</span></td></tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün hedefi bulunamadı.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center"><h2 class="card-title mb-0">Sorumlu brickler</h2><span class="badge bg-primary-lt text-primary">{{ assignments|length }}</span></div>
+      <div class="list-group list-group-flush">
+      {% for item in assignments %}<div class="list-group-item"><div class="fw-semibold">{{ item.brick }}</div><small class="text-secondary">{{ item.territory or representative.region or '-' }} · {{ item.city or representative.city or '-' }} · {{ item.source }}</small></div>{% else %}<div class="list-group-item text-secondary py-4">Bu dönem için brick ataması bulunmuyor.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

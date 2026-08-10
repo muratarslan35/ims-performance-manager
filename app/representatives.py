@@ -7,9 +7,11 @@ from flask import request
 from flask import url_for
 
 from flask_login import login_required
+from sqlalchemy import or_
 
 from app.extensions import db
-from app.models import Representative, RepresentativeBrickAssignment
+from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
+from app.services.period_service import PeriodService
 
 
 representatives_bp = Blueprint(
@@ -401,11 +403,79 @@ def view(
 
     )
 
-    latest = RepresentativeBrickAssignment.query.order_by(RepresentativeBrickAssignment.year.desc(), RepresentativeBrickAssignment.month.desc()).first()
-    year = request.args.get("year", type=int) or (latest.year if latest else None)
-    month = request.args.get("month", type=int) or (latest.month if latest else None)
+    active_period = PeriodService.get_active_period()
+    year = request.args.get("year", type=int) or active_period["year"]
+    month = request.args.get("month", type=int) or active_period["month"]
     assignments = RepresentativeBrickAssignment.query.filter_by(representative_id=id, year=year, month=month).order_by(RepresentativeBrickAssignment.brick).all() if year and month else []
-    return render_template("representative_detail.html", representative=representative, assignments=assignments, year=year, month=month)
+    targets = Target.query.filter_by(representative_id=id, year=year, month=month).join(Product).order_by(Product.display_order, Product.product_name).all()
+    summaries = {
+        item.product_id: item
+        for item in IMSSummary.query.filter_by(representative_id=id, year=year, month=month).all()
+    }
+    product_rows, totals = [], {"target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0, "actual_unit": 0.0}
+    for target in targets:
+        summary = summaries.get(target.product_id)
+        actual_tl = float(summary.tl if summary else 0.0)
+        actual_unit = float(summary.unit if summary else 0.0)
+        target_tl = float(target.tl_target or 0.0)
+        target_unit = float(target.unit_target or 0.0)
+        product_rows.append({
+            "product": target.product,
+            "target_tl": target_tl,
+            "actual_tl": actual_tl,
+            "target_unit": target_unit,
+            "actual_unit": actual_unit,
+            "percent": round(actual_tl * 100.0 / target_tl, 1) if target_tl else 0.0,
+        })
+        totals["target_tl"] += target_tl
+        totals["actual_tl"] += actual_tl
+        totals["target_unit"] += target_unit
+        totals["actual_unit"] += actual_unit
+    totals = {key: round(value, 2) for key, value in totals.items()}
+    totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
+    return render_template("representative_detail.html", representative=representative, assignments=assignments, products=product_rows, totals=totals, year=year, month=month)
+
+
+@representatives_bp.route("/search")
+@login_required
+def search():
+    query = (request.args.get("q") or "").strip()
+    if len(query) < 2:
+        return jsonify({"results": []})
+
+    active_period = PeriodService.get_active_period()
+    reps = Representative.query.filter(
+        or_(
+            Representative.rep_name.ilike(f"%{query}%"),
+            Representative.rep_code.ilike(f"%{query}%"),
+            Representative.city.ilike(f"%{query}%"),
+        )
+    ).order_by(Representative.active.desc(), Representative.rep_name.asc()).limit(7).all()
+    results = [{
+        "kind": "representative",
+        "title": rep.rep_name,
+        "meta": " · ".join(part for part in [rep.region, rep.city, rep.territory] if part) or "Temsilci",
+        "url": url_for("representatives.view", id=rep.id, year=active_period["year"], month=active_period["month"]),
+    } for rep in reps]
+
+    brick_rows = RepresentativeBrickAssignment.query.join(Representative).filter(
+        RepresentativeBrickAssignment.year == active_period["year"],
+        RepresentativeBrickAssignment.month == active_period["month"],
+        RepresentativeBrickAssignment.brick.ilike(f"%{query}%"),
+    ).order_by(RepresentativeBrickAssignment.brick.asc()).limit(7).all()
+    known_reps = {item["url"] for item in results}
+    for assignment in brick_rows:
+        url = url_for("representatives.view", id=assignment.representative_id, year=active_period["year"], month=active_period["month"])
+        if url in known_reps:
+            continue
+        results.append({
+            "kind": "brick",
+            "title": assignment.brick,
+            "meta": f"{assignment.representative.rep_name} · {assignment.territory or assignment.city or 'Brick'}",
+            "url": url,
+        })
+        known_reps.add(url)
+    return jsonify({"results": results[:10]})
 
 
 @representatives_bp.route("/view/<int:id>/assignments", methods=["POST"])
