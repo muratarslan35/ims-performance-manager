@@ -41,6 +41,34 @@ PRIME_SETTING_DEFAULTS = {
     "REQUIRED_75_COUNT": "1",
 }
 
+PRIME_SETTING_CATALOG = {
+    "MAIN_PRIME": ("Ana prim tutarı", "Aylık prim hak edişinde kullanılan temel ödeme tutarı.", "₺"),
+    "CIRO_PRIME": ("Ciro primi", "Toplam TL hedefi sağlandığında kullanılan ek ciro primi.", "₺"),
+    "PRIME_STEP": ("Prim artış adımı", "Hedef üzerindeki her artış kademesinin yüzdesi.", "%"),
+    "STEP_AMOUNT": ("Adım başına ek prim", "Her prim artış adımında eklenecek tutar.", "₺"),
+    "MAX_PRIME_PERCENT": ("Azami prim gerçekleşmesi", "Prim hesabında dikkate alınacak en yüksek gerçekleşme oranı.", "%"),
+    "MIN_PRIME_PERCENT": ("Asgari prim gerçekleşmesi", "Prim değerlendirmesine giriş için gereken alt oran.", "%"),
+    "TOTAL_PERCENT_REQUIRED": ("Toplam TL gerçekleşme şartı", "Aylık prim için toplam TL hedefinde gerekli en düşük oran.", "%"),
+    "ALLOW_CIRO_WITHOUT_PRODUCT": ("Ürün şartı olmadan ciro primi", "1 ise ürün koşulu sağlanmasa da ciro primi kuralı değerlendirilir.", "0 / 1"),
+    "RECOVERY_EFFECT_RATE": ("Recovery etkisi", "Recovery sonucunun prim skoruna etkisi.", "%"),
+    "QUARTER_EFFECT_RATE": ("Quarter etkisi", "Çeyrek dönem sonucunun prim skoruna etkisi.", "%"),
+    "PRODUCT_COEFFICIENT_DEFAULT": ("Varsayılan ürün katsayısı", "Ürün için özel katsayı yoksa kullanılan çarpan.", "Katsayı"),
+    "PRODUCT_BONUS_RATE": ("Ürün bonus oranı", "Ürün bazlı ek bonus hesaplama oranı.", "%"),
+    "BONUS_RATE": ("Bonus oranı", "Hedef üzeri başarı için kullanılan bonus oranı.", "%"),
+    "PENALTY_RATE": ("Ceza oranı", "Başarısız ürünlerin prim etkisinde kullanılan oran.", "%"),
+    "PENALTY_PER_FAILED_PRODUCT": ("Başarısız ürün cezası", "Şartı sağlamayan her ürün için uygulanacak tutar.", "₺"),
+    "WHAT_IF_WORST_FACTOR": ("Kötümser senaryo katsayısı", "Simülasyonda düşük beklenti senaryosu çarpanı.", "Katsayı"),
+    "WHAT_IF_EXPECTED_FACTOR": ("Beklenen senaryo katsayısı", "Simülasyonda beklenen sonuç çarpanı.", "Katsayı"),
+    "WHAT_IF_BEST_FACTOR": ("İyimser senaryo katsayısı", "Simülasyonda yüksek beklenti senaryosu çarpanı.", "Katsayı"),
+    "SLIDER_MAX_PERCENT": ("Simülasyon üst sınırı", "Prim simülasyonunda seçilebilecek en yüksek gerçekleşme.", "%"),
+    "TARGET_75": ("Esnek ürün eşiği", "Dört ana üründen en fazla birinin inebileceği alt eşik.", "%"),
+    "TARGET_90": ("Standart ürün eşiği", "Diğer ana ürünler için gereken gerçekleşme eşiği.", "%"),
+    "TARGET_100": ("Tam hedef eşiği", "Tam hedef kabul edilen gerçekleşme oranı.", "%"),
+    "PRIME_PRODUCT_COUNT": ("Primde değerlendirilen ürün sayısı", "Aylık prim kuralında izlenen ana ürün adedi.", "Adet"),
+    "REQUIRED_90_COUNT": ("Standart eşiği sağlaması gereken ürün", "En az %90 gerçekleşmesi gereken ana ürün adedi.", "Adet"),
+    "REQUIRED_75_COUNT": ("Esnek eşiğe izin verilen ürün", "%75–%90 aralığında kalmasına izin verilen ürün adedi.", "Adet"),
+}
+
 
 def ensure_prime_settings():
     changed = False
@@ -100,8 +128,8 @@ def index():
         "settings.html",
 
         settings=settings,
-
-        products=products
+        products=products,
+        setting_catalog={key: {"label": value[0], "help": value[1], "unit": value[2]} for key, value in PRIME_SETTING_CATALOG.items()}
 
     )
 

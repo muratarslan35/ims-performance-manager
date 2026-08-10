@@ -140,11 +140,13 @@ Sistem Ayarları
 
                 {% for item in settings %}
 
+                {% set meta = setting_catalog.get(item.setting_key, {"label": item.setting_key, "help": item.description or "Sistem parametresi.", "unit": ""}) %}
+
                 <div class="col-md-6 mb-3">
 
                     <label class="form-label">
 
-                        {{ item.description }}
+                        {{ meta.label }}{% if meta.unit %} <span class="text-secondary">({{ meta.unit }})</span>{% endif %}
 
                     </label>
 
@@ -160,7 +162,7 @@ Sistem Ayarları
 
                     <div class="form-hint">
 
-                        {{ item.setting_key }}
+                        {{ meta.help }} <span class="text-secondary">· DB anahtarı: {{ item.setting_key }}</span>
 
                     </div>
 
@@ -267,21 +269,19 @@ Sistem Ayarları
 
                 {% for item in settings %}
 
+                {% set meta = setting_catalog.get(item.setting_key, {"label": item.setting_key, "help": item.description or "Sistem parametresi.", "unit": ""}) %}
+
                 <tr>
 
                     <td>
 
-                        <code>
-
-                            {{ item.setting_key }}
-
-                        </code>
+                        <strong>{{ meta.label }}</strong>
 
                     </td>
 
                     <td>
 
-                        {{ item.description }}
+                        {{ meta.help }}{% if meta.unit %} <span class="text-secondary">({{ meta.unit }})</span>{% endif %}
 
                     </td>
 
