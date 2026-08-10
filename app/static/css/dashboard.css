@@ -25,6 +25,11 @@
 .dash-hero::before { width: 220px; height: 220px; right: -60px; top: -70px; }
 .dash-hero::after { width: 140px; height: 140px; right: 100px; bottom: -55px; }
 
+.dash-hero-content { position:relative; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:28px; }
+.dash-hero-tagline { display:flex; align-items:center; gap:11px; min-width:230px; padding:8px 0 8px 20px; border-left:1px solid rgba(255,255,255,.42); color:rgba(255,255,255,.88); font-size:13px; font-weight:600; line-height:1.25; }
+.dash-hero-tagline i { color:#9ce894; font-size:24px; }
+.dash-hero-tagline strong { color:#fff; font-size:17px; font-weight:800; }
+
 .dash-hero-title { margin: 0 0 2px; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
 .dash-hero-sub { margin: 0; font-size: 14px; opacity: .9; }
 .dash-hero-meta { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -604,6 +609,8 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
   .executive-market-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 640px) {
+  .dash-hero-content { align-items:flex-start; flex-direction:column; gap:14px; }
+  .dash-hero-tagline { min-width:0; padding:10px 0 0; border-left:0; border-top:1px solid rgba(255,255,255,.35); width:100%; }
   .dash-hero { padding: 20px; }
   .dash-hero-title { font-size: 24px; }
   .kpi-grid { grid-template-columns: 1fr; }

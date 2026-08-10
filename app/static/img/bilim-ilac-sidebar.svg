@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 92" role="img" aria-label="Bilim İlaç">
+  <path fill="#fff" d="M10 24 38 8l28 16v33L38 74 10 57zm28-8-15 9v25l15 9 15-9V25z"/>
+  <path fill="#fff" d="M27 35h24v9H27zm0 13h15v9H27z"/>
+  <text x="79" y="52" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="700" letter-spacing="-2">bilim</text>
+  <text x="82" y="76" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" letter-spacing="8">İLAÇ</text>
+</svg>
