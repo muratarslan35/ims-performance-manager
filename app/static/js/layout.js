@@ -15,6 +15,8 @@
     const closeBtn       = document.getElementById('sidebarCloseBtn');
     const themeBtn       = document.getElementById('themeToggleBtn');
     const themeIcon      = document.getElementById('themeIcon');
+    const userMenuButton = document.getElementById('userDropdown');
+    const userMenu       = userMenuButton ? userMenuButton.nextElementSibling : null;
 
     /* ─── HELPERS ──────────────────────────────────────────── */
     function isMobile() {
@@ -131,6 +133,22 @@
         });
     }
 
+    function setupUserMenu() {
+        if (!userMenuButton || !userMenu) return;
+        userMenuButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const isOpen = userMenu.classList.toggle('show');
+            userMenuButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        });
+        document.addEventListener('click', function (event) {
+            if (!event.target.closest('#userDropdown') && !event.target.closest('.user-dropdown')) {
+                userMenu.classList.remove('show');
+                userMenuButton.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
+
     /* ─── RESIZE HANDLER ────────────────────────────────────── */
     let resizeTimer;
     function onResize() {
@@ -176,6 +194,7 @@
         updateNotificationBadge();
         highlightActiveNav();
         setupDropdownKeyClose();
+        setupUserMenu();
 
         // Slight delay so CSS transitions play smoothly on load
         requestAnimationFrame(markPageReady);
