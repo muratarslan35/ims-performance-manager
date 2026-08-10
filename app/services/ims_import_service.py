@@ -1523,8 +1523,12 @@ class IMSImportService:
         for column in range(frame.shape[1]):
             label = self.clean_text(frame.iloc[header_row, column])
             normalized_label = AliasService.normalize(label)
-            if any(token in normalized_label for token in ("HEDEF", "CIKIS", "BAKIYE")):
-                current = normalized_label
+            if "HEDEF" in normalized_label:
+                current = "target_tl"
+            elif "CIKIS" in normalized_label:
+                current = "actual_tl"
+            elif "BAKIYE" in normalized_label:
+                current = "balance_unit" if "KUTU" in normalized_label else "balance_tl"
             sections[column] = current
         has_weekly_sales = any(
             "HAFTALIK" in AliasService.normalize(name) and "CIKIS" in AliasService.normalize(name)
@@ -1562,10 +1566,14 @@ class IMSImportService:
                 product_id = product_match["object"].id
                 metric = self.safe_float(row.iloc[column])
                 section = sections[column]
-                if "HEDEF" in section:
+                if section == "target_tl":
                     values.setdefault(product_id, {})["target"] = metric
-                elif "CIKIS" in section:
+                elif section == "actual_tl":
                     values.setdefault(product_id, {})["actual"] = metric
+                elif section == "balance_tl":
+                    values.setdefault(product_id, {})["balance_tl"] = metric
+                elif section == "balance_unit":
+                    values.setdefault(product_id, {})["balance_unit"] = metric
             for product_id, item in values.items():
                 if "target" not in item and "actual" not in item:
                     continue
@@ -1574,10 +1582,20 @@ class IMSImportService:
                     target = Target(year=year, month=month, quarter=self.quarter_for(month), representative_id=rep_id, product_id=product_id)
                     db.session.add(target); targets[(rep_id, product_id)] = target
                 target.tl_target = item.get("target", target.tl_target or 0.0)
-                target.unit_target = TargetBoxCalculationService.unit_target(
-                    target.tl_target,
-                    products_by_id.get(product_id).unit_price if products_by_id.get(product_id) else 0,
-                )
+                balance_tl = item.get("balance_tl")
+                balance_unit = item.get("balance_unit")
+                if balance_tl is not None and balance_unit not in (None, 0):
+                    # BAKİYE's MF'siz kutu block carries the representative /
+                    # product-specific net unit factor.  It is the source
+                    # used by the workbook's own remaining-box calculation.
+                    net_unit_price = balance_tl / balance_unit
+                    if net_unit_price > 0:
+                        target.unit_target = target.tl_target / net_unit_price
+                elif not target.unit_target:
+                    target.unit_target = TargetBoxCalculationService.unit_target(
+                        target.tl_target,
+                        products_by_id.get(product_id).unit_price if products_by_id.get(product_id) else 0,
+                    )
                 summary = summaries.get((rep_id, product_id))
                 if summary is not None:
                     summary.target_tl = target.tl_target
@@ -1673,7 +1691,15 @@ class IMSImportService:
                     summary.tl = metrics["tl"]
                     if target is not None:
                         target.tl_realization = metrics["tl"]
-                if "unit" in metrics:
+                derived_unit_actual = None
+                if target is not None and target.unit_target and target.tl_target:
+                    net_unit_price = target.tl_target / target.unit_target
+                    if net_unit_price > 0 and "tl" in metrics:
+                        derived_unit_actual = metrics["tl"] / net_unit_price
+                if derived_unit_actual is not None:
+                    summary.unit = derived_unit_actual
+                    target.unit_realization = derived_unit_actual
+                elif "unit" in metrics:
                     summary.unit = metrics["unit"]
                     if target is not None:
                         target.unit_realization = metrics["unit"]
