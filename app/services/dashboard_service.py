@@ -179,6 +179,7 @@ class DashboardService:
             "national_metrics": self.query_layer.load_national_dashboard_metrics(filters=filters),
             "competition": self.query_layer.load_competition_overview(filters=filters),
             "competitor_products": self.query_layer.load_competitor_product_rows(filters=filters),
+            "regional_competition": self.query_layer.load_regional_competition_rows(filters=filters),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -257,6 +258,45 @@ class DashboardService:
             group,territory=str(getattr(row,"product_group","") or "Pazar"),str(getattr(row,"territory","") or "-"); national[(group,product)]=national.get((group,product),0)+value
             if territory not in regional or value>regional[territory]["sales_tl"]: regional[territory]={"territory":territory,"product_name":product,"product_group":group,"sales_tl":round(value,2)}
         return {"top_products":[{"product_group":group,"product_name":product,"sales_tl":round(value,2)} for (group,product),value in sorted(national.items(),key=lambda item:item[1],reverse=True)[:5]],"hot_regions":sorted(regional.values(),key=lambda item:item["sales_tl"],reverse=True)[:6]}
+
+    @staticmethod
+    def _regional_competition(rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
+        """Build regional company-vs-market views without counting subtotal rows."""
+        own_names = {
+            "".join(ch for ch in str(getattr(item, "product_name", "") or "").upper() if ch.isalnum())
+            for item in product_rows or []
+        }
+        groups = {}
+        for row in rows or []:
+            territory = str(getattr(row, "territory", "") or "").strip()
+            group = str(getattr(row, "product_group", "") or "Pazar").strip()
+            product = str(getattr(row, "product_name", "") or "").strip()
+            value = float(getattr(row, "sales_tl", 0) or 0)
+            if not territory or not product or value <= 0:
+                continue
+            item = groups.setdefault((territory, group), {"territory": territory, "product_group": group, "market_tl": 0.0, "company_tl": 0.0})
+            item["market_tl"] += value
+            product_key = "".join(ch for ch in product.upper() if ch.isalnum())
+            if any(name and name in product_key for name in own_names):
+                item["company_tl"] += value
+        result = []
+        national = {}
+        for item in groups.values():
+            item["share_percent"] = item["company_tl"] * 100 / item["market_tl"] if item["market_tl"] else 0.0
+            national.setdefault(item["product_group"], [0.0, 0.0])
+            national[item["product_group"]][0] += item["company_tl"]
+            national[item["product_group"]][1] += item["market_tl"]
+        for item in groups.values():
+            company, market = national[item["product_group"]]
+            benchmark = company * 100 / market if market else 0.0
+            item["national_share_percent"] = round(benchmark, 1)
+            item["difference_pp"] = round(item["share_percent"] - benchmark, 1)
+            item["share_percent"] = round(item["share_percent"], 1)
+            item["company_tl"] = round(item["company_tl"], 2)
+            item["market_tl"] = round(item["market_tl"], 2)
+            result.append(item)
+        result.sort(key=lambda item: (item["difference_pp"], item["market_tl"]), reverse=True)
+        return {"signals": result[:16], "table": sorted(result, key=lambda item: (item["territory"], item["product_group"]))[:48]}
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
@@ -344,6 +384,7 @@ class DashboardService:
         fmt_prime = self.formatter.format_prime_summary(prime_data, ai_data)
         competition_overview = self._competition_overview(query_data.get("competition", []), query_data.get("product_performance", []))
         competitor_ai = self._competitor_ai(query_data.get("competitor_products", []), query_data.get("product_performance", []))
+        regional_competition = self._regional_competition(query_data.get("regional_competition", []), query_data.get("product_performance", []))
         region_realization = self._region_realization(query_data.get("region_perf", []))
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_FORMATTER_MS, (time.time() - t_formatter) * 1000)
 
@@ -360,6 +401,7 @@ class DashboardService:
                .set_competition_analysis(competition_overview) \
                .set_region_realization(region_realization) \
                .set_competitor_ai(competitor_ai) \
+               .set_regional_competition(regional_competition) \
                .set_history(fmt_history) \
                .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \

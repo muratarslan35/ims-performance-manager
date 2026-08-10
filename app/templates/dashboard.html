@@ -468,67 +468,14 @@
   </div>
 
   <div class="col-lg-5">
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-speedometer2"></i> Hedefe Göre Gerçekleşme</h2>
-      </div>
-      <div class="section-card-body text-center gauge-panel">
-        <div class="chart-container chart-container-md gauge-chart-wrap">
-          <canvas id="gaugeChart"></canvas>
-        </div>
-        <div class="gauge-center-text">
-          <div class="gauge-value">%{{ overall_safe }}</div>
-          <div class="gauge-label">Gerçekleşme</div>
-        </div>
-        <div class="gauge-stats mt-3">
-          <div class="gauge-stat-item">
-            <div class="gauge-stat-value">{% if payload.overall_realization_tl and payload.overall_realization_tl > 0 %}{{ "{:,.0f}".format(payload.overall_realization_tl) }} ₺{% else %}—{% endif %}</div>
-            <div class="gauge-stat-label">Gerçekleşen</div>
-          </div>
-          <div class="gauge-stat-item">
-            <div class="gauge-stat-value">{% if payload.overall_target_tl and payload.overall_target_tl > 0 %}{{ "{:,.0f}".format(payload.overall_target_tl) }} ₺{% else %}—{% endif %}</div>
-            <div class="gauge-stat-label">Hedef</div>
-          </div>
-        </div>
-      </div>
+    <div class="section-card executive-signal-card">
+      <div class="section-card-header"><h2 class="section-card-title"><i class="bi bi-radar"></i> Bölgesel Pazar Payı Sinyalleri</h2><span class="section-chip">Türkiye ortalamasına göre</span></div>
+      <div class="section-card-body regional-signal-list">{% for item in payload.regional_competition.signals | default([], true) %}<div class="regional-signal-row"><div><strong>{{ item.territory }}</strong><span>{{ item.product_group }}</span></div><b>%{{ item.share_percent }}</b><em class="{% if item.difference_pp >= 0 %}positive{% else %}negative{% endif %}">{% if item.difference_pp >= 0 %}▲{% else %}▼{% endif %} {{ item.difference_pp | abs }} pp</em></div>{% else %}<div class="empty-state"><i class="bi bi-bar-chart"></i><p>Bu dönem için bölgesel rekabet verisi bulunmuyor</p></div>{% endfor %}</div>
     </div>
   </div>
 </div>
 
-<div class="row g-4 mb-4">
-  <div class="col-lg-8">
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-graph-up"></i> Aylık Ciro Trendi</h2>
-        <span class="section-chip">Son 12 Ay</span>
-      </div>
-      <div class="section-card-body">
-        {% if payload.simulation_history %}
-          <div class="chart-container chart-container-lg"><canvas id="monthlyTrendChart"></canvas></div>
-        {% else %}
-          <div class="chart-placeholder"><i class="bi bi-graph-up"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
-          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="col-lg-4">
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-share-fill"></i> Pazar Payı Trendi</h2>
-      </div>
-      <div class="section-card-body">
-        {% if payload.market_share_trend and payload.market_share_trend.labels %}
-          <div class="chart-container chart-container-lg"><canvas id="marketShareChart"></canvas></div>
-        {% else %}
-          <div class="chart-placeholder"><i class="bi bi-share"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
-          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
+<div class="row g-4 mb-4"><div class="col-12"><div class="section-card"><div class="section-card-header"><h2 class="section-card-title"><i class="bi bi-globe-europe-africa"></i> Bölgesel Ürün Bazlı Rekabet Analizi</h2><span class="section-chip">Rakip ürünler ve pazar büyüklüğü</span></div><div class="table-responsive premium-table-wrap"><table class="table premium-table regional-competition-table align-middle mb-0"><thead><tr><th>Bölge</th><th>Ürün Grubu</th><th>Bilim Satışı</th><th>Bölgesel Pazar</th><th>Pazar Payı</th><th>Türkiye Ort. Farkı</th></tr></thead><tbody>{% for item in payload.regional_competition.table | default([], true) %}<tr><td class="fw-semibold">{{ item.territory }}</td><td>{{ item.product_group }}</td><td>{{ "{:,.0f}".format(item.company_tl) }} ₺</td><td>{{ "{:,.0f}".format(item.market_tl) }} ₺</td><td><span class="market-share-badge">%{{ item.share_percent }}</span></td><td><span class="market-delta {% if item.difference_pp >= 0 %}positive{% else %}negative{% endif %}">{% if item.difference_pp >= 0 %}▲{% else %}▼{% endif %} {{ item.difference_pp | abs }} pp</span></td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">Rekabet TL verisi bulunmuyor.</td></tr>{% endfor %}</tbody></table></div></div></div></div>
 
 <div class="row g-4 mb-4">
   <div class="col-12">
