@@ -398,9 +398,16 @@ class PrimeEngine:
         level = int(round(capped - minimum, 4) // step)
         return round(base + (level * step_amount), 2)
 
-    def calculate_ciro_prime(self, total_percent, product_success):
+    def calculate_ciro_prime(self, total_percent, product_success=None):
+        """Return the standalone ciro premium.
+
+        The ciro premium is deliberately an alternative to the main premium:
+        reaching the total TL target earns it even when the four-product rule
+        is not met.  A representative who meets the product rule receives the
+        main premium instead, not both premiums together.
+        """
         minimum = self.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
-        if total_percent < minimum or not product_success:
+        if total_percent < minimum:
             return 0.0
         return round(self.get_setting("CIRO_PRIME", 20000.0), 2)
 
@@ -529,14 +536,18 @@ class PrimeEngine:
     def build_breakdown(self, monthly_products, baseline_products, summary, quarter):
         eligible = summary["prime_eligible"]
         main_prime = self.calculate_main_prime(summary["total_tl_percent"]) if eligible else 0.0
-        ciro_prime = self.calculate_ciro_prime(summary["total_tl_percent"], eligible)
-        quarter_effect = self.calculate_quarter_component(quarter["total_percent"]) if eligible else 0.0
-        product_effect = self.calculate_product_component(monthly_products) if eligible else 0.0
-        recovery_prime = self.calculate_recovery_component(monthly_products, baseline_products=baseline_products) if eligible else 0.0
-        bonus = self.calculate_bonus(summary, monthly_products) if eligible else 0.0
-        penalty = self.calculate_penalty(summary) if eligible else 0.0
-        extra_prime = round(ciro_prime + quarter_effect + product_effect, 2)
-        total = round(main_prime + extra_prime + recovery_prime + bonus - penalty, 2)
+        ciro_prime = 0.0 if eligible else self.calculate_ciro_prime(summary["total_tl_percent"])
+        # The approved scheme has two mutually exclusive monthly payments:
+        # the 20,000 TL ciro premium or the 50,000 TL main premium plus its
+        # 5-point steps.  Historical experimental bonus/recovery components
+        # must not silently alter the gross entitlement.
+        quarter_effect = 0.0
+        product_effect = 0.0
+        recovery_prime = 0.0
+        bonus = 0.0
+        penalty = 0.0
+        extra_prime = ciro_prime
+        total = round(main_prime or ciro_prime, 2)
         return {
             "main_prime": round(main_prime, 2),
             "ciro_prime": round(ciro_prime, 2),
@@ -638,8 +649,9 @@ class PrimeEngine:
                     "target_tl": summary["total_target"],
                     "actual_tl": summary["total_realization"],
                     "prime": round(
-                        self.calculate_main_prime(summary["total_tl_percent"]) + self.calculate_ciro_prime(summary["total_tl_percent"], summary["prime_eligible"])
-                        if summary["prime_eligible"] else 0.0,
+                        self.calculate_main_prime(summary["total_tl_percent"])
+                        if summary["prime_eligible"]
+                        else self.calculate_ciro_prime(summary["total_tl_percent"]),
                         2,
                     ),
                     "percent": summary["total_tl_percent"],
@@ -686,7 +698,11 @@ class PrimeEngine:
         next_month = ai_service.predict_next_month()
         current_target = max(summary["total_target"], 1.0)
         forecast_percent = round((next_month.get("predicted_tl", 0.0) / current_target * 100.0), 2)
-        expected_prime = self.calculate_main_prime(forecast_percent) + self.calculate_ciro_prime(forecast_percent, summary["product_success"])
+        expected_prime = (
+            self.calculate_main_prime(forecast_percent)
+            if summary["product_success"] and forecast_percent >= self.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
+            else self.calculate_ciro_prime(forecast_percent)
+        )
         return {
             "predicted_tl": round(next_month.get("predicted_tl", 0.0), 2),
             "trend_direction": next_month.get("trend_direction", "stable"),
