@@ -24,33 +24,10 @@
 {% set ain = payload.ai_next_month | default({}, true) %}
 
 <div class="dash-hero mb-4">
-  <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3">
+  <div class="d-flex align-items-center">
     <div>
-      <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" class="dash-bilim-logo" alt="Bilim İlaç">
       <h1 class="dash-hero-title">Türkiye Performans Özeti</h1>
       <p class="dash-hero-sub">Hoş geldiniz, <strong>{{ current_user.full_name }}</strong> · Türkiye geneli yönetici görünümü</p>
-    </div>
-    <div class="dash-hero-side">
-      <div class="dash-hero-meta">
-        <div class="dash-hero-badge">
-          <i class="bi bi-calendar3-week"></i>
-          Aktif Quarter:
-          <strong>{{ "Q" ~ active_q if active_q else "Tanımsız" }}</strong>
-        </div>
-        <div class="dash-hero-badge">
-          <i class="bi bi-cloud-check-fill"></i>
-          Son IMS:
-          {% if payload.latest_upload_date %}<strong>{{ (payload.latest_upload_date | string)[:10] }}</strong>{% else %}<strong>Yükleme yok</strong>{% endif %}
-        </div>
-        <div class="dash-hero-badge">
-          <i class="bi bi-circle-fill {% if payload.latest_upload_status == 'COMPLETED' %}text-success{% elif payload.latest_upload_status == 'FAILED' %}text-danger{% else %}text-warning{% endif %} dash-hero-status-dot"></i>
-          {% if payload.latest_upload_status == "COMPLETED" %}Hazır{% elif payload.latest_upload_status == "FAILED" %}Hata{% elif payload.latest_upload_status %}{{ payload.latest_upload_status }}{% else %}Yükleme yok{% endif %}
-        </div>
-      </div>
-      <div class="dash-live-row mt-2">
-        <span class="dash-live-badge"><span class="dash-live-dot"></span>Canlı</span>
-        <span class="dash-last-update" id="dashLastUpdate">Son güncelleme: az önce</span>
-      </div>
     </div>
   </div>
 </div>

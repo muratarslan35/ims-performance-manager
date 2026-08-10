@@ -25,9 +25,6 @@
 .dash-hero::before { width: 220px; height: 220px; right: -60px; top: -70px; }
 .dash-hero::after { width: 140px; height: 140px; right: 100px; bottom: -55px; }
 
-.dash-bilim-logo { display:block; width:190px; height:72px; object-fit:cover; object-position:center 48%; margin:0 0 14px; border-radius:10px; box-shadow:0 5px 12px rgba(0,0,0,.22); }
-.dash-hero-side { min-width:300px; }
-
 .dash-hero-title { margin: 0 0 2px; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
 .dash-hero-sub { margin: 0; font-size: 14px; opacity: .9; }
 .dash-hero-meta { display: flex; gap: 10px; flex-wrap: wrap; }
