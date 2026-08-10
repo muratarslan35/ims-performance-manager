@@ -626,6 +626,48 @@ class IMSImportService:
                 return representative
         return None
 
+    @staticmethod
+    def _vacancy_code(region, vacancy_name):
+        """Return a stable ID for each distinct unassigned headcount row."""
+        identity = re.sub(r"[^A-Z0-9]+", "", AliasService.normalize(vacancy_name))[:48]
+        return f"UNASSIGNED{region or 'GENERAL'}{identity or 'VACANCY'}"
+
+    @staticmethod
+    def _vacancy_label(region, city, vacancy_name):
+        context = " ".join(part for part in (region, city) if part)
+        return f"ATANMAMIŞ · {context} · {vacancy_name}".strip(" ·")
+
+    def _migrate_legacy_vacancy_placeholders(self):
+        """Split legacy one-per-region placeholders before importing a workbook.
+
+        Earlier imports used ``UNASSIGNED<region>`` for every vacancy in the
+        same region, causing the last BAKİYE row to overwrite the preceding
+        empty-headcount rows.  Preserve its primary key by assigning it to the
+        last source row (the value it currently owns); other rows are created
+        with their own stable IDs during normal processing.
+        """
+        sheet_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
+        if not sheet_name:
+            return
+        vacancies_by_region = {}
+        for _, row in self.workbook[sheet_name].iterrows():
+            vacancy_name = self.clean_text(row.iloc[1]) if len(row) > 1 else ""
+            if not self._is_vacancy_representative(vacancy_name):
+                continue
+            region, city = self._region_context(self.clean_text(row.iloc[0]))
+            if region:
+                vacancies_by_region.setdefault(region, []).append((city, vacancy_name))
+        for region, vacancies in vacancies_by_region.items():
+            legacy = Representative.query.filter_by(rep_code=f"UNASSIGNED{region}").first()
+            if legacy is None:
+                continue
+            city, vacancy_name = vacancies[-1]
+            code = self._vacancy_code(region, vacancy_name)
+            if Representative.query.filter_by(rep_code=code).first() is None:
+                legacy.rep_code = code
+                legacy.rep_name = self._vacancy_label(region, city, vacancy_name)
+                legacy.city = city or legacy.city
+
     def _ensure_vacancy_representative(self, region_value=None, city=None, vacancy_name=None):
         """Store vacant brick activity under an inactive region-owned placeholder."""
         region, location_city = self._region_context(region_value, city)
@@ -634,12 +676,12 @@ class IMSImportService:
             if matched is not None:
                 self.statistics["vacancy_records"] += 1
                 return matched.id
-        code = f"UNASSIGNED{region or 'GENERAL'}"
+        code = self._vacancy_code(region, vacancy_name)
         representative = Representative.query.filter_by(rep_code=code).first()
         if representative is None:
             representative = Representative(
                 rep_code=code,
-                rep_name=f"ATANMAMIŞ · {region or 'GENEL'} {location_city or ''}".strip(),
+                rep_name=self._vacancy_label(region or "GENEL", location_city, vacancy_name or "BOŞ KADRO"),
                 region=region,
                 city=location_city,
                 active=False,
@@ -654,6 +696,7 @@ class IMSImportService:
         sheet_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
         if not sheet_name:
             return
+        self._migrate_legacy_vacancy_placeholders()
         frame = self.workbook[sheet_name]
         for _, row in frame.iterrows():
             if len(row) < 2:
