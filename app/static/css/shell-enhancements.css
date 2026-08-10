@@ -1,11 +1,11 @@
 /* Sidebar-only corporate identity: reference palette #142B39 / #1E468F / #75D86F. */
 .app-sidebar { background:linear-gradient(165deg,#142b39 0%,#153e4c 47%,#142b39 100%); }
 .app-sidebar::before { content:""; position:absolute; inset:88px 0 70px; pointer-events:none; opacity:.22; background:linear-gradient(145deg,transparent 29%,rgba(117,216,111,.42) 29.4%,transparent 30%),linear-gradient(35deg,transparent 63%,rgba(255,255,255,.18) 63.3%,transparent 64%); background-size:170px 170px; }
-.sidebar-header { position:relative; z-index:1; min-height:88px; padding:18px 16px; border-color:rgba(255,255,255,.14); }
+.sidebar-header { position:relative; z-index:1; min-height:94px; padding:17px 15px; border-color:rgba(255,255,255,.14); }
 .sidebar-brand-suite { width:100%; gap:9px; min-width:0; }
-.sidebar-brand-art { display:block; width:88px; height:39px; object-fit:contain; object-position:left center; flex:0 0 auto; }
-.sidebar-brand-divider { width:1px; height:32px; background:rgba(255,255,255,.30); flex:0 0 auto; }
-.sidebar-partner-art { width:105px; height:38px; min-width:0; object-fit:contain; object-position:left center; }
+.sidebar-brand-art { display:block; width:84px; height:54px; object-fit:contain; object-position:left center; flex:0 0 auto; }
+.sidebar-brand-divider { width:1px; height:38px; background:rgba(255,255,255,.34); flex:0 0 auto; }
+.sidebar-partner-art { width:124px; height:46px; min-width:0; object-fit:contain; object-position:left center; }
 .sidebar-brand-text { display:none; }
 .sidebar-nav,.sidebar-tagline,.sidebar-footer { position:relative; z-index:1; }
 .sidebar-nav-link { margin:2px 9px; border-radius:8px; font-size:13px; }
