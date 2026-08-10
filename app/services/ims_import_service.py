@@ -1647,8 +1647,15 @@ class IMSImportService:
                         current = label
                     sections[column] = current
                 national = frame.iloc[2]
+                # A weekly workbook can contain both cumulative month-to-date
+                # and current-week box blocks.  The dashboard's IMS Kutu
+                # Çıkışı is MTD, therefore keep the first KUTU ÇIKIŞI block.
+                selected_section = next(
+                    (section for section in sections.values() if "KUTU" in section),
+                    ""
+                )
                 for column, section in sections.items():
-                    if "KUTU" not in section:
+                    if not selected_section or section != selected_section:
                         continue
                     product_match = self.resolve_product_match(self.clean_text(frame.iloc[1, column]))
                     if product_match["matched"]:
