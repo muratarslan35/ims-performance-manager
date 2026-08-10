@@ -8,6 +8,12 @@
 - [-] Targeted production checks PASS: %110=55,000 TL; %140=70,000 TL; ciro at %100=20,000 TL; Q service and template render passed. `/quarter` login redirect returns 302 and the server is listening on port 8000.
 - [x] Commit/deploy: `e8f2ae8` pushed and deployed.
 
+## Mobile continuation and deploy automation (2026-08-11)
+
+- [x] `.github/workflows/deploy.yml` — Main branch pushes can deploy through GitHub Actions after the SSH secret is configured.
+- [x] `docs/MOBILE_CONTINUATION.md` — Mobile session handoff, non-secret server variables, deployment contract and current Q premium commits are documented.
+- [!] GitHub secret `IMS_DEPLOY_SSH_KEY` still requires one manual repository-settings action. The private `bist.key` is intentionally not tracked in Git.
+
 ## Representative code follow-up (2026-08-09)
 
 - `app/services/ims_import_service.py` no longer creates `AUTO-` representative codes. New master codes are derived from the normalized Excel name, for example `ENGIN YAPAK` -> `ENGINYAPAK`.
