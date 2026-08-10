@@ -1502,12 +1502,14 @@ class IMSImportService:
         db.session.flush()
 
     def apply_balance_summary(self, year, month):
-        """Use the workbook's BAKİYE report as the authoritative MTD TL view.
+        """Load BAKİYE targets and only use its actuals when TTS is absent.
 
-        Unlike the brick-sales extract, this report already reconciles monthly
-        target, IMS-date sales and remaining balance at representative/product
-        grain.  It therefore supplies the values used by target, recovery,
-        prime and dashboard calculations.
+        ``TTS HAFTALIK ÇIKIŞLARI`` is the canonical representative-level
+        actual-sales source.  BAKİYE can contain a different reconciliation
+        scope, so allowing it to overwrite TTS creates product-level drift.
+        Its target columns remain the authoritative target source; its actual
+        columns are retained solely as a compatibility fallback for workbooks
+        which do not include a TTS weekly sales report.
         """
         sheet_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
         if not sheet_name:
@@ -1524,6 +1526,10 @@ class IMSImportService:
             if any(token in normalized_label for token in ("HEDEF", "CIKIS", "BAKIYE")):
                 current = normalized_label
             sections[column] = current
+        has_weekly_sales = any(
+            "HAFTALIK" in AliasService.normalize(name) and "CIKIS" in AliasService.normalize(name)
+            for name in self.workbook
+        )
         targets = {(t.representative_id, t.product_id): t for t in Target.query.filter_by(year=year, month=month).all()}
         summaries = {(s.representative_id, s.product_id): s for s in IMSSummary.query.filter_by(year=year, month=month).all()}
         products_by_id = {product.id: product for product in Product.query.all()}
@@ -1572,15 +1578,112 @@ class IMSImportService:
                     target.tl_target,
                     products_by_id.get(product_id).unit_price if products_by_id.get(product_id) else 0,
                 )
-                target.tl_realization = item.get("actual", target.tl_realization or 0.0)
-                target.realization_percent = round(target.tl_realization * 100 / target.tl_target, 2) if target.tl_target else 0.0
                 summary = summaries.get((rep_id, product_id))
                 if summary is not None:
-                    summary.tl = target.tl_realization
+                    summary.target_tl = target.tl_target
+                    summary.target_unit = target.unit_target
+                if not has_weekly_sales and "actual" in item:
+                    target.tl_realization = item["actual"]
+                    target.realization_percent = round(target.tl_realization * 100 / target.tl_target, 2) if target.tl_target else 0.0
+                    if summary is not None:
+                        summary.tl = target.tl_realization
+                        summary.realization_percent = target.realization_percent
+        db.session.flush()
+
+    def apply_weekly_sales_summary(self, year, month):
+        """Apply TTS weekly TL/kutu values as the period actuals.
+
+        The sheet has two adjacent product blocks (TL and KUTU) and does not
+        require a fixed month name.  We discover the product header row and
+        forward-fill its block labels, then update the same representative /
+        product records used by the performance, target and prime screens.
+        """
+        sheet_name = next(
+            (
+                name for name in self.workbook
+                if "HAFTALIK" in AliasService.normalize(name)
+                and "CIKIS" in AliasService.normalize(name)
+            ),
+            None,
+        )
+        if not sheet_name:
+            return {"rows": 0, "matched_representatives": 0, "updated_values": 0}
+
+        frame = self.workbook[sheet_name]
+        header_row = next(
+            (
+                index for index in range(min(12, len(frame)))
+                if "TRAVAZOL" in " ".join(AliasService.normalize(value) for value in frame.iloc[index])
+                and "MONUROL" in " ".join(AliasService.normalize(value) for value in frame.iloc[index])
+            ),
+            None,
+        )
+        if header_row is None or header_row == 0:
+            self.warnings.append(f"{sheet_name}: TTS ürün başlığı bulunamadı.")
+            return {"rows": 0, "matched_representatives": 0, "updated_values": 0}
+
+        sections, current_section = {}, ""
+        for column in range(frame.shape[1]):
+            label = AliasService.normalize(self.clean_text(frame.iloc[header_row - 1, column]))
+            if "TL" in label and "CIKIS" in label:
+                current_section = "tl"
+            elif ("KUTU" in label or "UNIT" in label) and "CIKIS" in label:
+                current_section = "unit"
+            sections[column] = current_section
+
+        product_columns = {}
+        for column in range(frame.shape[1]):
+            if sections.get(column) not in {"tl", "unit"}:
+                continue
+            product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))
+            if product_match["matched"]:
+                product_columns[column] = (product_match["object"].id, sections[column])
+
+        targets = {(item.representative_id, item.product_id): item for item in Target.query.filter_by(year=year, month=month).all()}
+        summaries = {(item.representative_id, item.product_id): item for item in IMSSummary.query.filter_by(year=year, month=month).all()}
+        matched_representatives = updated_values = rows = 0
+        for _, row in frame.iloc[header_row + 1:].iterrows():
+            rep_name = self.clean_text(row.iloc[1])
+            if self._is_vacancy_representative(rep_name):
+                rep_id = self._ensure_vacancy_representative(self.clean_text(row.iloc[0]), vacancy_name=rep_name)
+            elif self._is_probable_representative_name(rep_name):
+                rep_match = self.resolve_representative_match(rep_name)
+                if not rep_match["matched"]:
+                    continue
+                rep_id = rep_match["object"].id
+            else:
+                continue
+
+            rows += 1
+            matched_representatives += 1
+            values = {}
+            for column, (product_id, metric) in product_columns.items():
+                values.setdefault(product_id, {})[metric] = self.safe_float(row.iloc[column])
+            for product_id, metrics in values.items():
+                summary = summaries.get((rep_id, product_id))
+                target = targets.get((rep_id, product_id))
+                if summary is None:
+                    continue
+                if "tl" in metrics:
+                    summary.tl = metrics["tl"]
+                    if target is not None:
+                        target.tl_realization = metrics["tl"]
+                if "unit" in metrics:
+                    summary.unit = metrics["unit"]
+                    if target is not None:
+                        target.unit_realization = metrics["unit"]
+                if target is not None:
+                    target.realization_percent = round(summary.tl * 100 / target.tl_target, 2) if target.tl_target else 0.0
                     summary.target_tl = target.tl_target
                     summary.target_unit = target.unit_target
                     summary.realization_percent = target.realization_percent
+                updated_values += 1
         db.session.flush()
+        return {
+            "rows": rows,
+            "matched_representatives": matched_representatives,
+            "updated_values": updated_values,
+        }
 
     def persist_national_dashboard_metrics(self, year, month):
         """Persist the workbook's National KPI rows for the executive dashboard.
@@ -1770,6 +1873,7 @@ class IMSImportService:
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
         self.apply_balance_summary(year, month)
+        self.apply_weekly_sales_summary(year, month)
         self.persist_national_dashboard_metrics(year, month)
 
         available_sheets = (self.workbook or {}).keys()
