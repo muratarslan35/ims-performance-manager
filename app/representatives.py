@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from app.extensions import db
 from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.period_service import PeriodService
+from app.services.representative_market_service import RepresentativeMarketService
 
 
 representatives_bp = Blueprint(
@@ -441,7 +442,19 @@ def view(
     totals = {key: round(value, 2) for key, value in totals.items()}
     totals["remaining_tl"] = round(max(totals["target_tl"] - totals["actual_tl"], 0.0), 2)
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
-    return render_template("representative_detail.html", representative=representative, assignments=assignments, products=product_rows, totals=totals, year=year, month=month)
+    market_analysis = RepresentativeMarketService(representative, year, month).build()
+    representatives = Representative.query.filter_by(active=True).order_by(Representative.rep_name.asc()).all()
+    return render_template(
+        "representative_detail.html",
+        representative=representative,
+        representatives=representatives,
+        assignments=assignments,
+        products=product_rows,
+        totals=totals,
+        market_analysis=market_analysis,
+        year=year,
+        month=month,
+    )
 
 
 @representatives_bp.route("/search")
