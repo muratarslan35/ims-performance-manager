@@ -33,14 +33,14 @@
         </div>
 
         <!-- Center: global search -->
-        <div class="navbar-center d-none d-lg-block">
+        <div class="navbar-center">
             <form class="navbar-search" role="search" autocomplete="off" action="{{ url_for('representatives.index') }}" method="get">
                 <i class="bi bi-search navbar-search-icon" aria-hidden="true"></i>
                 <input type="search"
                        class="navbar-search-input"
                        id="globalRepresentativeSearch"
                        name="q"
-                       placeholder="Temsilci, ürün, IMS veya rapor ara..."
+                       placeholder="Temsilci, brick veya ürün ara..."
                        aria-label="Global arama">
                 <div id="globalSearchResults" class="global-search-results" role="listbox" aria-label="Arama sonuçları"></div>
             </form>
@@ -56,6 +56,11 @@
                     aria-label="Tema Değiştir">
                 <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
             </button>
+
+            <div class="navbar-mobile-status" aria-label="Aktif dönem ve son IMS bilgisi">
+                <div><span>Aktif</span><strong>{{ active_period if active_period is defined and active_period else "—" }}</strong></div>
+                <div><span>Son IMS</span><strong>{{ latest_upload_date if latest_upload_date else "—" }}</strong></div>
+            </div>
 
             <!-- Notifications -->
             <div class="dropdown">
@@ -83,13 +88,13 @@
             </div>
 
             <!-- Last IMS -->
-            <div class="navbar-info-card d-none d-xl-flex">
+            <div class="navbar-info-card navbar-info-card-desktop">
                 <div class="navbar-info-label">Son IMS</div>
                 <div class="navbar-info-value">{{ latest_upload_date if latest_upload_date else "—" }}</div>
             </div>
 
             <!-- Active Period -->
-            <div class="navbar-info-card d-none d-xl-flex">
+            <div class="navbar-info-card navbar-info-card-desktop">
                 <div class="navbar-info-label">Aktif Dönem</div>
                 <div class="navbar-info-value">{{ active_period if active_period is defined and active_period else "—" }}</div>
             </div>
