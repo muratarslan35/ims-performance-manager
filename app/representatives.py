@@ -496,6 +496,21 @@ def search():
             "url": url,
         })
         known_reps.add(url)
+
+    products = Product.query.filter(
+        or_(
+            Product.product_name.ilike(f"%{query}%"),
+            Product.product_code.ilike(f"%{query}%"),
+            Product.ims_name.ilike(f"%{query}%"),
+        )
+    ).order_by(Product.display_order.asc(), Product.product_name.asc()).limit(5).all()
+    for product in products:
+        results.append({
+            "kind": "product",
+            "title": product.product_name,
+            "meta": " · ".join(part for part in [product.product_code, product.category] if part) or "Ürün",
+            "url": url_for("products.index"),
+        })
     return jsonify({"results": results[:10]})
 
 

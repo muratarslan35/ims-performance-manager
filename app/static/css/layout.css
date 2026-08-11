@@ -509,6 +509,8 @@ body.sidebar-collapsed .app-sidebar {
   margin-top: 2px;
   white-space: nowrap;
 }
+.navbar-mobile-status { display: none; }
+.navbar-info-card-desktop { display: flex; }
 
 /* User dropdown trigger */
 .navbar-user-btn {
@@ -769,6 +771,7 @@ body.sidebar-collapsed .app-sidebar {
   .footer-inner { padding: 12px 24px; }
   .navbar-inner { padding: 0 16px; }
   .navbar-center { max-width: 320px; }
+  .navbar-info-card-desktop { display: none; }
 }
 
 @media (max-width: 991.98px) {
@@ -799,13 +802,34 @@ body.sidebar-collapsed .app-sidebar {
 @media (max-width: 767.98px) {
   .page-body { padding: 12px; }
   .page-header { padding: 10px 12px 0; }
-  .navbar-center { display: none; }
-  .navbar-info-card { display: none !important; }
+  .app-navbar { height: auto; min-height: var(--navbar-height); }
+  .navbar-inner { min-height: var(--navbar-height); height: auto; flex-wrap: wrap; padding-top: 7px; padding-bottom: 8px; }
+  .navbar-inner > .d-flex:first-child { flex: 0 0 auto; }
+  .navbar-right { gap: 4px; }
+  .navbar-center { display: block; order: 3; flex: 1 0 100%; max-width: none; margin: 0; }
+  .navbar-search-input { height: 40px; background: var(--background); }
+  .navbar-mobile-status { display: flex; align-items: stretch; height: 38px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--background); }
+  .navbar-mobile-status > div { display: flex; flex-direction: column; justify-content: center; padding: 3px 7px; min-width: 62px; }
+  .navbar-mobile-status > div + div { border-left: 1px solid var(--border); }
+  .navbar-mobile-status span { font-size: 8px; line-height: 1; color: var(--text-light); text-transform: uppercase; font-weight: 800; letter-spacing: .04em; }
+  .navbar-mobile-status strong { margin-top: 3px; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; line-height: 1; color: var(--text); }
+  .navbar-info-card-desktop { display: none; }
+  .navbar-user-btn { padding-right: 5px; }
   .footer-inner { grid-template-columns: 1fr; text-align: center; gap: 8px; }
   .footer-brand { align-items: center; }
   .footer-status { justify-content: center; }
   .footer-copy { text-align: center; }
   .page-title { font-size: 18px; }
+}
+
+@media (max-width: 420px) {
+  .navbar-inner { padding-left: 8px; padding-right: 8px; gap: 5px; }
+  .navbar-hamburger { width: 36px; }
+  .navbar-icon-btn { width: 34px; height: 36px; }
+  .navbar-mobile-status { height: 36px; }
+  .navbar-mobile-status > div { min-width: 55px; padding-left: 5px; padding-right: 5px; }
+  .navbar-mobile-status strong { max-width: 65px; font-size: 8px; }
+  .navbar-user-avatar { width: 28px; height: 28px; }
 }
 
 /* ─── §10  AUTH PAGE (anonymous layout) ──────────────────────── */

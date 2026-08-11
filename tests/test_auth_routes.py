@@ -235,11 +235,12 @@ def test_profile_page_and_user_menu_are_available_after_login(app):
 
 def test_global_representative_search_is_authenticated_and_returns_json(app):
     from app.extensions import db
-    from app.models import Representative
+    from app.models import Product, Representative
 
     with app.app_context():
         representative = Representative(rep_code="SEARCH-001", rep_name="Arama Temsilcisi", region="101", city="İstanbul", active=True)
-        db.session.add(representative)
+        product = Product(product_code="SEARCH-PROD", product_name="Arama Ürünü", is_active=True)
+        db.session.add_all([representative, product])
         db.session.commit()
     client = app.test_client()
     login = client.post("/login", data={"email": "test@example.com", "password": "password123"})
@@ -251,6 +252,25 @@ def test_global_representative_search_is_authenticated_and_returns_json(app):
     assert payload["results"]
     assert payload["results"][0]["title"] == "Arama Temsilcisi"
     assert "/representatives/view/" in payload["results"][0]["url"]
+
+    product_response = client.get("/representatives/search?q=Arama Ürünü")
+    product_payload = product_response.get_json()
+    assert any(item["kind"] == "product" and item["title"] == "Arama Ürünü" for item in product_payload["results"])
+
+
+def test_mobile_navbar_contains_search_and_period_status(app):
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    response = client.get("/dashboard/", follow_redirects=True)
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'id="globalRepresentativeSearch"' in html
+    assert "Temsilci, brick veya ürün ara" in html
+    assert 'class="navbar-mobile-status"' in html
+    assert "Aktif" in html
+    assert "Son IMS" in html
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):
