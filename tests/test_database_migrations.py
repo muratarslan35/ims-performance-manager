@@ -344,7 +344,7 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
         )
         self.assertTrue(self._has_unique(inspector, "product_matches", "uq_product_match_ims_name"))
         self.assertTrue(
-            self._has_unique(inspector, "manual_match_queue", "uq_match_queue_entity_name")
+            self._has_unique(inspector, "manual_match_queue", "uq_manual_match_entity")
         )
 
     def _schema_fingerprint(self, inspector):
