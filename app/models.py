@@ -135,6 +135,10 @@ class RepresentativeAlias(db.Model):
     alias_name = db.Column(db.String(150), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    representative = db.relationship(
+        "Representative", backref=db.backref("aliases", lazy="dynamic")
+    )
+
 
 class RepresentativeBrickAssignment(db.Model):
     """Period-scoped brick membership; a brick may legitimately have co-workers."""

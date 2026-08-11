@@ -1,6 +1,8 @@
-name: Deploy IMS Performance Manager
+name: Validate and Deploy IMS Performance Manager
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -9,12 +11,41 @@ permissions:
   contents: read
 
 concurrency:
-  group: ims-production-deploy
+  group: ims-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  test:
+    name: Full test suite
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: testing
+      SECRET_KEY: ci-test-secret-not-for-production
+      DATABASE_URL: sqlite:////tmp/ims-ci.db
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
+
+      - name: Run every pytest test
+        run: python -m pytest tests/ -v
+
+  deploy:
+    name: Deploy and verify production
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
@@ -32,8 +63,45 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Fast-forward source and restart application
+      - name: Deploy, migrate and verify production
         shell: bash
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
-            "set -e; cd '$IMS_PATH'; git pull --ff-only origin main; pids=\$(ss -ltnp | sed -n 's/.*:8000.*pid=\\([0-9]*\\).*/\\1/p' | head -1); if [ -n \"\$pids\" ]; then kill \$pids; fi; sleep 1; nohup venv/bin/python run.py >/tmp/ims-performance-manager.log 2>&1 </dev/null &"
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+
+          git fetch origin main
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          git pull --ff-only origin main
+
+          venv/bin/python -m pip install -r requirements.txt
+
+          mkdir -p instance/backups
+          if [ -f instance/ipm.db ]; then
+            cp instance/ipm.db "instance/backups/ipm-predeploy-$(date +%Y%m%d-%H%M%S).db"
+          fi
+
+          venv/bin/python -m flask --app run.py db upgrade
+          venv/bin/python verify_runtime.py
+
+          pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
+          if [ -n "$pids" ]; then
+            kill "$pids"
+          fi
+
+          nohup venv/bin/python run.py >/tmp/ims-performance-manager.log 2>&1 </dev/null &
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null; then
+              echo "Production health check passed."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Production health check failed."
+          tail -n 100 /tmp/ims-performance-manager.log || true
+          exit 1
+          REMOTE
