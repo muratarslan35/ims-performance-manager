@@ -262,9 +262,10 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         result = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
         self.assertGreater(result["breakdown"]["main_prime"], 0)
 
-    def test_override_can_unlock_ciro_prime(self):
+    def test_override_unlocks_main_prime_not_ciro_prime(self):
         result = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
-        self.assertEqual(result["breakdown"]["ciro_prime"], 20000)
+        self.assertGreater(result["breakdown"]["main_prime"], 0)
+        self.assertEqual(result["breakdown"]["ciro_prime"], 0)
 
     def test_bonus_uses_database_bonus_amount(self):
         result = self.calculate()
@@ -278,9 +279,9 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         result = self.calculate()
         self.assertEqual(result["breakdown"]["recovery"], 0)
 
-    def test_recovery_component_positive_when_gap_closes(self):
+    def test_recovery_component_stays_zero_when_gap_closes(self):
         result = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
-        self.assertGreater(result["breakdown"]["recovery"], 0)
+        self.assertEqual(result["breakdown"]["recovery"], 0)
 
     def test_slider_override_scales_current_actual(self):
         result = self.calculate(overrides={self.prod1.id: {"slider_percent": 150, "mode": "delta"}})
@@ -376,21 +377,23 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         result = self.calculate()
         self.assertGreaterEqual(len(result["ai_messages"]), 2)
 
-    def test_product_coefficient_setting_changes_product_effect(self):
+    def test_product_coefficient_does_not_change_approved_payout(self):
         overrides = {self.prod2.id: {"tl_delta": 40000, "mode": "delta"}}
         baseline = self.calculate(overrides=overrides)
         db.session.add(Setting(setting_key="PRODUCT_COEFFICIENT_TRAV", setting_value="2", category="Prim", description="Test"))
         db.session.commit()
         adjusted = self.calculate(overrides=overrides)
-        self.assertGreater(adjusted["breakdown"]["product_effect"], baseline["breakdown"]["product_effect"])
+        self.assertEqual(adjusted["breakdown"]["product_effect"], 0)
+        self.assertEqual(adjusted["breakdown"]["total"], baseline["breakdown"]["total"])
 
-    def test_bonus_rate_setting_changes_bonus(self):
+    def test_bonus_rate_does_not_change_approved_payout(self):
         baseline = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
         setting = Setting.query.filter_by(setting_key="BONUS_RATE").first()
         setting.setting_value = "10"
         db.session.commit()
         adjusted = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
-        self.assertGreater(adjusted["breakdown"]["bonus"], baseline["breakdown"]["bonus"])
+        self.assertEqual(adjusted["breakdown"]["bonus"], 0)
+        self.assertEqual(adjusted["breakdown"]["total"], baseline["breakdown"]["total"])
 
     def test_penalty_rate_setting_changes_penalty(self):
         baseline = self.calculate()
@@ -401,13 +404,14 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         self.assertEqual(baseline["breakdown"]["penalty"], 0)
         self.assertEqual(adjusted["breakdown"]["penalty"], 0)
 
-    def test_recovery_rate_setting_changes_recovery_amount(self):
+    def test_recovery_rate_does_not_change_approved_payout(self):
         baseline = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
         setting = Setting.query.filter_by(setting_key="RECOVERY_EFFECT_RATE").first()
         setting.setting_value = "4"
         db.session.commit()
         adjusted = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
-        self.assertGreater(adjusted["breakdown"]["recovery"], baseline["breakdown"]["recovery"])
+        self.assertEqual(adjusted["breakdown"]["recovery"], 0)
+        self.assertEqual(adjusted["breakdown"]["total"], baseline["breakdown"]["total"])
 
     def test_cache_reports_miss_then_hit(self):
         first = self.calculate(use_cache=True)
