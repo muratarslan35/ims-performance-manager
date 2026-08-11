@@ -109,6 +109,15 @@ class RepresentativeMarketService:
                 return product
         return None
 
+    def _is_company_product(self, row, product):
+        product_key = self._key(row.product_name)
+        own_keys = {
+            self._key(product.product_name),
+            self._key(product.product_code),
+            self._key(product.ims_name),
+        } - {""}
+        return any(key in product_key or product_key in key for key in own_keys)
+
     def build(self):
         products = self._products()
         assignments, brick_keys, fallback_keys = self._scope()
@@ -122,70 +131,124 @@ class RepresentativeMarketService:
             ).all()
         }
 
-        grouped = defaultdict(lambda: {"tl": 0.0, "unit": 0.0, "shares": [], "rivals": defaultdict(float)})
+        grouped = defaultdict(lambda: {"unit": 0.0, "rivals": defaultdict(float)})
+        brick_groups = defaultdict(
+            lambda: {
+                "company_unit": 0.0,
+                "market_unit": 0.0,
+                "products": defaultdict(lambda: {"company_unit": 0.0, "market_unit": 0.0}),
+            }
+        )
         for row in competition_rows:
+            if row.metric_type != "UNIT":
+                continue
             product = self._product_for_row(row, products)
             if product is None:
                 continue
             bucket = grouped[product.id]
             value = float(row.metric_value or 0.0)
-            if row.metric_type == "TL":
-                bucket["tl"] += value
-                if self._key(product.product_name) not in self._key(row.product_name):
-                    bucket["rivals"][row.product_name] += value
-            elif row.metric_type == "UNIT":
-                bucket["unit"] += value
-            elif row.metric_type == "MARKET_SHARE":
-                bucket["shares"].append(value * 100.0 if 0 <= value <= 1 else value)
+            bucket["unit"] += value
+            is_company = self._is_company_product(row, product)
+            if not is_company:
+                bucket["rivals"][row.product_name] += value
+
+            brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
+            brick_bucket = brick_groups[brick]
+            brick_bucket["market_unit"] += value
+            product_bucket = brick_bucket["products"][product.product_name]
+            product_bucket["market_unit"] += value
+            if is_company:
+                brick_bucket["company_unit"] += value
+                product_bucket["company_unit"] += value
 
         rows = []
         for product in products:
             summary = summaries.get(product.id)
-            actual_tl = float(summary.tl if summary else 0.0)
             actual_unit = float(summary.unit if summary else 0.0)
             market = grouped[product.id]
-            market_tl = float(market["tl"])
             market_unit = float(market["unit"])
-            competitor_tl = max(market_tl - actual_tl, 0.0)
             competitor_unit = max(market_unit - actual_unit, 0.0)
-            calculated_share = actual_tl * 100.0 / market_tl if market_tl else 0.0
-            reported_share = sum(market["shares"]) / len(market["shares"]) if market["shares"] else 0.0
+            calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0
             rivals = sorted(market["rivals"].items(), key=lambda item: item[1], reverse=True)[:5]
             rows.append(
                 {
                     "product": product,
-                    "actual_tl": round(actual_tl, 2),
                     "actual_unit": round(actual_unit, 2),
-                    "market_tl": round(market_tl, 2),
                     "market_unit": round(market_unit, 2),
-                    "competitor_tl": round(competitor_tl, 2),
                     "competitor_unit": round(competitor_unit, 2),
                     "share_percent": round(calculated_share, 1),
-                    "reported_share_percent": round(reported_share, 1),
-                    "rivals": [{"name": name, "tl": round(value, 2)} for name, value in rivals],
+                    "gap_unit": round(competitor_unit - actual_unit, 2),
+                    "attention": "critical" if competitor_unit > actual_unit * 1.5 and competitor_unit > 0 else "warning" if competitor_unit > actual_unit else "strong",
+                    "rivals": [{"name": name, "unit": round(value, 2)} for name, value in rivals],
                 }
             )
 
-        total_actual = sum(item["actual_tl"] for item in rows)
-        total_market = sum(item["market_tl"] for item in rows)
+        total_actual = sum(item["actual_unit"] for item in rows)
+        total_market = sum(item["market_unit"] for item in rows)
+        average_competitor = (
+            sum(max(item["market_unit"] - item["company_unit"], 0.0) for item in brick_groups.values())
+            / len(brick_groups)
+            if brick_groups else 0.0
+        )
+        brick_rows = []
+        for brick, item in brick_groups.items():
+            company_unit = item["company_unit"]
+            market_unit = item["market_unit"]
+            competitor_unit = max(market_unit - company_unit, 0.0)
+            delta_unit = competitor_unit - company_unit
+            if competitor_unit >= average_competitor * 1.5 and competitor_unit > company_unit and competitor_unit > 0:
+                attention, label, arrow = "critical", "Öncelikli bölge", "↑"
+            elif competitor_unit > average_competitor or competitor_unit > company_unit:
+                attention, label, arrow = "warning", "Takip edilmeli", "↗"
+            else:
+                attention, label, arrow = "strong", "Güçlü / dengeli", "→"
+            threats = []
+            for product_name, product_data in item["products"].items():
+                rival_units = max(product_data["market_unit"] - product_data["company_unit"], 0.0)
+                if rival_units > product_data["company_unit"]:
+                    threats.append(
+                        {
+                            "product_name": product_name,
+                            "competitor_unit": round(rival_units, 2),
+                            "gap_unit": round(rival_units - product_data["company_unit"], 2),
+                        }
+                    )
+            threats.sort(key=lambda threat: threat["gap_unit"], reverse=True)
+            brick_rows.append(
+                {
+                    "brick": brick,
+                    "company_unit": round(company_unit, 2),
+                    "competitor_unit": round(competitor_unit, 2),
+                    "market_unit": round(market_unit, 2),
+                    "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,
+                    "delta_unit": round(delta_unit, 2),
+                    "attention": attention,
+                    "attention_label": label,
+                    "arrow": arrow,
+                    "threats": threats[:3],
+                }
+            )
+        priority = {"critical": 0, "warning": 1, "strong": 2}
+        brick_rows.sort(key=lambda item: (priority[item["attention"]], -item["competitor_unit"]))
         return {
             "rows": rows,
             "chart_rows": [
                 {
                     "product_name": item["product"].product_name,
-                    "actual_tl": item["actual_tl"],
-                    "competitor_tl": item["competitor_tl"],
+                    "actual_unit": item["actual_unit"],
+                    "competitor_unit": item["competitor_unit"],
                 }
                 for item in rows
             ],
+            "brick_rows": brick_rows,
             "upload_id": upload_id,
             "scope": "brick" if brick_keys else "geography" if fallback_keys else "none",
             "bricks": [item.brick for item in assignments],
             "has_competition": bool(competition_rows),
             "totals": {
-                "actual_tl": round(total_actual, 2),
-                "market_tl": round(total_market, 2),
-                "competitor_tl": round(max(total_market - total_actual, 0.0), 2),
+                "actual_unit": round(total_actual, 2),
+                "market_unit": round(total_market, 2),
+                "competitor_unit": round(max(total_market - total_actual, 0.0), 2),
                 "share_percent": round(total_actual * 100.0 / total_market, 1) if total_market else 0.0,
             },
         }
