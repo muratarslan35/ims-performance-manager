@@ -42,6 +42,7 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             db.session.add_all(
                 [
                     RepresentativeBrickAssignment(representative_id=representative.id, year=2026, month=8, brick="BRICK A"),
+                    RepresentativeBrickAssignment(representative_id=representative.id, year=2026, month=8, brick="BRICK C"),
                     RepresentativeBrickAssignment(representative_id=other.id, year=2026, month=8, brick="BRICK B"),
                     IMSSummary(upload_id=upload.id, representative_id=representative.id, product_id=products[0].id, year=2026, month=8, quarter="Q3", tl=100, unit=10),
                 ]
@@ -61,7 +62,9 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                     competition("BRICK A", "RAKIP A", "TL", 300),
                     competition("BRICK A", "TRAVAZOL", "UNIT", 10),
                     competition("BRICK A", "RAKIP A", "UNIT", 30),
-                    competition("BRICK B", "RAKIP B", "TL", 900),
+                    competition("BRICK C", "TRAVAZOL", "UNIT", 5),
+                    competition("BRICK C", "RAKIP C", "UNIT", 95),
+                    competition("BRICK B", "RAKIP B", "UNIT", 900),
                 ]
             )
             db.session.commit()
@@ -71,10 +74,16 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert result["scope"] == "brick"
             assert len(result["rows"]) == 7
             travazol = result["rows"][0]
-            assert travazol["actual_tl"] == 100
-            assert travazol["market_tl"] == 400
-            assert travazol["competitor_tl"] == 300
-            assert travazol["share_percent"] == 25
-            assert travazol["rivals"] == [{"name": "RAKIP A", "tl": 300.0}]
+            assert travazol["actual_unit"] == 10
+            assert travazol["market_unit"] == 140
+            assert travazol["competitor_unit"] == 130
+            assert travazol["share_percent"] == 7.1
+            assert travazol["rivals"] == [
+                {"name": "RAKIP C", "unit": 95.0},
+                {"name": "RAKIP A", "unit": 30.0},
+            ]
+            assert [row["brick"] for row in result["brick_rows"]] == ["BRICK C", "BRICK A"]
+            assert result["brick_rows"][0]["attention"] == "critical"
+            assert result["brick_rows"][0]["threats"][0]["product_name"] == "Travazol"
     finally:
         temporary.cleanup()
