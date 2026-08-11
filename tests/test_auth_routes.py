@@ -268,5 +268,6 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     response = client.get(f"/representatives/view/{representative_id}?year=2026&month=8")
 
     assert response.status_code == 200
-    assert "Detay Temsilcisi Ürün ve Rakip Pazar Analizi" in response.get_data(as_text=True)
+    assert "Detay Temsilcisi Ürün ve Brick Rekabet Analizi" in response.get_data(as_text=True)
+    assert "Brick bazında kutu yoğunluğu ve dikkat alanları" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
