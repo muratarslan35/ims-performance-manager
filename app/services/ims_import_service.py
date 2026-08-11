@@ -352,6 +352,18 @@ class IMSImportService:
         # (TL/KUTU/PP) without hard-coding a month or column number.
         contextual_headers = {}
         for row_index in header_rows[:-1]:
+            # A single-cell report title is not a column-group header. Carrying
+            # it across the row makes words such as "BRICK" classify the
+            # actual metric column as a dimension and drops every data row.
+            populated_cells = sum(
+                1
+                for value in dataframe.iloc[row_index].tolist()
+                if self.clean_text(value)
+            )
+            if populated_cells <= 1:
+                for column_index in range(dataframe.shape[1]):
+                    contextual_headers[(row_index, column_index)] = ""
+                continue
             current_label = ""
             for column_index in range(dataframe.shape[1]):
                 value = self.clean_text(dataframe.iloc[row_index, column_index])
