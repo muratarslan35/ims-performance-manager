@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ representative.rep_name }} | Temsilci Performansı{% endblock %}
 {% block page_title %}Temsilci Performansı{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/representative_detail.css') }}" rel="stylesheet">{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
@@ -9,7 +10,13 @@
     <h1 class="h2 mb-1">{{ representative.rep_name }}</h1>
     <p class="text-secondary mb-0"><span class="badge bg-primary-lt text-primary me-1">{{ representative.region or 'Bölge yok' }}</span>{{ representative.city or 'İl bilgisi yok' }}{% if representative.territory %} · {{ representative.territory }}{% endif %}</p>
   </div>
-  <div class="text-end text-secondary small">Aktif dönem<br><strong class="text-dark">{{ year }}/{{ '%02d'|format(month) }}</strong></div>
+  <div class="representative-switcher">
+    <label for="representativeSwitcher" class="form-label small text-secondary mb-1">Temsilci değiştir</label>
+    <select id="representativeSwitcher" class="form-select" data-year="{{ year }}" data-month="{{ month }}">
+      {% for item in representatives %}<option value="{{ item.id }}" {% if item.id == representative.id %}selected{% endif %}>{{ item.rep_name }}</option>{% endfor %}
+    </select>
+    <div class="text-end text-secondary small mt-2">Aktif dönem · <strong class="text-dark">{{ year }}/{{ '%02d'|format(month) }}</strong></div>
+  </div>
 </div>
 
 <div class="row g-3 mb-4">
@@ -37,4 +44,45 @@
     </div>
   </div>
 </div>
+
+<section class="representative-market-section mt-4" aria-labelledby="representativeMarketTitle">
+  <div class="market-section-heading">
+    <div><span class="section-kicker">SEÇİLİ TEMSİLCİ · DİNAMİK ANALİZ</span><h2 id="representativeMarketTitle">{{ representative.rep_name }} Ürün ve Rakip Pazar Analizi</h2><p>Mevcut IMS çıkışını, temsilcinin bricklerindeki rakip çıkışları ve hesaplanan pazar payını yedi ürün için karşılaştırır.</p></div>
+    <div class="scope-chip"><i class="bi bi-geo-alt"></i>{% if market_analysis.scope == 'brick' %}{{ market_analysis.bricks|length }} brick kapsamı{% elif market_analysis.scope == 'geography' %}Coğrafi eşleşme{% else %}Kapsam bekleniyor{% endif %}</div>
+  </div>
+
+  <div class="market-kpis">
+    <div><span>Temsilci IMS çıkışı</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.actual_tl) }} ₺</strong></div>
+    <div><span>Toplam pazar</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.market_tl) }} ₺</strong></div>
+    <div><span>Rakip çıkışları</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.competitor_tl) }} ₺</strong></div>
+    <div><span>Temsilci pazar payı</span><strong>%{{ market_analysis.totals.share_percent }}</strong></div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-xl-5"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">7 ürün pazar karşılaştırması</h3></div><div class="card-body"><div class="representative-market-chart"><canvas id="representativeMarketChart"></canvas></div></div></div></div>
+    <div class="col-xl-7"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">Ürün bazında karşılaştırma</h3></div><div class="table-responsive"><table class="table table-vcenter card-table market-product-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Mevcut çıkış</th><th class="text-end">Rakip çıkışı</th><th class="text-end">Toplam pazar</th><th class="text-end">Pay</th></tr></thead><tbody>
+      {% for item in market_analysis.rows %}<tr><td><strong>{{ item.product.product_name }}</strong><small>{{ '{:,.0f}'.format(item.actual_unit) }} kutu · rakip {{ '{:,.0f}'.format(item.competitor_unit) }} kutu</small></td><td class="text-end">{{ '{:,.0f}'.format(item.actual_tl) }} ₺</td><td class="text-end text-warning-emphasis">{{ '{:,.0f}'.format(item.competitor_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.market_tl) }} ₺</td><td class="text-end"><span class="market-share-pill">%{{ item.share_percent }}</span>{% if item.reported_share_percent %}<small class="d-block text-secondary mt-1">Dosya: %{{ item.reported_share_percent }}</small>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div></div></div>
+  </div>
+
+  <div class="card"><div class="card-header"><h3 class="card-title mb-0">Ürün gruplarına göre öne çıkan rakipler</h3></div><div class="card-body"><div class="rival-grid">
+    {% for item in market_analysis.rows %}<article class="rival-card"><div><span>{{ item.product.product_name }}</span><strong>%{{ item.share_percent }} pay</strong></div>{% for rival in item.rivals %}<p><span>{{ rival.name }}</span><b>{{ '{:,.0f}'.format(rival.tl) }} ₺</b></p>{% else %}<p class="text-secondary">Bu brick kapsamında rakip ürün kaydı yok.</p>{% endfor %}</article>{% endfor %}
+  </div>{% if not market_analysis.has_competition %}<div class="alert alert-info mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>Bu temsilcinin dönemsel brickleriyle eşleşen rekabet verisi henüz bulunmuyor. IMS rekabet sayfaları yüklendiğinde alan otomatik dolacaktır.</div>{% endif %}</div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const selector = document.getElementById("representativeSwitcher");
+  selector?.addEventListener("change", function () {
+    const params = new URLSearchParams({year: selector.dataset.year, month: selector.dataset.month});
+    window.location.assign(`/representatives/view/${selector.value}?${params.toString()}`);
+  });
+  const canvas = document.getElementById("representativeMarketChart");
+  if (!canvas || typeof Chart === "undefined") return;
+  const rows = {{ market_analysis.chart_rows|tojson }};
+  new Chart(canvas, {type:"bar",data:{labels:rows.map(item=>item.product_name),datasets:[{label:"Temsilci IMS",data:rows.map(item=>item.actual_tl),backgroundColor:"#0b4ea2",borderRadius:6},{label:"Rakip çıkışları",data:rows.map(item=>item.competitor_tl),backgroundColor:"#f4a300",borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:"y",plugins:{legend:{position:"bottom",labels:{usePointStyle:true}}},scales:{x:{stacked:true,ticks:{callback:value=>Number(value).toLocaleString("tr-TR")+" ₺"}},y:{stacked:true,grid:{display:false}}}}});
+});
+</script>
 {% endblock %}
