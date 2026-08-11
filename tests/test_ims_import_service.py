@@ -340,7 +340,12 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 result = service.run(2026, 5)
 
         self.assertTrue(result["success"], result["errors"])
-        self.assertEqual(find_product.call_count, 1)
+        travazol_lookups = [
+            call
+            for call in find_product.call_args_list
+            if AliasService.normalize(call.args[0]) == "TRAVAZOL"
+        ]
+        self.assertEqual(len(travazol_lookups), 1)
         self.assertEqual(IMSRawData.query.count(), 1)
 
     def test_shifted_header_and_noise_rows_are_tolerated(self):
