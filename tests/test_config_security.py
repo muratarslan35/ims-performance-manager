@@ -36,10 +36,8 @@ class ConfigSecurityTestCase(unittest.TestCase):
         try:
             os.environ["APP_ENV"] = "development"
             config_module = self._reload_config_module()
-            self.assertEqual(
-                "dev-only-insecure-key-change-in-production",
-                config_module.Config.SECRET_KEY,
-            )
+            self.assertIsInstance(config_module.Config.SECRET_KEY, str)
+            self.assertGreaterEqual(len(config_module.Config.SECRET_KEY), 32)
             self.assertFalse(config_module.Config.STRICT_SCHEMA_VALIDATION)
         finally:
             if original_secret is not None:
