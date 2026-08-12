@@ -1,4 +1,5 @@
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 
 from app.extensions import db
 from app.models import Product, Representative
@@ -115,6 +116,90 @@ class SimulationService:
         dashboard.sort(key=lambda row: (row["status"], -row["quarter_percent"]))
         return dashboard
 
+    def remaining_workdays(self):
+        """Return actionable weekdays left in the selected period."""
+        period_end = date(self.year, self.month, monthrange(self.year, self.month)[1])
+        period_start = date(self.year, self.month, 1)
+        if period_end < self.today:
+            return 0
+        cursor = max(self.today, period_start)
+        workdays = 0
+        while cursor <= period_end:
+            if cursor.weekday() < 5:
+                workdays += 1
+            cursor += timedelta(days=1)
+        return workdays
+
+    def period_closed(self):
+        return date(self.year, self.month, monthrange(self.year, self.month)[1]) < self.today
+
+    def build_target_snapshot(self, results):
+        target = float(results["total_target"] or 0)
+        realization = float(results["total_realization"] or 0)
+        current_prime = float(results["breakdown"]["total"] or 0)
+        best_prime = max(
+            (float(item.get("total_prime", 0) or 0) for item in results["what_if_analysis"]),
+            default=current_prime,
+        )
+        return {
+            "target_tl": round(target, 2),
+            "realization_tl": round(realization, 2),
+            "remaining_tl": round(max(0.0, target - realization), 2),
+            "realization_percent": float(results["total_tl_percent"] or 0),
+            "current_prime": round(current_prime, 2),
+            "prime_opportunity": round(max(0.0, best_prime - current_prime), 2),
+            "remaining_workdays": self.remaining_workdays(),
+            "period_closed": self.period_closed(),
+            "prime_eligible": bool(results["prime_eligible"]),
+        }
+
+    def build_action_plan(self, results):
+        workdays = self.remaining_workdays()
+        actions = []
+        for item in results["products"]:
+            remaining_box = round(max(0.0, item["target_unit"] - item["actual_unit"]), 2)
+            remaining_tl = round(max(0.0, item["target_tl"] - item["actual_tl"]), 2)
+            percent = float(item["percent"] or 0)
+            required_percent = float(item["required_percent"] or 0)
+
+            if remaining_tl <= 0:
+                priority, status = 3, "Koruma"
+                action = "Hedef kapandı; satış ivmesini ve müşteri sürekliliğini koruyun."
+            elif item["include_in_prime"] and percent < 75:
+                priority, status = 1, "Kritik"
+                action = "Prim alt eşiğinin altında; günlük kutu planı ve saha yöneticisi takibi başlatın."
+            elif item["include_in_prime"] and percent < required_percent:
+                priority, status = 1, "Prim Riski"
+                action = f"%{required_percent:g} ürün eşiğini kapatmak için öncelikli müşteri listesi oluşturun."
+            else:
+                priority, status = 2, "Takip"
+                action = "Açığı haftalık kapanış planına bölün ve gerçekleşmeyi düzenli izleyin."
+
+            if self.period_closed() and remaining_tl > 0:
+                action = "Dönem kapalı; açığı performans değerlendirmesine ve sonraki dönem planına taşıyın."
+            elif workdays == 0 and remaining_tl > 0:
+                action = "Dönemde iş günü kalmadı; yönetici kararıyla acil kapanış aksiyonu değerlendirin."
+
+            actions.append({
+                "product_id": item["product_id"],
+                "product": item["product_name"],
+                "priority": priority,
+                "priority_label": f"P{priority}",
+                "status": status,
+                "percent": percent,
+                "required_percent": required_percent,
+                "target_box": item["target_unit"],
+                "actual_box": item["actual_unit"],
+                "remaining_box": remaining_box,
+                "remaining_tl": remaining_tl,
+                "daily_box": round(remaining_box / workdays, 2) if workdays else 0,
+                "daily_tl": round(remaining_tl / workdays, 2) if workdays else 0,
+                "action": action,
+                "include_in_prime": bool(item["include_in_prime"]),
+            })
+        actions.sort(key=lambda row: (row["priority"], -row["remaining_tl"], row["product"]))
+        return actions
+
     def build_override_report(self):
         report = []
         for product in Product.query.filter_by(is_active=True).order_by(Product.display_order.asc()).all():
@@ -138,6 +223,8 @@ class SimulationService:
     def build_response(self, results):
         response = self.build_result(results)
         response["dashboard"] = self.build_dashboard(results)
+        response["target_snapshot"] = self.build_target_snapshot(results)
+        response["action_plan"] = self.build_action_plan(results)
         response["overrides"] = self.build_override_report()
         response["generated_at"] = self.today.isoformat()
         return response
