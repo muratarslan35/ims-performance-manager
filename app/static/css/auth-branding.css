@@ -28,26 +28,23 @@
 }
 
 .auth-system-title {
-  position: absolute;
-  z-index: 2;
-  top: 28px;
-  left: 28px;
-  right: 28px;
+  position: static;
+  width: min(100%, 1120px);
+  margin: 0 auto 14px;
   padding: 14px 18px;
-  border: 1px solid rgba(255, 255, 255, .28);
+  border: 1px solid rgba(30, 83, 153, .18);
   border-radius: 12px;
-  background: rgba(5, 31, 80, .76);
-  color: #fff;
+  background: rgba(255, 255, 255, .96);
+  color: #0a3470;
   font-size: clamp(17px, 2vw, 25px);
   font-weight: 800;
   letter-spacing: .06em;
   text-align: center;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, .28);
-  backdrop-filter: blur(5px);
+  box-shadow: 0 10px 30px rgba(7, 39, 90, .10);
 }
 
 @media (max-width: 800px) {
   .auth-identity-panel { min-height: 190px; }
   .auth-identity-logo { object-position: center 48%; }
-  .auth-system-title { top: 16px; left: 16px; right: 16px; padding: 10px; font-size: 15px; }
+  .auth-system-title { padding: 10px; font-size: 15px; margin-bottom: 10px; }
 }
