@@ -27,7 +27,27 @@
   filter: none;
 }
 
+.auth-system-title {
+  position: absolute;
+  z-index: 2;
+  top: 28px;
+  left: 28px;
+  right: 28px;
+  padding: 14px 18px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 12px;
+  background: rgba(5, 31, 80, .76);
+  color: #fff;
+  font-size: clamp(17px, 2vw, 25px);
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .28);
+  backdrop-filter: blur(5px);
+}
+
 @media (max-width: 800px) {
   .auth-identity-panel { min-height: 190px; }
   .auth-identity-logo { object-position: center 48%; }
+  .auth-system-title { top: 16px; left: 16px; right: 16px; padding: 10px; font-size: 15px; }
 }
