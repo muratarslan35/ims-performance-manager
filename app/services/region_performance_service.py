@@ -15,8 +15,9 @@ class RegionPerformanceService:
         self.month = int(month)
         if not self.region_key or self.month < 1 or self.month > 12:
             raise ValueError("Geçersiz bölge veya dönem.")
+        # Bölge toplamı kadro doluluğundan bağımsızdır. Boş kadrolara atanmış
+        # hedefler de bölgenin sorumluluğudur ve toplamdan düşürülmemelidir.
         self.representatives = Representative.query.filter(
-            Representative.active.is_(True),
             or_(
                 Representative.region == self.region_key,
                 Representative.city == self.region_key,
@@ -79,7 +80,7 @@ class RegionPerformanceService:
 
         product_rows = [{"product_id": pid, "product_name": products[pid].product_name if pid in products else f"Ürün {pid}", "target_tl": round(vals[0], 2), "actual_tl": round(vals[1], 2), "realization_percent": self.percent(vals[1], vals[0]), "gap_tl": round(vals[0] - vals[1], 2)} for pid, vals in product_totals.items()]
         product_rows.sort(key=lambda row: (-row["actual_tl"], row["product_name"]))
-        representative_rows = [{"representative_id": rid, "representative_name": reps[rid].rep_name, "city": reps[rid].city or "-", "target_tl": round(vals[0], 2), "actual_tl": round(vals[1], 2), "realization_percent": self.percent(vals[1], vals[0]), "gap_tl": round(vals[0] - vals[1], 2)} for rid, vals in rep_totals.items()]
+        representative_rows = [{"representative_id": rid, "representative_name": reps[rid].rep_name, "city": reps[rid].city or "-", "active": bool(reps[rid].active), "is_vacant": "boş" in (reps[rid].rep_name or "").casefold(), "target_tl": round(vals[0], 2), "actual_tl": round(vals[1], 2), "realization_percent": self.percent(vals[1], vals[0]), "gap_tl": round(vals[0] - vals[1], 2)} for rid, vals in rep_totals.items()]
         representative_rows.sort(key=lambda row: (-row["realization_percent"], -row["actual_tl"]))
         monthly_rows = [{"year": year, "month": month, "label": f"{month:02d}/{year}", "target_tl": round(month_totals[(year, month)][0], 2), "actual_tl": round(month_totals[(year, month)][1], 2), "realization_percent": self.percent(month_totals[(year, month)][1], month_totals[(year, month)][0]), "gap_tl": round(month_totals[(year, month)][0] - month_totals[(year, month)][1], 2)} for year, month in months]
         return {"target_tl": round(total_target, 2), "actual_tl": round(total_actual, 2), "realization_percent": self.percent(total_actual, total_target), "gap_tl": round(total_target - total_actual, 2), "products": product_rows, "representatives": representative_rows, "months": monthly_rows}
@@ -89,9 +90,12 @@ class RegionPerformanceService:
         for key, label, length in self.PERIODS:
             months = self.period_months(length)
             periods[key] = {"key": key, "label": label, "month_count": len(months), **self.aggregate(months)}
-        primary = self.representatives[0]
+        primary = next((rep for rep in self.representatives if rep.active), self.representatives[0])
         city_counts = defaultdict(int)
         for rep in self.representatives:
             city_counts[rep.city or ""] += 1
         city = max(city_counts, key=city_counts.get) if city_counts else ""
-        return {"region_key": self.region_key, "region_name": " ".join(part for part in [self.region_key, city] if part and part != self.region_key), "year": self.year, "month": self.month, "representative_count": len(self.representatives), "manager": primary.manager or "-", "periods": periods}
+        active_count = sum(1 for rep in self.representatives if rep.active)
+        vacant_count = sum(1 for rep in self.representatives if "boş" in (rep.rep_name or "").casefold())
+        display_name = (city or self.region_key).upper()
+        return {"region_key": self.region_key, "region_name": display_name, "year": self.year, "month": self.month, "representative_count": active_count, "active_count": active_count, "vacant_count": vacant_count, "manager": primary.manager or "-", "periods": periods}
