@@ -31,6 +31,7 @@
 .dash-hero-tagline strong { color:#fff; font-size:17px; font-weight:800; }
 
 .dash-hero-title { margin: 0 0 2px; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
+.dash-hero,.dash-hero h1,.dash-hero h2,.dash-hero strong{color:#fff!important}
 .dash-hero-sub { margin: 0; font-size: 14px; opacity: .9; }
 .dash-hero-meta { display: flex; gap: 10px; flex-wrap: wrap; }
 .dash-hero-badge {
@@ -249,6 +250,9 @@
 .map-region-selected .region-path { stroke: #0b4ea2; stroke-width: 3.5; filter: drop-shadow(0 2px 8px rgba(11,78,162,.4)); }
 .region-label { font-size: 10px; font-weight: 700; fill: rgba(13, 37, 74, 0.78); text-anchor: middle; pointer-events: none; }
 .map-region-subtitle { font-size: 7px; font-weight: 700; letter-spacing: .04em; }
+.region-label-strong{font-size:9px;fill:#fff;font-weight:900;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.province-layer{pointer-events:none}.province-layer .province{stroke:#fff;stroke-width:1.5;opacity:.96}.province-layer text{font-size:6px;font-weight:900;text-anchor:middle;fill:#fff}.province.p1{fill:#6c5ce7}.province.p2{fill:#00a8cc}.province.p3{fill:#ff7675}.province.p4{fill:#00b894}.province.p5{fill:#e17055}.province.p6{fill:#0984e3}.province.p7{fill:#fdcb6e}.province.p8{fill:#d63031}.province.p9{fill:#2d98da}.province.p10{fill:#8854d0}.province.p11{fill:#20bf6b}
+.map-selected-info{margin-top:10px;padding:12px 14px;border:1px solid #d7e5f4;border-radius:11px;background:#f7fbff;color:#294d72;font-size:12px}.map-selected-info strong{color:#0b4ea2}.map-selected-info a{float:right;font-weight:800;color:#0b5cad;text-decoration:none}
 
 .turkey-map-legend {
   display: grid;
