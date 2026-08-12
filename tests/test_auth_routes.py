@@ -258,6 +258,69 @@ def test_global_representative_search_is_authenticated_and_returns_json(app):
     assert any(item["kind"] == "product" and item["title"] == "Arama Ürünü" for item in product_payload["results"])
 
 
+def test_region_search_opens_region_performance_screen(app):
+    from app.extensions import db
+    from app.models import Representative
+
+    with app.app_context():
+        db.session.add(Representative(rep_code="REGION-901", rep_name="Diyarbakır Temsilcisi", region="901", city="Diyarbakır", active=True))
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    response = client.get("/representatives/search?q=Diyarbakır")
+    region_item = next(item for item in response.get_json()["results"] if item["kind"] == "region")
+
+    assert region_item["title"] == "901 Diyarbakır"
+    assert "/regions/901" in region_item["url"]
+    assert "3 aylık" in region_item["meta"]
+
+
+def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(app):
+    from app.extensions import db
+    from app.models import IMSSummary, IMSUpload, Product, Representative, Target
+    from app.services.region_performance_service import RegionPerformanceService
+
+    with app.app_context():
+        product = Product(product_code="REG-PROD", product_name="Bölge Ürünü", is_active=True)
+        rep_a = Representative(rep_code="REG-A", rep_name="Bölge Temsilcisi A", region="901", city="Diyarbakır", active=True)
+        rep_b = Representative(rep_code="REG-B", rep_name="Bölge Temsilcisi B", region="901", city="Diyarbakır", active=True)
+        db.session.add_all([product, rep_a, rep_b]); db.session.commit()
+        for month in range(1, 7):
+            quarter = f"Q{((month - 1) // 3) + 1}"
+            upload = IMSUpload(file_name=f"region-{month}.xlsx", year=2032, month=month, quarter=quarter, status="COMPLETED")
+            db.session.add(upload)
+            db.session.flush()
+            for rep, target, actual in [(rep_a, 1000, month * 100), (rep_b, 2000, month * 200)]:
+                db.session.add(Target(year=2032, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
+                db.session.add(IMSSummary(upload_id=upload.id, year=2032, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl=actual, unit=1))
+        db.session.commit()
+
+        report = RegionPerformanceService("901", 2032, 6).report()
+
+        assert report["representative_count"] == 2
+        assert report["periods"]["monthly"]["target_tl"] == 3000
+        assert report["periods"]["monthly"]["actual_tl"] == 1800
+        assert report["periods"]["monthly"]["realization_percent"] == 60
+        assert report["periods"]["quarterly"]["target_tl"] == 9000
+        assert report["periods"]["quarterly"]["actual_tl"] == 4500
+        assert report["periods"]["half_year"]["target_tl"] == 18000
+        assert report["periods"]["half_year"]["actual_tl"] == 6300
+        assert report["periods"]["yearly"]["actual_tl"] == 6300
+        assert len(report["periods"]["yearly"]["months"]) == 6
+        assert len(report["periods"]["yearly"]["representatives"]) == 2
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    page = client.get("/regions/901?year=2032&month=6")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "BÖLGESEL PERFORMANS MERKEZİ" in html
+    assert "Ürün Bazlı 3 Aylık Realizasyon" in html
+    assert "Bölge Temsilci Performansı" in html
+    assert "Bölge Temsilcisi A" in html
+
+
 def test_mobile_navbar_contains_search_and_period_status(app):
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})

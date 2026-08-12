@@ -465,6 +465,31 @@ def search():
         return jsonify({"results": []})
 
     active_period = PeriodService.get_active_period()
+    region_matches = Representative.query.filter(
+        Representative.active.is_(True),
+        or_(
+            Representative.region.ilike(f"%{query}%"),
+            Representative.city.ilike(f"%{query}%"),
+            Representative.territory.ilike(f"%{query}%"),
+        ),
+    ).order_by(Representative.region.asc(), Representative.city.asc()).all()
+    region_results, seen_regions = [], set()
+    for rep in region_matches:
+        region_key = (rep.region or rep.city or rep.territory or "").strip()
+        if not region_key or region_key in seen_regions:
+            continue
+        seen_regions.add(region_key)
+        region_results.append({
+            "kind": "region",
+            "title": " ".join(
+                part for index, part in enumerate([region_key, rep.city])
+                if part and (index == 0 or part != region_key)
+            ),
+            "meta": "Bölge performansı · Aylık / 3 aylık / 6 aylık / yıllık",
+            "url": url_for("regions.detail", region_key=region_key, year=active_period["year"], month=active_period["month"]),
+        })
+        if len(region_results) >= 4:
+            break
     reps = Representative.query.filter(
         or_(
             Representative.rep_name.ilike(f"%{query}%"),
@@ -472,7 +497,7 @@ def search():
             Representative.city.ilike(f"%{query}%"),
         )
     ).order_by(Representative.active.desc(), Representative.rep_name.asc()).limit(7).all()
-    results = [{
+    results = region_results + [{
         "kind": "representative",
         "title": rep.rep_name,
         "meta": " · ".join(part for part in [rep.region, rep.city, rep.territory] if part) or "Temsilci",
