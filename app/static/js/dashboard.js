@@ -208,7 +208,56 @@ function initProductDonut(data) {
   }
 
   destroyChart("productDonut");
-  updateDonutLegendColors(data.labels.length);
+  const orbitLabelsPlugin = {
+    id: "orbitLabels",
+    afterDatasetsDraw(chart) {
+      const {ctx, chartArea} = chart;
+      const meta = chart.getDatasetMeta(0);
+      const values = chart.data.datasets[0].data.map(Number);
+      const total = values.reduce((sum, value) => sum + (value || 0), 0);
+      if (!meta.data.length || !total) return;
+      const centerX = (chartArea.left + chartArea.right) / 2;
+      const centerY = (chartArea.top + chartArea.bottom) / 2;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#123e70";
+      ctx.font = "800 16px Arial";
+      ctx.fillText(numberTR(total, " ₺"), centerX, centerY - 1);
+      ctx.fillStyle = "#71859b";
+      ctx.font = "700 9px Arial";
+      ctx.fillText("TOPLAM GERÇEKLEŞEN", centerX, centerY + 15);
+
+      meta.data.forEach((arc, index) => {
+        const angle = (arc.startAngle + arc.endAngle) / 2;
+        const side = Math.cos(angle) >= 0 ? 1 : -1;
+        const startX = arc.x + Math.cos(angle) * (arc.outerRadius + 3);
+        const startY = arc.y + Math.sin(angle) * (arc.outerRadius + 3);
+        const elbowX = arc.x + Math.cos(angle) * (arc.outerRadius + 22);
+        const elbowY = arc.y + Math.sin(angle) * (arc.outerRadius + 22);
+        const endX = elbowX + side * 25;
+        const color = CORP_COLORS[index % CORP_COLORS.length];
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(elbowX, elbowY);
+        ctx.lineTo(endX, elbowY);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(endX, elbowY, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.textAlign = side > 0 ? "left" : "right";
+        ctx.fillStyle = "#173d66";
+        ctx.font = "700 9px Arial";
+        ctx.fillText(String(chart.data.labels[index]), endX + side * 5, elbowY - 3);
+        ctx.fillStyle = "#526f8b";
+        ctx.font = "800 9px Arial";
+        ctx.fillText(numberTR(values[index], " ₺"), endX + side * 5, elbowY + 9);
+      });
+      ctx.restore();
+    }
+  };
 
   CHARTS.productDonut = new Chart(canvas, {
     type: "doughnut",
@@ -223,10 +272,13 @@ function initProductDonut(data) {
         spacing: 1
       }]
     },
+    plugins: [orbitLabelsPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      cutout: "67%",
+      cutout: "64%",
+      radius: "68%",
+      layout: { padding: { top: 55, right: 92, bottom: 55, left: 92 } },
       animation: { animateRotate: true, animateScale: true, duration: 1100 },
       plugins: {
         legend: { display: false },
@@ -245,7 +297,6 @@ function initProductDonut(data) {
     }
   });
 
-  initDonutLegendInteractions(CHARTS.productDonut, data.labels.length);
 }
 
 function initGaugeChart(data) {
@@ -335,7 +386,7 @@ function initTurkeyMap(regionRealization) {
       tooltip.innerHTML = percentages.length
         ? `<strong>${regionName}</strong><br>%${avg.toFixed(1)} · ${percentages.length} il verisi`
         : `<strong>${regionName}</strong><br>Veri yok`;
-      if (metrics.length) tooltip.innerHTML = `<strong>${regionName}</strong><br>${metrics.map((item) => `${item.code} ${item.city}: %${item.percent}`).join("<br>")}${region.dataset.cities ? `<small>Kapsam: ${region.dataset.cities}</small>` : ""}`;
+      if (metrics.length) tooltip.innerHTML = `<strong>${regionName}</strong><br>${metrics.map((item) => `Hedef: ${numberTR(item.tl_target, " ₺")}<br>Gerçekleşen: ${numberTR(item.tl_actual, " ₺")}<br>Realizasyon: %${item.percent}`).join("<br>")}${region.dataset.cities ? `<small>Kapsam: ${region.dataset.cities}</small>` : ""}`;
       tooltip.style.display = "block";
     });
 
