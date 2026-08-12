@@ -39,12 +39,11 @@
     <div class="executive-kpi-card blue"><span>Aylık ₺ Hedefi</span><strong>{{ "{:,.0f}".format(national_target) }} ₺</strong><small>National BAKİYE hedef toplamı</small><i class="bi bi-bullseye"></i></div>
     <div class="executive-kpi-card primary"><span>Gerçekleşen Çıkış</span><strong>{{ "{:,.0f}".format(national_actual) }} ₺</strong><small>BAKİYE ÇIKIŞ TL · ay içi gerçekleşen</small><i class="bi bi-cash-coin"></i></div>
     <div class="executive-kpi-card {% if national_percent >= 70 %}green{% else %}orange{% endif %}"><span>TL Realizasyonu</span><strong>%{{ national_percent }}</strong><small>{{ "{:,.0f}".format(national_target - national_actual) }} ₺ hedef farkı</small><i class="bi bi-graph-up-arrow"></i></div>
-    <div class="executive-kpi-card navy"><span>Pazar Büyüklüğü</span><strong>{{ "{:,.0f}".format(market.market_total_tl | default(0, true)) }} ₺</strong><small>Rekabet TL sayfalarındaki aktif dönem pazarı</small><i class="bi bi-pie-chart-fill"></i></div>
-    <div class="executive-kpi-card {% if executive.risk_regions > 0 %}red{% else %}green{% endif %}"><span>Bölgesel Aksiyon</span><strong>{{ executive.risk_regions }} bölge</strong><small>%70 TL realizasyonunun altında olan bölge sayısı</small><i class="bi bi-exclamation-triangle-fill"></i></div>
   </div>
   <section class="ims-unit-exit-panel" aria-label="IMS kutu çıkışı">
-    <div class="ims-unit-exit-head"><div><span>IMS KUTU ÇIKIŞI</span><strong>{{ "{:,.0f}".format(national.unit_actual | default(0, true)) }} kutu</strong><small>TTS HAFTALIK ÇIKIŞLARI · National</small></div><i class="bi bi-box-seam"></i></div>
-    <div class="ims-unit-exit-list">{% for product in national.products | default([], true) %}<div class="ims-unit-exit-row"><span>{{ product.product_name }}</span><b>{{ "{:,.0f}".format(product.unit_actual | default(0, true)) }} kutu</b><em class="{% if product.realization_percent >= 100 %}good{% elif product.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ product.realization_percent | default(0, true) }}</em></div>{% else %}<div class="ims-unit-exit-empty">TTS kutu verisi sonraki importta burada listelenir.</div>{% endfor %}</div>
+    <div class="ims-unit-exit-head"><div><span>NATIONAL · KUTU PERFORMANSI</span><strong>Kutu Hedef ve Gerçekleşme</strong><small>Hedef yönetimi + TTS haftalık çıkışları</small></div><i class="bi bi-box-seam"></i></div>
+    <div class="unit-summary-grid"><div><span>Hedef Kutu</span><strong>{{ "{:,.0f}".format(national.unit_target | default(0, true)) }}</strong></div><div><span>Gerçekleşen Kutu</span><strong>{{ "{:,.0f}".format(national.unit_actual | default(0, true)) }}</strong></div><div><span>Kutu Realizasyonu</span><strong>%{{ national.unit_realization_percent | default(0, true) }}</strong></div></div>
+    <div class="ims-unit-exit-list">{% for product in national.products | default([], true) %}<div class="ims-unit-exit-row"><span>{{ product.product_name }}</span><small>{{ "{:,.0f}".format(product.unit_target | default(0, true)) }} hedef</small><b>{{ "{:,.0f}".format(product.unit_actual | default(0, true)) }} kutu</b><em class="{% if product.unit_realization_percent >= 100 %}good{% elif product.unit_realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ product.unit_realization_percent | default(0, true) }}</em></div>{% else %}<div class="ims-unit-exit-empty">Kutu verisi sonraki importta burada listelenir.</div>{% endfor %}</div>
   </section>
 </div>
 <div class="kpi-grid legacy-kpi-grid mb-4">
@@ -205,18 +204,18 @@
 
 {% set competition = payload.competition_analysis | default({}, true) %}
 <div class="executive-market-panel mb-4"><div class="executive-market-head"><div><span class="executive-eyebrow">TÜRKİYE GENELİ · REKABET İZLEME</span><h2><i class="bi bi-bar-chart-line-fill"></i> Pazar ve Rakip Analizi</h2><p>Son tamamlanan IMS yüklemesindeki rekabet TL/PP sayfaları ile şirket IMS satışlarının yönetici görünümü.</p></div><span class="section-chip">Aktif dönem</span></div>
-{% if competition.groups %}<div class="row g-4"><div class="col-xl-5"><div class="market-chart-box"><canvas id="competitionMarketChart"></canvas></div></div><div class="col-xl-7"><div class="table-responsive market-table-wrap"><table class="table market-table align-middle mb-0"><thead><tr><th>Pazar grubu</th><th>Şirket ürünü</th><th>Şirket IMS</th><th>Pazar TL</th><th>Rakip alanı</th><th>Pay</th></tr></thead><tbody>{% for group in competition.groups %}<tr><td class="fw-semibold">{{ group.product_group }}</td><td>{{ group.company_product }}</td><td>{{ "{:,.0f}".format(group.company_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.market_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.competitor_sales_tl | default(0, true)) }} ₺</td><td><span class="market-share-badge">%{{ group.company_share_percent | default(0, true) }}</span></td></tr>{% endfor %}</tbody></table></div></div></div><p class="market-source-note"><i class="bi bi-info-circle"></i> Toplam hedef, gerçekleşen ve realizasyon yalnızca üst KPI alanında gösterilir. Bu bölüm ürün bazlı IMS–pazar karşılaştırmasıdır.</p>{% else %}<div class="empty-state"><i class="bi bi-bar-chart-line"></i><p>Aktif dönem için rekabet TL verisi bulunmuyor.</p></div>{% endif %}</div>
+{% if competition.groups %}<div class="competition-explainer"><i class="bi bi-info-circle-fill"></i><span>Her satırda şirket IMS satışı, rakip satış alanı ve toplam pazar birlikte gösterilir. Mavi çubuk şirket, turuncu çubuk rakip payını ifade eder.</span></div><div class="table-responsive market-table-wrap market-table-full"><table class="table market-table competition-visible-table align-middle mb-0"><thead><tr><th>Ürün / Pazar Grubu</th><th>Şirket IMS</th><th>Rakip Alanı</th><th>Toplam Pazar</th><th>Görsel Dağılım</th><th>Şirket Payı</th></tr></thead><tbody>{% for group in competition.groups %}<tr><td><strong>{{ group.company_product }}</strong><small>{{ group.product_group }}</small></td><td><strong>{{ "{:,.0f}".format(group.company_sales_tl | default(0, true)) }} ₺</strong></td><td>{{ "{:,.0f}".format(group.competitor_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.market_sales_tl | default(0, true)) }} ₺</td><td><div class="market-composition" aria-label="Şirket payı yüzde {{ group.company_share_percent | default(0, true) }}"><span style="width:{{ group.company_share_percent | default(0, true) }}%"></span><em style="width:{{ 100 - (group.company_share_percent | default(0, true)) }}%"></em></div><div class="composition-label"><span>Şirket</span><span>Rakip</span></div></td><td><span class="market-share-badge">%{{ group.company_share_percent | default(0, true) }}</span></td></tr>{% endfor %}</tbody></table></div><p class="market-source-note"><i class="bi bi-calculator"></i> Rakip alanı = Toplam pazar − Şirket IMS. Tüm değerler tıklama gerektirmeden görünür.</p>{% else %}<div class="empty-state"><i class="bi bi-bar-chart-line"></i><p>Aktif dönem için rekabet TL verisi bulunmuyor.</p></div>{% endif %}</div>
 
 <div class="row g-4 mb-4">
   <div class="col-lg-7">
     <div class="section-card">
       <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-geo-alt-fill"></i> Excel Bölge Yerleşimi</h2>
-        <span class="section-chip">Brick · il kapsamı</span>
+        <h2 class="section-card-title"><i class="bi bi-map-fill"></i> Türkiye Bölge Haritası</h2>
+        <span class="section-chip">11 satış bölgesi</span>
       </div>
       <div class="section-card-body">
         {% include "partials/turkey_map.html" %}
-        <div class="region-realization-list mt-3">{% for region in payload.region_realization | default([], true) %}<div class="region-realization-item"><strong>{{ region.code }} {{ region.city }}</strong><span>{{ "{:,.0f}".format(region.tl_actual) }} ₺ · {{ "{:,.0f}".format(region.unit_actual) }} kutu</span><b class="{% if region.percent >= 90 %}good{% elif region.percent >= 70 %}watch{% else %}risk{% endif %}">%{{ region.percent }}</b></div>{% endfor %}</div>
+        <div class="region-realization-list mt-3">{% for region in payload.region_realization | default([], true) %}<div class="region-realization-item"><div class="region-card-head"><strong>{{ region.code }} {{ region.city }}</strong><b class="{% if region.percent >= 90 %}good{% elif region.percent >= 70 %}watch{% else %}risk{% endif %}">%{{ region.percent }}</b></div><div class="region-card-metrics"><span><small>Hedef ₺</small>{{ "{:,.0f}".format(region.tl_target) }}</span><span><small>Gerçekleşen ₺</small>{{ "{:,.0f}".format(region.tl_actual) }}</span><span><small>Realizasyon</small>%{{ region.percent }}</span></div></div>{% endfor %}</div>
       </div>
     </div>
   </div>
@@ -229,20 +228,8 @@
       </div>
       <div class="section-card-body">
         {% if payload.products %}
-          <div class="chart-container chart-container-md"><canvas id="productDonutChart"></canvas></div>
-          <div class="donut-legend mt-3" id="productDonutLegend">
-            {% for p in payload.products %}
-            {% set prod_tl = p.realization_tl | default(0, true) %}
-            <button type="button" class="donut-legend-item" data-donut-index="{{ loop.index0 }}">
-              <span class="donut-legend-label"><span class="donut-legend-dot" id="donut-dot-{{ loop.index0 }}"></span>{{ p.product_name | default('Unknown') }}</span>
-              <span class="donut-legend-value">{% if prod_tl > 0 %}{{ "{:,.0f}".format(prod_tl) }} ₺{% else %}—{% endif %}</span>
-            </button>
-            {% endfor %}
-            <div class="donut-legend-item donut-legend-total">
-              <span class="donut-legend-label">Toplam</span>
-              <span class="donut-legend-value">{% if payload.overall_realization_tl and payload.overall_realization_tl > 0 %}{{ "{:,.0f}".format(payload.overall_realization_tl) }} ₺{% else %}—{% endif %}</span>
-            </div>
-          </div>
+          <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
+          <div class="orbit-note"><i class="bi bi-diagram-3"></i> Ürün değerleri daire çevresinde doğrudan gösterilir; merkezde toplam gerçekleşen ₺ bulunur.</div>
         {% else %}
           <div class="chart-placeholder"><i class="bi bi-pie-chart"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
           <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
