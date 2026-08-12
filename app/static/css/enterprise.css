@@ -151,6 +151,11 @@
 [data-theme="dark"] .donut-legend-item { background: #1a2e48; border-color: rgba(255,255,255,.08); }
 [data-theme="dark"] .donut-legend-value { color: #d0dff0; }
 [data-theme="dark"] .dash-hero { box-shadow: 0 18px 38px rgba(0,0,0,.4); }
+
+/* Kurumsal mavi başlıklarda tema metni siyaha çevirmemelidir. */
+.simulation-hero,.simulation-hero h1,.simulation-hero h2,.quarter-hero,.quarter-hero h1,.quarter-hero h2,
+.ims-hero,.ims-hero h1,.ims-hero h2,.target-hero,.target-hero h1,.target-hero h2,
+.region-hero,.region-hero h1,.region-hero h2 { color:#fff!important; }
 [data-theme="dark"] .ims-upload-card { background: #16253d; border-color: rgba(255,255,255,.08); }
 [data-theme="dark"] .ims-upload-card-header { background: linear-gradient(90deg,#19283f,#16253d); border-color: rgba(255,255,255,.07); }
 [data-theme="dark"] .ims-dropzone { background: #1a2e48; border-color: rgba(255,255,255,.12); }
