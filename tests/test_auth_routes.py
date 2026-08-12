@@ -374,6 +374,8 @@ def test_login_and_register_show_corporate_system_name(app):
     client = app.test_client()
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/login").get_data(as_text=True)
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/register").get_data(as_text=True)
+    css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
+    assert "position: static" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
@@ -402,6 +404,21 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "Excel Bölge Yerleşimi" not in html
     assert "Türkiye temsili satış bölgesi haritası" in html
     assert "Ürün Performansı" in html
+    assert "Türkiye Performans Özeti" not in html
+    assert 'id="mapSelectedInfo"' in html
+    assert "901 · DİYARBAKIR BÖLGESİ" in html
+    assert "Batman" in html and "Şanlıurfa" in html and "Mardin" in html
+    assert "Bölge analizini aç" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+
+def test_user_visible_recovery_labels_are_turkish():
+    visible_files = [
+        Path("app/templates/simulation.html"), Path("app/templates/ims.html"),
+        Path("app/templates/settings.html"), Path("app/templates/partials/sidebar.html"),
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in visible_files)
+    assert "Recovery" not in combined
+    assert "Telafi" in combined
 
 
 def test_national_dashboard_box_metrics_use_target_and_weekly_sources(app):

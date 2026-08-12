@@ -336,6 +336,7 @@ function initTurkeyMap(regionRealization) {
   const wrapper = document.getElementById("turkeyMapWrapper");
   const regions = document.querySelectorAll(".map-region");
   const tooltip = document.getElementById("mapTooltip");
+  const selectedInfo = document.getElementById("mapSelectedInfo");
   if (!wrapper || !regions.length) return;
 
   const palette = {
@@ -379,6 +380,12 @@ function initTurkeyMap(regionRealization) {
       }
       region.classList.add("map-region-selected");
       selectedRegion = region;
+      if (selectedInfo) {
+        const metric = metrics[0];
+        const regionCode = String(region.dataset.codes || "").split(",")[0].trim();
+        const detailUrl = region.dataset.url || (regionCode ? `/regions/${encodeURIComponent(regionCode)}` : "");
+        selectedInfo.innerHTML = `<strong>${regionName}</strong> · ${region.dataset.cities || "İl kapsamı tanımlı değil"}${metric ? ` · Hedef ${numberTR(metric.tl_target," ₺")} · Gerçekleşen ${numberTR(metric.tl_actual," ₺")} · %${metric.percent}` : ""}${detailUrl ? `<a href="${detailUrl}">Bölge analizini aç <i class="bi bi-arrow-right"></i></a>` : ""}`;
+      }
     });
 
     if (!tooltip) return;
