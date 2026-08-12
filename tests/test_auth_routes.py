@@ -290,6 +290,46 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert 'id="regionalCompetitionTable"' in html
     assert 'data-competition-filter="risk"' in html
     assert "Pay = Şirket IMS ÷ Toplam Pazar" in html
+    assert "Pazar Büyüklüğü" not in html
+    assert "Bölgesel Aksiyon" not in html
+    assert "Hedef Kutu" in html
+    assert "Gerçekleşen Kutu" in html
+    assert "Kutu Realizasyonu" in html
+    assert "Türkiye Bölge Haritası" in html
+    assert "Excel Bölge Yerleşimi" not in html
+    assert "Türkiye temsili satış bölgesi haritası" in html
+    assert "Ürün Performansı" in html
+
+
+def test_national_dashboard_box_metrics_use_target_and_weekly_sources(app):
+    from datetime import datetime
+
+    from app.extensions import db
+    from app.models import IMSRawData, IMSUpload, Product, Representative, Target
+    from app.query.dashboard_query import DashboardQuery
+    from app.query.filters import DashboardFilterParams
+
+    with app.app_context():
+        product = Product(product_code="BOX-KPI", product_name="Kutu KPI Ürünü", is_active=True)
+        representative = Representative(rep_code="BOX-REP", rep_name="Kutu Temsilcisi", active=True)
+        db.session.add_all([product, representative])
+        db.session.commit()
+        upload = IMSUpload(file_name="box-kpi.xlsx", year=2031, month=5, status="COMPLETED", completed_at=datetime.utcnow())
+        db.session.add(upload)
+        db.session.commit()
+        db.session.add_all([
+            Target(year=2031, month=5, quarter="Q2", representative_id=representative.id, product_id=product.id, unit_target=200, tl_target=20000),
+            IMSRawData(upload_id=upload.id, year=2031, month=5, quarter="Q2", source_row=2, sheet_name="BAKİYE", sheet_type="dashboard_balance_national", product_id=product.id, unit=20000, tl=12000, raw_json="{}"),
+            IMSRawData(upload_id=upload.id, year=2031, month=5, quarter="Q2", source_row=2, sheet_name="TTS", sheet_type="dashboard_weekly_units", product_id=product.id, unit=150, tl=0, raw_json="{}"),
+        ])
+        db.session.commit()
+
+        result = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2031, month=5))
+
+        assert result["unit_target"] == 200
+        assert result["unit_actual"] == 150
+        assert result["unit_realization_percent"] == 75
+        assert result["products"][0]["unit_realization_percent"] == 75
 
 
 def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
