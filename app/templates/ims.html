@@ -160,7 +160,7 @@
         <div class="ims-upload-card-title"><i class="bi bi-activity" style="color:#0b4ea2;"></i> Sistem Durumu</div>
       </div>
       <div class="ims-upload-card-body">
-        {% for svc in [("IMS Import","bi-cloud-upload"), ("Alias Service","bi-diagram-2"), ("Prime Engine","bi-cash-stack"), ("Quarter Engine","bi-calendar3-week"), ("Recovery Engine","bi-arrow-repeat")] %}
+        {% for svc in [("IMS Aktarım","bi-cloud-upload"), ("Eş Ad Hizmeti","bi-diagram-2"), ("Prim Motoru","bi-cash-stack"), ("Çeyrek Motoru","bi-calendar3-week"), ("Telafi Motoru","bi-arrow-repeat")] %}
         <div class="d-flex justify-content-between align-items-center {% if not loop.last %}mb-2{% endif %}">
           <span style="font-size:12px;display:flex;align-items:center;gap:6px;"><i class="bi {{ svc[1] }}" style="color:#0b4ea2;"></i>{{ svc[0] }}</span>
           <span class="badge bg-success" style="font-size:10px;">Aktif</span>
@@ -194,7 +194,7 @@
   </div>
   <div class="ims-info-card">
     <div class="ims-info-card-icon green"><i class="bi bi-arrow-repeat"></i></div>
-    <div><div class="ims-info-card-title">Recovery Analizi</div><div class="ims-info-card-text">Kayıp prim ve telafi hesabı</div></div>
+    <div><div class="ims-info-card-title">Telafi Analizi</div><div class="ims-info-card-text">Kayıp prim ve telafi hesabı</div></div>
   </div>
   <div class="ims-info-card">
     <div class="ims-info-card-icon yellow"><i class="bi bi-sliders"></i></div>
