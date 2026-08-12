@@ -8,6 +8,7 @@ from flask import url_for
 
 from flask_login import login_required
 from sqlalchemy import or_
+import unicodedata
 
 from app.extensions import db
 from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
@@ -24,6 +25,12 @@ representatives_bp = Blueprint(
     url_prefix="/representatives"
 
 )
+
+
+def _search_key(value):
+    """Turkish-aware, accent-insensitive key used by the global search."""
+    value = (value or "").translate(str.maketrans({"ı": "i", "İ": "I"})).casefold()
+    return "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
 
 
 @representatives_bp.route(
@@ -465,14 +472,11 @@ def search():
         return jsonify({"results": []})
 
     active_period = PeriodService.get_active_period()
-    region_matches = Representative.query.filter(
-        Representative.active.is_(True),
-        or_(
-            Representative.region.ilike(f"%{query}%"),
-            Representative.city.ilike(f"%{query}%"),
-            Representative.territory.ilike(f"%{query}%"),
-        ),
-    ).order_by(Representative.region.asc(), Representative.city.asc()).all()
+    normalized_query = _search_key(query)
+    all_representatives = Representative.query.order_by(Representative.region.asc(), Representative.city.asc()).all()
+    region_matches = [rep for rep in all_representatives if any(
+        normalized_query in _search_key(value) for value in (rep.region, rep.city, rep.territory)
+    )]
     region_results, seen_regions = [], set()
     for rep in region_matches:
         region_key = (rep.region or rep.city or rep.territory or "").strip()
@@ -490,13 +494,11 @@ def search():
         })
         if len(region_results) >= 4:
             break
-    reps = Representative.query.filter(
-        or_(
-            Representative.rep_name.ilike(f"%{query}%"),
-            Representative.rep_code.ilike(f"%{query}%"),
-            Representative.city.ilike(f"%{query}%"),
-        )
-    ).order_by(Representative.active.desc(), Representative.rep_name.asc()).limit(7).all()
+    reps = [rep for rep in all_representatives if any(
+        normalized_query in _search_key(value) for value in (rep.rep_name, rep.rep_code, rep.city)
+    )]
+    reps.sort(key=lambda rep: (not rep.active, _search_key(rep.rep_name)))
+    reps = reps[:7]
     results = region_results + [{
         "kind": "representative",
         "title": rep.rep_name,
@@ -522,13 +524,9 @@ def search():
         })
         known_reps.add(url)
 
-    products = Product.query.filter(
-        or_(
-            Product.product_name.ilike(f"%{query}%"),
-            Product.product_code.ilike(f"%{query}%"),
-            Product.ims_name.ilike(f"%{query}%"),
-        )
-    ).order_by(Product.display_order.asc(), Product.product_name.asc()).limit(5).all()
+    products = [product for product in Product.query.order_by(Product.display_order.asc(), Product.product_name.asc()).all() if any(
+        normalized_query in _search_key(value) for value in (product.product_name, product.product_code, product.ims_name)
+    )][:5]
     for product in products:
         results.append({
             "kind": "product",

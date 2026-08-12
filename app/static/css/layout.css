@@ -822,6 +822,17 @@ body.sidebar-collapsed .app-sidebar {
   .page-title { font-size: 18px; }
 }
 
+/* Telefonların yatay/ölçeklenmiş görünümünde durum kartları 768px üzerine
+   çıkabildiği için tablet genişliğinde de görünür kalmalıdır. */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .navbar-mobile-status { display: flex; align-items: stretch; height: 38px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--background); }
+  .navbar-mobile-status > div { display: flex; flex-direction: column; justify-content: center; padding: 3px 7px; min-width: 62px; }
+  .navbar-mobile-status > div + div { border-left: 1px solid var(--border); }
+  .navbar-mobile-status span { font-size: 8px; line-height: 1; color: var(--text-light); text-transform: uppercase; font-weight: 800; }
+  .navbar-mobile-status strong { margin-top: 3px; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text); }
+  .navbar-info-card-desktop { display: none; }
+}
+
 @media (max-width: 420px) {
   .navbar-inner { padding-left: 8px; padding-right: 8px; gap: 5px; }
   .navbar-hamburger { width: 36px; }
