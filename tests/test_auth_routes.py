@@ -275,6 +275,36 @@ def test_region_search_opens_region_performance_screen(app):
     assert "/regions/901" in region_item["url"]
     assert "3 aylık" in region_item["meta"]
 
+    dotted_upper_response = client.get("/representatives/search?q=DİYARBAKIR")
+    assert any(item["kind"] == "region" and item["title"] == "901 Diyarbakır" for item in dotted_upper_response.get_json()["results"])
+
+
+def test_region_totals_include_inactive_vacant_positions(app):
+    from app.extensions import db
+    from app.models import Product, Representative, Target
+    from app.services.region_performance_service import RegionPerformanceService
+
+    with app.app_context():
+        product = Product(product_code="VACANT-PROD", product_name="Boş Kadro Ürünü", is_active=True)
+        employee = Representative(rep_code="REG-EMP", rep_name="Diyarbakır Çalışan", region="901", city="Diyarbakır", active=True)
+        vacant_a = Representative(rep_code="REG-EMPTY-A", rep_name="Diyarbakır Boş", region="901", city="Diyarbakır", active=False)
+        vacant_b = Representative(rep_code="REG-EMPTY-B", rep_name="Diyarbakır Kadro Boş", region="901", city="Diyarbakır", active=False)
+        db.session.add_all([product, employee, vacant_a, vacant_b])
+        db.session.commit()
+        for representative, target in ((employee, 1000), (vacant_a, 2000), (vacant_b, 3000)):
+            db.session.add(Target(year=2033, month=7, quarter="Q3", representative_id=representative.id, product_id=product.id, tl_target=target, unit_target=10))
+        db.session.commit()
+
+        report = RegionPerformanceService("901", 2033, 7).report()
+        monthly = report["periods"]["monthly"]
+
+        assert monthly["target_tl"] == 6000
+        assert {row["representative_name"] for row in monthly["representatives"]} == {
+            "Diyarbakır Çalışan", "Diyarbakır Boş", "Diyarbakır Kadro Boş"
+        }
+        assert report["active_count"] == 1
+        assert report["vacant_count"] == 2
+
 
 def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(app):
     from app.extensions import db
@@ -319,6 +349,9 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     assert "Ürün Bazlı 3 Aylık Realizasyon" in html
     assert "Bölge Temsilci Performansı" in html
     assert "Bölge Temsilcisi A" in html
+    assert "BÖLGE ANALİZİ" in html
+    yearly_panel = html.split('data-period-panel="yearly"', 1)[1]
+    assert "Aylık Başarı Dağılımı" not in yearly_panel
 
 
 def test_mobile_navbar_contains_search_and_period_status(app):
@@ -334,6 +367,13 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert 'class="navbar-mobile-status"' in html
     assert "Aktif" in html
     assert "Son IMS" in html
+    assert "IMS PERFORMANS TAKİP SİSTEMİ" in html
+
+
+def test_login_and_register_show_corporate_system_name(app):
+    client = app.test_client()
+    assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/login").get_data(as_text=True)
+    assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/register").get_data(as_text=True)
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
