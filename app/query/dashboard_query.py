@@ -149,21 +149,34 @@ class DashboardQuery:
         unit_by_product = dict(self.session.query(
             IMSRawData.product_id, IMSRawData.unit
         ).filter(IMSRawData.upload_id == upload_id, IMSRawData.sheet_type == "dashboard_weekly_units").all())
+        target_unit_by_product = dict(self.session.query(
+            Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
+        ).join(Representative, Representative.id == Target.representative_id).filter(
+            Target.year == filters.year,
+            Target.month == filters.month,
+            ~Representative.rep_code.like("UNASSIGNED%"),
+        ).group_by(Target.product_id).all())
         products = [{
             "product_id": row[0], "product_name": row[1],
             "target_tl": round(float(row[2] or 0), 2),
             "actual_tl": round(float(row[3] or 0), 2),
+            "unit_target": round(float(target_unit_by_product.get(row[0], 0) or 0), 2),
             "unit_actual": round(float(unit_by_product.get(row[0], 0) or 0), 2),
         } for row in balance_rows]
         target = sum(item["target_tl"] for item in products)
         actual = sum(item["actual_tl"] for item in products)
         for item in products:
             item["realization_percent"] = round(item["actual_tl"] * 100 / item["target_tl"], 1) if item["target_tl"] else 0.0
+            item["unit_realization_percent"] = round(item["unit_actual"] * 100 / item["unit_target"], 1) if item["unit_target"] else 0.0
+        unit_target = sum(item["unit_target"] for item in products)
+        unit_actual = sum(item["unit_actual"] for item in products)
         return {
             "source": "BAKİYE / TTS HAFTALIK ÇIKIŞLARI · NATIONAL",
             "target_tl": round(target, 2), "actual_tl": round(actual, 2),
             "realization_percent": round(actual * 100 / target, 2) if target else 0.0,
-            "unit_actual": round(sum(item["unit_actual"] for item in products), 2),
+            "unit_target": round(unit_target, 2),
+            "unit_actual": round(unit_actual, 2),
+            "unit_realization_percent": round(unit_actual * 100 / unit_target, 2) if unit_target else 0.0,
             "products": products,
         }
 
