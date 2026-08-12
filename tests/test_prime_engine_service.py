@@ -514,6 +514,33 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         self.assertTrue(all("remaining_tl" in item for item in open_rows))
         self.assertTrue(any(item["remaining_box"] > 0 for item in open_rows))
 
+    def test_service_builds_representative_target_snapshot(self):
+        result = SimulationService(self.rep.id, 2025, 6, {}).report()
+        snapshot = result["target_snapshot"]
+
+        self.assertEqual(snapshot["target_tl"], 310000)
+        self.assertEqual(snapshot["realization_tl"], 295000)
+        self.assertEqual(snapshot["remaining_tl"], 15000)
+        self.assertIn("prime_opportunity", snapshot)
+        self.assertIn("remaining_workdays", snapshot)
+
+    def test_service_prioritizes_prime_risk_in_action_plan(self):
+        result = SimulationService(self.rep.id, 2025, 6, {}).report()
+        action_plan = result["action_plan"]
+
+        self.assertEqual(action_plan[0]["product"], "Monurol")
+        self.assertEqual(action_plan[0]["priority"], 1)
+        self.assertGreater(action_plan[0]["remaining_box"], 0)
+        self.assertGreater(action_plan[0]["remaining_tl"], 0)
+        self.assertIn("action", action_plan[0])
+
+    def test_closed_period_action_plan_has_no_daily_pace(self):
+        result = SimulationService(self.rep.id, 2025, 6, {}).report()
+
+        self.assertTrue(result["target_snapshot"]["period_closed"])
+        self.assertTrue(all(item["daily_box"] == 0 for item in result["action_plan"]))
+        self.assertTrue(all(item["daily_tl"] == 0 for item in result["action_plan"]))
+
     def test_service_override_report_lists_changes(self):
         result = SimulationService(self.rep.id, 2025, 6, {self.prod1.id: {"tl_delta": 250000, "mode": "delta"}}).report()
         self.assertEqual(len(result["overrides"]), 1)
