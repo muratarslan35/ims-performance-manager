@@ -261,7 +261,7 @@ class DashboardService:
 
     @staticmethod
     def _regional_competition(rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
-        """Build regional company-vs-market views without counting subtotal rows."""
+        """Build and mathematically validate regional company-vs-market views."""
         own_names = {
             "".join(ch for ch in str(getattr(item, "product_name", "") or "").upper() if ch.isalnum())
             for item in product_rows or []
@@ -286,17 +286,57 @@ class DashboardService:
             national.setdefault(item["product_group"], [0.0, 0.0])
             national[item["product_group"]][0] += item["company_tl"]
             national[item["product_group"]][1] += item["market_tl"]
+        invalid_rows = 0
         for item in groups.values():
             company, market = national[item["product_group"]]
             benchmark = company * 100 / market if market else 0.0
+            raw_share = item["share_percent"]
+            company_tl = round(item["company_tl"], 2)
+            market_tl = round(item["market_tl"], 2)
+            competitor_tl = round(max(0.0, market_tl - company_tl), 2)
+            data_valid = market_tl >= 0 and company_tl >= 0 and company_tl <= market_tl + 0.01
+            formula_valid = abs(raw_share - (company_tl * 100 / market_tl if market_tl else 0.0)) < 0.05
+            if not data_valid or not formula_valid:
+                invalid_rows += 1
             item["national_share_percent"] = round(benchmark, 1)
-            item["difference_pp"] = round(item["share_percent"] - benchmark, 1)
-            item["share_percent"] = round(item["share_percent"], 1)
-            item["company_tl"] = round(item["company_tl"], 2)
-            item["market_tl"] = round(item["market_tl"], 2)
+            item["difference_pp"] = round(raw_share - benchmark, 1)
+            item["share_percent"] = round(raw_share, 1)
+            item["company_tl"] = company_tl
+            item["market_tl"] = market_tl
+            item["competitor_tl"] = competitor_tl
+            item["data_valid"] = data_valid and formula_valid
+            item["signal_type"] = "strong" if item["difference_pp"] >= 3 else "risk" if item["difference_pp"] <= -3 else "balanced"
             result.append(item)
-        result.sort(key=lambda item: (item["difference_pp"], item["market_tl"]), reverse=True)
-        return {"signals": result[:16], "table": sorted(result, key=lambda item: (item["territory"], item["product_group"]))[:48]}
+
+        positive = sorted((item for item in result if item["difference_pp"] > 0), key=lambda item: (item["difference_pp"], item["market_tl"]), reverse=True)[:5]
+        negative = sorted((item for item in result if item["difference_pp"] < 0), key=lambda item: (item["difference_pp"], -item["market_tl"]))[:5]
+        signals = sorted(positive + negative, key=lambda item: (abs(item["difference_pp"]), item["market_tl"]), reverse=True)
+        territories = {item["territory"] for item in result}
+        product_groups = {item["product_group"] for item in result}
+        company_total = sum(item["company_tl"] for item in result)
+        market_total = sum(item["market_tl"] for item in result)
+        table = sorted(result, key=lambda item: (item["signal_type"] != "risk", -abs(item["difference_pp"]), item["territory"], item["product_group"]))
+        return {
+            "signals": signals,
+            "table": table,
+            "summary": {
+                "territory_count": len(territories),
+                "product_group_count": len(product_groups),
+                "row_count": len(result),
+                "strong_count": len([item for item in result if item["signal_type"] == "strong"]),
+                "risk_count": len([item for item in result if item["signal_type"] == "risk"]),
+                "company_tl": round(company_total, 2),
+                "market_tl": round(market_total, 2),
+                "weighted_share_percent": round(company_total * 100 / market_total, 1) if market_total else 0.0,
+            },
+            "validation": {
+                "is_valid": invalid_rows == 0,
+                "valid_rows": len(result) - invalid_rows,
+                "invalid_rows": invalid_rows,
+                "formula": "company_tl / market_tl * 100",
+                "benchmark": "weighted national product-group share",
+            },
+        }
 
     # =========================================================================
     # 3. PUBLIC ENTRY POINT (run)
