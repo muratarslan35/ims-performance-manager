@@ -358,3 +358,10 @@ Aylık dört ürün + toplam TL prim hakedişi kuralı üretime alındı.
 - Backfill sonucu: 789 benzersiz brick, 798 temsilci–brick üyeliği. Örnek `ADANA AKINCILAR+KISLA`: MERT HIKMET DAG ve GOKHAN ONAL; `IZM BAYRAKLI`: YIGIT PLAV ve SUDE OZBAYKAL.
 - Uzun ad doğrulaması: Excel’deki 99 geçerli temsilcinin tamamı master ID ile eşleşti; eşleşmeyen yok. En uzun ad `MUHAMMET ALPARSLAN SAFAK` (24 karakter); rep_code çakışması veya `AUTO-` prefix yok.
 - Migration head: `h3c4d5e6f7a8`; Python derleme ve gerçek DB backfill PASS.
+
+## 2026-08-12 — Bölge Performans Merkezi
+
+- Global aramadan bölge bazlı performans ekranına geçiş eklendi.
+- Aylık, 3 aylık, 6 aylık ve yıllık hedef, gerçekleşen ve realizasyon KPI'ları gerçek IMS verilerine bağlandı.
+- Ürün, ay ve temsilci kırılımları ortak bir servis üzerinden sunuldu.
+- Doğrulama: 154 test geçti, 1 test atlandı.
