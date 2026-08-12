@@ -290,6 +290,12 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "item.remaining_box" in html
     assert "item.remaining_tl" in html
     assert "risk-row-high" in html
+    assert "Temsilci Prim Hedef Özeti" in html
+    assert 'id="targetSnapshot"' in html
+    assert "Temsilci Saha Aksiyon Planı" in html
+    assert 'id="actionPlanTable"' in html
+    assert "item.daily_box" in html
+    assert "item.daily_tl" in html
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):
