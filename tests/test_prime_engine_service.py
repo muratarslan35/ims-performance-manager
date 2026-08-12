@@ -505,6 +505,15 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         result = SimulationService(self.rep.id, 2025, 6, {}).report()
         self.assertIn("history", result)
 
+    def test_service_recovery_exposes_box_and_tl_gaps(self):
+        result = SimulationService(self.rep.id, 2025, 6, {}).report()
+        open_rows = [item for item in result["recovery"] if item["remaining_tl"] > 0]
+
+        self.assertTrue(open_rows)
+        self.assertTrue(all("remaining_box" in item for item in open_rows))
+        self.assertTrue(all("remaining_tl" in item for item in open_rows))
+        self.assertTrue(any(item["remaining_box"] > 0 for item in open_rows))
+
     def test_service_override_report_lists_changes(self):
         result = SimulationService(self.rep.id, 2025, 6, {self.prod1.id: {"tl_delta": 250000, "mode": "delta"}}).report()
         self.assertEqual(len(result["overrides"]), 1)
