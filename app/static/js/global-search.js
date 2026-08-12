@@ -20,7 +20,7 @@
         const items = payload.results || [];
         results.innerHTML = items.length ? items.map((item) => `
           <a class="global-search-item" href="${escapeHtml(item.url)}" role="option">
-            <i class="bi ${item.kind === "brick" ? "bi-geo-alt-fill" : item.kind === "product" ? "bi-capsule" : "bi-person-fill"}"></i>
+            <i class="bi ${item.kind === "region" ? "bi-map-fill" : item.kind === "brick" ? "bi-geo-alt-fill" : item.kind === "product" ? "bi-capsule" : "bi-person-fill"}"></i>
             <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.meta)}</small></span>
           </a>`).join("") : '<div class="global-search-empty">Eşleşen temsilci, brick veya ürün bulunamadı.</div>';
         results.classList.add("is-open");
