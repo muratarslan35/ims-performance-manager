@@ -273,6 +273,25 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert "Son IMS" in html
 
 
+def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    response = client.get("/simulation/")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'id="simulationSubmit"' in html
+    assert "Yeni Hesaplama Yap" in html
+    assert "finally" in html
+    assert "setButtonState(false,completed)" in html
+    assert "Kutu Eksiği" in html
+    assert "₺ Eksiği" in html
+    assert "item.remaining_box" in html
+    assert "item.remaining_tl" in html
+    assert "risk-row-high" in html
+
+
 def test_representative_detail_renders_dynamic_market_analysis(app):
     from app.extensions import db
     from app.models import Representative
