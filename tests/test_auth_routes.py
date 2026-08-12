@@ -273,6 +273,25 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert "Son IMS" in html
 
 
+def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    response = client.get("/dashboard/", follow_redirects=True)
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert html.count("Aylık ₺ Hedefi") == 1
+    assert html.count("Gerçekleşen Çıkış") == 1
+    assert html.count("TL Realizasyonu") == 1
+    assert "executive-market-kpis" not in html
+    assert "Bölgesel Pazar Payı Sinyalleri" in html
+    assert "Bölgesel Ürün Bazlı Rekabet Analizi" in html
+    assert 'id="regionalCompetitionTable"' in html
+    assert 'data-competition-filter="risk"' in html
+    assert "Pay = Şirket IMS ÷ Toplam Pazar" in html
+
+
 def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
