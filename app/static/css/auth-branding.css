@@ -45,6 +45,15 @@
 }
 .auth-system-title::after{content:"";display:block;width:72px;height:3px;margin:10px auto 0;border-radius:99px;background:linear-gradient(90deg,#0b4ea2,#45a4ee)}
 
+/* Başlık ve form masaüstünde tek bir ortalanmış grup olarak hareket eder. */
+.auth-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
 @media (max-width: 800px) {
   .auth-identity-panel { min-height: 190px; }
   .auth-identity-logo { object-position: center 48%; }

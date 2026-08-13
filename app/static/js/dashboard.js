@@ -249,8 +249,8 @@ function initProductDonut(data) {
       responsive: true,
       maintainAspectRatio: false,
       cutout: "64%",
-      radius: "78%",
-      layout: { padding: 24 },
+      radius: "82%",
+      layout: { padding: 10 },
       animation: { animateRotate: true, animateScale: true, duration: 1100 },
       plugins: {
         legend: { display: false },

@@ -214,7 +214,7 @@
       </div>
       <div class="section-card-body">
         {% include "partials/turkey_map.html" %}
-        <div class="region-realization-list mt-3">{% for region in payload.region_realization | default([], true) %}<div class="region-realization-item"><div class="region-card-head"><strong>{{ region.code }} {{ region.city }}</strong><b class="{% if region.percent >= 90 %}good{% elif region.percent >= 70 %}watch{% else %}risk{% endif %}">%{{ region.percent }}</b></div><div class="region-card-metrics"><span><small>Hedef ₺</small>{{ "{:,.0f}".format(region.tl_target) }}</span><span><small>Gerçekleşen ₺</small>{{ "{:,.0f}".format(region.tl_actual) }}</span><span><small>Realizasyon</small>%{{ region.percent }}</span></div></div>{% endfor %}</div>
+        <div class="region-realization-list mt-3">{% for region in payload.region_realization | default([], true) %}<div class="region-realization-item"><div class="region-card-head"><strong>{{ region.code }} {{ region.city }}</strong></div><div class="region-card-metrics"><span><small>Hedef ₺</small>{{ "{:,.0f}".format(region.tl_target) }}</span><span><small>Gerçekleşen ₺</small>{{ "{:,.0f}".format(region.tl_actual) }}</span><span class="region-realization-value {% if region.percent >= 90 %}excellent{% elif region.percent >= 70 %}good{% elif region.percent >= 50 %}watch{% else %}risk{% endif %}"><small>Realizasyon</small>%{{ region.percent }}</span></div></div>{% endfor %}</div>
       </div>
     </div>
   </div>
@@ -227,8 +227,10 @@
       </div>
       <div class="section-card-body">
         {% if payload.products %}
-          <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
-          <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
+          <div class="product-performance-layout">
+            <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
+            <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
+          </div>
           <div class="orbit-note"><i class="bi bi-diagram-3"></i> Merkezde toplam gerçekleşen ₺, altında ürünlerin ayrıştırılmış değerleri gösterilir.</div>
         {% else %}
           <div class="chart-placeholder"><i class="bi bi-pie-chart"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
