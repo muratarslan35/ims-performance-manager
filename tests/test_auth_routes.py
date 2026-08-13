@@ -410,9 +410,13 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert 'id="mapSelectedInfo"' in html
     assert "901 · DİYARBAKIR" in html
     assert "Batman" in html and "Şanlıurfa" in html and "Mardin" in html
+    assert "DOĞU VE GÜNEYDOĞU BÖLGESİ" not in html
+    assert "Van" in html
     assert "Bölge analizini aç" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert "province-layer" not in html
     assert 'id="productValueLegend"' in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    assert "product-performance-layout" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    assert "region-realization-value" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 
 
