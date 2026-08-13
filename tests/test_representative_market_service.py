@@ -37,7 +37,8 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             db.session.add_all([representative, other, *products])
             db.session.flush()
             upload = IMSUpload(file_name="august.xlsx", year=2026, month=8, quarter="Q3", status="COMPLETED")
-            db.session.add(upload)
+            previous_upload = IMSUpload(file_name="july.xlsx", year=2026, month=7, quarter="Q3", status="COMPLETED")
+            db.session.add_all([upload, previous_upload])
             db.session.flush()
             db.session.add_all(
                 [
@@ -45,6 +46,7 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                     RepresentativeBrickAssignment(representative_id=representative.id, year=2026, month=8, brick="BRICK C"),
                     RepresentativeBrickAssignment(representative_id=other.id, year=2026, month=8, brick="BRICK B"),
                     IMSSummary(upload_id=upload.id, representative_id=representative.id, product_id=products[0].id, year=2026, month=8, quarter="Q3", tl=100, unit=10),
+                    IMSSummary(upload_id=previous_upload.id, representative_id=representative.id, product_id=products[0].id, year=2026, month=7, quarter="Q3", tl=50, unit=5),
                 ]
             )
 
@@ -67,6 +69,12 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                     competition("BRICK B", "RAKIP B", "UNIT", 900),
                 ]
             )
+            db.session.add(CompetitionData(
+                upload_id=previous_upload.id, year=2026, month=7, sheet_name="REKABET UNIT",
+                period_type="MONTHLY", territory="101", subterritory="BRICK A",
+                product_group="TRAVAZOL GRUBU", product_name="RAKIP A",
+                metric_type="UNIT", metric_value=20, source_row=1,
+            ))
             db.session.commit()
 
             result = RepresentativeMarketService(representative, 2026, 8).build()
@@ -78,6 +86,11 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert travazol["market_unit"] == 140
             assert travazol["competitor_unit"] == 130
             assert travazol["share_percent"] == 7.1
+            assert travazol["has_previous"] is True
+            assert travazol["previous_actual_unit"] == 5
+            assert travazol["actual_change_unit"] == 5
+            assert travazol["actual_change_percent"] == 100.0
+            assert travazol["competitor_change_unit"] == 115
             assert travazol["rivals"] == [
                 {"name": "RAKIP C", "unit": 95.0},
                 {"name": "RAKIP A", "unit": 30.0},

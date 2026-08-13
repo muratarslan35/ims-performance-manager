@@ -55,8 +55,8 @@
   </div>
   <div class="ims-stat-card">
     <div class="ims-stat-label">Son Durum</div>
-    <div class="ims-stat-value {% if uploads and uploads[0].status == 'Hazır' %}green{% endif %}">
-      {% if uploads %}{% if uploads[0].status == 'Hazır' %}Hazır{% else %}{{ uploads[0].status }}{% endif %}{% else %}—{% endif %}
+    <div class="ims-stat-value {% if uploads and uploads[0].status in ('Hazır', 'COMPLETED') %}green{% endif %}">
+      {% if uploads %}{% if uploads[0].status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif uploads[0].status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ uploads[0].status }}{% endif %}{% else %}—{% endif %}
     </div>
   </div>
 </div>
@@ -142,7 +142,7 @@
           </div>
           <div class="d-flex justify-content-between align-items-center">
             <span style="font-size:12px;color:#6a7a90;">Durum</span>
-            <span class="badge {% if uploads[0].status == 'Hazır' %}bg-success{% elif uploads[0].status == 'İşleniyor' %}bg-warning{% else %}bg-danger{% endif %}">{{ uploads[0].status }}</span>
+            <span class="badge {% if uploads[0].status in ('Hazır', 'COMPLETED') %}bg-success{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}bg-warning{% else %}bg-danger{% endif %}">{% if uploads[0].status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif uploads[0].status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ uploads[0].status }}{% endif %}</span>
           </div>
           <div class="d-flex justify-content-between align-items-center">
             <span style="font-size:12px;color:#6a7a90;">Tarih</span>
@@ -263,10 +263,12 @@
           <td style="padding:12px 16px;font-size:13px;">{{ item.sheet_count }}</td>
           <td style="padding:12px 16px;font-size:13px;">{{ item.uploaded_by }}</td>
           <td style="padding:12px 16px;">
-            {% if item.status == "Hazır" %}
-            <span class="badge bg-success" style="font-size:11px;">Hazır</span>
-            {% elif item.status == "İşleniyor" %}
+            {% if item.status in ("Hazır", "COMPLETED") %}
+            <span class="badge bg-success" style="font-size:11px;">Tamamlandı</span>
+            {% elif item.status in ("İşleniyor", "PROCESSING") %}
             <span class="badge bg-warning text-dark" style="font-size:11px;">İşleniyor</span>
+            {% elif item.status in ("Hata", "FAILED") %}
+            <span class="badge bg-danger" style="font-size:11px;">Başarısız</span>
             {% else %}
             <span class="badge bg-danger" style="font-size:11px;">{{ item.status }}</span>
             {% endif %}
