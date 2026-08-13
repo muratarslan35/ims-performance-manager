@@ -123,6 +123,11 @@ class RepresentativeMarketService:
         } - {""}
         return any(key in product_key or product_key in key for key in own_keys)
 
+    @staticmethod
+    def _is_subtotal_product_name(product_name):
+        normalized = AliasService.normalize(product_name)
+        return "SUBTOTAL" in normalized or "ARA TOPLAM" in normalized or normalized.endswith(" TOPLAM") or normalized.endswith(" TOTAL")
+
     def build(self):
         products = self._products()
         assignments, brick_keys, fallback_keys = self._scope()
@@ -157,7 +162,7 @@ class RepresentativeMarketService:
             ).all()
         }
 
-        grouped = defaultdict(lambda: {"unit": 0.0, "rivals": defaultdict(float)})
+        grouped = defaultdict(lambda: {"unit": 0.0, "subtotal_unit": 0.0, "rivals": defaultdict(float)})
         brick_groups = defaultdict(
             lambda: {
                 "company_unit": 0.0,
@@ -166,6 +171,7 @@ class RepresentativeMarketService:
                     lambda: {
                         "company_unit": 0.0,
                         "market_unit": 0.0,
+                        "subtotal_unit": 0.0,
                         "market_products": defaultdict(float),
                     }
                 ),
@@ -179,12 +185,17 @@ class RepresentativeMarketService:
                 continue
             bucket = grouped[product.id]
             value = float(row.metric_value or 0.0)
+            brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
+            product_bucket = brick_groups[brick]["products"][product.product_name]
+            if self._is_subtotal_product_name(row.product_name):
+                bucket["subtotal_unit"] += value
+                product_bucket["subtotal_unit"] += value
+                continue
             bucket["unit"] += value
             is_company = self._is_company_product(row, product)
             if not is_company:
                 bucket["rivals"][row.product_name] += value
 
-            brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
             brick_bucket = brick_groups[brick]
             brick_bucket["market_unit"] += value
             product_bucket = brick_bucket["products"][product.product_name]
@@ -194,13 +205,33 @@ class RepresentativeMarketService:
                 brick_bucket["company_unit"] += value
                 product_bucket["company_unit"] += value
 
-        previous_grouped = defaultdict(float)
+        for brick_data in brick_groups.values():
+            brick_data["company_unit"] = 0.0
+            brick_data["market_unit"] = 0.0
+            for product_data in brick_data["products"].values():
+                brick_data["company_unit"] += product_data["company_unit"]
+                brick_data["market_unit"] += product_data["market_unit"]
+
+        # Analysis totals only use product detail rows. Excel subtotal values
+        # remain separate display KPIs, preventing duplicate aggregation.
+        products_by_name = {product.product_name: product for product in products}
+        for market in grouped.values():
+            market["unit"] = 0.0
+            market["subtotal_unit"] = 0.0
+        for brick_data in brick_groups.values():
+            for product_name, product_data in brick_data["products"].items():
+                product = products_by_name.get(product_name)
+                if product is not None:
+                    grouped[product.id]["unit"] += product_data["market_unit"]
+
+        previous_grouped = defaultdict(lambda: {"unit": 0.0, "subtotal_unit": 0.0})
         for row in previous_competition_rows:
             if row.metric_type != "UNIT":
                 continue
             product = self._product_for_row(row, products)
             if product is not None:
-                previous_grouped[product.id] += float(row.metric_value or 0.0)
+                key = "subtotal_unit" if self._is_subtotal_product_name(row.product_name) else "unit"
+                previous_grouped[product.id][key] += float(row.metric_value or 0.0)
 
         rows = []
         for product in products:
@@ -211,7 +242,8 @@ class RepresentativeMarketService:
             competitor_unit = max(market_unit - actual_unit, 0.0)
             previous_summary = previous_summaries.get(product.id)
             previous_actual_unit = float(previous_summary.unit or 0.0) if previous_summary else 0.0
-            previous_market_unit = float(previous_grouped[product.id])
+            previous_market = previous_grouped[product.id]
+            previous_market_unit = float(previous_market["unit"])
             previous_competitor_unit = max(previous_market_unit - previous_actual_unit, 0.0)
             has_previous = previous_summary is not None or previous_market_unit > 0
             actual_change_unit = actual_unit - previous_actual_unit
@@ -288,7 +320,6 @@ class RepresentativeMarketService:
             )
         priority = {"critical": 0, "warning": 1, "strong": 2}
         brick_rows.sort(key=lambda item: (priority[item["attention"]], -item["competitor_unit"]))
-        products_by_name = {product.product_name: product for product in products}
         brick_product_rows = []
         for brick, brick_data in brick_groups.items():
             for product_name, product_data in brick_data["products"].items():
@@ -315,6 +346,7 @@ class RepresentativeMarketService:
                     "company_unit": round(company_unit, 2),
                     "competitor_unit": round(competitor_unit, 2),
                     "market_unit": round(market_unit, 2),
+                    "subtotal_unit": round(float(product_data["subtotal_unit"]), 2),
                     "target_unit": round(target_unit, 2),
                     "realization_percent": round(company_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
                     "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,
