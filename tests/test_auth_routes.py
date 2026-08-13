@@ -429,6 +429,15 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "Bölge Pazar Payları Sıralaması" in html
     dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert dashboard_js.index('"productPerformanceSection"') < dashboard_js.index('"turkeyMapSection"') < dashboard_js.index('"imsTurkeyRankingSection"') < dashboard_js.index('"regionalMarketShareRankingSection"')
+    assert 'id="aiExecutiveSummary"' in html
+    assert "Gerçekleşen Ciro" in html
+    assert "Hedef Açığı" in html
+    assert "Aksiyon Bölgesi" in html
+    assert "Aksiyon Ürünü" in html
+    assert "Risk Puanı" not in html
+    assert "Beklenen Prim" not in html
+    assert "Kaçırılan Prim" not in html
+    assert 'appendChild(executiveSummary)' in dashboard_js
     assert "region-realization-value" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 

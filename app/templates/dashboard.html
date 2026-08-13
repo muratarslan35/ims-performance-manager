@@ -221,49 +221,49 @@
 
 </div>
 
-<div class="ai-summary-card mb-4">
+<div class="ai-summary-card mb-4" id="aiExecutiveSummary">
   {% set competitor_ai = payload.competitor_ai | default({"top_products": [], "hot_regions": []}, true) %}
   <div class="ai-summary-head">
     <div>
       <div class="ai-summary-title"><i class="bi bi-cpu-fill"></i> AI Yönetici Özeti</div>
-      <div class="ai-summary-sub">Mevcut IMS ve hedef verilerinden otomatik hesaplanır</div>
+      <div class="ai-summary-sub">Gerçek IMS, hedef, rekabet ve saha performansı kayıtlarından yönetici görünümü</div>
     </div>
   </div>
   <div class="ai-score-grid">
     <div class="ai-score-item">
-      <div class="ai-score-label">Risk Puanı</div>
-      <div class="ai-score-value">{{ ais.risk_score | default('0', true) }}</div>
-      <div class="ai-score-unit">/ 100</div>
+      <div class="ai-score-label">Gerçekleşen Ciro</div>
+      <div class="ai-score-value ai-score-value-money">{{ "{:,.0f}".format(national_actual) }} ₺</div>
+      <div class="ai-score-unit">Aktif dönem IMS toplamı</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Fırsat Puanı</div>
-      <div class="ai-score-value">{{ ais.opportunity_score | default('0', true) }}</div>
-      <div class="ai-score-unit">/ 100</div>
+      <div class="ai-score-label">Hedef Açığı</div>
+      <div class="ai-score-value ai-score-value-money">{{ "{:,.0f}".format([national_target - national_actual, 0] | max) }} ₺</div>
+      <div class="ai-score-unit">Hedef ile gerçekleşen farkı</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Hedefe Ulaşma Olasılığı</div>
-      <div class="ai-score-value">%{{ ais.goal_probability | default('0', true) }}</div>
-      <div class="ai-score-unit">Gerçekleşme bazlı</div>
+      <div class="ai-score-label">Dönem Gerçekleşme Oranı</div>
+      <div class="ai-score-value">%{{ national_percent }}</div>
+      <div class="ai-score-unit">Gerçekleşen ÷ hedef</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Beklenen Prim</div>
-      <div class="ai-score-value ai-score-value-money">{% if ps.expected_prime and ps.expected_prime > 0 %}{{ "{:,.0f}".format(ps.expected_prime) }} ₺{% else %}—{% endif %}</div>
-      <div class="ai-score-unit">Mevcut performans</div>
+      <div class="ai-score-label">Aksiyon Bölgesi</div>
+      <div class="ai-score-value">{{ executive.risk_regions }}</div>
+      <div class="ai-score-unit">%70 realizasyonun altındaki bölge</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Kaçırılan Prim</div>
-      <div class="ai-score-value ai-score-value-money text-danger-soft">{% if ps.lost_prime and ps.lost_prime > 0 %}{{ "{:,.0f}".format(ps.lost_prime) }} ₺{% else %}—{% endif %}</div>
-      <div class="ai-score-unit">Hedef farkı</div>
+      <div class="ai-score-label">Aksiyon Ürünü</div>
+      <div class="ai-score-value">{{ payload.ai_risky_products | default([], true) | length }}</div>
+      <div class="ai-score-unit">Gerçekleşmesi düşük ürün adedi</div>
     </div>
     <div class="ai-score-item">
-      <div class="ai-score-label">Gelecek Ay Tahmini</div>
+      <div class="ai-score-label">Gelecek Ay Ciro Tahmini</div>
       <div class="ai-score-value ai-score-value-money text-success-soft">{% if ain.predicted_tl and ain.predicted_tl > 0 %}{{ "{:,.0f}".format(ain.predicted_tl) }} ₺{% else %}—{% endif %}</div>
-      <div class="ai-score-unit">Mevcut veriden tahmin</div>
+      <div class="ai-score-unit">Mevcut IMS eğiliminden hesaplanan</div>
     </div>
   </div>
     <div class="ai-panel-sections">
     <div class="ai-panel-section">
-      <div class="ai-section-title"><i class="bi bi-sun-fill"></i> Bugünün Özeti</div>
+        <div class="ai-section-title"><i class="bi bi-clipboard-data-fill"></i> Dönem Yönetici Özeti</div>
       <div class="ai-section-body">
         {% if payload.ai_messages %}
           {% for msg in payload.ai_messages %}
@@ -296,7 +296,7 @@
       </div>
 
       <div class="ai-panel-section ai-panel-section-half">
-        <div class="ai-section-title"><i class="bi bi-person-x-fill text-danger-soft"></i> Riskli Temsilciler</div>
+        <div class="ai-section-title"><i class="bi bi-person-exclamation"></i> Aksiyon Gerektiren Temsilciler</div>
         <div class="ai-section-body">
           {% if payload.ai_risky_representatives %}
             {% for r in payload.ai_risky_representatives[:3] %}
@@ -305,7 +305,7 @@
             </div>
             {% endfor %}
           {% else %}
-            <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-person-check"></i>Riskli temsilci yok</div>
+            <div class="ai-insight-row ai-insight-placeholder"><i class="bi bi-person-check"></i>Aksiyon gerektiren temsilci yok</div>
           {% endif %}
         </div>
       </div>
@@ -355,12 +355,12 @@
           </span>
         </div>
         <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Beklenen Prim</span>
-          <span class="ai-forecast-value text-success-soft">{% if ps.expected_prime and ps.expected_prime > 0 %}{{ "{:,.0f}".format(ps.expected_prime) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-label">Mevcut Dönem Gerçekleşen</span>
+          <span class="ai-forecast-value">{{ "{:,.0f}".format(national_actual) }} ₺</span>
         </div>
         <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Kaçırılan Prim</span>
-          <span class="ai-forecast-value text-danger-soft">{% if ps.lost_prime and ps.lost_prime > 0 %}{{ "{:,.0f}".format(ps.lost_prime) }} ₺{% else %}—{% endif %}</span>
+          <span class="ai-forecast-label">Tahmin Farkı</span>
+          <span class="ai-forecast-value">{{ "{:,.0f}".format((ain.predicted_tl | default(0, true)) - national_actual) }} ₺</span>
         </div>
       </div>
     </div>

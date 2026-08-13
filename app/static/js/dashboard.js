@@ -479,6 +479,10 @@ function applyDashboardSectionOrder() {
     anchor.insertAdjacentElement("afterend", section);
     anchor = section;
   });
+  const executiveSummary = document.getElementById("aiExecutiveSummary");
+  if (executiveSummary && executiveSummary.parentElement) {
+    executiveSummary.parentElement.appendChild(executiveSummary);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
