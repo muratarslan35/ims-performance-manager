@@ -31,17 +31,19 @@
   position: static;
   width: min(100%, 1120px);
   margin: 0 auto 14px;
-  padding: 14px 18px;
-  border: 1px solid rgba(30, 83, 153, .18);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, .96);
-  color: #0a3470;
+  padding: 2px 18px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #111827;
   font-size: clamp(17px, 2vw, 25px);
   font-weight: 800;
   letter-spacing: .06em;
   text-align: center;
-  box-shadow: 0 10px 30px rgba(7, 39, 90, .10);
+  box-shadow: none;
+  position: relative;
 }
+.auth-system-title::after{content:"";display:block;width:72px;height:3px;margin:10px auto 0;border-radius:99px;background:linear-gradient(90deg,#0b4ea2,#45a4ee)}
 
 @media (max-width: 800px) {
   .auth-identity-panel { min-height: 190px; }
