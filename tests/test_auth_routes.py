@@ -376,6 +376,8 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/register").get_data(as_text=True)
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert "position: static" in css
+    assert "background: transparent" in css
+    assert "color: #111827" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
@@ -406,9 +408,12 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "Ürün Performansı" in html
     assert "Türkiye Performans Özeti" not in html
     assert 'id="mapSelectedInfo"' in html
-    assert "901 · DİYARBAKIR BÖLGESİ" in html
+    assert "901 · DİYARBAKIR" in html
     assert "Batman" in html and "Şanlıurfa" in html and "Mardin" in html
     assert "Bölge analizini aç" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+    assert "province-layer" not in html
+    assert 'id="productValueLegend"' in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 
 
 def test_user_visible_recovery_labels_are_turkish():
