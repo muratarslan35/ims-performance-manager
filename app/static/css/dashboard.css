@@ -361,6 +361,7 @@
 .ai-forecast-item { display: flex; flex-direction: column; gap: 2px; }
 .ai-forecast-label { font-size: 11px; opacity: .72; }
 .ai-forecast-value { font-size: 16px; font-weight: 700; }
+.ai-summary-card,.ai-summary-card *{color:#fff}.ai-summary-card .ai-score-label,.ai-summary-card .ai-score-unit,.ai-summary-card .ai-summary-sub,.ai-summary-card .ai-forecast-label{color:#eaf4ff;opacity:1}.ai-summary-card .ai-panel-section{background:rgba(5,34,86,.38);border-color:rgba(255,255,255,.28)}.ai-summary-card .ai-insight-row{color:#fff;opacity:1;line-height:1.45}.ai-summary-card .ai-insight-row small{color:#dbeafe;opacity:1}.ai-summary-card .ai-insight-warning,.ai-summary-card .ai-insight-action{color:#fff3bf}.ai-summary-card .ai-insight-ok{color:#c9ffe0}.ai-summary-card .ai-insight-near{color:#c9f4ff}.ai-summary-card .ai-insight-placeholder{color:#e3efff;opacity:1}
 
 .rep-list-body { padding-top: 10px; padding-bottom: 10px; }
 .rep-row {
