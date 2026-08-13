@@ -228,7 +228,8 @@
       <div class="section-card-body">
         {% if payload.products %}
           <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
-          <div class="orbit-note"><i class="bi bi-diagram-3"></i> Ürün değerleri daire çevresinde doğrudan gösterilir; merkezde toplam gerçekleşen ₺ bulunur.</div>
+          <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
+          <div class="orbit-note"><i class="bi bi-diagram-3"></i> Merkezde toplam gerçekleşen ₺, altında ürünlerin ayrıştırılmış değerleri gösterilir.</div>
         {% else %}
           <div class="chart-placeholder"><i class="bi bi-pie-chart"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
           <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
