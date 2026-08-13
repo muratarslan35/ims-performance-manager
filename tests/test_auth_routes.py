@@ -526,6 +526,26 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "Detay Temsilcisi Ürün ve Brick Rekabet Analizi" in response.get_data(as_text=True)
     assert "Brick bazında kutu yoğunluğu ve dikkat alanları" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
+    assert "Aylık ürün değişimi ve rakip baskısı" in response.get_data(as_text=True)
+    assert "Ürün bazlı öne çıkan rakipler" in response.get_data(as_text=True)
+
+
+def test_ims_completed_status_is_rendered_in_turkish(app):
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        db.session.add(IMSUpload(file_name="tamamlanan.xlsx", year=2026, month=8, status="COMPLETED"))
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    response = client.get("/ims/")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Tamamlandı" in html
+    assert ">COMPLETED<" not in html
 
 
 def test_product_management_uses_simplified_safe_fields(app):

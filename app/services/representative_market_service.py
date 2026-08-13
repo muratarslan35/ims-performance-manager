@@ -71,10 +71,12 @@ class RepresentativeMarketService:
         }
         return assignments, brick_keys, fallback_keys
 
-    def _competition_rows(self, brick_keys, fallback_keys):
+    def _competition_rows(self, brick_keys, fallback_keys, year=None, month=None):
+        year = self.year if year is None else int(year)
+        month = self.month if month is None else int(month)
         upload_id = db.session.query(func.max(CompetitionData.upload_id)).filter(
-            CompetitionData.year == self.year,
-            CompetitionData.month == self.month,
+            CompetitionData.year == year,
+            CompetitionData.month == month,
         ).scalar()
         if upload_id is None:
             return None, []
@@ -122,12 +124,25 @@ class RepresentativeMarketService:
         products = self._products()
         assignments, brick_keys, fallback_keys = self._scope()
         upload_id, competition_rows = self._competition_rows(brick_keys, fallback_keys)
+        previous_year = self.year if self.month > 1 else self.year - 1
+        previous_month = self.month - 1 if self.month > 1 else 12
+        previous_upload_id, previous_competition_rows = self._competition_rows(
+            brick_keys, fallback_keys, previous_year, previous_month
+        )
         summaries = {
             item.product_id: item
             for item in IMSSummary.query.filter_by(
                 representative_id=self.representative.id,
                 year=self.year,
                 month=self.month,
+            ).all()
+        }
+        previous_summaries = {
+            item.product_id: item
+            for item in IMSSummary.query.filter_by(
+                representative_id=self.representative.id,
+                year=previous_year,
+                month=previous_month,
             ).all()
         }
 
@@ -161,6 +176,14 @@ class RepresentativeMarketService:
                 brick_bucket["company_unit"] += value
                 product_bucket["company_unit"] += value
 
+        previous_grouped = defaultdict(float)
+        for row in previous_competition_rows:
+            if row.metric_type != "UNIT":
+                continue
+            product = self._product_for_row(row, products)
+            if product is not None:
+                previous_grouped[product.id] += float(row.metric_value or 0.0)
+
         rows = []
         for product in products:
             summary = summaries.get(product.id)
@@ -168,6 +191,14 @@ class RepresentativeMarketService:
             market = grouped[product.id]
             market_unit = float(market["unit"])
             competitor_unit = max(market_unit - actual_unit, 0.0)
+            previous_summary = previous_summaries.get(product.id)
+            previous_actual_unit = float(previous_summary.unit or 0.0) if previous_summary else 0.0
+            previous_market_unit = float(previous_grouped[product.id])
+            previous_competitor_unit = max(previous_market_unit - previous_actual_unit, 0.0)
+            has_previous = previous_summary is not None or previous_market_unit > 0
+            actual_change_unit = actual_unit - previous_actual_unit
+            competitor_change_unit = competitor_unit - previous_competitor_unit
+            actual_change_percent = actual_change_unit * 100.0 / previous_actual_unit if previous_actual_unit else None
             calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0
             rivals = sorted(market["rivals"].items(), key=lambda item: item[1], reverse=True)[:5]
             rows.append(
@@ -178,6 +209,12 @@ class RepresentativeMarketService:
                     "competitor_unit": round(competitor_unit, 2),
                     "share_percent": round(calculated_share, 1),
                     "gap_unit": round(competitor_unit - actual_unit, 2),
+                    "has_previous": has_previous,
+                    "previous_actual_unit": round(previous_actual_unit, 2),
+                    "actual_change_unit": round(actual_change_unit, 2),
+                    "actual_change_percent": round(actual_change_percent, 1) if actual_change_percent is not None else None,
+                    "previous_competitor_unit": round(previous_competitor_unit, 2),
+                    "competitor_change_unit": round(competitor_change_unit, 2),
                     "attention": "critical" if competitor_unit > actual_unit * 1.5 and competitor_unit > 0 else "warning" if competitor_unit > actual_unit else "strong",
                     "rivals": [{"name": name, "unit": round(value, 2)} for name, value in rivals],
                 }
@@ -242,6 +279,8 @@ class RepresentativeMarketService:
             ],
             "brick_rows": brick_rows,
             "upload_id": upload_id,
+            "previous_upload_id": previous_upload_id,
+            "previous_period": {"year": previous_year, "month": previous_month},
             "scope": "brick" if brick_keys else "geography" if fallback_keys else "none",
             "bricks": [item.brick for item in assignments],
             "has_competition": bool(competition_rows),
