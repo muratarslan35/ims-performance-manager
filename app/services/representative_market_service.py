@@ -5,7 +5,7 @@ from collections import defaultdict
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models import CompetitionData, IMSSummary, Product, RepresentativeBrickAssignment
+from app.models import CompetitionData, IMSSummary, Product, RepresentativeBrickAssignment, Target
 from app.services.alias_service import AliasService
 
 
@@ -145,6 +145,14 @@ class RepresentativeMarketService:
                 month=previous_month,
             ).all()
         }
+        targets = {
+            item.product_id: item
+            for item in Target.query.filter_by(
+                representative_id=self.representative.id,
+                year=self.year,
+                month=self.month,
+            ).all()
+        }
 
         grouped = defaultdict(lambda: {"unit": 0.0, "rivals": defaultdict(float)})
         brick_groups = defaultdict(
@@ -199,6 +207,7 @@ class RepresentativeMarketService:
             actual_change_unit = actual_unit - previous_actual_unit
             competitor_change_unit = competitor_unit - previous_competitor_unit
             actual_change_percent = actual_change_unit * 100.0 / previous_actual_unit if previous_actual_unit else None
+            target_unit = float(targets.get(product.id).unit_target or 0.0) if targets.get(product.id) else 0.0
             calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0
             rivals = sorted(market["rivals"].items(), key=lambda item: item[1], reverse=True)[:5]
             rows.append(
@@ -215,6 +224,8 @@ class RepresentativeMarketService:
                     "actual_change_percent": round(actual_change_percent, 1) if actual_change_percent is not None else None,
                     "previous_competitor_unit": round(previous_competitor_unit, 2),
                     "competitor_change_unit": round(competitor_change_unit, 2),
+                    "target_unit": round(target_unit, 2),
+                    "realization_percent": round(actual_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
                     "attention": "critical" if competitor_unit > actual_unit * 1.5 and competitor_unit > 0 else "warning" if competitor_unit > actual_unit else "strong",
                     "rivals": [{"name": name, "unit": round(value, 2)} for name, value in rivals],
                 }
@@ -267,6 +278,27 @@ class RepresentativeMarketService:
             )
         priority = {"critical": 0, "warning": 1, "strong": 2}
         brick_rows.sort(key=lambda item: (priority[item["attention"]], -item["competitor_unit"]))
+        products_by_name = {product.product_name: product for product in products}
+        brick_product_rows = []
+        for brick, brick_data in brick_groups.items():
+            for product_name, product_data in brick_data["products"].items():
+                product = products_by_name.get(product_name)
+                target = targets.get(product.id) if product else None
+                target_unit = float(target.unit_target or 0.0) if target else 0.0
+                company_unit = float(product_data["company_unit"])
+                market_unit = float(product_data["market_unit"])
+                competitor_unit = max(market_unit - company_unit, 0.0)
+                brick_product_rows.append({
+                    "brick": brick,
+                    "product_name": product_name,
+                    "company_unit": round(company_unit, 2),
+                    "competitor_unit": round(competitor_unit, 2),
+                    "market_unit": round(market_unit, 2),
+                    "target_unit": round(target_unit, 2),
+                    "realization_percent": round(company_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
+                    "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,
+                })
+        brick_product_rows.sort(key=lambda item: (item["brick"], item["product_name"]))
         return {
             "rows": rows,
             "chart_rows": [
@@ -278,6 +310,7 @@ class RepresentativeMarketService:
                 for item in rows
             ],
             "brick_rows": brick_rows,
+            "brick_product_rows": brick_product_rows,
             "upload_id": upload_id,
             "previous_upload_id": previous_upload_id,
             "previous_period": {"year": previous_year, "month": previous_month},
