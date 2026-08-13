@@ -464,7 +464,25 @@ function initMapPulseStyle() {
   document.head.appendChild(style);
 }
 
+function applyDashboardSectionOrder() {
+  const orderedIds = [
+    "productPerformanceSection",
+    "turkeyMapSection",
+    "imsTurkeyRankingSection",
+    "regionalMarketShareRankingSection"
+  ];
+  let anchor = document.getElementById("executiveKpiLayout");
+  if (!anchor) return;
+  orderedIds.forEach((id) => {
+    const section = document.getElementById(id);
+    if (!section) return;
+    anchor.insertAdjacentElement("afterend", section);
+    anchor = section;
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  applyDashboardSectionOrder();
   const lastUpdateEl = document.getElementById("dashLastUpdate");
   if (lastUpdateEl) {
     const now = new Date();
