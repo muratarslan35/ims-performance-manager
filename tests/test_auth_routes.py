@@ -526,7 +526,8 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "Detay Temsilcisi Ürün ve Brick Rekabet Analizi" in response.get_data(as_text=True)
     assert "1. Ürün Bazlı Analiz" in response.get_data(as_text=True)
     assert "2. Brick Bazlı Analiz" in response.get_data(as_text=True)
-    assert "Brick ve ürün realizasyon kırılımı" in response.get_data(as_text=True)
+    assert "Brick bazlı ürün karşılaştırması" in response.get_data(as_text=True)
+    assert 'data-brick-target=' in response.get_data(as_text=True) or "Brick verisi bulunmuyor" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
     assert "Aylık ürün değişimi ve rakip baskısı" in response.get_data(as_text=True)
 

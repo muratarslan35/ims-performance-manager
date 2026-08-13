@@ -92,8 +92,20 @@
     </div>
 
     <div class="analysis-tab-pane" data-analysis-pane="brick">
-      <div class="brick-pane-heading"><div><h3>Brick ve ürün realizasyon kırılımı</h3><p>Brick çıkışının temsilcinin aylık ürün hedefini karşılama katkısı gösterilir; brick seviyesinde ayrı hedef kaydı bulunmadığı için yapay hedef dağıtılmaz.</p></div></div>
-      <div class="table-responsive"><table class="table table-vcenter card-table brick-product-table mb-0"><thead><tr><th>Brick</th><th>Ürün</th><th class="text-end">Aylık ürün hedefi</th><th class="text-end">Brick kutu çıkışı</th><th class="text-end">Hedefe katkı</th><th class="text-end">Rakip kutu</th><th class="text-end">Toplam pazar</th><th class="text-end">Pazar payı</th></tr></thead><tbody>{% for item in market_analysis.brick_product_rows %}<tr><td><strong>{{ item.brick }}</strong></td><td>{{ item.product_name }}</td><td class="text-end">{{ '{:,.0f}'.format(item.target_unit) }}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(item.company_unit) }}</td><td class="text-end"><span class="realization-pill {% if item.realization_percent >= 100 %}strong{% elif item.realization_percent >= 70 %}warning{% else %}critical{% endif %}">%{{ item.realization_percent }}</span></td><td class="text-end">{{ '{:,.0f}'.format(item.competitor_unit) }}</td><td class="text-end">{{ '{:,.0f}'.format(item.market_unit) }}</td><td class="text-end"><span class="market-share-pill">%{{ item.share_percent }}</span></td></tr>{% else %}<tr><td colspan="8" class="text-center text-secondary py-4">Bu dönem için brick–ürün kutu verisi bulunmuyor.</td></tr>{% endfor %}</tbody></table></div>
+      <div class="brick-section-intro"><h3>Brick bazlı ürün karşılaştırması</h3><p>Soldan bir brick seçerek ürünlerin kutu çıkışı, hedefe katkısı ve rakip durumunu karşılaştırın.</p></div>
+      <div class="brick-explorer">
+        <nav class="brick-explorer-menu" aria-label="Brick seçimi">
+          <div class="product-menu-title">Brickler</div>
+          {% for brick, items in market_analysis.brick_product_rows|groupby('brick') %}<button type="button" class="brick-menu-item {% if loop.first %}active{% endif %}" data-brick-target="brick-{{ loop.index }}"><span>{{ brick }}</span><b>{{ items|length }} ürün</b></button>{% else %}<div class="text-secondary small p-3">Brick verisi bulunmuyor.</div>{% endfor %}
+        </nav>
+        <div class="brick-explorer-content">
+          {% for brick, items in market_analysis.brick_product_rows|groupby('brick') %}<article class="brick-detail-panel {% if loop.first %}active{% endif %}" id="brick-{{ loop.index }}">
+            <div class="brick-pane-heading"><div><span>SEÇİLİ BRICK</span><h3>{{ brick }}</h3><p>Ürünlerin kutu çıkışı, aylık ürün hedefine katkısı ve rakip pazar karşılaştırması.</p></div></div>
+            <div class="brick-summary-kpis"><div><span>Ürün sayısı</span><strong>{{ items|length }}</strong></div><div><span>Toplam kutu çıkışı</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='company_unit')) }}</strong></div><div><span>Toplam rakip kutu</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='competitor_unit')) }}</strong></div><div><span>Toplam kutu pazarı</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='market_unit')) }}</strong></div></div>
+            <div class="table-responsive"><table class="table table-vcenter card-table brick-product-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Aylık ürün hedefi</th><th class="text-end">Brick kutu çıkışı</th><th class="text-end">Hedefe katkı</th><th class="text-end">Rakip kutu</th><th class="text-end">Toplam pazar</th><th class="text-end">Pazar payı</th></tr></thead><tbody>{% for item in items %}<tr><td><strong>{{ item.product_name }}</strong></td><td class="text-end">{{ '{:,.0f}'.format(item.target_unit) }}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(item.company_unit) }}</td><td class="text-end"><span class="realization-pill {% if item.realization_percent >= 100 %}strong{% elif item.realization_percent >= 70 %}warning{% else %}critical{% endif %}">%{{ item.realization_percent }}</span></td><td class="text-end">{{ '{:,.0f}'.format(item.competitor_unit) }}</td><td class="text-end">{{ '{:,.0f}'.format(item.market_unit) }}</td><td class="text-end"><span class="market-share-pill">%{{ item.share_percent }}</span></td></tr>{% endfor %}</tbody></table></div>
+          </article>{% endfor %}
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -112,6 +124,12 @@ document.addEventListener("DOMContentLoaded", function () {
     button.addEventListener("click", () => {
       document.querySelectorAll("[data-product-target]").forEach(item => item.classList.toggle("active", item === button));
       document.querySelectorAll(".product-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.productTarget));
+    });
+  });
+  document.querySelectorAll("[data-brick-target]").forEach(button => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-brick-target]").forEach(item => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".brick-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.brickTarget));
     });
   });
   const selector = document.getElementById("representativeSwitcher");
