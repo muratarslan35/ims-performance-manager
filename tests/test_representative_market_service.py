@@ -64,6 +64,7 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                     competition("BRICK A", "RAKIP A", "TL", 300),
                     competition("BRICK A", "TRAVAZOL", "UNIT", 10),
                     competition("BRICK A", "RAKIP A", "UNIT", 30),
+                    competition("BRICK A", "TRAVAZOL GRUP SUBTOTAL", "UNIT", 35),
                     competition("BRICK C", "TRAVAZOL", "UNIT", 5),
                     competition("BRICK C", "RAKIP C", "UNIT", 95),
                     competition("BRICK B", "RAKIP B", "UNIT", 900),
@@ -105,5 +106,8 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                 {"name": "TRAVAZOL", "unit": 10.0, "is_company": True, "share_percent": 25.0, "realization_percent": None},
                 {"name": "RAKIP A", "unit": 30.0, "is_company": False, "share_percent": 75.0, "realization_percent": None},
             ]
+            assert all("SUBTOTAL" not in item["name"] for item in result["brick_product_rows"][0]["market_products"])
+            assert result["brick_product_rows"][0]["market_unit"] == 40
+            assert result["brick_product_rows"][0]["subtotal_unit"] == 35
     finally:
         temporary.cleanup()
