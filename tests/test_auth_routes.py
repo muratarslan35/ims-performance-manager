@@ -524,10 +524,11 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
 
     assert response.status_code == 200
     assert "Detay Temsilcisi Ürün ve Brick Rekabet Analizi" in response.get_data(as_text=True)
-    assert "Brick bazında kutu yoğunluğu ve dikkat alanları" in response.get_data(as_text=True)
+    assert "1. Ürün Bazlı Analiz" in response.get_data(as_text=True)
+    assert "2. Brick Bazlı Analiz" in response.get_data(as_text=True)
+    assert "Brick ve ürün realizasyon kırılımı" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
     assert "Aylık ürün değişimi ve rakip baskısı" in response.get_data(as_text=True)
-    assert "Ürün bazlı öne çıkan rakipler" in response.get_data(as_text=True)
 
 
 def test_ims_completed_status_is_rendered_in_turkish(app):
