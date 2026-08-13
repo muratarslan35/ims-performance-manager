@@ -112,7 +112,10 @@ class RepresentativeMarketService:
         return None
 
     def _is_company_product(self, row, product):
-        product_key = self._key(row.product_name)
+        return self._is_company_product_name(row.product_name, product)
+
+    def _is_company_product_name(self, product_name, product):
+        product_key = self._key(product_name)
         own_keys = {
             self._key(product.product_name),
             self._key(product.product_code),
@@ -159,7 +162,13 @@ class RepresentativeMarketService:
             lambda: {
                 "company_unit": 0.0,
                 "market_unit": 0.0,
-                "products": defaultdict(lambda: {"company_unit": 0.0, "market_unit": 0.0}),
+                "products": defaultdict(
+                    lambda: {
+                        "company_unit": 0.0,
+                        "market_unit": 0.0,
+                        "market_products": defaultdict(float),
+                    }
+                ),
             }
         )
         for row in competition_rows:
@@ -180,6 +189,7 @@ class RepresentativeMarketService:
             brick_bucket["market_unit"] += value
             product_bucket = brick_bucket["products"][product.product_name]
             product_bucket["market_unit"] += value
+            product_bucket["market_products"][str(row.product_name or "Ürün adı yok").strip()] += value
             if is_company:
                 brick_bucket["company_unit"] += value
                 product_bucket["company_unit"] += value
@@ -288,6 +298,17 @@ class RepresentativeMarketService:
                 company_unit = float(product_data["company_unit"])
                 market_unit = float(product_data["market_unit"])
                 competitor_unit = max(market_unit - company_unit, 0.0)
+                market_products = []
+                for market_product_name, market_product_unit in product_data["market_products"].items():
+                    is_company = self._is_company_product_name(market_product_name, product) if product else False
+                    market_products.append({
+                        "name": market_product_name,
+                        "unit": round(float(market_product_unit), 2),
+                        "is_company": is_company,
+                        "share_percent": round(float(market_product_unit) * 100.0 / market_unit, 1) if market_unit else 0.0,
+                        "realization_percent": round(float(market_product_unit) * 100.0 / target_unit, 1) if is_company and target_unit else None,
+                    })
+                market_products.sort(key=lambda item: (not item["is_company"], -item["unit"], item["name"]))
                 brick_product_rows.append({
                     "brick": brick,
                     "product_name": product_name,
@@ -297,6 +318,7 @@ class RepresentativeMarketService:
                     "target_unit": round(target_unit, 2),
                     "realization_percent": round(company_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
                     "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,
+                    "market_products": market_products,
                 })
         brick_product_rows.sort(key=lambda item: (item["brick"], item["product_name"]))
         return {

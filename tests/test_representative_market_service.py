@@ -101,5 +101,9 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert len(result["brick_product_rows"]) == 2
             assert result["brick_product_rows"][0]["product_name"] == "Travazol"
             assert result["brick_product_rows"][0]["company_unit"] == 10
+            assert result["brick_product_rows"][0]["market_products"] == [
+                {"name": "TRAVAZOL", "unit": 10.0, "is_company": True, "share_percent": 25.0, "realization_percent": None},
+                {"name": "RAKIP A", "unit": 30.0, "is_company": False, "share_percent": 75.0, "realization_percent": None},
+            ]
     finally:
         temporary.cleanup()
