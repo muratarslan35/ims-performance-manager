@@ -517,3 +517,58 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "Detay Temsilcisi Ürün ve Brick Rekabet Analizi" in response.get_data(as_text=True)
     assert "Brick bazında kutu yoğunluğu ve dikkat alanları" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
+
+
+def test_product_management_uses_simplified_safe_fields(app):
+    from app.models import Product
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    page = client.get("/products/")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "Prime Esas" in html
+    assert 'name="ims_name"' not in html
+    assert 'name="category"' not in html
+    assert 'name="required_percent"' not in html
+    assert "<th>IMS Adı</th>" not in html
+    assert "<th>Kategori</th>" not in html
+    assert "<th>Hedef</th>" not in html
+
+    response = client.post("/products/add", data={
+        "product_code": "YENI-URUN",
+        "product_name": "Yeni Ürün",
+        "molecule": "Örnek etken madde",
+        "strength": "10 mg",
+        "dosage_form": "Tablet",
+        "unit_price": "25.50",
+        "display_order": "20",
+        "prime": "on",
+        "include_total_tl": "on",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+
+    with app.app_context():
+        product = Product.query.filter_by(product_code="YENI-URUN").one()
+        assert product.product_name == "Yeni Ürün"
+        assert product.ims_name == "Yeni Ürün"
+        assert product.category is None
+        assert product.required_percent == 0
+        assert product.molecule == "Örnek etken madde"
+
+
+def test_verified_product_active_ingredients_are_migrated():
+    migration = Path("migrations/versions/j5e6f7a8b9c0_update_product_active_ingredients.py").read_text(encoding="utf-8")
+    expected = {
+        "ACNEMIX": "Benzoil peroksit + Eritromisin",
+        "BRIMODER": "Brimonidin tartarat",
+        "FENTIVAG": "Fentikonazol nitrat",
+        "MIXOVUL": "Metronidazol + Mikonazol nitrat + Lidokain",
+        "MONUROL": "Fosfomisin trometamol",
+        "STIDERM": "Mepiramin maleat + Lidokain hidroklorür + Dekspantenol",
+        "TRAVAZOL": "İzokonazol nitrat + Diflukortolon valerat",
+    }
+    for code, ingredient in expected.items():
+        assert code in migration
+        assert ingredient in migration

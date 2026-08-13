@@ -48,7 +48,7 @@
 
                 <div class="text-secondary">
 
-                    Prime Ürün
+                    Prime Esas Ürün
 
                 </div>
 
@@ -196,42 +196,6 @@
 
                     <label class="form-label">
 
-                        IMS Adı
-
-                    </label>
-
-                    <input
-
-                        class="form-control"
-
-                        name="ims_name"
-
-                    >
-
-                </div>
-
-                <div class="col-md-3 mb-3">
-
-                    <label class="form-label">
-
-                        Kategori
-
-                    </label>
-
-                    <input
-
-                        class="form-control"
-
-                        name="category"
-
-                    >
-
-                </div>
-
-                <div class="col-md-3 mb-3">
-
-                    <label class="form-label">
-
                         Molekül
 
                     </label>
@@ -304,25 +268,6 @@
 
                 </div>
 
-                <div class="col-md-2 mb-3">
-
-                    <label class="form-label">
-
-                        Hedef %
-
-                    </label>
-
-                    <input
-
-                        class="form-control"
-
-                        type="number"
-
-                        name="required_percent"
-
-                    >
-
-                </div>
                                 <div class="col-md-2 mb-3">
 
                     <label class="form-label">
@@ -369,7 +314,7 @@
 
                         >
 
-                            Prime Ürün
+                            Prime Esas
 
                         </label>
 
@@ -479,17 +424,11 @@
 
                     <th>Ürün</th>
 
-                    <th>IMS Adı</th>
-
-                    <th>Kategori</th>
-
                     <th>Molekül</th>
 
                     <th>Fiyat</th>
 
-                    <th>Hedef</th>
-
-                    <th>Prime</th>
+                    <th>Prime Esas</th>
 
                     <th>Durum</th>
 
@@ -527,18 +466,6 @@
 
                     <td>
 
-                        {{ product.ims_name }}
-
-                    </td>
-
-                    <td>
-
-                        {{ product.category }}
-
-                    </td>
-
-                    <td>
-
                         {{ product.molecule }}
 
                     </td>
@@ -551,17 +478,11 @@
 
                     <td>
 
-                        %{{ product.required_percent }}
-
-                    </td>
-
-                    <td>
-
                         {% if product.is_prime_product %}
 
                         <span class="badge bg-success">
 
-                            Prime
+                            Prime Esas
 
                         </span>
 
