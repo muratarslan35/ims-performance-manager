@@ -227,34 +227,6 @@ function initProductDonut(data) {
       ctx.font = "700 9px Arial";
       ctx.fillText("TOPLAM GERÇEKLEŞEN", centerX, centerY + 15);
 
-      meta.data.forEach((arc, index) => {
-        const angle = (arc.startAngle + arc.endAngle) / 2;
-        const side = Math.cos(angle) >= 0 ? 1 : -1;
-        const startX = arc.x + Math.cos(angle) * (arc.outerRadius + 3);
-        const startY = arc.y + Math.sin(angle) * (arc.outerRadius + 3);
-        const elbowX = arc.x + Math.cos(angle) * (arc.outerRadius + 22);
-        const elbowY = arc.y + Math.sin(angle) * (arc.outerRadius + 22);
-        const endX = elbowX + side * 25;
-        const color = CORP_COLORS[index % CORP_COLORS.length];
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(elbowX, elbowY);
-        ctx.lineTo(endX, elbowY);
-        ctx.stroke();
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(endX, elbowY, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.textAlign = side > 0 ? "left" : "right";
-        ctx.fillStyle = "#173d66";
-        ctx.font = "700 9px Arial";
-        ctx.fillText(String(chart.data.labels[index]), endX + side * 5, elbowY - 3);
-        ctx.fillStyle = "#526f8b";
-        ctx.font = "800 9px Arial";
-        ctx.fillText(numberTR(values[index], " ₺"), endX + side * 5, elbowY + 9);
-      });
       ctx.restore();
     }
   };
@@ -277,8 +249,8 @@ function initProductDonut(data) {
       responsive: true,
       maintainAspectRatio: false,
       cutout: "64%",
-      radius: "68%",
-      layout: { padding: { top: 55, right: 92, bottom: 55, left: 92 } },
+      radius: "78%",
+      layout: { padding: 24 },
       animation: { animateRotate: true, animateScale: true, duration: 1100 },
       plugins: {
         legend: { display: false },
@@ -296,6 +268,9 @@ function initProductDonut(data) {
       }
     }
   });
+
+  const legend = document.getElementById("productValueLegend");
+  if (legend) legend.innerHTML = data.labels.map((label,index)=>`<div class="product-value-item"><span><i style="background:${CORP_COLORS[index % CORP_COLORS.length]}"></i>${escapeHtml(label)}</span><strong>${numberTR(Number(data.values[index]||0)," ₺")}</strong></div>`).join("");
 
 }
 
@@ -386,6 +361,9 @@ function initTurkeyMap(regionRealization) {
         const detailUrl = region.dataset.url || (regionCode ? `/regions/${encodeURIComponent(regionCode)}` : "");
         selectedInfo.innerHTML = `<strong>${regionName}</strong> · ${region.dataset.cities || "İl kapsamı tanımlı değil"}${metric ? ` · Hedef ${numberTR(metric.tl_target," ₺")} · Gerçekleşen ${numberTR(metric.tl_actual," ₺")} · %${metric.percent}` : ""}${detailUrl ? `<a href="${detailUrl}">Bölge analizini aç <i class="bi bi-arrow-right"></i></a>` : ""}`;
       }
+      const regionCode = String(region.dataset.codes || "").split(",")[0].trim();
+      const detailUrl = region.dataset.url || (regionCode ? `/regions/${encodeURIComponent(regionCode)}` : "");
+      if (detailUrl) window.location.assign(detailUrl);
     });
 
     if (!tooltip) return;
