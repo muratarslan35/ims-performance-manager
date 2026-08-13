@@ -36,6 +36,12 @@ function numberTR(value, suffix = "") {
   return `${safeValue.toLocaleString("tr-TR")}${suffix}`;
 }
 
+function escapeDashboardHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
+}
+
 function defaultTooltip() {
   return {
     backgroundColor: "rgba(11, 34, 67, .95)",
@@ -270,7 +276,14 @@ function initProductDonut(data) {
   });
 
   const legend = document.getElementById("productValueLegend");
-  if (legend) legend.innerHTML = data.labels.map((label,index)=>`<div class="product-value-item"><span><i style="background:${CORP_COLORS[index % CORP_COLORS.length]}"></i>${escapeHtml(label)}</span><strong>${numberTR(Number(data.values[index]||0)," ₺")}</strong></div>`).join("");
+  if (legend) {
+    const total = data.values.reduce((sum, value) => sum + Number(value || 0), 0);
+    legend.innerHTML = data.labels.map((label, index) => {
+      const value = Number(data.values[index] || 0);
+      const share = total > 0 ? (value / total * 100).toLocaleString("tr-TR", {maximumFractionDigits: 1}) : "0";
+      return `<div class="product-value-item"><span><i style="background:${CORP_COLORS[index % CORP_COLORS.length]}"></i><span class="product-value-name">${escapeDashboardHtml(label)}<small>Toplam payı %${share}</small></span></span><strong>${numberTR(value," ₺")}</strong></div>`;
+    }).join("");
+  }
 
 }
 

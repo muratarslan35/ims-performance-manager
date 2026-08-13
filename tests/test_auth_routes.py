@@ -405,7 +405,7 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "Türkiye Bölge Haritası" in html
     assert "Excel Bölge Yerleşimi" not in html
     assert "Türkiye temsili satış bölgesi haritası" in html
-    assert "Ürün Performansı" in html
+    assert "Ürün Performans Tablosu" in html
     assert "Türkiye Performans Özeti" not in html
     assert 'id="mapSelectedInfo"' in html
     assert "901 · DİYARBAKIR" in html
@@ -416,6 +416,10 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "province-layer" not in html
     assert 'id="productValueLegend"' in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
     assert "product-performance-layout" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    dashboard_template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    assert dashboard_template.index("Ürün Performans Tablosu") < dashboard_template.index('id="productDonutChart"')
+    assert "Toplam Ciro Dağılımı" in dashboard_template
+    assert "escapeDashboardHtml" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert "region-realization-value" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 

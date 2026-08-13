@@ -206,7 +206,7 @@
 {% if competition.groups %}<div class="competition-explainer"><i class="bi bi-info-circle-fill"></i><span>Her satırda şirket IMS satışı, rakip satış alanı ve toplam pazar birlikte gösterilir. Mavi çubuk şirket, turuncu çubuk rakip payını ifade eder.</span></div><div class="table-responsive market-table-wrap market-table-full"><table class="table market-table competition-visible-table align-middle mb-0"><thead><tr><th>Ürün / Pazar Grubu</th><th>Şirket IMS</th><th>Rakip Alanı</th><th>Toplam Pazar</th><th>Görsel Dağılım</th><th>Şirket Payı</th></tr></thead><tbody>{% for group in competition.groups %}<tr><td><strong>{{ group.company_product }}</strong><small>{{ group.product_group }}</small></td><td><strong>{{ "{:,.0f}".format(group.company_sales_tl | default(0, true)) }} ₺</strong></td><td>{{ "{:,.0f}".format(group.competitor_sales_tl | default(0, true)) }} ₺</td><td>{{ "{:,.0f}".format(group.market_sales_tl | default(0, true)) }} ₺</td><td><div class="market-composition" aria-label="Şirket payı yüzde {{ group.company_share_percent | default(0, true) }}"><span style="width:{{ group.company_share_percent | default(0, true) }}%"></span><em style="width:{{ 100 - (group.company_share_percent | default(0, true)) }}%"></em></div><div class="composition-label"><span>Şirket</span><span>Rakip</span></div></td><td><span class="market-share-badge">%{{ group.company_share_percent | default(0, true) }}</span></td></tr>{% endfor %}</tbody></table></div><p class="market-source-note"><i class="bi bi-calculator"></i> Rakip alanı = Toplam pazar − Şirket IMS. Tüm değerler tıklama gerektirmeden görünür.</p>{% else %}<div class="empty-state"><i class="bi bi-bar-chart-line"></i><p>Aktif dönem için rekabet TL verisi bulunmuyor.</p></div>{% endif %}</div>
 
 <div class="row g-4 mb-4">
-  <div class="col-lg-7">
+  <div class="col-12">
     <div class="section-card">
       <div class="section-card-header">
         <h2 class="section-card-title"><i class="bi bi-map-fill"></i> Türkiye Bölge Haritası</h2>
@@ -219,26 +219,6 @@
     </div>
   </div>
 
-  <div class="col-lg-5">
-    <div class="section-card">
-      <div class="section-card-header">
-        <h2 class="section-card-title"><i class="bi bi-pie-chart-fill"></i> Ürün Performansı</h2>
-        <span class="section-chip section-chip-success">Toplam Ciro</span>
-      </div>
-      <div class="section-card-body">
-        {% if payload.products %}
-          <div class="product-performance-layout">
-            <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
-            <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
-          </div>
-          <div class="orbit-note"><i class="bi bi-diagram-3"></i> Merkezde toplam gerçekleşen ₺, altında ürünlerin ayrıştırılmış değerleri gösterilir.</div>
-        {% else %}
-          <div class="chart-placeholder"><i class="bi bi-pie-chart"></i><div class="chart-placeholder-title">Veri bekleniyor</div><div class="chart-placeholder-sub">Henüz IMS verisi yüklenmedi</div></div>
-          <div class="chart-skeleton"><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div><div class="chart-skeleton-bar"></div></div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
 </div>
 
 <div class="ai-summary-card mb-4">
@@ -489,6 +469,14 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+      <div class="product-chart-under-table">
+        <div class="product-chart-heading"><div><i class="bi bi-pie-chart-fill"></i><strong>Ürün Performansı · Toplam Ciro Dağılımı</strong><small>Gerçekleşen IMS satışlarının ürün bazlı dağılımı</small></div><span class="section-chip section-chip-success">Canlı IMS Verisi</span></div>
+        <div class="product-performance-layout">
+          <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
+          <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
+        </div>
+        <div class="orbit-note"><i class="bi bi-info-circle"></i> Merkezde toplam gerçekleşen ₺; sağdaki listede ürün tutarı ve toplam ciro payı gösterilir.</div>
       </div>
       {% else %}
         <div class="section-card-body"><div class="empty-state"><i class="bi bi-table"></i><p>Henüz ürün performans verisi bulunmuyor</p></div></div>
