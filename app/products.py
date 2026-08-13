@@ -60,6 +60,8 @@ def add():
 
     try:
 
+        product_name = (request.form.get("product_name") or "").strip()
+
         product = Product(
 
             product_code=request.form.get(
@@ -68,23 +70,13 @@ def add():
 
             ).strip(),
 
-            product_name=request.form.get(
+            product_name=product_name,
 
-                "product_name"
+            # IMS adı yönetim ekranından kaldırıldı. Eşleştirme motorunun
+            # geriye dönük çalışması için yeni kayıtta ürün adı kullanılır.
+            ims_name=product_name,
 
-            ).strip(),
-
-            ims_name=request.form.get(
-
-                "ims_name"
-
-            ).strip(),
-
-            category=request.form.get(
-
-                "category"
-
-            ),
+            category=None,
 
             molecule=request.form.get(
 
@@ -116,17 +108,7 @@ def add():
 
             ),
 
-            required_percent=float(
-
-                request.form.get(
-
-                    "required_percent",
-
-                    0
-
-                ) or 0
-
-            ),
+            required_percent=0.0,
 
             include_total_tl=bool(
 
@@ -241,17 +223,12 @@ def edit(
 
         ).strip()
 
-        product.ims_name = request.form.get(
+        # Arayüzden kaldırılan eski alanlar mevcut kayıtlarda korunur.
+        if "ims_name" in request.form:
+            product.ims_name = (request.form.get("ims_name") or product.product_name).strip()
 
-            "ims_name"
-
-        ).strip()
-
-        product.category = request.form.get(
-
-            "category"
-
-        )
+        if "category" in request.form:
+            product.category = request.form.get("category") or None
 
         product.molecule = request.form.get(
 
@@ -283,17 +260,8 @@ def edit(
 
         )
 
-        product.required_percent = float(
-
-            request.form.get(
-
-                "required_percent",
-
-                0
-
-            ) or 0
-
-        )
+        if "required_percent" in request.form:
+            product.required_percent = float(request.form.get("required_percent") or 0)
 
         product.include_total_tl = bool(
 
