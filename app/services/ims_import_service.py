@@ -1749,7 +1749,7 @@ class IMSImportService:
                     # used by the workbook's own remaining-box calculation.
                     net_unit_price = balance_tl / balance_unit
                     if net_unit_price > 0:
-                        target.unit_target = target.tl_target / net_unit_price
+                        target.unit_target = float(round(target.tl_target / net_unit_price))
                 elif not target.unit_target:
                     target.unit_target = TargetBoxCalculationService.unit_target(
                         target.tl_target,
