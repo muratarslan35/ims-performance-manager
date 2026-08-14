@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from enum import Enum
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple
 from openpyxl import load_workbook as openpyxl_load_workbook
 from app.extensions import db
 from app.models import CompetitionData
@@ -325,16 +325,30 @@ class CompetitionImportService:
         sheet = self._workbook[orig_name]
 
         ptype, year, month = self._discover_metadata(sheet)
-        # These IMS sheets have product headers rather than literal Territory /
-        # Subterritory labels. Columns A and B carry those dimensions.
+        # Monthly competition sheets carry Region, National, IAM Brick and two
+        # representative columns before the dynamic product columns.
         source_name = self._normalize_sheet_name(orig_name)
         if "AYLIK" in source_name and "REKABET" in source_name:
-            h_row, t_col, s_col = 3, 1, 2
+            h_row, t_col = 3, 1
+            header_values = {
+                column: self._normalize_turkish_text(self._get_cell_value(sheet, h_row, column))
+                for column in range(1, (sheet.max_column or 0) + 1)
+            }
+            brick_columns = [column for column, label in header_values.items() if "BRICK" in label]
+            representative_columns = [
+                column for column, label in header_values.items()
+                if "TTS" in label and "ISMI" in label
+            ]
+            s_col = brick_columns[0] if brick_columns else 2
+            last_dimension_column = max([s_col, *representative_columns])
+            dimension_columns = set(range(1, last_dimension_column + 1))
         elif "REKABET" in source_name:
             h_row, t_col, s_col = 2, 1, 2
+            dimension_columns = {1, 2}
         else:
             h_row = self._find_header_row(sheet)
             t_col, s_col = None, None
+            dimension_columns = set()
 
         if t_col is None or s_col is None:
             for c in range(1, (sheet.max_column or 0) + 1):
@@ -347,8 +361,18 @@ class CompetitionImportService:
         if not t_col or not s_col:
             raise ValueError("Bölge sütunları başlık satırında eksik.")
 
-        d_start = self._find_data_start(sheet, h_row, t_col)
+        d_start = 5 if "AYLIK" in source_name and "REKABET" in source_name else self._find_data_start(sheet, h_row, t_col)
         d_end = self._find_data_end(sheet, d_start)
+        product_columns = {
+            column: name
+            for column, name in self._extract_product_columns(sheet, h_row).items()
+            if column not in dimension_columns
+        }
+        product_groups = {
+            group: [(name, column) for name, column in products if column not in dimension_columns]
+            for group, products in self._extract_product_groups(sheet, h_row).items()
+        }
+        product_groups = {group: products for group, products in product_groups.items() if products}
 
         struct = {
             "sheet_name": orig_name,
@@ -362,8 +386,8 @@ class CompetitionImportService:
             "max_columns": sheet.max_column or 0,
             "territory_column": t_col,
             "subterritory_column": s_col,
-            "product_columns": self._extract_product_columns(sheet, h_row),
-            "product_groups": self._extract_product_groups(sheet, h_row),
+            "product_columns": product_columns,
+            "product_groups": product_groups,
         }
 
         # Fail-fast validation ensuring structure dictionary is fully populated without empty/None values
@@ -564,6 +588,15 @@ class CompetitionImportService:
         if not product_group:
             product_group = DefaultGroup.GENEL.value
 
+        product_name = norm_rec.get("product_name") or ""
+        normalized_product = self._normalize_turkish_text(product_name)
+        is_grand_total = "GRAND TOTAL" in normalized_product or "GENEL TOPLAM" in normalized_product
+        is_subtotal = not is_grand_total and (
+            "SUBTOTAL" in normalized_product
+            or "ARA TOPLAM" in normalized_product
+            or normalized_product.endswith(" TOPLAM")
+        )
+
         return CompetitionData(
             upload_id=upload_id,
             sheet_name=norm_rec.get("sheet_name", sheet_name),
@@ -574,9 +607,11 @@ class CompetitionImportService:
             territory=norm_rec.get("territory"),
             subterritory=norm_rec.get("subterritory", ""),
             product_group=product_group,
-            product_name=norm_rec.get("product_name"),
+            product_name=product_name,
             metric_type=metric_type,
             metric_value=norm_rec.get("metric_value", 0.0),
+            is_subtotal=is_subtotal,
+            is_grand_total=is_grand_total,
             source_row=norm_rec.get("source_row")
         )
 
@@ -618,7 +653,7 @@ class CompetitionImportService:
         sheet_warnings: List[Dict[str, Any]] = []
         model_instances = []
 
-        existing_keys: Set[Tuple[Any, ...]] = set()
+        existing_values: Dict[Tuple[Any, ...], float] = {}
         existing_rows = db.session.query(
             CompetitionData.upload_id,
             CompetitionData.sheet_name,
@@ -629,7 +664,8 @@ class CompetitionImportService:
             CompetitionData.subterritory,
             CompetitionData.product_group,
             CompetitionData.product_name,
-            CompetitionData.metric_type
+            CompetitionData.metric_type,
+            CompetitionData.metric_value,
         ).filter_by(
             upload_id=self.upload_id
         ).all()
@@ -638,7 +674,7 @@ class CompetitionImportService:
             # Case-insensitive normalized comparison for sheet names in duplicate checks
             row_list = list(row)
             row_list[1] = self._normalize_turkish_text(row_list[1])
-            existing_keys.add(tuple(row_list))
+            existing_values[tuple(row_list[:-1])] = float(row_list[-1] or 0.0)
 
         for rec in records:
             is_valid, val_warnings = self.validate_record(rec)
@@ -666,11 +702,17 @@ class CompetitionImportService:
                 norm.get("metric_type")
             )
 
-            if biz_key in existing_keys:
+            metric_value = float(norm.get("metric_value") or 0.0)
+            if biz_key in existing_values:
+                if abs(existing_values[biz_key] - metric_value) > 1e-9:
+                    raise ValueError(
+                        "Aynı rekabet veri anahtarında çelişen değerler bulundu: "
+                        f"key={biz_key}, first={existing_values[biz_key]}, second={metric_value}"
+                    )
                 duplicate_count += 1
                 continue
 
-            existing_keys.add(biz_key)
+            existing_values[biz_key] = metric_value
 
             model_obj = self.map_record_to_model(norm, sheet_name)
             model_instances.append(model_obj)
@@ -737,7 +779,7 @@ class CompetitionImportService:
                 total_duplicates += stats["duplicates"]
                 total_invalid += stats["invalid"]
 
-            if total_invalid or total_duplicates or total_inserted != self.parse_statistics["numeric_cells"]:
+            if total_invalid or total_inserted + total_duplicates != self.parse_statistics["numeric_cells"]:
                 raise ValueError(
                     "Rekabet veri mutabakatı başarısız: "
                     f"numeric={self.parse_statistics['numeric_cells']}, inserted={total_inserted}, "
