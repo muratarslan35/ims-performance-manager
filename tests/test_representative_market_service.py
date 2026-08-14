@@ -5,7 +5,7 @@ from flask_migrate import upgrade
 
 from app import create_app
 from app.extensions import db
-from app.models import CompetitionData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment
+from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment
 from app.services.representative_market_service import RepresentativeMarketService
 
 
@@ -109,5 +109,92 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert all("SUBTOTAL" not in item["name"] for item in result["brick_product_rows"][0]["market_products"])
             assert result["brick_product_rows"][0]["market_unit"] == 40
             assert result["brick_product_rows"][0]["subtotal_unit"] == 35
+    finally:
+        temporary.cleanup()
+
+
+def test_representative_grained_competition_and_raw_brick_market_are_combined():
+    temporary = tempfile.TemporaryDirectory()
+    database_path = Path(temporary.name) / "representative-market-grains.db"
+
+    class Config:
+        TESTING = True
+        SECRET_KEY = "test-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        UPLOAD_FOLDER = Path(temporary.name) / "uploads"
+        REPORT_FOLDER = Path(temporary.name) / "reports"
+        BACKUP_FOLDER = Path(temporary.name) / "backups"
+        LOG_FOLDER = Path(temporary.name) / "logs"
+
+    application = create_app(Config)
+    try:
+        with application.app_context():
+            upgrade(directory=str(Path(__file__).resolve().parents[1] / "migrations"))
+            representative = Representative(rep_code="R1", rep_name="Murat Arslan", active=True)
+            product = Product(product_code="TRAVAZOL", product_name="Travazol", display_order=1, is_active=True)
+            db.session.add_all([representative, product])
+            db.session.flush()
+            upload = IMSUpload(file_name="january.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED")
+            db.session.add(upload)
+            db.session.flush()
+            db.session.add_all([
+                RepresentativeBrickAssignment(
+                    representative_id=representative.id, year=2026, month=1, brick="MARDIN MERKEZ"
+                ),
+                IMSSummary(
+                    upload_id=upload.id, representative_id=representative.id, product_id=product.id,
+                    year=2026, month=1, quarter="Q1", unit=100,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="TTS REKABET",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MURAT ARSLAN",
+                    product_group="TRAVAZOL GRUP", product_name="TRAVAZOL", metric_type="UNIT",
+                    metric_value=100, source_row=1,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="TTS REKABET",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MURAT ARSLAN",
+                    product_group="TRAVAZOL GRUP", product_name="RAKIP A", metric_type="UNIT",
+                    metric_value=300, source_row=1,
+                ),
+                IMSRawData(
+                    upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=1,
+                    sheet_name="BRICK SATIS", sheet_type="brick_sales",
+                    representative_id=representative.id, product_id=product.id, representative="MURAT ARSLAN",
+                    brick="MARDIN MERKEZ", product="TRAVAZOL", unit=40, raw_json="{}",
+                ),
+                IMSRawData(
+                    upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=1,
+                    sheet_name="REKABET KUTU", sheet_type="competition_box",
+                    representative_id=representative.id, product_id=product.id, representative="MURAT ARSLAN",
+                    brick="MARDIN MERKEZ", product="TRAVAZOL", unit=160, raw_json="{}",
+                ),
+            ])
+            db.session.commit()
+
+            result = RepresentativeMarketService(representative, 2026, 1).build()
+
+            travazol = result["rows"][0]
+            assert travazol["market_unit"] == 400
+            assert travazol["competitor_unit"] == 300
+            assert travazol["rivals"] == [{"name": "RAKIP A", "unit": 300.0}]
+            assert result["brick_rows"][0]["brick"] == "MARDIN MERKEZ"
+            assert result["brick_rows"][0]["company_unit"] == 40
+            assert result["brick_rows"][0]["market_unit"] == 160
+            assert result["brick_product_rows"][0]["market_products"][1]["name"] == "Rakip toplamı"
+            assert result["brick_product_rows"][0]["market_products"][1]["unit"] == 120
+
+            # A newer completed snapshot is authoritative. A competitor that
+            # disappeared from it must not leak forward from the older upload.
+            newer_upload = IMSUpload(
+                file_name="january-revised.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED"
+            )
+            db.session.add(newer_upload)
+            db.session.commit()
+            revised = RepresentativeMarketService(representative, 2026, 1).build()
+            assert revised["has_competition"] is False
+            assert revised["brick_rows"] == []
+            assert revised["brick_product_rows"] == []
     finally:
         temporary.cleanup()
