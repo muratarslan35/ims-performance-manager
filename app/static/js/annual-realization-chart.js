@@ -6,7 +6,7 @@
     afterDatasetsDraw(chart) {
       const {ctx} = chart;
       ctx.save();
-      ctx.fillStyle = "#173d66";
+      ctx.fillStyle = "#7a5200";
       ctx.font = "700 11px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
@@ -29,14 +29,14 @@
         datasets: [{
           label: "Aylık toplam realizasyon",
           data: rows.map(item => item.has_data ? item.percent : null),
-          borderColor: "#0b5cad",
-          backgroundColor: "rgba(11,92,173,.12)",
-          pointBackgroundColor: "#0b5cad",
+          borderColor: "#b77900",
+          backgroundColor: "rgba(244,163,0,.16)",
+          pointBackgroundColor: "#f4a300",
           pointBorderColor: "#fff",
           pointBorderWidth: 2,
           pointRadius: 5,
           pointHoverRadius: 7,
-          borderWidth: 3,
+          borderWidth: 2,
           fill: true,
           tension: .28,
           spanGaps: false

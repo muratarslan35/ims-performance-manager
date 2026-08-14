@@ -32,6 +32,9 @@
   </section>
   {% endfor %}
 </div>
+{% endblock %}
+
+{% block scripts %}
 <script src="{{ url_for('static', filename='js/annual-realization-chart.js') }}"></script>
 <script>document.querySelectorAll('[data-period-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-period-tab]').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('[data-period-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.periodPanel===button.dataset.periodTab));}));</script>
 {% endblock %}
