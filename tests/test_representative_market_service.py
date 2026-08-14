@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 from flask_migrate import upgrade
+from openpyxl import Workbook
 
 from app import create_app
 from app.extensions import db
@@ -305,4 +306,80 @@ def test_shared_brick_source_is_visible_to_both_reps_without_duplicate_facts():
             assert IMSSummary.query.count() == 1
             assert Target.query.count() == 1
     finally:
+        temporary.cleanup()
+
+
+def test_legacy_upload_reads_named_brick_rivals_directly_from_source_workbook():
+    temporary = tempfile.TemporaryDirectory()
+    root = Path(temporary.name)
+    database_path = root / "legacy-brick-rivals.db"
+
+    class Config:
+        TESTING = True
+        SECRET_KEY = "test-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        UPLOAD_FOLDER = root / "uploads"
+        REPORT_FOLDER = root / "reports"
+        BACKUP_FOLDER = root / "backups"
+        LOG_FOLDER = root / "logs"
+
+    application = create_app(Config)
+    try:
+        with application.app_context():
+            upgrade(directory=str(Path(__file__).resolve().parents[1] / "migrations"))
+            representative = Representative(rep_code="LEGACY", rep_name="Legacy Temsilci", active=True)
+            product = Product(product_code="TRAVAZOL", product_name="Travazol", display_order=1, is_active=True)
+            db.session.add_all([representative, product])
+            db.session.flush()
+            upload = IMSUpload(file_name="legacy-source.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED")
+            db.session.add(upload)
+            db.session.flush()
+            db.session.add_all([
+                RepresentativeBrickAssignment(representative_id=representative.id, year=2026, month=1, brick="MARDIN BATI"),
+                IMSRawData(
+                    upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=5,
+                    sheet_name="1001 BRICK SATIS", sheet_type="brick_sales",
+                    representative_id=representative.id, product_id=product.id,
+                    representative="LEGACY TEMSILCI", brick="MARDIN BATI", product="TRAVAZOL",
+                    unit=40, raw_json="{}",
+                ),
+                IMSRawData(
+                    upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=5,
+                    sheet_name="REKABET KUTU", sheet_type="competition_box",
+                    representative_id=representative.id, product_id=product.id,
+                    representative="LEGACY TEMSILCI", brick="MARDIN BATI", product="TRAVAZOL",
+                    unit=120, raw_json="{}",
+                ),
+            ])
+            db.session.commit()
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "AYLIK REKABET KUTU"
+            sheet.cell(1, 1, "OCAK 2026")
+            sheet.cell(2, 6, "TRAVAZOL GRUP")
+            for column, value in enumerate(
+                ("BOLGE", "NATIONAL", "IAM BRICK", "1. TTS ISMI", "2. TTS ISMI", "TRAVAZOL", "RAKIP X"),
+                start=1,
+            ):
+                sheet.cell(3, column, value)
+            for column, value in enumerate(
+                ("901", "DIYARBAKIR", "MARDIN BATI", "LEGACY TEMSILCI", None, 40, 80),
+                start=1,
+            ):
+                sheet.cell(5, column, value)
+            workbook.save(Config.UPLOAD_FOLDER / upload.file_name)
+
+            RepresentativeMarketService._workbook_competition_cache.clear()
+            result = RepresentativeMarketService(representative, 2026, 1).build()
+            market_products = result["brick_product_rows"][0]["market_products"]
+
+            assert [(item["name"], item["unit"]) for item in market_products] == [
+                ("TRAVAZOL", 40.0),
+                ("RAKIP X", 80.0),
+            ]
+            assert all(item["name"] != "Rakip toplamı" for item in market_products)
+    finally:
+        RepresentativeMarketService._workbook_competition_cache.clear()
         temporary.cleanup()

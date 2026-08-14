@@ -1,16 +1,26 @@
 """Representative-scoped company and competitor market analysis."""
 
 from collections import defaultdict
+import logging
+from pathlib import Path
+from types import SimpleNamespace
 
+from flask import current_app
 from sqlalchemy import desc
 
 from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, RepresentativeBrickAssignment, Target
 from app.services.alias_service import AliasService
+from app.services.competition_import_service import CompetitionImportService
+
+
+logger = logging.getLogger(__name__)
 
 
 class RepresentativeMarketService:
     """Build a seven-product market view without leaking another rep's bricks."""
+
+    _workbook_competition_cache = {}
 
     PRODUCT_ORDER = (
         "TRAVAZOL",
@@ -186,7 +196,55 @@ class RepresentativeMarketService:
             and "REKABET" in AliasService.normalize(row.sheet_name)
             and "KUTU" in AliasService.normalize(row.sheet_name)
         ]
+        if not exact:
+            exact = self._brick_competition_rows_from_workbook(upload_id, brick_keys)
         return upload_id, exact
+
+    def _brick_competition_rows_from_workbook(self, upload_id, brick_keys):
+        """Read exact named brick products from the retained source workbook.
+
+        This is a read-only compatibility path for uploads completed before
+        product-level monthly competition rows were persisted. New uploads use
+        the database path above. The parsed source is cached per upload so the
+        workbook is read only once per application process.
+        """
+        cached = self._workbook_competition_cache.get(upload_id)
+        if cached is None:
+            upload = db.session.get(IMSUpload, upload_id)
+            upload_folder = Path(current_app.config["UPLOAD_FOLDER"])
+            workbook_path = upload_folder / upload.file_name if upload else None
+            cached = []
+            if workbook_path and workbook_path.is_file():
+                parser = CompetitionImportService(
+                    file_path=str(workbook_path), upload_id=upload_id,
+                    year=self.year, month=self.month,
+                )
+                try:
+                    parser.load_workbook(str(workbook_path))
+                    for sheet_name in parser.get_supported_sheets():
+                        normalized = AliasService.normalize(sheet_name)
+                        if not ("AYLIK" in normalized and "REKABET" in normalized and "KUTU" in normalized):
+                            continue
+                        structure = parser._parse_sheet_structure(sheet_name)
+                        for record in parser._parse_sheet_records(structure):
+                            cached.append(SimpleNamespace(
+                                subterritory=record.get("subterritory"),
+                                territory=record.get("territory"),
+                                product_group=record.get("product_group"),
+                                product_name=record.get("product_name"),
+                                metric_type=record.get("metric_type"),
+                                metric_value=record.get("metric_value"),
+                                sheet_name=record.get("sheet_name"),
+                                is_subtotal=False,
+                                is_grand_total=False,
+                            ))
+                except Exception:
+                    logger.exception("brick_competition_source_read_failed upload_id=%s", upload_id)
+                finally:
+                    if parser._workbook:
+                        parser._workbook.close()
+            self._workbook_competition_cache[upload_id] = cached
+        return [row for row in cached if self._key(row.subterritory) in brick_keys]
 
     def _product_for_row(self, row, products):
         group_key = self._key(row.product_group)
