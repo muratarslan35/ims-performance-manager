@@ -87,6 +87,10 @@ jobs:
           fi
 
           venv/bin/python -m flask --app run.py db upgrade
+          repair_backup="instance/backups/ipm-pre-competition-backfill-$(date +%Y%m%d-%H%M%S).db"
+          cp instance/ipm.db "$repair_backup"
+          echo "Competition backfill backup created: $repair_backup"
+          venv/bin/python backfill_competition_data.py
           venv/bin/python verify_runtime.py
 
           pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
