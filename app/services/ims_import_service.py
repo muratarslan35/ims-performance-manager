@@ -500,16 +500,17 @@ class IMSImportService:
 
     def parse_metric_value(self, value):
         if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
-            return 0.0, True
+            return 0.0, "empty"
         if isinstance(value, (int, float, bool)):
-            return self.safe_float(value), True
+            return self.safe_float(value), "valid"
         text = str(value).strip()
         if not text or AliasService.normalize(text) in {"", "NAN", "NONE", "-"}:
-            return 0.0, True
+            return 0.0, "empty"
         parsed = self.safe_float(text)
         has_numeric_marker = bool(re.search(r"\d", text))
-        valid = has_numeric_marker or parsed != 0.0
-        return parsed, valid
+        if has_numeric_marker or parsed != 0.0:
+            return parsed, "valid"
+        return parsed, "invalid"
 
     def resolve_representative_match(self, representative_name):
         normalized = AliasService.normalize(representative_name)
@@ -1026,12 +1027,26 @@ class IMSImportService:
                         "sheet_names": set(),
                         "metrics": {"unit": 0.0, "tl": 0.0, "market_share": 0.0, "value_share": 0.0, "growth": 0.0},
                         "source_values": {},
+                        "has_metric_value": False,
+                        "invalid_metrics": [],
                     },
                 )
                 merged_row["source_rows"].append(source_row)
                 merged_row["sheet_names"].add(sheet["sheet_name"])
                 metric_value = row[sheet["metric_column"]]
-                merged_row["metrics"][sheet["metric_kind"]] += self.safe_float(metric_value)
+                parsed_value, metric_state = self.parse_metric_value(metric_value)
+                if metric_state == "valid":
+                    merged_row["has_metric_value"] = True
+                    merged_row["metrics"][sheet["metric_kind"]] += parsed_value
+                elif metric_state == "invalid":
+                    merged_row["invalid_metrics"].append(
+                        {
+                            "field": sheet["metric_column"],
+                            "sheet_name": sheet["sheet_name"],
+                            "source_row": source_row,
+                            "value": self._value_for_json(metric_value),
+                        }
+                    )
                 merged_row["source_values"][f"{sheet['sheet_name']}::{sheet['metric_column']}"] = self._value_for_json(
                     metric_value
                 )
@@ -1151,7 +1166,17 @@ class IMSImportService:
 
                 self.statistics["matched_products"] += 1
                 metrics = item["metrics"]
-                if not any(metrics.values()):
+                if item["invalid_metrics"]:
+                    self.statistics["skipped_records"] += 1
+                    for invalid_metric in item["invalid_metrics"]:
+                        self._log_skipped_row(
+                            reason="invalid_numeric_value",
+                            representative=representative_name,
+                            product=product_group_name,
+                            **invalid_metric,
+                        )
+                    continue
+                if not item["has_metric_value"]:
                     self.statistics["skipped_records"] += 1
                     self._log_skipped_row(
                         reason="empty_metrics",
@@ -1346,10 +1371,11 @@ class IMSImportService:
                                 "growth": 0.0,
                             }
                             source_values = {}
+                            has_metric_value = False
                             for column in product_info["columns"]:
                                 value = row.iloc[column["index"]]
-                                parsed_value, valid_numeric = self.parse_metric_value(value)
-                                if not valid_numeric:
+                                parsed_value, metric_state = self.parse_metric_value(value)
+                                if metric_state == "invalid":
                                     self.statistics["skipped_records"] += 1
                                     self._log_skipped_row(
                                         reason="invalid_numeric_value",
@@ -1362,12 +1388,14 @@ class IMSImportService:
                                     )
                                     metrics = None
                                     break
-                                metrics[column["metric"]] += parsed_value
+                                if metric_state == "valid":
+                                    has_metric_value = True
+                                    metrics[column["metric"]] += parsed_value
                                 source_values[column["header"]] = self._value_for_json(value)
                             if metrics is None:
                                 continue
 
-                            if not any(metrics.values()):
+                            if not has_metric_value:
                                 self.statistics["skipped_records"] += 1
                                 self._log_skipped_row(
                                     reason="empty_metrics",

@@ -421,6 +421,59 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertIn("invalid_numeric_value", reasons)
         self.assertEqual(IMSRawData.query.count(), 1)
 
+    def test_wide_zero_metrics_are_stored_as_real_zero_sales(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "zero_metrics.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None],
+                    ["Representative", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", 0, 0.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertNotIn("empty_metrics", {item["reason"] for item in result["skipped_logs"]})
+        self.assertEqual(IMSRawData.query.count(), 1)
+        self.assertEqual(IMSFact.query.count(), 1)
+        summary = IMSSummary.query.one()
+        self.assertEqual(summary.unit, 0.0)
+        self.assertEqual(summary.tl, 0.0)
+
+    def test_wide_truly_empty_metrics_are_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "empty_metrics.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None],
+                    ["Representative", "Travazol Box", "Travazol TL"],
+                    ["Ayşe Kaya", None, None],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertIn("empty_metrics", {item["reason"] for item in result["skipped_logs"]})
+        self.assertEqual(IMSRawData.query.count(), 0)
+
+    def test_normalized_zero_metric_is_stored_as_real_zero_sales(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "normalized_zero.xlsx"
+            pd.DataFrame(
+                [
+                    ["Bilim İlaç Brick Analizi", None, None],
+                    ["Temsilci", "Ürün Grubu", "TL"],
+                    ["Ayşe Kaya", "Travazol", 0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="TL")
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertNotIn("empty_metrics", {item["reason"] for item in result["skipped_logs"]})
+        self.assertEqual(IMSRawData.query.count(), 1)
+        self.assertEqual(IMSFact.query.count(), 1)
+
     def test_region_and_province_unmatched_items_have_review_fields(self):
         db.session.query(Representative).delete()
         db.session.add(Representative(rep_code="R-100", rep_name="Ali Veli", region="Ege", city="İzmir", active=True))
