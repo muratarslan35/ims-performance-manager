@@ -5,7 +5,7 @@ from flask_migrate import upgrade
 
 from app import create_app
 from app.extensions import db
-from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment
+from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.representative_market_service import RepresentativeMarketService
 
 
@@ -153,10 +153,34 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
                     metric_value=100, source_row=1,
                 ),
                 CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
+                    product_group="TRAVAZOL GRUP", product_name="TRAVAZOL", metric_type="UNIT",
+                    metric_value=40, source_row=5,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
+                    product_group="TRAVAZOL GRUP", product_name="RAKIP A", metric_type="UNIT",
+                    metric_value=80, source_row=5,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
+                    product_group="TRAVAZOL GRUP", product_name="RAKIP B", metric_type="UNIT",
+                    metric_value=40, source_row=5,
+                ),
+                CompetitionData(
                     upload_id=upload.id, year=2026, month=1, sheet_name="TTS REKABET",
                     period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MURAT ARSLAN",
                     product_group="TRAVAZOL GRUP", product_name="RAKIP A", metric_type="UNIT",
                     metric_value=300, source_row=1,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="TTS REKABET",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MURAT ARSLAN",
+                    product_group="TRAVAZOL GRUP", product_name="RAKIP B", metric_type="UNIT",
+                    metric_value=100, source_row=1,
                 ),
                 IMSRawData(
                     upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=1,
@@ -176,14 +200,22 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
             result = RepresentativeMarketService(representative, 2026, 1).build()
 
             travazol = result["rows"][0]
-            assert travazol["market_unit"] == 400
-            assert travazol["competitor_unit"] == 300
-            assert travazol["rivals"] == [{"name": "RAKIP A", "unit": 300.0}]
+            assert travazol["market_unit"] == 500
+            assert travazol["competitor_unit"] == 400
+            assert travazol["rivals"] == [
+                {"name": "RAKIP A", "unit": 300.0},
+                {"name": "RAKIP B", "unit": 100.0},
+            ]
             assert result["brick_rows"][0]["brick"] == "MARDIN MERKEZ"
             assert result["brick_rows"][0]["company_unit"] == 40
             assert result["brick_rows"][0]["market_unit"] == 160
-            assert result["brick_product_rows"][0]["market_products"][1]["name"] == "Rakip toplamı"
-            assert result["brick_product_rows"][0]["market_products"][1]["unit"] == 120
+            market_products = result["brick_product_rows"][0]["market_products"]
+            assert [(item["name"], item["unit"]) for item in market_products] == [
+                ("TRAVAZOL", 40.0),
+                ("RAKIP A", 80.0),
+                ("RAKIP B", 40.0),
+            ]
+            assert sum(item["unit"] for item in market_products if not item["is_company"]) == 120
 
             # A newer completed snapshot is authoritative. A competitor that
             # disappeared from it must not leak forward from the older upload.
@@ -196,5 +228,81 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
             assert revised["has_competition"] is False
             assert revised["brick_rows"] == []
             assert revised["brick_product_rows"] == []
+    finally:
+        temporary.cleanup()
+
+
+def test_shared_brick_source_is_visible_to_both_reps_without_duplicate_facts():
+    temporary = tempfile.TemporaryDirectory()
+    database_path = Path(temporary.name) / "shared-brick.db"
+
+    class Config:
+        TESTING = True
+        SECRET_KEY = "test-secret"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{database_path}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        UPLOAD_FOLDER = Path(temporary.name) / "uploads"
+        REPORT_FOLDER = Path(temporary.name) / "reports"
+        BACKUP_FOLDER = Path(temporary.name) / "backups"
+        LOG_FOLDER = Path(temporary.name) / "logs"
+
+    application = create_app(Config)
+    try:
+        with application.app_context():
+            upgrade(directory=str(Path(__file__).resolve().parents[1] / "migrations"))
+            ahmet = Representative(rep_code="A1", rep_name="Ahmet", active=True)
+            mehmet = Representative(rep_code="M1", rep_name="Mehmet", active=True)
+            product = Product(product_code="TRAVAZOL", product_name="Travazol", display_order=1, is_active=True)
+            db.session.add_all([ahmet, mehmet, product])
+            db.session.flush()
+            upload = IMSUpload(file_name="shared.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED")
+            db.session.add(upload)
+            db.session.flush()
+            db.session.add_all([
+                RepresentativeBrickAssignment(representative_id=ahmet.id, year=2026, month=1, brick="ORTAK BRICK"),
+                RepresentativeBrickAssignment(representative_id=mehmet.id, year=2026, month=1, brick="ORTAK BRICK"),
+                IMSRawData(
+                    upload_id=upload.id, year=2026, month=1, quarter="Q1", source_row=10,
+                    sheet_name="1001 BRICK SATIS", sheet_type="brick_sales",
+                    representative_id=ahmet.id, product_id=product.id, representative="AHMET",
+                    brick="ORTAK BRICK", product="TRAVAZOL", unit=125, tl=2500, raw_json="{}",
+                ),
+                IMSSummary(
+                    upload_id=upload.id, representative_id=ahmet.id, product_id=product.id,
+                    year=2026, month=1, quarter="Q1", unit=125, tl=2500,
+                ),
+                Target(
+                    representative_id=ahmet.id, product_id=product.id, year=2026, month=1,
+                    quarter="Q1", unit_target=200, tl_target=4000,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="101", subterritory="ORTAK BRICK",
+                    product_group="TRAVAZOL GRUP", product_name="TRAVAZOL", metric_type="UNIT",
+                    metric_value=125, source_row=10,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="101", subterritory="ORTAK BRICK",
+                    product_group="TRAVAZOL GRUP", product_name="RAKIP X", metric_type="UNIT",
+                    metric_value=75, source_row=10,
+                ),
+            ])
+            db.session.commit()
+
+            ahmet_result = RepresentativeMarketService(ahmet, 2026, 1).build()
+            mehmet_result = RepresentativeMarketService(mehmet, 2026, 1).build()
+
+            for result in (ahmet_result, mehmet_result):
+                assert result["rows"][0]["actual_unit"] == 125
+                assert result["rows"][0]["target_unit"] == 200
+                assert result["brick_product_rows"][0]["market_products"] == [
+                    {"name": "TRAVAZOL", "unit": 125.0, "is_company": True, "share_percent": 62.5, "realization_percent": 62.5},
+                    {"name": "RAKIP X", "unit": 75.0, "is_company": False, "share_percent": 37.5, "realization_percent": None},
+                ]
+
+            assert IMSRawData.query.filter_by(sheet_type="brick_sales").count() == 1
+            assert IMSSummary.query.count() == 1
+            assert Target.query.count() == 1
     finally:
         temporary.cleanup()
