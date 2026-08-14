@@ -182,8 +182,19 @@ class IMSImportService:
             "queued_for_manual": 0,
             "skipped_records": 0,
             "rows_error": 0,
+            "source_metric_records": 0,
+            "stored_source_records": 0,
+            "zero_metric_records": 0,
+            "blank_metric_records": 0,
+            "invalid_metric_records": 0,
+            "unmatched_product_records": 0,
+            "unresolved_representative_rows": 0,
+            "aggregate_rows_excluded": 0,
+            "reconciliation_difference": 0,
+            "reconciliation_status": "PENDING",
         }
         self.skipped_logs = []
+        self.excluded_logs = []
         self._skipped_log_counts = {}
         self.parser_decisions = []
         self._representative_match_cache = {}
@@ -493,6 +504,42 @@ class IMSImportService:
     def _log_warning(self, reason, sheet_name, source_row, **context):
         payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
         self.warnings.append(self._json_dump(payload))
+
+    def _log_excluded_row(self, reason, sheet_name, source_row, **context):
+        payload = {"reason": reason, "sheet_name": sheet_name, "source_row": source_row, **context}
+        self.excluded_logs.append(payload)
+        logger.info("ims_import_excluded_row %s", self._json_dump(payload))
+
+    def _finalize_source_reconciliation(self):
+        source = self.statistics["source_metric_records"]
+        classified = (
+            self.statistics["stored_source_records"]
+            + self.statistics["blank_metric_records"]
+            + self.statistics["invalid_metric_records"]
+            + self.statistics["unmatched_product_records"]
+        )
+        difference = source - classified
+        self.statistics["reconciliation_difference"] = difference
+        blocking = {
+            "unclassified_records": difference,
+            "blank_metric_records": self.statistics["blank_metric_records"],
+            "invalid_metric_records": self.statistics["invalid_metric_records"],
+            "unmatched_product_records": self.statistics["unmatched_product_records"],
+            "unresolved_representative_rows": self.statistics["unresolved_representative_rows"],
+            "row_errors": self.statistics["rows_error"],
+        }
+        failed = any(value != 0 for value in blocking.values())
+        self.statistics["reconciliation_status"] = "FAILED" if failed else "PASSED"
+        self._log_stage_metrics(
+            "source_reconciliation",
+            source_metric_records=source,
+            stored_source_records=self.statistics["stored_source_records"],
+            zero_metric_records=self.statistics["zero_metric_records"],
+            aggregate_rows_excluded=self.statistics["aggregate_rows_excluded"],
+            **blocking,
+        )
+        if failed:
+            raise ValueError(f"IMS veri bütünlüğü doğrulaması başarısız: {self._json_dump(blocking)}")
 
     def _log_stage_metrics(self, stage, **metrics):
         payload = {"stage": stage, "upload_id": self.upload.id if self.upload else None, **metrics}
@@ -1054,6 +1101,7 @@ class IMSImportService:
 
     def stage_normalized_raw_data(self, normalized_rows, year, month, week_number=None):
         for item in normalized_rows:
+            self.statistics["source_metric_records"] += 1
             representative_name = item["representative_name"]
             try:
                 representative_match = self.resolve_representative_match(representative_name)
@@ -1062,6 +1110,7 @@ class IMSImportService:
                     representative_id = representative_match["object"].id
                     self.statistics["matched_representatives"] += 1
                 else:
+                    self.statistics["unresolved_representative_rows"] += 1
                     self.statistics["unmatched_representatives"] += 1
                     self.statistics["queued_for_manual"] += 1
                     self._log_skipped_row(
@@ -1086,6 +1135,7 @@ class IMSImportService:
                 if not product_match["matched"]:
                     self.statistics["skipped_records"] += 1
                     self.statistics["unmatched_products"] += 1
+                    self.statistics["unmatched_product_records"] += 1
                     self.unknown_products.append(product_group_name)
                     self._log_skipped_row(
                         reason="unmatched_product_group",
@@ -1168,6 +1218,7 @@ class IMSImportService:
                 metrics = item["metrics"]
                 if item["invalid_metrics"]:
                     self.statistics["skipped_records"] += 1
+                    self.statistics["invalid_metric_records"] += 1
                     for invalid_metric in item["invalid_metrics"]:
                         self._log_skipped_row(
                             reason="invalid_numeric_value",
@@ -1178,6 +1229,7 @@ class IMSImportService:
                     continue
                 if not item["has_metric_value"]:
                     self.statistics["skipped_records"] += 1
+                    self.statistics["blank_metric_records"] += 1
                     self._log_skipped_row(
                         reason="empty_metrics",
                         sheet_name=" | ".join(sorted(item["sheet_names"])),
@@ -1208,6 +1260,9 @@ class IMSImportService:
                     metrics=metrics,
                     source_values=source_values,
                 )
+                self.statistics["stored_source_records"] += 1
+                if not any(metrics.values()):
+                    self.statistics["zero_metric_records"] += 1
                 self.statistics["processed_rows"] += 1
             except Exception as exc:
                 self.statistics["rows_error"] += 1
@@ -1337,13 +1392,23 @@ class IMSImportService:
                             representative_id = self._ensure_vacancy_representative(region_value, province_value, representative_name)
                             existed = True
                         elif not self._is_probable_representative_name(representative_name):
-                            self.statistics["skipped_records"] += 1
-                            self._log_skipped_row(
-                                reason="aggregate_or_invalid_representative",
-                                sheet_name=sheet["sheet_name"],
-                                source_row=source_row,
-                                representative=representative_name,
-                            )
+                            if self._is_aggregate_label(representative_name):
+                                self.statistics["aggregate_rows_excluded"] += 1
+                                self._log_excluded_row(
+                                    reason="aggregate_representative",
+                                    sheet_name=sheet["sheet_name"],
+                                    source_row=source_row,
+                                    representative=representative_name,
+                                )
+                            else:
+                                self.statistics["skipped_records"] += 1
+                                self.statistics["unresolved_representative_rows"] += 1
+                                self._log_skipped_row(
+                                    reason="invalid_representative",
+                                    sheet_name=sheet["sheet_name"],
+                                    source_row=source_row,
+                                    representative=representative_name,
+                                )
                             continue
                         else:
                             representative_id, existed = self._resolve_representative(
@@ -1355,6 +1420,7 @@ class IMSImportService:
                                 manager=manager_value,
                             )
                         if representative_id is None:
+                            self.statistics["unresolved_representative_rows"] += 1
                             continue
                         if not existed:
                             self.warnings.append(
@@ -1363,6 +1429,7 @@ class IMSImportService:
                             )
 
                         for product_info in sheet["products"].values():
+                            self.statistics["source_metric_records"] += 1
                             metrics = {
                                 "unit": 0.0,
                                 "tl": 0.0,
@@ -1377,6 +1444,7 @@ class IMSImportService:
                                 parsed_value, metric_state = self.parse_metric_value(value)
                                 if metric_state == "invalid":
                                     self.statistics["skipped_records"] += 1
+                                    self.statistics["invalid_metric_records"] += 1
                                     self._log_skipped_row(
                                         reason="invalid_numeric_value",
                                         sheet_name=sheet["sheet_name"],
@@ -1397,6 +1465,7 @@ class IMSImportService:
 
                             if not has_metric_value:
                                 self.statistics["skipped_records"] += 1
+                                self.statistics["blank_metric_records"] += 1
                                 self._log_skipped_row(
                                     reason="empty_metrics",
                                     sheet_name=sheet["sheet_name"],
@@ -1423,6 +1492,9 @@ class IMSImportService:
                                 territory=territory_value,
                                 brick=territory_value,
                             )
+                            self.statistics["stored_source_records"] += 1
+                            if not any(metrics.values()):
+                                self.statistics["zero_metric_records"] += 1
                     self.statistics["processed_rows"] += 1
                 except Exception as exc:
                     self.statistics["rows_error"] += 1
@@ -1974,6 +2046,7 @@ class IMSImportService:
             self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self._flush_raw_batch()
+        self._finalize_source_reconciliation()
         self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
         TargetImportService(
             file_path=self.file_path,
@@ -2037,6 +2110,13 @@ class IMSImportService:
         self.upload.raw_record_count = self.statistics["raw_records"]
         self.upload.fact_record_count = self.statistics["fact_records"]
         self.upload.summary_record_count = self.statistics["summary_records"]
+        self.upload.source_record_count = self.statistics["source_metric_records"]
+        self.upload.stored_source_record_count = self.statistics["stored_source_records"]
+        self.upload.zero_metric_count = self.statistics["zero_metric_records"]
+        self.upload.blank_metric_count = self.statistics["blank_metric_records"]
+        self.upload.invalid_metric_count = self.statistics["invalid_metric_records"]
+        self.upload.excluded_aggregate_count = self.statistics["aggregate_rows_excluded"]
+        self.upload.reconciliation_status = self.statistics["reconciliation_status"]
         self.upload.warning_message = "\n".join(self.warnings) or None
         self.upload.error_message = "\n".join(self.errors) or None
         self.upload.status = "COMPLETED" if success else "FAILED"
@@ -2054,6 +2134,7 @@ class IMSImportService:
             "unknown_products": sorted(set(self.unknown_products)),
             "unknown_columns": sorted(set(self.unknown_columns)),
             "skipped_logs": self.skipped_logs,
+            "excluded_logs": self.excluded_logs,
             "parser_decisions": self.parser_decisions,
             "processing_time": round(time.monotonic() - self.started, 2),
         }
@@ -2078,6 +2159,13 @@ class IMSImportService:
             error_message="\n".join(self.errors),
             warning_message="\n".join(self.warnings) or None,
             completed_at=datetime.utcnow(),
+            source_record_count=self.statistics["source_metric_records"],
+            stored_source_record_count=self.statistics["stored_source_records"],
+            zero_metric_count=self.statistics["zero_metric_records"],
+            blank_metric_count=self.statistics["blank_metric_records"],
+            invalid_metric_count=self.statistics["invalid_metric_records"],
+            excluded_aggregate_count=self.statistics["aggregate_rows_excluded"],
+            reconciliation_status=self.statistics.get("reconciliation_status", "FAILED"),
         )
         db.session.add(failure_upload)
         db.session.commit()
