@@ -107,27 +107,86 @@ class RepresentativeMarketService:
         ]
         return upload_id, scoped
 
-    def _brick_raw_rows(self):
-        """Return the latest representative-owned brick market and sales rows.
+    def _brick_raw_rows(self, year=None, month=None):
+        """Return latest source rows for every brick assigned to the rep.
 
-        The competition extension sheets are representative-grained in the
-        January workbook, while the main IMS parser already stores true brick
-        market totals in ``competition_box``.  Reading that canonical grain
-        avoids inventing a competitor allocation across bricks.
+        A shared brick is stored once under the primary Excel representative,
+        but both people are members of that brick.  Scoping by membership (and
+        not by the raw row owner) lets both individual analysis pages show the
+        same source values without duplicating national facts.
         """
-        upload_id = self._latest_upload_id(self.year, self.month)
-        if upload_id is None:
+        year = self.year if year is None else int(year)
+        month = self.month if month is None else int(month)
+        upload_id = self._latest_upload_id(year, month)
+        assignments = RepresentativeBrickAssignment.query.filter_by(
+            representative_id=self.representative.id, year=year, month=month
+        ).all()
+        brick_keys = {self._key(item.brick) for item in assignments if self._key(item.brick)}
+        if upload_id is None or not brick_keys:
             return None, []
-        rows = IMSRawData.query.filter(
+        candidates = IMSRawData.query.filter(
             IMSRawData.upload_id == upload_id,
-            IMSRawData.representative_id == self.representative.id,
-            IMSRawData.year == self.year,
-            IMSRawData.month == self.month,
+            IMSRawData.year == year,
+            IMSRawData.month == month,
             IMSRawData.brick.isnot(None),
             IMSRawData.product_id.isnot(None),
             IMSRawData.sheet_type.in_(("brick_sales", "competition_box")),
         ).all()
+        rows = [row for row in candidates if self._key(row.brick) in brick_keys]
         return upload_id, rows
+
+    def _shared_target_fallback(self, targets, assignments):
+        """Use a co-worker's target only for an identical shared brick scope.
+
+        Targets have representative grain in the workbook.  Therefore a
+        partial overlap cannot be allocated safely.  If this representative
+        has no target rows and another member has exactly the same complete
+        brick set, the Excel scope is demonstrably common and the same target
+        may be displayed on both pages without inserting a second DB record.
+        """
+        if targets or not assignments:
+            return targets
+        own_keys = {self._key(item.brick) for item in assignments if self._key(item.brick)}
+        if not own_keys:
+            return targets
+        co_members = db.session.query(RepresentativeBrickAssignment.representative_id).filter(
+            RepresentativeBrickAssignment.year == self.year,
+            RepresentativeBrickAssignment.month == self.month,
+            RepresentativeBrickAssignment.representative_id != self.representative.id,
+        ).distinct().all()
+        for (representative_id,) in co_members:
+            member_assignments = RepresentativeBrickAssignment.query.filter_by(
+                representative_id=representative_id, year=self.year, month=self.month
+            ).all()
+            member_keys = {self._key(item.brick) for item in member_assignments if self._key(item.brick)}
+            if member_keys != own_keys:
+                continue
+            member_targets = Target.query.filter_by(
+                representative_id=representative_id, year=self.year, month=self.month
+            ).all()
+            if member_targets:
+                return {item.product_id: item for item in member_targets}
+        return targets
+
+    def _brick_competition_rows(self, brick_keys):
+        """Return exact product-level UNIT rows from monthly brick competition."""
+        upload_id = self._latest_upload_id(self.year, self.month)
+        if upload_id is None or not brick_keys:
+            return None, []
+        rows = CompetitionData.query.filter(
+            CompetitionData.upload_id == upload_id,
+            CompetitionData.metric_type == "UNIT",
+            CompetitionData.is_subtotal.is_(False),
+            CompetitionData.is_grand_total.is_(False),
+        ).all()
+        exact = [
+            row for row in rows
+            if self._key(row.subterritory) in brick_keys
+            and "AYLIK" in AliasService.normalize(row.sheet_name)
+            and "REKABET" in AliasService.normalize(row.sheet_name)
+            and "KUTU" in AliasService.normalize(row.sheet_name)
+        ]
+        return upload_id, exact
 
     def _product_for_row(self, row, products):
         group_key = self._key(row.product_group)
@@ -165,6 +224,7 @@ class RepresentativeMarketService:
         assignments, brick_keys, fallback_keys = self._scope()
         upload_id, competition_rows = self._competition_rows(brick_keys, fallback_keys)
         brick_upload_id, brick_raw_rows = self._brick_raw_rows()
+        _, brick_competition_rows = self._brick_competition_rows(brick_keys)
         previous_year = self.year if self.month > 1 else self.year - 1
         previous_month = self.month - 1 if self.month > 1 else 12
         previous_upload_id, previous_competition_rows = self._competition_rows(
@@ -194,6 +254,15 @@ class RepresentativeMarketService:
                 month=self.month,
             ).all()
         }
+        targets = self._shared_target_fallback(targets, assignments)
+
+        # Representative summaries remain single-owner facts.  For a brick
+        # scoped profile, source sales are the authoritative view and include
+        # common rows for every assigned co-worker.
+        scoped_actuals = defaultdict(float)
+        for raw in brick_raw_rows:
+            if raw.sheet_type == "brick_sales":
+                scoped_actuals[raw.product_id] += float(raw.unit or 0.0)
 
         grouped = defaultdict(lambda: {"unit": 0.0, "subtotal_unit": 0.0, "rivals": defaultdict(float)})
         brick_groups = defaultdict(
@@ -203,6 +272,7 @@ class RepresentativeMarketService:
                 "products": defaultdict(
                     lambda: {
                         "company_unit": 0.0,
+                        "exact_company_unit": 0.0,
                         "market_unit": 0.0,
                         "subtotal_unit": 0.0,
                         "market_products": defaultdict(float),
@@ -211,6 +281,7 @@ class RepresentativeMarketService:
             }
         )
         use_raw_bricks = bool(brick_raw_rows)
+        use_exact_brick_competition = bool(brick_competition_rows)
         for row in competition_rows:
             if row.metric_type != "UNIT":
                 continue
@@ -253,8 +324,25 @@ class RepresentativeMarketService:
                 value = float(raw.unit or 0.0)
                 if raw.sheet_type == "brick_sales":
                     product_bucket["company_unit"] += value
-                elif raw.sheet_type == "competition_box":
+                elif raw.sheet_type == "competition_box" and not use_exact_brick_competition:
                     product_bucket["market_unit"] += value
+
+        if use_exact_brick_competition:
+            for row in brick_competition_rows:
+                product = self._product_for_row(row, products)
+                brick = str(row.subterritory or "").strip()
+                if product is None or not brick:
+                    continue
+                value = float(row.metric_value or 0.0)
+                product_bucket = brick_groups[brick]["products"][product.product_name]
+                product_bucket["market_unit"] += value
+                product_bucket["market_products"][str(row.product_name).strip()] += value
+                if self._is_company_product(row, product):
+                    product_bucket["exact_company_unit"] += value
+
+            for brick_data in brick_groups.values():
+                for product_data in brick_data["products"].values():
+                    product_data["company_unit"] = product_data["exact_company_unit"]
 
         for brick_data in brick_groups.values():
             brick_data["company_unit"] = 0.0
@@ -288,7 +376,14 @@ class RepresentativeMarketService:
         rows = []
         for product in products:
             summary = summaries.get(product.id)
-            actual_unit = float(summary.unit if summary else 0.0)
+            # The persisted summary is authoritative for the primary owner.
+            # A co-worker without a duplicated summary receives the same
+            # shared-brick source value in the analysis view.
+            actual_unit = (
+                float(summary.unit)
+                if summary is not None
+                else float(scoped_actuals.get(product.id, 0.0))
+            )
             market = grouped[product.id]
             market_unit = float(market["unit"])
             competitor_unit = max(market_unit - actual_unit, 0.0)
@@ -382,7 +477,7 @@ class RepresentativeMarketService:
                 market_unit = float(product_data["market_unit"])
                 competitor_unit = max(market_unit - company_unit, 0.0)
                 market_products = []
-                if use_raw_bricks:
+                if use_raw_bricks and not use_exact_brick_competition:
                     rival_unit = max(market_unit - company_unit, 0.0)
                     for market_product_name, market_product_unit, is_company in (
                         (product_name, company_unit, True),
