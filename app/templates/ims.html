@@ -249,6 +249,10 @@
             data-id="{{ item.id }}" data-file="{{ item.file_name }}" data-year="{{ item.year or '-' }}"
             data-month="{{ item.month or '-' }}" data-quarter="{{ item.quarter or '-' }}"
             data-sheets="{{ item.sheet_count }}" data-by="{{ item.uploaded_by }}"
+            data-source-records="{{ item.source_record_count }}" data-stored-records="{{ item.stored_source_record_count }}"
+            data-zero-records="{{ item.zero_metric_count }}" data-blank-records="{{ item.blank_metric_count }}"
+            data-invalid-records="{{ item.invalid_metric_count }}" data-aggregate-records="{{ item.excluded_aggregate_count }}"
+            data-reconciliation="{{ item.reconciliation_status }}"
             data-date="{{ item.uploaded_at.strftime('%d.%m.%Y %H:%M') }}"
             style="cursor:pointer;transition:background .2s;">
           <td style="padding:12px 16px;font-size:13px;color:#8496ae;">{{ item.id }}</td>
@@ -435,6 +439,11 @@
         <div class="ims-detail-row"><span class="ims-detail-label">Yükleyen</span><span class="ims-detail-value">${row.dataset.by}</span></div>
         <div class="ims-detail-row"><span class="ims-detail-label">Tarih</span><span class="ims-detail-value">${row.dataset.date}</span></div>
         <div class="ims-detail-row"><span class="ims-detail-label">Durum</span><span class="ims-detail-value">${row.dataset.status}</span></div>
+        <div class="ims-detail-row"><span class="ims-detail-label">Veri bütünlüğü</span><span class="ims-detail-value">${row.dataset.reconciliation === "PASSED" ? "Doğrulandı" : row.dataset.reconciliation}</span></div>
+        <div class="ims-detail-row"><span class="ims-detail-label">Kaynak / kaydedilen</span><span class="ims-detail-value">${row.dataset.sourceRecords} / ${row.dataset.storedRecords}</span></div>
+        <div class="ims-detail-row"><span class="ims-detail-label">Korunan sıfır satış</span><span class="ims-detail-value">${row.dataset.zeroRecords}</span></div>
+        <div class="ims-detail-row"><span class="ims-detail-label">Boş / geçersiz</span><span class="ims-detail-value">${row.dataset.blankRecords} / ${row.dataset.invalidRecords}</span></div>
+        <div class="ims-detail-row"><span class="ims-detail-label">Hariç tutulan toplam satırı</span><span class="ims-detail-value">${row.dataset.aggregateRecords}</span></div>
       `;
       overlay.classList.add("visible");
     });
