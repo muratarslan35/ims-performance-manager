@@ -197,6 +197,8 @@ def register():
                 if phone:
                     representative.phone = phone
             db.session.commit()
+            from app.services.user_vault_service import UserVaultService
+            UserVaultService.sync_from_primary()
             login_user(user, remember=True)
             flash("Hesabınız oluşturuldu. Hoş geldiniz!", "success")
             return redirect(url_for("main.dashboard"))
@@ -245,6 +247,8 @@ def reset_password(token):
         else:
             user.password = generate_password_hash(password)
             db.session.commit()
+            from app.services.user_vault_service import UserVaultService
+            UserVaultService.sync_from_primary()
             flash("Şifreniz güncellendi. Yeni şifrenizle giriş yapabilirsiniz.", "success")
             return redirect(url_for("auth.login"))
 
@@ -261,7 +265,10 @@ def profile():
             current_password,password,confirm=request.form.get("current_password",""),request.form.get("password",""),request.form.get("password_confirm","")
             if not check_password_hash(current_user.password,current_password): flash("Mevcut şifre doğrulanamadı.","danger")
             elif len(password)<8 or password!=confirm: flash("Yeni şifre en az 8 karakter olmalı ve tekrarıyla aynı olmalıdır.","warning")
-            else: current_user.password=generate_password_hash(password);db.session.commit();flash("Şifreniz güncellendi.","success")
+            else:
+                current_user.password=generate_password_hash(password);db.session.commit()
+                from app.services.user_vault_service import UserVaultService
+                UserVaultService.sync_from_primary();flash("Şifreniz güncellendi.","success")
         else:
             full_name,email,phone,region=request.form.get("full_name","").strip(),request.form.get("email","").strip().lower(),request.form.get("phone","").strip(),request.form.get("region","").strip();duplicate=User.query.filter(User.email==email,User.id!=current_user.id).first()
             if not full_name or not email: flash("Ad soyad ve e-posta zorunludur.","warning")
@@ -272,7 +279,9 @@ def profile():
                 if representative is not None:
                     representative.email,representative.phone=email,phone or representative.phone
                     if region: representative.region,representative.city=region,next((city for code,city in regions if code==region),representative.city)
-                db.session.commit();flash("Profil bilgileriniz güncellendi.","success")
+                db.session.commit()
+                from app.services.user_vault_service import UserVaultService
+                UserVaultService.sync_from_primary();flash("Profil bilgileriniz güncellendi.","success")
     return render_template("profile.html",regions=regions,representative=representative)
 
 

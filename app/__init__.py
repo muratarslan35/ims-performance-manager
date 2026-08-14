@@ -141,6 +141,9 @@ def create_database(app):
 
         initialize_database()
 
+        from app.services.user_vault_service import UserVaultService
+        UserVaultService.reconcile()
+
 
 def create_app(config_object=Config):
 

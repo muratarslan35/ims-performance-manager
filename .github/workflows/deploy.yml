@@ -82,6 +82,9 @@ jobs:
           if [ -f instance/ipm.db ]; then
             cp instance/ipm.db "instance/backups/ipm-predeploy-$(date +%Y%m%d-%H%M%S).db"
           fi
+          if [ -f instance/persistent/users.db ]; then
+            cp instance/persistent/users.db "instance/backups/users-predeploy-$(date +%Y%m%d-%H%M%S).db"
+          fi
 
           venv/bin/python -m flask --app run.py db upgrade
           venv/bin/python verify_runtime.py
