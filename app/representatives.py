@@ -14,6 +14,7 @@ from app.extensions import db
 from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.period_service import PeriodService
 from app.services.representative_market_service import RepresentativeMarketService
+from app.services.annual_realization_service import AnnualRealizationService
 
 
 representatives_bp = Blueprint(
@@ -450,6 +451,7 @@ def view(
     totals["remaining_tl"] = round(max(totals["target_tl"] - totals["actual_tl"], 0.0), 2)
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     market_analysis = RepresentativeMarketService(representative, year, month).build()
+    annual_realization = AnnualRealizationService.build(year, [representative.id])
     representatives = Representative.query.filter_by(active=True).order_by(Representative.rep_name.asc()).all()
     return render_template(
         "representative_detail.html",
@@ -459,6 +461,7 @@ def view(
         products=product_rows,
         totals=totals,
         market_analysis=market_analysis,
+        annual_realization=annual_realization,
         year=year,
         month=month,
     )
