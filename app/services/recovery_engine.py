@@ -90,7 +90,7 @@ class RecoveryEngine:
 
         if target:
 
-            target_box = target.unit_target
+            target_box = float(round(target.unit_target or 0))
 
             target_tl = target.tl_target
 

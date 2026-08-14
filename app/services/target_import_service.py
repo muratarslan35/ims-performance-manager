@@ -468,6 +468,7 @@ class TargetImportService:
 
     def _upsert_target(self, target_map: dict, pending_targets: list, representative_id: int, product_id: int, year: int, month: int, quarter: str, unit_target: float, tl_target: float) -> None:
         """Centralized helper method to perform insert or update on target records."""
+        unit_target = float(round(unit_target or 0))
         t_key = (representative_id, product_id)
         existing = target_map.get(t_key)
 

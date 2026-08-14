@@ -213,7 +213,7 @@ class PrimeEngine:
         target = self.targets_by_period.get((product_id, month))
         summary = self.summaries_by_period.get((product_id, month))
         return {
-            "target_unit": float(target.unit_target if target else 0),
+            "target_unit": float(round(target.unit_target or 0)) if target else 0.0,
             "target_tl": float(target.tl_target if target else 0),
             "actual_unit": float(summary.unit if summary else 0),
             "actual_tl": float(summary.tl if summary else 0),

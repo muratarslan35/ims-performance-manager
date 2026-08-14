@@ -117,12 +117,17 @@ def analysis():
     details, totals = [], {"unit_target": 0.0, "unit_actual": 0.0, "tl_target": 0.0, "tl_actual": 0.0}
     for target, representative, product, summary in rows:
         unit_actual, tl_actual = float(summary.unit or 0) if summary else 0.0, float(summary.tl or 0) if summary else 0.0
-        unit_target = float(target.unit_target or 0) or (float(target.tl_target or 0) / float(product.unit_price or 1))
+        unit_target = float(round(float(target.unit_target or 0) or (float(target.tl_target or 0) / float(product.unit_price or 1))))
         details.append({"target": target, "representative": representative, "product": product, "unit_target": unit_target, "unit_actual": unit_actual, "tl_actual": tl_actual, "unit_percent": round(unit_actual * 100 / unit_target, 1) if unit_target else 0.0, "tl_percent": round(tl_actual * 100 / target.tl_target, 1) if target.tl_target else 0.0})
         totals["unit_target"] += unit_target; totals["unit_actual"] += unit_actual; totals["tl_target"] += float(target.tl_target or 0); totals["tl_actual"] += tl_actual
     totals["unit_percent"] = round(totals["unit_actual"] * 100 / totals["unit_target"], 1) if totals["unit_target"] else 0.0; totals["tl_percent"] = round(totals["tl_actual"] * 100 / totals["tl_target"], 1) if totals["tl_target"] else 0.0
+    detail_groups = []
+    for item in details:
+        if not detail_groups or detail_groups[-1]["representative"].id != item["representative"].id:
+            detail_groups.append({"representative": item["representative"], "items": []})
+        detail_groups[-1]["items"].append(item)
     periods = db.session.query(Target.year, Target.month).distinct().order_by(Target.year.desc(), Target.month.desc()).all(); regions = db.session.query(Representative.region, Representative.city).filter(Representative.region.isnot(None)).distinct().order_by(Representative.region, Representative.city).all()
-    return render_template("targets_analysis.html", details=details, totals=totals, year=year, month=month, region=region, search=search, periods=periods, regions=regions)
+    return render_template("targets_analysis.html", details=details, detail_groups=detail_groups, totals=totals, year=year, month=month, region=region, search=search, periods=periods, regions=regions)
 
 
 @targets_bp.route(

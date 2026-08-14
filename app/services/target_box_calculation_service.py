@@ -9,10 +9,10 @@ class TargetBoxCalculationService:
 
     @staticmethod
     def unit_target(tl_target, unit_price):
-        """Return a two-decimal box target, or zero when no usable price exists."""
+        """Return a whole-box target, or zero when no usable price exists."""
         target = float(tl_target or 0)
         price = float(unit_price or 0)
-        return round(target / price, 2) if target and price > 0 else 0.0
+        return float(round(target / price)) if target and price > 0 else 0.0
 
     @classmethod
     def synchronize(cls, year=None, month=None):

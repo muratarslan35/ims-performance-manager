@@ -90,7 +90,7 @@ class QuarterEngine:
 
             if target:
 
-                t_unit = target.unit_target
+                t_unit = float(round(target.unit_target or 0))
 
                 t_tl = target.tl_target
 
