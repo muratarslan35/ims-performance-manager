@@ -36,6 +36,32 @@ class DashboardQuery:
     def __init__(self, session=None):
         self.session = session or db.session
 
+    def _latest_competition_upload_id(self, filters: Optional[DashboardFilterParams]) -> Optional[int]:
+        """Select the newest completed upload that contains real competition TL data.
+
+        Legacy uploads created before the competition pipeline was hardened may
+        be completed while carrying no usable competition rows.  Dashboard
+        competition panels must not bind to those empty upload ids when the
+        same period already has a verified Excel competition import.
+        """
+        if not filters or filters.year is None or filters.month is None:
+            return None
+        return (
+            self.session.query(IMSUpload.id)
+            .join(CompetitionData, CompetitionData.upload_id == IMSUpload.id)
+            .filter(
+                IMSUpload.year == filters.year,
+                IMSUpload.month == filters.month,
+                IMSUpload.status == "COMPLETED",
+                CompetitionData.metric_type == "TL",
+                CompetitionData.metric_value != 0,
+            )
+            .group_by(IMSUpload.id, IMSUpload.completed_at)
+            .order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id))
+            .limit(1)
+            .scalar()
+        )
+
     def _generate_cache_signature(
         self, 
         query_name: str, 
@@ -295,13 +321,7 @@ class DashboardQuery:
 
     def load_competition_overview(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
         """Aggregate competition metrics from the latest completed workbook only."""
-        if not filters or filters.year is None or filters.month is None:
-            return []
-        latest_upload_id = (
-            self.session.query(IMSUpload.id)
-            .filter(IMSUpload.year == filters.year, IMSUpload.month == filters.month, IMSUpload.status == "COMPLETED")
-            .order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
-        )
+        latest_upload_id = self._latest_competition_upload_id(filters)
         if not latest_upload_id:
             return []
         return (
@@ -315,19 +335,13 @@ class DashboardQuery:
         )
 
     def load_competitor_product_rows(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
-        if not filters or filters.year is None or filters.month is None: return []
-        upload_id=self.session.query(IMSUpload.id).filter(IMSUpload.year==filters.year,IMSUpload.month==filters.month,IMSUpload.status=="COMPLETED").order_by(desc(IMSUpload.completed_at),desc(IMSUpload.id)).limit(1).scalar()
+        upload_id = self._latest_competition_upload_id(filters)
         if not upload_id: return []
         return self.session.query(CompetitionData.territory,CompetitionData.product_group,CompetitionData.product_name,func.sum(CompetitionData.metric_value).label("sales_tl")).filter(CompetitionData.upload_id==upload_id,CompetitionData.metric_type=="TL",CompetitionData.is_subtotal.is_(False),CompetitionData.is_grand_total.is_(False),~func.upper(CompetitionData.product_name).like("%GRAND%"),~func.upper(CompetitionData.product_name).like("%SUBTOTAL%")).group_by(CompetitionData.territory,CompetitionData.product_group,CompetitionData.product_name).all()
 
     def load_regional_competition_rows(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
         """Return a compact territory/product market dataset for executive analysis."""
-        if not filters or filters.year is None or filters.month is None:
-            return []
-        upload_id = self.session.query(IMSUpload.id).filter(
-            IMSUpload.year == filters.year, IMSUpload.month == filters.month,
-            IMSUpload.status == "COMPLETED"
-        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        upload_id = self._latest_competition_upload_id(filters)
         if not upload_id:
             return []
         return self.session.query(
