@@ -52,7 +52,7 @@
           tooltip: {callbacks: {label(context) {return context.raw === null ? " Veri yok" : ` Realizasyon: %${Number(context.raw).toLocaleString("tr-TR")}`;}}}
         },
         scales: {
-          x: {grid: {display: false}, ticks: {color: "#5f748b", font: {weight: "600"}}},
+          x: {offset: true, grid: {display: false}, ticks: {color: "#5f748b", font: {weight: "600"}}},
           y: {beginAtZero: true, suggestedMax: 120, ticks: {callback: value => `%${value}`, color: "#71859b"}, grid: {color: "rgba(18,62,112,.08)"}}
         }
       }

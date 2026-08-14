@@ -399,6 +399,47 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     assert "Aylık Başarı Dağılımı" not in yearly_panel
 
 
+def test_dashboard_competition_uses_latest_upload_with_real_excel_tl_rows(app):
+    from app.extensions import db
+    from app.models import CompetitionData, IMSUpload
+    from app.query.dashboard_query import DashboardQuery
+    from app.query.filters import DashboardFilterParams
+
+    with app.app_context():
+        source_upload = IMSUpload(file_name="ocak-rekabet.xlsx", year=2035, month=1, status="COMPLETED")
+        db.session.add(source_upload)
+        db.session.flush()
+        db.session.add_all([
+            CompetitionData(
+                upload_id=source_upload.id, sheet_name="AYLIK REKABET TL", period_type="MONTHLY",
+                year=2035, month=1, territory="201 KADIKOY", subterritory="KADIKOY MERKEZ",
+                product_group="TRAVAZOL GRUP", product_name="TRAVAZOL KREM", metric_type="TL",
+                metric_value=125000, source_row=5,
+            ),
+            CompetitionData(
+                upload_id=source_upload.id, sheet_name="AYLIK REKABET TL", period_type="MONTHLY",
+                year=2035, month=1, territory="201 KADIKOY", subterritory="KADIKOY MERKEZ",
+                product_group="TRAVAZOL GRUP", product_name="TRAVOCORT KREM", metric_type="TL",
+                metric_value=75000, source_row=5,
+            ),
+        ])
+        db.session.flush()
+        empty_newer_upload = IMSUpload(file_name="bos-yukleme.xlsx", year=2035, month=1, status="COMPLETED")
+        db.session.add(empty_newer_upload)
+        db.session.commit()
+
+        filters = DashboardFilterParams(year=2035, month=1)
+        query = DashboardQuery()
+        overview = query.load_competition_overview(filters)
+        regional = query.load_regional_competition_rows(filters)
+
+        assert len(overview) == 1
+        assert overview[0].product_group == "TRAVAZOL GRUP"
+        assert overview[0].market_tl == 200000
+        assert len(regional) == 2
+        assert {row.product_name for row in regional} == {"TRAVAZOL KREM", "TRAVOCORT KREM"}
+
+
 def test_mobile_navbar_contains_search_and_period_status(app):
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
