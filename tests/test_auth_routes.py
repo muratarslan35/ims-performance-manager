@@ -306,6 +306,46 @@ def test_region_totals_include_inactive_vacant_positions(app):
         assert report["vacant_count"] == 2
 
 
+def test_target_analysis_groups_products_under_one_representative(app):
+    from app.extensions import db
+    from app.models import Product, Representative, Target
+
+    with app.app_context():
+        representative = Representative(
+            rep_code="TARGET-GROUP", rep_name="Hedef Temsilcisi",
+            region="901", city="Diyarbakır", active=True,
+        )
+        products = [
+            Product(product_code="TARGET-A", product_name="Hedef Ürün A", is_active=True),
+            Product(product_code="TARGET-B", product_name="Hedef Ürün B", is_active=True),
+        ]
+        db.session.add_all([representative, *products])
+        db.session.flush()
+        db.session.add_all([
+            Target(year=2034, month=1, quarter="Q1", representative_id=representative.id,
+                   product_id=product.id, tl_target=1000, unit_target=10)
+            for product in products
+        ])
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    response = client.get("/targets/analysis?year=2034&month=1")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert html.count("Hedef Temsilcisi") == 1
+    assert 'data-bs-target="#targetAnalysisRep' in html
+    assert "Hedef Ürün A" in html
+    assert "Hedef Ürün B" in html
+
+
+def test_box_target_calculation_returns_whole_boxes():
+    from app.services.target_box_calculation_service import TargetBoxCalculationService
+
+    assert TargetBoxCalculationService.unit_target(1005902, 111.655) == 9009
+
+
 def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(app):
     from app.extensions import db
     from app.models import IMSSummary, IMSUpload, Product, Representative, Target
