@@ -4,6 +4,7 @@ from sqlalchemy import and_, func, or_
 
 from app.extensions import db
 from app.models import IMSSummary, Product, Representative, Target
+from app.services.annual_realization_service import AnnualRealizationService
 
 
 class RegionPerformanceService:
@@ -98,4 +99,4 @@ class RegionPerformanceService:
         active_count = sum(1 for rep in self.representatives if rep.active)
         vacant_count = sum(1 for rep in self.representatives if "boş" in (rep.rep_name or "").casefold())
         display_name = (city or self.region_key).upper()
-        return {"region_key": self.region_key, "region_name": display_name, "year": self.year, "month": self.month, "representative_count": active_count, "active_count": active_count, "vacant_count": vacant_count, "manager": primary.manager or "-", "periods": periods}
+        return {"region_key": self.region_key, "region_name": display_name, "year": self.year, "month": self.month, "representative_count": active_count, "active_count": active_count, "vacant_count": vacant_count, "manager": primary.manager or "-", "periods": periods, "annual_realization": AnnualRealizationService.build(self.year, self.rep_ids)}

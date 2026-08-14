@@ -379,6 +379,9 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
         assert report["periods"]["yearly"]["actual_tl"] == 6300
         assert len(report["periods"]["yearly"]["months"]) == 6
         assert len(report["periods"]["yearly"]["representatives"]) == 2
+        assert len(report["annual_realization"]) == 12
+        assert [row["percent"] for row in report["annual_realization"][:6]] == [10, 20, 30, 40, 50, 60]
+        assert all(row["percent"] is None for row in report["annual_realization"][6:])
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
@@ -388,6 +391,8 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     assert "BÖLGESEL PERFORMANS MERKEZİ" in html
     assert "Ürün Bazlı 3 Aylık Realizasyon" in html
     assert "Bölge Temsilci Performansı" in html
+    assert "12 Aylık Bölge Realizasyonu" in html
+    assert "annual-realization-chart.js" in html
     assert "Bölge Temsilcisi A" in html
     assert "BÖLGE ANALİZİ" in html
     yearly_panel = html.split('data-period-panel="yearly"', 1)[1]
@@ -575,6 +580,8 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert 'data-brick-target=' in response.get_data(as_text=True) or "Brick verisi bulunmuyor" in response.get_data(as_text=True)
     assert "Temsilci değiştir" in response.get_data(as_text=True)
     assert "Aylık ürün değişimi ve rakip baskısı" in response.get_data(as_text=True)
+    assert "12 Aylık Toplam Realizasyon" in response.get_data(as_text=True)
+    assert "annual-realization-chart.js" in response.get_data(as_text=True)
 
 
 def test_ims_completed_status_is_rendered_in_turkish(app):
