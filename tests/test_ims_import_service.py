@@ -152,6 +152,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
             "created_raw_records",
             "created_facts",
             "created_summaries",
+            "source_reconciliation",
         }
         self.assertEqual({payload.get("stage") for payload in stage_payloads}, expected_stages)
         self.assertTrue(all(payload.get("upload_id") == result["upload_id"] for payload in stage_payloads))
@@ -165,6 +166,9 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(stage_map["created_raw_records"]["created_raw_records"], 1)
         self.assertEqual(stage_map["created_facts"]["created_facts"], 1)
         self.assertEqual(stage_map["created_summaries"]["created_summaries"], 1)
+        self.assertEqual(stage_map["source_reconciliation"]["source_metric_records"], 1)
+        self.assertEqual(stage_map["source_reconciliation"]["stored_source_records"], 1)
+        self.assertEqual(stage_map["source_reconciliation"]["unclassified_records"], 0)
 
     def test_week_number_extracted_from_filename(self):
         """Week number is parsed from the file name (e.g. '24.Hafta')."""
@@ -199,8 +203,8 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(fact.unit, 20, "Fact values should be updated on re-import")
         self.assertEqual(fact.tl, 500.0)
 
-    def test_unmatched_rep_queued_for_manual(self):
-        """An unrecognised representative name creates a ManualMatchQueue entry."""
+    def test_unmatched_rep_fails_atomic_import(self):
+        """An unresolved representative rejects the upload instead of storing partial data."""
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "ims.xlsx"
             pd.DataFrame(
@@ -210,14 +214,13 @@ class IMSImportServiceTestCase(unittest.TestCase):
                     ["Unknown Rep XYZ", 5, 100.0],
                 ]
             ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
-            IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 1)
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 1)
 
-        queue_items = ManualMatchQueue.query.filter_by(
-            entity_type=ManualMatchQueue.ENTITY_REPRESENTATIVE
-        ).all()
-        self.assertEqual(len(queue_items), 1)
-        self.assertEqual(queue_items[0].ims_name, "Unknown Rep XYZ")
-        self.assertEqual(queue_items[0].status, ManualMatchQueue.STATUS_PENDING)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["statistics"]["reconciliation_status"], "FAILED")
+        self.assertEqual(result["statistics"]["unresolved_representative_rows"], 1)
+        self.assertEqual(IMSRawData.query.count(), 0)
+        self.assertEqual(IMSUpload.query.one().status, "FAILED")
 
     def test_import_audit_log_created(self):
         """An ImportAuditLog record is created for every successful import."""
@@ -403,7 +406,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertTrue(result["success"], result["errors"])
         self.assertEqual(IMSRawData.query.count(), 1)
 
-    def test_corrupted_numeric_is_skipped_as_row_error_not_global_failure(self):
+    def test_corrupted_numeric_rejects_atomic_import(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "corrupted_numeric.xlsx"
             pd.DataFrame(
@@ -416,10 +419,14 @@ class IMSImportServiceTestCase(unittest.TestCase):
             ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
             result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
 
-        self.assertTrue(result["success"], result["errors"])
+        self.assertFalse(result["success"])
         reasons = {item["reason"] for item in result["skipped_logs"]}
         self.assertIn("invalid_numeric_value", reasons)
-        self.assertEqual(IMSRawData.query.count(), 1)
+        self.assertEqual(result["statistics"]["invalid_metric_records"], 1)
+        self.assertEqual(IMSRawData.query.count(), 0)
+        upload = IMSUpload.query.one()
+        self.assertEqual(upload.status, "FAILED")
+        self.assertEqual(upload.invalid_metric_count, 1)
 
     def test_wide_zero_metrics_are_stored_as_real_zero_sales(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -440,6 +447,11 @@ class IMSImportServiceTestCase(unittest.TestCase):
         summary = IMSSummary.query.one()
         self.assertEqual(summary.unit, 0.0)
         self.assertEqual(summary.tl, 0.0)
+        upload = IMSUpload.query.one()
+        self.assertEqual(upload.reconciliation_status, "PASSED")
+        self.assertEqual(upload.source_record_count, 1)
+        self.assertEqual(upload.stored_source_record_count, 1)
+        self.assertEqual(upload.zero_metric_count, 1)
 
     def test_wide_truly_empty_metrics_are_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -453,9 +465,13 @@ class IMSImportServiceTestCase(unittest.TestCase):
             ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
             result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 7)
 
-        self.assertTrue(result["success"], result["errors"])
+        self.assertFalse(result["success"])
         self.assertIn("empty_metrics", {item["reason"] for item in result["skipped_logs"]})
+        self.assertEqual(result["statistics"]["blank_metric_records"], 1)
         self.assertEqual(IMSRawData.query.count(), 0)
+        upload = IMSUpload.query.one()
+        self.assertEqual(upload.status, "FAILED")
+        self.assertEqual(upload.blank_metric_count, 1)
 
     def test_normalized_zero_metric_is_stored_as_real_zero_sales(self):
         with tempfile.TemporaryDirectory() as directory:
