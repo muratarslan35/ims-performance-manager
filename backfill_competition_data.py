@@ -25,19 +25,19 @@ def backfill_latest_competition(upload_folder: Path | None = None) -> dict:
         raise RuntimeError("Tamamlanmış IMS yüklemesi bulunamadı.")
 
     before_count = CompetitionData.query.filter_by(upload_id=upload.id).count()
-    if before_count:
-        nonzero_tl = CompetitionData.query.filter(
-            CompetitionData.upload_id == upload.id,
-            CompetitionData.metric_type == "TL",
-            CompetitionData.metric_value != 0,
-        ).count()
+    nonzero_tl_before = CompetitionData.query.filter(
+        CompetitionData.upload_id == upload.id,
+        CompetitionData.metric_type == "TL",
+        CompetitionData.metric_value != 0,
+    ).count()
+    if nonzero_tl_before:
         return {
             "status": "already_complete",
             "upload_id": upload.id,
             "file_name": upload.file_name,
             "records_before": before_count,
             "records_after": before_count,
-            "nonzero_tl_records": nonzero_tl,
+            "nonzero_tl_records": nonzero_tl_before,
         }
 
     source_path = Path(upload_folder or current_app.config["UPLOAD_FOLDER"]) / upload.file_name
@@ -61,7 +61,7 @@ def backfill_latest_competition(upload_folder: Path | None = None) -> dict:
         CompetitionData.metric_type == "TL",
         CompetitionData.metric_value != 0,
     ).count()
-    if after_count <= before_count or nonzero_tl <= 0:
+    if after_count < before_count or nonzero_tl <= 0:
         db.session.rollback()
         raise RuntimeError(
             "Rekabet verisi geri dolum doğrulaması başarısız: "
