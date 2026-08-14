@@ -155,7 +155,12 @@ def upload():
 
             flash(
 
-                f"{filename} başarıyla içe aktarıldı.",
+                (
+                    f"{filename} başarıyla içe aktarıldı. Veri bütünlüğü doğrulandı: "
+                    f"{result['statistics'].get('stored_source_records', 0)}/"
+                    f"{result['statistics'].get('source_metric_records', 0)} kayıt; "
+                    f"{result['statistics'].get('zero_metric_records', 0)} sıfır satış kaydı korundu."
+                ),
 
                 "success"
 
