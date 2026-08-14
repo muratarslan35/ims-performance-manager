@@ -393,6 +393,9 @@ class RepresentativeMarketService:
                     continue
                 value = float(row.metric_value or 0.0)
                 product_bucket = brick_groups[brick]["products"][product.product_name]
+                if self._is_subtotal_product_name(row.product_name):
+                    product_bucket["subtotal_unit"] += value
+                    continue
                 product_bucket["market_unit"] += value
                 product_bucket["market_products"][str(row.product_name).strip()] += value
                 if self._is_company_product(row, product):
@@ -566,6 +569,9 @@ class RepresentativeMarketService:
                     "competitor_unit": round(competitor_unit, 2),
                     "market_unit": round(market_unit, 2),
                     "subtotal_unit": round(float(product_data["subtotal_unit"]), 2),
+                    "group_total_unit": round(
+                        float(product_data["subtotal_unit"] or market_unit), 2
+                    ),
                     "target_unit": round(target_unit, 2),
                     "realization_percent": round(company_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
                     "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,

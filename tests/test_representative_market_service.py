@@ -110,6 +110,7 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert all("SUBTOTAL" not in item["name"] for item in result["brick_product_rows"][0]["market_products"])
             assert result["brick_product_rows"][0]["market_unit"] == 40
             assert result["brick_product_rows"][0]["subtotal_unit"] == 35
+            assert result["brick_product_rows"][0]["group_total_unit"] == 35
     finally:
         temporary.cleanup()
 
@@ -158,6 +159,12 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
                     period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
                     product_group="TRAVAZOL GRUP", product_name="TRAVAZOL", metric_type="UNIT",
                     metric_value=40, source_row=5,
+                ),
+                CompetitionData(
+                    upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
+                    period_type="MONTHLY", territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
+                    product_group="TRAVAZOL GRUP", product_name="TRAVAZOL GRUBU Subtotal", metric_type="UNIT",
+                    metric_value=160, source_row=5,
                 ),
                 CompetitionData(
                     upload_id=upload.id, year=2026, month=1, sheet_name="AYLIK REKABET KUTU",
@@ -216,6 +223,8 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
                 ("RAKIP A", 80.0),
                 ("RAKIP B", 40.0),
             ]
+            assert result["brick_product_rows"][0]["group_total_unit"] == 160
+            assert all("SUBTOTAL" not in item["name"].upper() for item in market_products)
             assert sum(item["unit"] for item in market_products if not item["is_company"]) == 120
 
             # A newer completed snapshot is authoritative. A competitor that
