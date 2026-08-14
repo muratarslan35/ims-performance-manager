@@ -26,6 +26,11 @@
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
 </div>
 
+<div class="card annual-realization-card mb-4">
+  <div class="card-header"><div><h2 class="card-title mb-1">12 Aylık Toplam Realizasyon</h2><p class="text-secondary small mb-0">{{ year }} yılı aylık toplam TL hedefi ve gerçekleşen IMS verisine göre</p></div></div>
+  <div class="card-body"><div class="annual-realization-chart"><canvas data-annual-realization-chart data-rows='{{ annual_realization|tojson|forceescape }}'></canvas></div></div>
+</div>
+
 <div class="row g-4">
   <div class="col-xl-7">
     <div class="card h-100">
@@ -112,6 +117,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/annual-realization-chart.js') }}"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll("[data-analysis-tab]").forEach(button => {
