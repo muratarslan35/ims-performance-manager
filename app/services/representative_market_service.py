@@ -2,10 +2,10 @@
 
 from collections import defaultdict
 
-from sqlalchemy import func
+from sqlalchemy import desc
 
 from app.extensions import db
-from app.models import CompetitionData, IMSSummary, Product, RepresentativeBrickAssignment, Target
+from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, RepresentativeBrickAssignment, Target
 from app.services.alias_service import AliasService
 
 
@@ -71,13 +71,18 @@ class RepresentativeMarketService:
         }
         return assignments, brick_keys, fallback_keys
 
+    @staticmethod
+    def _latest_upload_id(year, month):
+        return db.session.query(IMSUpload.id).filter(
+            IMSUpload.year == year,
+            IMSUpload.month == month,
+            IMSUpload.status == "COMPLETED",
+        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+
     def _competition_rows(self, brick_keys, fallback_keys, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
-        upload_id = db.session.query(func.max(CompetitionData.upload_id)).filter(
-            CompetitionData.year == year,
-            CompetitionData.month == month,
-        ).scalar()
+        upload_id = self._latest_upload_id(year, month)
         if upload_id is None:
             return None, []
 
@@ -87,6 +92,11 @@ class RepresentativeMarketService:
             CompetitionData.is_grand_total.is_(False),
             CompetitionData.metric_type.in_(("TL", "UNIT", "MARKET_SHARE")),
         ).all()
+        representative_key = self._key(self.representative.rep_name)
+        representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
+        if representative_rows:
+            return upload_id, representative_rows
+
         scope_keys = brick_keys or fallback_keys
         if not scope_keys:
             return upload_id, []
@@ -96,6 +106,28 @@ class RepresentativeMarketService:
             if self._key(row.subterritory) in scope_keys or self._key(row.territory) in scope_keys
         ]
         return upload_id, scoped
+
+    def _brick_raw_rows(self):
+        """Return the latest representative-owned brick market and sales rows.
+
+        The competition extension sheets are representative-grained in the
+        January workbook, while the main IMS parser already stores true brick
+        market totals in ``competition_box``.  Reading that canonical grain
+        avoids inventing a competitor allocation across bricks.
+        """
+        upload_id = self._latest_upload_id(self.year, self.month)
+        if upload_id is None:
+            return None, []
+        rows = IMSRawData.query.filter(
+            IMSRawData.upload_id == upload_id,
+            IMSRawData.representative_id == self.representative.id,
+            IMSRawData.year == self.year,
+            IMSRawData.month == self.month,
+            IMSRawData.brick.isnot(None),
+            IMSRawData.product_id.isnot(None),
+            IMSRawData.sheet_type.in_(("brick_sales", "competition_box")),
+        ).all()
+        return upload_id, rows
 
     def _product_for_row(self, row, products):
         group_key = self._key(row.product_group)
@@ -132,6 +164,7 @@ class RepresentativeMarketService:
         products = self._products()
         assignments, brick_keys, fallback_keys = self._scope()
         upload_id, competition_rows = self._competition_rows(brick_keys, fallback_keys)
+        brick_upload_id, brick_raw_rows = self._brick_raw_rows()
         previous_year = self.year if self.month > 1 else self.year - 1
         previous_month = self.month - 1 if self.month > 1 else 12
         previous_upload_id, previous_competition_rows = self._competition_rows(
@@ -177,6 +210,7 @@ class RepresentativeMarketService:
                 ),
             }
         )
+        use_raw_bricks = bool(brick_raw_rows)
         for row in competition_rows:
             if row.metric_type != "UNIT":
                 continue
@@ -185,17 +219,20 @@ class RepresentativeMarketService:
                 continue
             bucket = grouped[product.id]
             value = float(row.metric_value or 0.0)
-            brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
-            product_bucket = brick_groups[brick]["products"][product.product_name]
             if self._is_subtotal_product_name(row.product_name):
                 bucket["subtotal_unit"] += value
-                product_bucket["subtotal_unit"] += value
+                if not use_raw_bricks:
+                    brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
+                    brick_groups[brick]["products"][product.product_name]["subtotal_unit"] += value
                 continue
             bucket["unit"] += value
             is_company = self._is_company_product(row, product)
             if not is_company:
                 bucket["rivals"][row.product_name] += value
 
+            if use_raw_bricks:
+                continue
+            brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
             brick_bucket = brick_groups[brick]
             brick_bucket["market_unit"] += value
             product_bucket = brick_bucket["products"][product.product_name]
@@ -204,6 +241,20 @@ class RepresentativeMarketService:
             if is_company:
                 brick_bucket["company_unit"] += value
                 product_bucket["company_unit"] += value
+
+        if use_raw_bricks:
+            products_by_id = {product.id: product for product in products}
+            for raw in brick_raw_rows:
+                product = products_by_id.get(raw.product_id)
+                brick = str(raw.brick or "").strip()
+                if product is None or not brick:
+                    continue
+                product_bucket = brick_groups[brick]["products"][product.product_name]
+                value = float(raw.unit or 0.0)
+                if raw.sheet_type == "brick_sales":
+                    product_bucket["company_unit"] += value
+                elif raw.sheet_type == "competition_box":
+                    product_bucket["market_unit"] += value
 
         for brick_data in brick_groups.values():
             brick_data["company_unit"] = 0.0
@@ -215,14 +266,15 @@ class RepresentativeMarketService:
         # Analysis totals only use product detail rows. Excel subtotal values
         # remain separate display KPIs, preventing duplicate aggregation.
         products_by_name = {product.product_name: product for product in products}
-        for market in grouped.values():
-            market["unit"] = 0.0
-            market["subtotal_unit"] = 0.0
-        for brick_data in brick_groups.values():
-            for product_name, product_data in brick_data["products"].items():
-                product = products_by_name.get(product_name)
-                if product is not None:
-                    grouped[product.id]["unit"] += product_data["market_unit"]
+        if not use_raw_bricks:
+            for market in grouped.values():
+                market["unit"] = 0.0
+                market["subtotal_unit"] = 0.0
+            for brick_data in brick_groups.values():
+                for product_name, product_data in brick_data["products"].items():
+                    product = products_by_name.get(product_name)
+                    if product is not None:
+                        grouped[product.id]["unit"] += product_data["market_unit"]
 
         previous_grouped = defaultdict(lambda: {"unit": 0.0, "subtotal_unit": 0.0})
         for row in previous_competition_rows:
@@ -330,15 +382,29 @@ class RepresentativeMarketService:
                 market_unit = float(product_data["market_unit"])
                 competitor_unit = max(market_unit - company_unit, 0.0)
                 market_products = []
-                for market_product_name, market_product_unit in product_data["market_products"].items():
-                    is_company = self._is_company_product_name(market_product_name, product) if product else False
-                    market_products.append({
-                        "name": market_product_name,
-                        "unit": round(float(market_product_unit), 2),
-                        "is_company": is_company,
-                        "share_percent": round(float(market_product_unit) * 100.0 / market_unit, 1) if market_unit else 0.0,
-                        "realization_percent": round(float(market_product_unit) * 100.0 / target_unit, 1) if is_company and target_unit else None,
-                    })
+                if use_raw_bricks:
+                    rival_unit = max(market_unit - company_unit, 0.0)
+                    for market_product_name, market_product_unit, is_company in (
+                        (product_name, company_unit, True),
+                        ("Rakip toplamı", rival_unit, False),
+                    ):
+                        market_products.append({
+                            "name": market_product_name,
+                            "unit": round(float(market_product_unit), 2),
+                            "is_company": is_company,
+                            "share_percent": round(float(market_product_unit) * 100.0 / market_unit, 1) if market_unit else 0.0,
+                            "realization_percent": round(float(market_product_unit) * 100.0 / target_unit, 1) if is_company and target_unit else None,
+                        })
+                else:
+                    for market_product_name, market_product_unit in product_data["market_products"].items():
+                        is_company = self._is_company_product_name(market_product_name, product) if product else False
+                        market_products.append({
+                            "name": market_product_name,
+                            "unit": round(float(market_product_unit), 2),
+                            "is_company": is_company,
+                            "share_percent": round(float(market_product_unit) * 100.0 / market_unit, 1) if market_unit else 0.0,
+                            "realization_percent": round(float(market_product_unit) * 100.0 / target_unit, 1) if is_company and target_unit else None,
+                        })
                 market_products.sort(key=lambda item: (not item["is_company"], -item["unit"], item["name"]))
                 brick_product_rows.append({
                     "brick": brick,
@@ -366,6 +432,7 @@ class RepresentativeMarketService:
             "brick_rows": brick_rows,
             "brick_product_rows": brick_product_rows,
             "upload_id": upload_id,
+            "brick_upload_id": brick_upload_id,
             "previous_upload_id": previous_upload_id,
             "previous_period": {"year": previous_year, "month": previous_month},
             "scope": "brick" if brick_keys else "geography" if fallback_keys else "none",

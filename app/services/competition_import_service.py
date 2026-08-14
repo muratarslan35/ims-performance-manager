@@ -87,6 +87,8 @@ class CompetitionImportService:
         self._sheet_values: Dict[str, List[Tuple[Any, ...]]] = {}
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        self.parse_statistics = {"numeric_cells": 0, "blank_cells": 0, "invalid_cells": 0}
+        self.invalid_cells: List[Dict[str, Any]] = []
 
     def _normalize_sheet_name(self, sheet_name: str) -> str:
         """Normalize sheet name for robust mapping."""
@@ -421,6 +423,7 @@ class CompetitionImportService:
             for col_idx, (product_group, prod_name) in col_to_group_and_prod.items():
                 cell_val = self._get_cell_value(sheet, r, col_idx)
                 if cell_val is None or str(cell_val).strip() == "":
+                    self.parse_statistics["blank_cells"] += 1
                     continue
 
                 # Safe float conversion supporting percentages (%12,5 / 12.5% / strings)
@@ -435,10 +438,20 @@ class CompetitionImportService:
                         else:
                             metric_value = float(val_str.replace(',', '.'))
                     except (ValueError, TypeError):
+                        self.parse_statistics["invalid_cells"] += 1
+                        self.invalid_cells.append({
+                            "sheet_name": sheet_name,
+                            "source_row": r,
+                            "source_column": col_idx,
+                            "product_group": product_group,
+                            "product_name": prod_name,
+                            "value": val_str,
+                        })
                         continue
 
                 if metric_value is None:
                     continue
+                self.parse_statistics["numeric_cells"] += 1
 
                 sheet_type = structure_info["sheet_type"]
                 s_upper = sheet_name.upper()
@@ -702,18 +715,36 @@ class CompetitionImportService:
 
             structures = {s: self._parse_sheet_structure(s) for s in supported_sheets}
 
+            records_by_sheet = {
+                s_name: self._parse_sheet_records(struct_info)
+                for s_name, struct_info in structures.items()
+            }
+            if self.invalid_cells:
+                raise ValueError(
+                    "Rekabet sayfalarında geçersiz metrik hücreleri bulundu: "
+                    f"count={len(self.invalid_cells)}, sample={self.invalid_cells[:10]}"
+                )
+
             sheet_statistics = []
             total_inserted = 0
             total_duplicates = 0
             total_invalid = 0
 
-            for s_name, struct_info in structures.items():
-                sheet_records = self._parse_sheet_records(struct_info)
+            for s_name, sheet_records in records_by_sheet.items():
                 stats = self.import_records(sheet_records, s_name)
                 sheet_statistics.append(stats)
                 total_inserted += stats["inserted"]
                 total_duplicates += stats["duplicates"]
                 total_invalid += stats["invalid"]
+
+            if total_invalid or total_duplicates or total_inserted != self.parse_statistics["numeric_cells"]:
+                raise ValueError(
+                    "Rekabet veri mutabakatı başarısız: "
+                    f"numeric={self.parse_statistics['numeric_cells']}, inserted={total_inserted}, "
+                    f"duplicates={total_duplicates}, invalid={total_invalid}"
+                )
+            if total_inserted == 0:
+                raise ValueError("Rekabet sayfalarında aktarılabilir sayısal kayıt bulunamadı.")
 
             total_exec_time = round(time.time() - pipeline_start_time, 4)
             logger.info(
@@ -734,6 +765,7 @@ class CompetitionImportService:
                     "total_inserted": total_inserted,
                     "total_duplicates": total_duplicates,
                     "total_invalid": total_invalid,
+                    **self.parse_statistics,
                     "execution_time": total_exec_time
                 },
                 "sheet_statistics": sheet_statistics,
