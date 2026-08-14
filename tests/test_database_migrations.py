@@ -456,19 +456,31 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
                 "ims_facts": self._count_rows(connection, "ims_facts"),
                 "ims_summary": self._count_rows(connection, "ims_summary"),
             }
-            self.assertEqual(before_counts, after_counts)
+            self.assertEqual(before_counts["users"], after_counts["users"])
+            for table_name in (
+                "ims_uploads",
+                "ims_raw_data",
+                "ims_facts",
+                "ims_summary",
+            ):
+                self.assertEqual(0, after_counts[table_name])
 
             legacy_user_email = connection.execute(
                 sa.text("SELECT email FROM users WHERE id = 1")
             ).scalar_one()
             self.assertEqual("legacy.user@example.com", legacy_user_email)
 
-            legacy_upload_name = connection.execute(
-                sa.text("SELECT file_name FROM ims_uploads WHERE id = 1")
-            ).scalar_one()
-            self.assertEqual("ims.xlsx", legacy_upload_name)
-
             created_at = datetime(2026, 7, 1, 0, 0, 0)
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO ims_uploads
+                    (id, file_name, year, month, quarter, uploaded_at)
+                    VALUES (1, 'ims-after-reset.xlsx', 2026, 7, 'Q3', :created_at)
+                    """
+                ),
+                {"created_at": created_at},
+            )
             connection.execute(
                 sa.text(
                     """

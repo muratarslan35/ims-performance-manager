@@ -67,6 +67,10 @@ class Config:
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    USER_VAULT_PATH = Path(
+        os.getenv("USER_VAULT_PATH", str(BASE_DIR / "instance" / "persistent" / "users.db"))
+    )
+
     # ------------------------------------------------------------------
     # Dosya Klasörleri
     # ------------------------------------------------------------------
