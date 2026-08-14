@@ -536,6 +536,10 @@ class IMSImportService:
             stored_source_records=self.statistics["stored_source_records"],
             zero_metric_records=self.statistics["zero_metric_records"],
             aggregate_rows_excluded=self.statistics["aggregate_rows_excluded"],
+            competition_source_records=self.statistics.get("competition_source_records", 0),
+            competition_records=self.statistics.get("competition_records", 0),
+            competition_duplicates=self.statistics.get("competition_duplicates", 0),
+            competition_invalid=self.statistics.get("competition_invalid", 0),
             **blocking,
         )
         if failed:
@@ -2046,7 +2050,6 @@ class IMSImportService:
             self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self._flush_raw_batch()
-        self._finalize_source_reconciliation()
         self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
         TargetImportService(
             file_path=self.file_path,
@@ -2076,8 +2079,10 @@ class IMSImportService:
             self.statistics["competition_records"] = competition_summary.get("total_inserted", 0)
             self.statistics["competition_duplicates"] = competition_summary.get("total_duplicates", 0)
             self.statistics["competition_invalid"] = competition_summary.get("total_invalid", 0)
+            self.statistics["competition_source_records"] = competition_summary.get("numeric_cells", 0)
         else:
             self.warnings.append("Rekabet etiketi taşıyan bir sayfa bulunamadığı için rekabet importu atlandı.")
+        self._finalize_source_reconciliation()
 
     def write_audit_log(self, year, month, week_number, success):
         """Write an ImportAuditLog record for this import run."""
