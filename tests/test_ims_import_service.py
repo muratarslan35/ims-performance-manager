@@ -19,6 +19,7 @@ from app.models import (
     ImportAuditLog,
     ManualMatchQueue,
     Product,
+    ProductionResultUpload,
     Representative,
     RepresentativeMatch,
     User,
@@ -612,6 +613,42 @@ class IMSImportServiceTestCase(unittest.TestCase):
             after_counts,
             {"ims_uploads": 1, "ims_raw_data": 1, "ims_facts": 1, "ims_summary": 1},
         )
+
+    def test_production_upload_is_staged_without_changing_ims_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = self._make_workbook(directory, "first-production.xlsx")
+
+            with self.app.test_client() as client:
+                client.post(
+                    "/login",
+                    data={"email": "test@example.com", "password": "password123"},
+                    follow_redirects=False,
+                )
+                with workbook_path.open("rb") as workbook_file:
+                    response = client.post(
+                        "/ims/production-upload",
+                        data={
+                            "year": "2026",
+                            "month": "1",
+                            "production_stage": "1",
+                            "file": (workbook_file, "first-production.xlsx"),
+                        },
+                        content_type="multipart/form-data",
+                        follow_redirects=False,
+                    )
+
+        self.assertIn(response.status_code, (301, 302))
+        staged = ProductionResultUpload.query.one()
+        self.assertEqual(staged.status, ProductionResultUpload.STATUS_PENDING_VALIDATION)
+        self.assertEqual(staged.production_stage, 1)
+        self.assertEqual((IMSUpload.query.count(), IMSRawData.query.count(), IMSFact.query.count(), IMSSummary.query.count()), (0, 0, 0, 0))
+
+        with self.app.test_client() as client:
+            client.post("/login", data={"email": "test@example.com", "password": "password123"})
+            page = client.get("/ims/")
+        html = page.get_data(as_text=True)
+        self.assertIn("Satış Sonrası Üretim Sonuçları", html)
+        self.assertIn("Şablon doğrulaması bekliyor", html)
 
 
 if __name__ == "__main__":

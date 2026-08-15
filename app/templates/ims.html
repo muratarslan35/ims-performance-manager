@@ -171,6 +171,86 @@
   </div>
 </div>
 
+<div class="ims-upload-card mb-4" id="production-results">
+  <div class="ims-upload-card-header">
+    <div>
+      <div class="ims-upload-card-title"><i class="bi bi-shield-check" style="color:#b98200;"></i> Satış Sonrası Üretim Sonuçları</div>
+      <div style="font-size:12px;color:#6a7a90;margin-top:4px;">İade sonrası 1. ve 2. üretim realizasyonlarını, kaynak IMS satışlarını koruyarak yönetin.</div>
+    </div>
+    <span class="badge" style="background:#fff4cf;color:#765500;border:1px solid #f0d372;">Güvenli finalizasyon</span>
+  </div>
+  <div class="ims-upload-card-body">
+    <div class="alert mb-4" style="background:#f4f8ff;border:1px solid rgba(11,78,162,.16);color:#1c3558;font-size:13px;">
+      <i class="bi bi-lock-fill me-2" style="color:#0b4ea2;"></i>
+      Yüklenen dosya önce bekleyen alana alınır. Şablon, temsilci ve ürün eşleşmeleri doğrulanmadan IMS satışları, realizasyonlar ve primler değiştirilmez.
+      Final önceliği <strong>2. üretim → 1. üretim → mevcut IMS</strong> şeklindedir.
+    </div>
+
+    <form method="POST" action="{{ url_for('ims.production_upload') }}" enctype="multipart/form-data">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label fw-semibold" style="font-size:13px;">IMS yılı</label>
+          <select class="form-select" name="year" required>
+            {% for year in range(2025,2036) %}<option value="{{ year }}">{{ year }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-semibold" style="font-size:13px;">IMS ayı</label>
+          <select class="form-select" name="month" required>
+            <option value="1">Ocak</option><option value="2">Şubat</option><option value="3">Mart</option>
+            <option value="4">Nisan</option><option value="5">Mayıs</option><option value="6">Haziran</option>
+            <option value="7">Temmuz</option><option value="8">Ağustos</option><option value="9">Eylül</option>
+            <option value="10">Ekim</option><option value="11">Kasım</option><option value="12">Aralık</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-semibold" style="font-size:13px;">Sonuç aşaması</label>
+          <select class="form-select" name="production_stage" required>
+            <option value="1">1. üretim</option>
+            <option value="2">2. üretim</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold" style="font-size:13px;">Üretim Excel dosyası</label>
+          <input class="form-control" type="file" name="file" accept=".xlsx,.xls" required>
+        </div>
+        <div class="col-md-2 d-grid">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-inbox-arrow-down me-2"></i>Güvenli alana al</button>
+        </div>
+      </div>
+    </form>
+
+    <div class="table-responsive mt-4">
+      <table class="table table-hover align-middle mb-0">
+        <thead style="background:#f4f8ff;">
+          <tr>
+            <th>Dosya</th><th>Dönem</th><th>Aşama</th><th>Durum</th><th>Yükleyen</th><th>Tarih</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in production_uploads %}
+          <tr>
+            <td><strong>{{ item.file_name }}</strong></td>
+            <td>{{ item.year }}/{{ "%02d"|format(item.month) }}</td>
+            <td>{{ item.production_stage }}. üretim</td>
+            <td>
+              {% if item.status == 'APPLIED' %}<span class="badge bg-success">Uygulandı</span>
+              {% elif item.status == 'VALIDATED' %}<span class="badge bg-primary">Doğrulandı</span>
+              {% elif item.status == 'FAILED' %}<span class="badge bg-danger">Hatalı</span>
+              {% else %}<span class="badge" style="background:#fff4cf;color:#765500;">Şablon doğrulaması bekliyor</span>{% endif %}
+            </td>
+            <td>{{ item.uploaded_by or '—' }}</td>
+            <td>{{ item.uploaded_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">Henüz üretim sonucu dosyası yüklenmedi.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="ims-info-grid mb-4">
   <div class="ims-info-card">
     <div class="ims-info-card-icon blue"><i class="bi bi-file-earmark-excel-fill"></i></div>
