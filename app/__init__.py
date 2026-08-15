@@ -1,6 +1,8 @@
 from flask import Flask
 from flask import render_template
 from pathlib import Path
+from datetime import timezone
+from zoneinfo import ZoneInfo
 
 from config import Config
 
@@ -28,6 +30,14 @@ from app.regions import regions_bp
 
 def register_template_context(app):
     """Expose the current IMS period consistently to the application shell."""
+    @app.template_filter("istanbul_datetime")
+    def istanbul_datetime(value, format_string="%d.%m.%Y %H:%M"):
+        """Render UTC database timestamps in the application's local timezone."""
+        if value is None:
+            return "—"
+        aware_value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        return aware_value.astimezone(ZoneInfo("Europe/Istanbul")).strftime(format_string)
+
     @app.context_processor
     def shell_context():
         try:
