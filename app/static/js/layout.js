@@ -81,6 +81,7 @@
         if (themeBtn) {
             themeBtn.title = theme === 'dark' ? 'Açık Temaya Geç' : 'Koyu Temaya Geç';
         }
+        window.dispatchEvent(new CustomEvent('ims:theme-change', { detail: { theme: theme } }));
     }
 
     function toggleTheme() {
