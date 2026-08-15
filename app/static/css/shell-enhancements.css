@@ -59,3 +59,112 @@ body.sidebar-collapsed .navbar-collapsed-brand {
 .global-search-item i { color: var(--primary); }
 .global-search-item small { display: block; color: var(--text-light); }
 .global-search-empty { padding: 12px; color: var(--text-light); font-size: 13px; }
+
+/* Global dark-mode compatibility layer. Keep page-specific light styling intact,
+   but neutralise Bootstrap's per-cell white backgrounds and fixed light panels. */
+[data-theme="dark"] .table {
+  --bs-table-color: #dce7f5;
+  --bs-table-bg: #16243a;
+  --bs-table-border-color: #33445f;
+  --bs-table-striped-color: #dce7f5;
+  --bs-table-striped-bg: #1b2b44;
+  --bs-table-active-color: #fff;
+  --bs-table-active-bg: #243955;
+  --bs-table-hover-color: #fff;
+  --bs-table-hover-bg: #20334f;
+  color: #dce7f5;
+}
+[data-theme="dark"] .table > :not(caption) > * > * {
+  background-color: var(--bs-table-bg) !important;
+  border-color: var(--bs-table-border-color) !important;
+  color: inherit;
+  box-shadow: none !important;
+}
+[data-theme="dark"] .table-striped > tbody > tr:nth-of-type(odd) > * {
+  background-color: var(--bs-table-striped-bg) !important;
+  color: var(--bs-table-striped-color);
+}
+[data-theme="dark"] .table-hover > tbody > tr:hover > * {
+  background-color: var(--bs-table-hover-bg) !important;
+  color: var(--bs-table-hover-color);
+}
+[data-theme="dark"] .table thead th {
+  background: #101d31 !important;
+  color: #aebed2 !important;
+}
+[data-theme="dark"] .table .btn-link,
+[data-theme="dark"] .table a:not(.badge):not(.btn),
+[data-theme="dark"] .rep-link { color: #75b8ff !important; }
+[data-theme="dark"] .table .text-secondary,
+[data-theme="dark"] .table .text-muted,
+[data-theme="dark"] .metric-sub { color: #a9bdd5 !important; }
+[data-theme="dark"] .table .metric-main { color: #f2f7fd !important; }
+[data-theme="dark"] .table .badge.bg-primary-lt {
+  background: rgba(45, 127, 249, .18) !important;
+  color: #8fc4ff !important;
+}
+
+[data-theme="dark"] .accordion-item,
+[data-theme="dark"] .accordion-button,
+[data-theme="dark"] .accordion-body,
+[data-theme="dark"] .list-group-item,
+[data-theme="dark"] .offcanvas,
+[data-theme="dark"] .modal-content,
+[data-theme="dark"] .popover,
+[data-theme="dark"] .toast {
+  background: #1a2234;
+  border-color: #33445f;
+  color: #e2e8f0;
+}
+[data-theme="dark"] .accordion-button:not(.collapsed) {
+  background: #20334f;
+  color: #fff;
+}
+[data-theme="dark"] .accordion-button::after { filter: invert(1) grayscale(1); }
+[data-theme="dark"] .form-label,
+[data-theme="dark"] .form-check-label,
+[data-theme="dark"] .card-title,
+[data-theme="dark"] .modal-title { color: #e2e8f0; }
+[data-theme="dark"] .form-control::placeholder { color: #7f91aa; opacity: 1; }
+[data-theme="dark"] .input-group-text {
+  background: #101d31;
+  border-color: #33445f;
+  color: #aebed2;
+}
+[data-theme="dark"] .pagination { --bs-pagination-bg:#1a2234; --bs-pagination-color:#a9ceff; --bs-pagination-border-color:#33445f; --bs-pagination-hover-bg:#20334f; --bs-pagination-hover-color:#fff; --bs-pagination-hover-border-color:#3d5575; }
+
+/* Region performance uses a few deliberately light presentation surfaces. */
+[data-theme="dark"] .region-section { background: #15233a !important; border-color: #33445f !important; }
+[data-theme="dark"] .region-section-head { background: #1b2c46 !important; border-color: #33445f !important; }
+[data-theme="dark"] .region-section-head h2 { color: #eef5fd; }
+[data-theme="dark"] .region-chip { background: rgba(45,127,249,.18); color: #91c7ff; }
+[data-theme="dark"] .month-card { background: #101d31 !important; border-color: #33445f !important; }
+[data-theme="dark"] .mini-track { background: #33445f; }
+
+/* Anonymous pages inherit the saved theme before authentication. Make the
+   complete login/register surface dark instead of mixing a white card with
+   dark form controls and light text. */
+[data-theme="dark"] body.anonymous,
+[data-theme="dark"] body.anonymous .page-wrapper {
+  background: radial-gradient(circle at 20% 20%, rgba(45,127,249,.17), transparent 30%),
+              radial-gradient(circle at 82% 78%, rgba(24,179,104,.10), transparent 34%),
+              #08111f !important;
+}
+[data-theme="dark"] body.anonymous .auth-system-title { color: #eef5fd; }
+[data-theme="dark"] body.anonymous .auth-layout { border: 1px solid #2d3e59; }
+[data-theme="dark"] body.anonymous .auth-layout .auth-card {
+  background: #152238;
+  border-color: #2d3e59;
+  color: #e2e8f0;
+}
+[data-theme="dark"] body.anonymous .auth-welcome { color: #f4f7fb; }
+[data-theme="dark"] body.anonymous .auth-subtitle,
+[data-theme="dark"] body.anonymous .auth-footer,
+[data-theme="dark"] body.anonymous .form-hint { color: #a9b9cf; }
+[data-theme="dark"] body.anonymous .auth-form .form-control {
+  background: #0d1a2d;
+  border-color: #354964;
+  color: #f1f5f9;
+}
+[data-theme="dark"] body.anonymous .auth-link,
+[data-theme="dark"] body.anonymous .auth-footer a { color: #80bdff; }
