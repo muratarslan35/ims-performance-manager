@@ -648,3 +648,47 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
 @media(max-width:900px){.executive-kpi-grid{grid-template-columns:1fr 1fr}.executive-kpi-card{min-width:0;min-height:150px}.executive-kpi-card strong{font-size:clamp(22px,5vw,30px);overflow-wrap:anywhere}.executive-kpi-card small{max-width:90%}}
 @media(max-width:640px){.executive-kpi-grid{grid-template-columns:1fr}.executive-kpi-card{min-height:132px;padding:18px 20px}.executive-kpi-card strong{font-size:29px;white-space:normal}.executive-kpi-card small{font-size:12px;line-height:1.45}.executive-kpi-card i{right:20px}}
 .product-value-legend{display:grid;grid-template-columns:1fr;gap:8px;margin-top:0}.product-value-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border:1px solid #dbe7f3;border-radius:10px;background:#fff;font-size:11px;box-shadow:0 3px 10px rgba(18,58,101,.04)}.product-value-item>span{display:flex;align-items:center;gap:9px;color:#526f8b}.product-value-item i{width:10px;height:10px;border-radius:50%;flex:0 0 auto}.product-value-name{display:flex;flex-direction:column;gap:2px;font-weight:800;color:#294d72}.product-value-name small{font-size:9px;font-weight:600;color:#8395a8}.product-value-item strong{color:#173d66;white-space:nowrap}@media(max-width:700px){.product-chart-under-table{padding:16px 12px}.product-chart-heading{align-items:flex-start}.product-performance-layout{grid-template-columns:1fr;gap:8px}.product-value-legend{grid-template-columns:1fr;margin-top:0}.product-orbit-chart{height:310px}}
+
+/* Dashboard dark theme: light-only surfaces receive a matching dark state. */
+[data-theme="dark"] .executive-kpi-card,
+[data-theme="dark"] .kpi-card,
+[data-theme="dark"] .section-card{background:#16253d;border-color:#2a3c57;box-shadow:0 10px 25px rgba(0,0,0,.24)}
+[data-theme="dark"] .executive-kpi-card span,[data-theme="dark"] .executive-kpi-card small,[data-theme="dark"] .kpi-label,[data-theme="dark"] .kpi-desc,[data-theme="dark"] .kpi-comparison{color:#a9bdd5}
+[data-theme="dark"] .executive-kpi-card strong,[data-theme="dark"] .kpi-value,[data-theme="dark"] .section-card-title,[data-theme="dark"] .product-name-cell,[data-theme="dark"] .rep-percent{color:#f1f6fd}
+[data-theme="dark"] .section-card-header{border-color:#2a3c57}
+[data-theme="dark"] .section-chip,[data-theme="dark"] .regional-summary-line span{background:#203755;color:#9ccaff}
+[data-theme="dark"] .section-collapse-btn,[data-theme="dark"] .btn-export-placeholder,[data-theme="dark"] .table-search-input,[data-theme="dark"] .competition-filter{background:#12203a;color:#dce8f7;border-color:#334966}
+[data-theme="dark"] .premium-table,[data-theme="dark"] .market-table{--bs-table-bg:#16253d;--bs-table-color:#dbe7f5;color:#dbe7f5}
+[data-theme="dark"] .premium-table thead th,[data-theme="dark"] .market-table thead th{background:#102039;color:#a9bdd5;border-color:#334966}
+[data-theme="dark"] .premium-table tbody td,[data-theme="dark"] .market-table tbody td{background:#16253d;color:#dbe7f5;border-color:#2d405c}
+[data-theme="dark"] .premium-table tbody tr:hover td,[data-theme="dark"] .market-table tbody tr:hover td{background:#1b2f4b}
+[data-theme="dark"] .premium-table .text-muted,[data-theme="dark"] .market-table small,[data-theme="dark"] .regional-competition-table td:first-child small{color:#a9bdd5!important}
+[data-theme="dark"] .market-table-wrap,[data-theme="dark"] .market-chart-box{background:#16253d}
+[data-theme="dark"] .product-chart-under-table{background:linear-gradient(180deg,#152640,#101e34);border-color:#2d405c}
+[data-theme="dark"] .product-chart-heading strong,[data-theme="dark"] .product-value-name,[data-theme="dark"] .product-value-item strong{color:#eef5fd}
+[data-theme="dark"] .product-chart-heading small,[data-theme="dark"] .orbit-note,[data-theme="dark"] .product-value-name small,[data-theme="dark"] .product-value-item>span{color:#a9bdd5}
+[data-theme="dark"] .product-value-item,[data-theme="dark"] .donut-legend-item{background:#1b2f4b;border-color:#334966;box-shadow:none}
+[data-theme="dark"] button.donut-legend-item:hover{background:#203755}
+[data-theme="dark"] .region-realization-item{background:#172b46;border-color:#334966;box-shadow:none}
+[data-theme="dark"] .region-card-head strong,[data-theme="dark"] .regional-signal-row strong,[data-theme="dark"] .regional-signal-row b{color:#eaf2fc}
+[data-theme="dark"] .region-card-metrics span{background:#203755;color:#e0ebf8}
+[data-theme="dark"] .region-card-metrics small,[data-theme="dark"] .regional-signal-row span,[data-theme="dark"] .signal-share small{color:#a9bdd5!important}
+[data-theme="dark"] .regional-signal-row{border-color:#334966}
+[data-theme="dark"] .regional-signal-row.signal-risk{background:linear-gradient(90deg,rgba(227,75,75,.15),transparent)}
+[data-theme="dark"] .regional-signal-row.signal-strong{background:linear-gradient(90deg,rgba(24,179,104,.10),transparent)}
+[data-theme="dark"] .regional-data-note{background:#102039;color:#a9bdd5;border-color:#334966}
+[data-theme="dark"] .composition-label,[data-theme="dark"] .chart-placeholder,[data-theme="dark"] .chart-placeholder-title,[data-theme="dark"] .chart-placeholder-sub,[data-theme="dark"] .empty-state{color:#a9bdd5}
+[data-theme="dark"] .market-composition{background:#2a3d59}
+[data-theme="dark"] .alert-item-text strong{color:#eef5fd}
+[data-theme="dark"] .alert-item-text span,[data-theme="dark"] .alert-item-text small,[data-theme="dark"] .quick-actions-title{color:#b6c8dd}
+[data-theme="dark"] .alert-item-critical{background:rgba(227,75,75,.14)}
+[data-theme="dark"] .alert-item-warning{background:rgba(244,163,0,.14)}
+[data-theme="dark"] .alert-item-info{background:rgba(45,127,249,.13)}
+[data-theme="dark"] .alert-item-success{background:rgba(24,179,104,.13)}
+[data-theme="dark"] .quick-action-primary{background:rgba(45,127,249,.16);color:#9ccaff}
+[data-theme="dark"] .quick-action-success{background:rgba(24,179,104,.15);color:#8ce1b5}
+[data-theme="dark"] .quick-action-warning{background:rgba(244,163,0,.16);color:#ffd67a}
+[data-theme="dark"] .rep-name,[data-theme="dark"] .upload-filename,[data-theme="dark"] .gauge-stat-value{color:#eef5fd}
+[data-theme="dark"] .rep-city,[data-theme="dark"] .rep-ciro,[data-theme="dark"] .upload-meta,[data-theme="dark"] .gauge-label,[data-theme="dark"] .gauge-stat-label{color:#a9bdd5}
+[data-theme="dark"] .progress-sm{background:#2a3d59}
+[data-theme="dark"] .map-selected-info{background:#172b46;border-color:#334966;color:#dbe7f5}
