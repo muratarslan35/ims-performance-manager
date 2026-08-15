@@ -36,6 +36,35 @@ function numberTR(value, suffix = "") {
   return `${safeValue.toLocaleString("tr-TR")}${suffix}`;
 }
 
+function isDashboardDark() {
+  return document.documentElement.getAttribute("data-theme") === "dark";
+}
+
+function applyDashboardChartTheme() {
+  const dark = isDashboardDark();
+  const textColor = dark ? "#D7E5F7" : "#6F8198";
+  const gridColor = dark ? "rgba(154, 181, 216, .16)" : "rgba(13, 43, 83, .05)";
+
+  Object.values(CHARTS).forEach((chart) => {
+    if (!chart) return;
+    const options = chart.options || {};
+    if (options.plugins && options.plugins.legend && options.plugins.legend.labels) {
+      options.plugins.legend.labels.color = textColor;
+    }
+    Object.values(options.scales || {}).forEach((scale) => {
+      if (scale.ticks) scale.ticks.color = textColor;
+      if (scale.grid && scale.grid.display !== false) scale.grid.color = gridColor;
+    });
+    if (chart === CHARTS.productDonut && chart.data.datasets[0]) {
+      chart.data.datasets[0].borderColor = dark ? "#16253D" : "#FFFFFF";
+    }
+    if (chart === CHARTS.gauge && chart.data.datasets[0]) {
+      chart.data.datasets[0].backgroundColor[1] = dark ? "#2A3D59" : "#E7EEF8";
+    }
+    chart.update("none");
+  });
+}
+
 function escapeDashboardHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -226,10 +255,10 @@ function initProductDonut(data) {
       const centerY = (chartArea.top + chartArea.bottom) / 2;
       ctx.save();
       ctx.textAlign = "center";
-      ctx.fillStyle = "#123e70";
+      ctx.fillStyle = isDashboardDark() ? "#F4F8FF" : "#123e70";
       ctx.font = "800 16px Arial";
       ctx.fillText(numberTR(total, " ₺"), centerX, centerY - 1);
-      ctx.fillStyle = "#71859b";
+      ctx.fillStyle = isDashboardDark() ? "#AFC3DD" : "#71859b";
       ctx.font = "700 9px Arial";
       ctx.fillText("TOPLAM GERÇEKLEŞEN", centerX, centerY + 15);
 
@@ -445,7 +474,10 @@ function lazyInitCharts(data) {
     entries.forEach((entry) => {
       if (!entry.isIntersecting) return;
       const match = initializers.find((item) => item.id === entry.target.id);
-      if (match) match.fn();
+      if (match) {
+        match.fn();
+        applyDashboardChartTheme();
+      }
       obs.unobserve(entry.target);
     });
   }, { threshold: 0.2, rootMargin: "60px" });
@@ -529,6 +561,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTurkeyMap(data.regionRealization || []);
   animateCounters();
   initProgressBars();
+  window.addEventListener("ims:theme-change", applyDashboardChartTheme);
 });
 
 window.addEventListener("beforeunload", () => {
