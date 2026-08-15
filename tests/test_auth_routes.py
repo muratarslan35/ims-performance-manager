@@ -643,6 +643,30 @@ def test_ims_completed_status_is_rendered_in_turkish(app):
     assert ">COMPLETED<" not in html
 
 
+def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
+    from datetime import datetime
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        db.session.add(
+            IMSUpload(
+                file_name="saat-kontrol.xlsx",
+                year=2026,
+                month=8,
+                status="COMPLETED",
+                uploaded_at=datetime(2026, 8, 15, 10, 5),
+            )
+        )
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    html = client.get("/ims/").get_data(as_text=True)
+
+    assert "15.08.2026 13:05" in html
+
+
 def test_product_management_uses_simplified_safe_fields(app):
     from app.models import Product
 
