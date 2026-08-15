@@ -483,6 +483,10 @@ function applyDashboardSectionOrder() {
   if (executiveSummary && executiveSummary.parentElement) {
     executiveSummary.parentElement.appendChild(executiveSummary);
   }
+  const warningActions = document.getElementById("warningActionSection");
+  if (warningActions && warningActions.parentElement) {
+    warningActions.parentElement.appendChild(warningActions);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
