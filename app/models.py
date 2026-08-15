@@ -239,6 +239,85 @@ class IMSUpload(db.Model):
         return f"<IMSUpload {self.file_name} ({self.status})>"
 
 
+class ProductionResultUpload(db.Model):
+    """A post-sales production workbook staged independently from IMS sales."""
+
+    __tablename__ = "production_result_uploads"
+    __table_args__ = (
+        db.Index("ix_production_upload_period", "year", "month", "production_stage"),
+        db.UniqueConstraint("source_hash", name="uq_production_upload_source_hash"),
+    )
+
+    STATUS_PENDING_VALIDATION = "PENDING_VALIDATION"
+    STATUS_VALIDATED = "VALIDATED"
+    STATUS_APPLIED = "APPLIED"
+    STATUS_FAILED = "FAILED"
+
+    id = db.Column(db.Integer, primary_key=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    stored_file_name = db.Column(db.String(255), nullable=False)
+    source_hash = db.Column(db.String(64), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    production_stage = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(30), nullable=False, default=STATUS_PENDING_VALIDATION)
+    uploaded_by = db.Column(db.String(150), nullable=True)
+    row_count = db.Column(db.Integer, nullable=False, default=0)
+    matched_row_count = db.Column(db.Integer, nullable=False, default=0)
+    warning_message = db.Column(db.Text, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    validated_at = db.Column(db.DateTime, nullable=True)
+    applied_at = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<ProductionResultUpload {self.year}/{self.month} stage={self.production_stage}>"
+
+
+class ProductionResult(db.Model):
+    """Validated representative/product realization from a production result."""
+
+    __tablename__ = "production_results"
+    __table_args__ = (
+        db.UniqueConstraint("upload_id", "representative_id", "product_id", name="uq_production_result_row"),
+        db.Index("ix_production_result_rep_product", "representative_id", "product_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("product_results", lazy="dynamic"))
+    representative = db.relationship("Representative", backref="production_results")
+    product = db.relationship("Product", backref="production_results")
+
+
+class ProductionRepresentativeTotal(db.Model):
+    """Workbook-provided total realization kept separate from product results."""
+
+    __tablename__ = "production_representative_totals"
+    __table_args__ = (
+        db.UniqueConstraint("upload_id", "representative_id", name="uq_production_representative_total"),
+        db.Index("ix_production_total_representative", "representative_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False)
+    representative_id = db.Column(db.Integer, db.ForeignKey("representatives.id"), nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("representative_totals", lazy="dynamic"))
+    representative = db.relationship("Representative", backref="production_result_totals")
+
+
 class IMSRawData(db.Model):
     __tablename__ = "ims_raw_data"
     __table_args__ = (
