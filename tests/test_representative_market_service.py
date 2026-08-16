@@ -31,11 +31,23 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             representative = Representative(rep_code="R1", rep_name="Temsilci Bir", active=True)
             other = Representative(rep_code="R2", rep_name="Temsilci İki", active=True)
             names = ("Travazol", "Monurol", "Acnemix", "Mixovul", "Stiderm", "Brimoder", "Fentivag")
-            products = [
-                Product(product_code=name.upper(), product_name=name, display_order=index, is_active=True)
-                for index, name in enumerate(names)
-            ]
-            db.session.add_all([representative, other, *products])
+            products = []
+            for index, name in enumerate(names):
+                product = Product.query.filter_by(product_code=name.upper()).first()
+                if product is None:
+                    product = Product(
+                        product_code=name.upper(),
+                        product_name=name,
+                        display_order=index,
+                        is_active=True,
+                    )
+                    db.session.add(product)
+                else:
+                    product.product_name = name
+                    product.display_order = index
+                    product.is_active = True
+                products.append(product)
+            db.session.add_all([representative, other])
             db.session.flush()
             upload = IMSUpload(file_name="august.xlsx", year=2026, month=8, quarter="Q3", status="COMPLETED")
             previous_upload = IMSUpload(file_name="july.xlsx", year=2026, month=7, quarter="Q3", status="COMPLETED")
