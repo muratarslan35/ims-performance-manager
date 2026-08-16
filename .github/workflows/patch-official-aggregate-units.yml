@@ -17,11 +17,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/ims-official-aggregate-units
-      - name: Apply official KPI patch
+      - name: Apply dashboard official-layer patch
         run: |
-          python tools/patch_official_aggregate_kpis.py
+          python tools/patch_dashboard_official_layers.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/query/dashboard_query.py app/services/region_performance_service.py
-          git commit -m "fix: use official national and region aggregate KPIs"
+          git add app/query/dashboard_query.py
+          git commit -m "fix: align dashboard global and region KPIs to official aggregates"
           git push origin HEAD:fix/ims-official-aggregate-units
