@@ -1,0 +1,238 @@
+name: January production final repair and audit
+
+on:
+  push:
+    branches: [ops/january-final-repair-audit]
+    paths: [.github/workflows/january-final-repair-audit.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  repair-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Backup, repair January and run final reconciliation
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          git pull --ff-only origin main
+
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          cp instance/ipm.db "instance/backups/ipm-pre-january-final-audit-${stamp}.db"
+          sha256sum instance/ipm.db "instance/backups/ipm-pre-january-final-audit-${stamp}.db"
+
+          echo '--- GUARDED JANUARY ACTUAL REPAIR ---'
+          venv/bin/python repair_january_ims_actuals.py
+
+          echo '--- FINAL JANUARY SOURCE RECONCILIATION ---'
+          venv/bin/python - <<'PY'
+          import json
+          from decimal import Decimal
+          from pathlib import Path
+
+          from app import create_app
+          from app.extensions import db
+          from app.models import CompetitionData, IMSRawData, IMSUpload, IMSSummary, Product, Representative, Target
+          from app.services.alias_service import AliasService
+          from app.services.ims_import_service import IMSImportService
+          from app.services.official_aggregate_service import (
+              ACTUAL_TYPE, TARGET_TYPE, OfficialAggregateService,
+              _balance_columns, persist_official_aggregates,
+          )
+          from repair_january_ims_actuals import (
+              PRODUCT_CODES, _period_representatives, _resolve_source_file,
+              extract_weekly_actuals, is_person_row, norm, region_code,
+              resolve_representative,
+          )
+
+          YEAR, MONTH = 2026, 1
+          TL_TOL = 0.01
+          UNIT_TOL = 1e-5
+          app = create_app()
+          with app.app_context():
+              upload = (IMSUpload.query.filter_by(year=YEAR, month=MONTH, status='COMPLETED')
+                        .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first())
+              if upload is None:
+                  raise RuntimeError('January completed upload missing')
+              source_file = _resolve_source_file(upload)
+
+              # Refresh exact NATIONAL and 11-region aggregate rows with the new production parser.
+              service = IMSImportService(str(source_file))
+              service.upload = upload
+              service.load_workbook(str(source_file))
+              aggregate_write = persist_official_aggregates(service, YEAR, MONTH)
+              db.session.commit()
+
+              target_rows = Target.query.filter_by(year=YEAR, month=MONTH).all()
+              target_count = len(target_rows)
+              rep_ids = {row.representative_id for row in target_rows}
+              summary_count = IMSSummary.query.filter_by(year=YEAR, month=MONTH).count()
+              product_ids = {row.product_id for row in target_rows}
+              if target_count != 791 or len(rep_ids) != 113 or len(product_ids) != 7 or summary_count != 791:
+                  raise RuntimeError(f'Coverage mismatch targets={target_count} reps={len(rep_ids)} products={len(product_ids)} summaries={summary_count}')
+
+              fentivag = Product.query.filter(db.func.upper(Product.product_code) == 'FENTIVAG').first()
+              if fentivag is None or not fentivag.is_active:
+                  raise RuntimeError('Fentivag is not active')
+
+              national = OfficialAggregateService.product_totals(YEAR, MONTH, 'NATIONAL') or []
+              if len(national) != 7:
+                  raise RuntimeError(f'Official NATIONAL product count mismatch: {len(national)}')
+              national_tl = sum(Decimal(str(row['target_tl'])) for row in national)
+              national_unit = sum(Decimal(str(row['target_unit'])) for row in national)
+              if abs(national_tl - Decimal('133777948.40')) > Decimal('0.01'):
+                  raise RuntimeError(f'NATIONAL TL mismatch: {national_tl}')
+              if abs(national_unit - Decimal('1189100')) > Decimal('0.001'):
+                  raise RuntimeError(f'NATIONAL UNIT mismatch: {national_unit}')
+
+              target_upload_id = OfficialAggregateService.latest_upload_id(YEAR, MONTH, TARGET_TYPE)
+              region_target_rows = IMSRawData.query.filter(
+                  IMSRawData.upload_id == target_upload_id,
+                  IMSRawData.sheet_type == TARGET_TYPE,
+                  IMSRawData.territory != 'NATIONAL',
+              ).all()
+              regions = sorted({str(row.territory) for row in region_target_rows})
+              region_tl = sum(Decimal(str(row.tl or 0)) for row in region_target_rows)
+              region_unit = sum(Decimal(str(row.unit or 0)) for row in region_target_rows)
+              if len(regions) != 11:
+                  raise RuntimeError(f'Official region count mismatch: {len(regions)} {regions}')
+              if abs(region_tl - national_tl) > Decimal('0.01'):
+                  raise RuntimeError(f'Region/NATIONAL TL mismatch: regions={region_tl} national={national_tl}')
+              if abs(region_unit - national_unit) > Decimal('0.001'):
+                  raise RuntimeError(f'Region/NATIONAL UNIT mismatch: regions={region_unit} national={national_unit}')
+
+              # Verify every person/cadre actual against the canonical workbook TL + KUTU source.
+              source_records = extract_weekly_actuals(source_file)
+              period_ids, representatives, exact = _period_representatives(YEAR, MONTH)
+              actual_mismatches = []
+              checked_actuals = 0
+              for record in source_records:
+                  rep = resolve_representative(record, representatives, exact)
+                  if rep is None:
+                      actual_mismatches.append(('UNMATCHED_REP', record['representative']))
+                      continue
+                  for code, source in record['values'].items():
+                      product = Product.query.filter(db.func.upper(Product.product_code) == code).first()
+                      target = Target.query.filter_by(year=YEAR, month=MONTH, representative_id=rep.id, product_id=product.id).first()
+                      summary = IMSSummary.query.filter_by(year=YEAR, month=MONTH, representative_id=rep.id, product_id=product.id).first()
+                      if target is None or summary is None:
+                          actual_mismatches.append(('MISSING_DB', rep.rep_name, code))
+                          continue
+                      checked_actuals += 1
+                      if abs(float(target.tl_realization or 0) - source['tl']) > TL_TOL or abs(float(summary.tl or 0) - source['tl']) > TL_TOL:
+                          actual_mismatches.append(('TL', rep.rep_name, code, source['tl'], target.tl_realization, summary.tl))
+                      if abs(float(target.unit_realization or 0) - source['unit']) > UNIT_TOL or abs(float(summary.unit or 0) - source['unit']) > UNIT_TOL:
+                          actual_mismatches.append(('UNIT', rep.rep_name, code, source['unit'], target.unit_realization, summary.unit))
+              if checked_actuals != 791 or actual_mismatches:
+                  raise RuntimeError(f'Person actual reconciliation failed checked={checked_actuals} mismatches={len(actual_mismatches)} sample={actual_mismatches[:5]}')
+
+              # Verify person/cadre target TL and derivable exact box target against BAKIYE source rows.
+              balance_name = next(name for name in service.workbook if 'BAKIYE' in norm(name))
+              frame = service.workbook[balance_name]
+              header_row = next(index for index in range(min(12, len(frame)))
+                                if 'HEDEF' in ' '.join(norm(v) for v in frame.iloc[index])
+                                and 'BAKIYE' in ' '.join(norm(v) for v in frame.iloc[index]))
+              columns = _balance_columns(service, frame, header_row)
+              managed = {p.id: p for p in Product.query.filter(db.func.upper(Product.product_code).in_(PRODUCT_CODES)).all()}
+              target_mismatches = []
+              checked_targets = 0
+              unverifiable_units = 0
+              for row_index in range(header_row + 1, len(frame)):
+                  row = frame.iloc[row_index]
+                  location = row.iloc[0] if len(row) else None
+                  rep_name = row.iloc[1] if len(row) > 1 else None
+                  if not is_person_row(location, rep_name):
+                      continue
+                  record = {'representative': str(rep_name or '').strip(), 'source_key': norm(rep_name), 'region_code': region_code(location)}
+                  rep = resolve_representative(record, representatives, exact)
+                  if rep is None:
+                      continue
+                  for pid, metrics in columns.items():
+                      if pid not in managed or 'target_tl' not in metrics:
+                          continue
+                      source_tl = service.safe_float(row.iloc[metrics['target_tl']])
+                      db_target = Target.query.filter_by(year=YEAR, month=MONTH, representative_id=rep.id, product_id=pid).first()
+                      if db_target is None:
+                          target_mismatches.append(('MISSING_TARGET', rep.rep_name, managed[pid].product_code))
+                          continue
+                      checked_targets += 1
+                      if abs(float(db_target.tl_target or 0) - source_tl) > TL_TOL:
+                          target_mismatches.append(('TARGET_TL', rep.rep_name, managed[pid].product_code, source_tl, db_target.tl_target))
+                      balance_tl = service.safe_float(row.iloc[metrics['balance_tl']]) if 'balance_tl' in metrics else 0.0
+                      balance_unit = service.safe_float(row.iloc[metrics['balance_unit']]) if 'balance_unit' in metrics else 0.0
+                      if abs(balance_tl) > 1e-12 and abs(balance_unit) > 1e-12:
+                          unit_factor = balance_tl / balance_unit
+                          if unit_factor > 0:
+                              source_unit = source_tl / unit_factor
+                              if abs(float(db_target.unit_target or 0) - source_unit) > UNIT_TOL:
+                                  target_mismatches.append(('TARGET_UNIT', rep.rep_name, managed[pid].product_code, source_unit, db_target.unit_target))
+                          else:
+                              unverifiable_units += 1
+                      else:
+                          unverifiable_units += 1
+              if checked_targets != 791 or target_mismatches:
+                  raise RuntimeError(f'Person target reconciliation failed checked={checked_targets} unverifiable_units={unverifiable_units} mismatches={len(target_mismatches)} sample={target_mismatches[:8]}')
+
+              competition_count = CompetitionData.query.filter_by(upload_id=upload.id).count()
+              if competition_count != 87032:
+                  raise RuntimeError(f'Competition row count mismatch: {competition_count}')
+
+              fentivag_nat = next(row for row in national if norm(row['product_name']) == 'FENTIVAG')
+              if abs(Decimal(str(fentivag_nat['target_unit'])) - Decimal('30000')) > Decimal('0.001'):
+                  raise RuntimeError(f'Fentivag NATIONAL unit target mismatch: {fentivag_nat}')
+
+              result = {
+                  'status': 'SUCCESS',
+                  'source_file': str(source_file),
+                  'target_rows': target_count,
+                  'summary_rows': summary_count,
+                  'representatives': len(rep_ids),
+                  'products': len(product_ids),
+                  'checked_person_actual_cells': checked_actuals,
+                  'actual_mismatches': len(actual_mismatches),
+                  'checked_person_targets': checked_targets,
+                  'target_mismatches': len(target_mismatches),
+                  'unverifiable_unit_targets': unverifiable_units,
+                  'national_target_tl': str(national_tl),
+                  'national_target_unit': str(national_unit),
+                  'region_target_tl_sum': str(region_tl),
+                  'region_target_unit_sum': str(region_unit),
+                  'region_count': len(regions),
+                  'tl_difference': str(region_tl - national_tl),
+                  'unit_difference': str(region_unit - national_unit),
+                  'fentivag_active': bool(fentivag.is_active),
+                  'fentivag_national_unit_target': str(fentivag_nat['target_unit']),
+                  'competition_rows': competition_count,
+                  'official_aggregate_write': aggregate_write,
+              }
+              print('FINAL_JANUARY_AUDIT|' + json.dumps(result, ensure_ascii=False, sort_keys=True))
+          PY
+
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'FINAL_HEALTH_CHECK|SUCCESS'
+          REMOTE
