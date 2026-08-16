@@ -29,74 +29,52 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read-only production audit
+      - name: Read-only production source audit
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          import sqlite3
           from pathlib import Path
+          from openpyxl import load_workbook
 
-          db_path = Path('instance/ipm.db')
-          con = sqlite3.connect(db_path)
-          con.row_factory = sqlite3.Row
-          cur = con.cursor()
+          roots = [Path('instance/uploads'), Path('uploads'), Path('instance')]
+          seen = set()
+          files = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for p in root.rglob('*.xlsx'):
+                  rp = str(p.resolve())
+                  if rp not in seen:
+                      seen.add(rp)
+                      files.append(p)
+          print('=== XLSX_FILES ===')
+          for p in files:
+              print(p)
 
-          print('=== PRODUCTS ===')
-          for r in cur.execute("SELECT id, product_code, product_name, ims_name, is_active FROM products ORDER BY id"):
-              print(dict(r))
-
-          print('=== PRODUCT_MATCH_FENTIVAG_MONUROL ===')
-          for r in cur.execute("""
-              SELECT pm.id, pm.ims_name, pm.product_id, p.product_code, p.product_name
-              FROM product_matches pm JOIN products p ON p.id=pm.product_id
-              WHERE UPPER(pm.ims_name) LIKE '%FENT%' OR UPPER(pm.ims_name) LIKE '%MONU%'
-              ORDER BY pm.id
-          """):
-              print(dict(r))
-
-          print('=== PRODUCT_ALIAS_FENTIVAG_MONUROL ===')
-          for r in cur.execute("""
-              SELECT pa.id, pa.alias_name, pa.product_id, p.product_code, p.product_name
-              FROM product_aliases pa JOIN products p ON p.id=pa.product_id
-              WHERE UPPER(pa.alias_name) LIKE '%FENT%' OR UPPER(pa.alias_name) LIKE '%MONU%'
-              ORDER BY pa.id
-          """):
-              print(dict(r))
-
-          print('=== JAN_TARGET_COUNTS_BY_PRODUCT ===')
-          for r in cur.execute("""
-              SELECT p.product_code, p.product_name, COUNT(*) target_rows,
-                     SUM(t.unit_target) unit_sum, SUM(t.tl_target) tl_sum
-              FROM targets t JOIN products p ON p.id=t.product_id
-              WHERE t.year=2026 AND t.month=1
-              GROUP BY p.id, p.product_code, p.product_name
-              ORDER BY p.product_code
-          """):
-              print(dict(r))
-
-          print('=== MURAT_ARSLAN_JAN_TARGETS ===')
-          for r in cur.execute("""
-              SELECT r.rep_name, p.product_code, p.product_name, t.unit_target, t.tl_target
-              FROM targets t
-              JOIN representatives r ON r.id=t.representative_id
-              JOIN products p ON p.id=t.product_id
-              WHERE t.year=2026 AND t.month=1 AND UPPER(r.rep_name)='MURAT ARSLAN'
-              ORDER BY p.product_code
-          """):
-              print(dict(r))
-
-          print('=== VACANT_901_JAN_TARGETS ===')
-          for r in cur.execute("""
-              SELECT r.id rep_id, r.rep_name, r.active, p.product_code, t.unit_target, t.tl_target
-              FROM targets t
-              JOIN representatives r ON r.id=t.representative_id
-              JOIN products p ON p.id=t.product_id
-              WHERE t.year=2026 AND t.month=1 AND r.region='901' AND UPPER(r.rep_name) LIKE '%BOS%'
-              ORDER BY r.id, p.product_code
-          """):
-              print(dict(r))
-          con.close()
+          for p in files:
+              try:
+                  wb = load_workbook(p, data_only=True, read_only=True)
+              except Exception as exc:
+                  print('OPEN_ERROR', p, exc)
+                  continue
+              try:
+                  for ws in wb.worksheets:
+                      matches = []
+                      for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                          vals = ['' if v is None else str(v) for v in row]
+                          joined = ' | '.join(vals)
+                          up = joined.upper()
+                          if 'FENTIVAG' in up or 'MONUROL' in up or ('HEDEF' in up and row_idx <= 15):
+                              matches.append((row_idx, joined[:2000]))
+                          if row_idx > 150 and matches:
+                              break
+                      if matches:
+                          print(f'=== FILE {p} SHEET {ws.title} ===')
+                          for row_idx, text in matches[:40]:
+                              print(f'ROW {row_idx}: {text}')
+              finally:
+                  wb.close()
           PY
           REMOTE
