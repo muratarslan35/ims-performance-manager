@@ -1,0 +1,63 @@
+name: Patch Fentivag test fixture
+
+on:
+  push:
+    branches:
+      - fix/activate-fentivag-and-backfill-targets
+    paths:
+      - .github/workflows/patch-fentivag-test-fixture.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/activate-fentivag-and-backfill-targets
+      - name: Reuse migrated Fentivag product in fixture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/test_representative_market_service.py')
+          text = path.read_text()
+          old = '''            names = ("Travazol", "Monurol", "Acnemix", "Mixovul", "Stiderm", "Brimoder", "Fentivag")
+            products = [
+                Product(product_code=name.upper(), product_name=name, display_order=index, is_active=True)
+                for index, name in enumerate(names)
+            ]
+            db.session.add_all([representative, other, *products])
+            db.session.flush()
+'''
+          new = '''            names = ("Travazol", "Monurol", "Acnemix", "Mixovul", "Stiderm", "Brimoder", "Fentivag")
+            products = []
+            for index, name in enumerate(names):
+                product = Product.query.filter_by(product_code=name.upper()).first()
+                if product is None:
+                    product = Product(
+                        product_code=name.upper(),
+                        product_name=name,
+                        display_order=index,
+                        is_active=True,
+                    )
+                    db.session.add(product)
+                else:
+                    product.product_name = name
+                    product.display_order = index
+                    product.is_active = True
+                products.append(product)
+            db.session.add_all([representative, other])
+            db.session.flush()
+'''
+          if old not in text:
+              raise SystemExit('expected stale fixture block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/test_representative_market_service.py
+          git commit -m 'test: reuse migrated Fentivag fixture'
+          git push origin HEAD:fix/activate-fentivag-and-backfill-targets
