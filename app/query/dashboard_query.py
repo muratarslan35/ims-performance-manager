@@ -27,7 +27,7 @@ from app.models import (
 from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
 from app.services.production_result_service import ProductionResultService
-from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE
+from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE, TARGET_TYPE
 
 
 class DashboardQuery:
@@ -153,6 +153,20 @@ class DashboardQuery:
     def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return SimpleNamespace(realization_tl=Decimal("0"), target_tl=Decimal("0"))
+        if filters.representative_id is None:
+            official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
+            actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
+            if official and actual_rows:
+                if ProductionResultService.final_upload(filters.year, filters.month):
+                    actuals = {}
+                    for target_row in self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month).all():
+                        effective = ProductionResultService.effective_product(filters.year, filters.month, target_row.representative_id, target_row.product_id)
+                        actuals[target_row.product_id] = actuals.get(target_row.product_id, Decimal("0")) + Decimal(str(effective.get("actual_tl") or 0))
+                    realization = sum((actuals.get(item["product_id"], Decimal("0")) for item in official), Decimal("0"))
+                else:
+                    realization = sum((Decimal(str(item["actual_tl"] or 0)) for item in official), Decimal("0"))
+                target = sum((Decimal(str(item["target_tl"] or 0)) for item in official), Decimal("0"))
+                return SimpleNamespace(realization_tl=realization, target_tl=target)
         targets = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
         if filters.representative_id is not None:
             targets = targets.filter(Target.representative_id == filters.representative_id)
@@ -255,6 +269,24 @@ class DashboardQuery:
     def load_product_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
+        if filters.representative_id is None:
+            official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
+            actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
+            if official and actual_rows:
+                production_actuals = None
+                if ProductionResultService.final_upload(filters.year, filters.month):
+                    production_actuals = {}
+                    for target_row in self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month).all():
+                        effective = ProductionResultService.effective_product(filters.year, filters.month, target_row.representative_id, target_row.product_id)
+                        production_actuals[target_row.product_id] = production_actuals.get(target_row.product_id, Decimal("0")) + Decimal(str(effective.get("actual_tl") or 0))
+                rows = []
+                for item in official:
+                    actual = production_actuals.get(item["product_id"], Decimal("0")) if production_actuals is not None else Decimal(str(item["actual_tl"] or 0))
+                    rows.append(SimpleNamespace(
+                        product_id=item["product_id"], product_name=item["product_name"],
+                        realization_tl=actual, target_tl=Decimal(str(item["target_tl"] or 0)),
+                    ))
+                return sorted(rows, key=lambda row: row.realization_tl, reverse=True)
         q = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
         if filters.representative_id is not None:
             q = q.filter(Target.representative_id == filters.representative_id)
@@ -357,6 +389,38 @@ class DashboardQuery:
     def load_region_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
+        if not ProductionResultService.final_upload(filters.year, filters.month):
+            target_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, TARGET_TYPE)
+            actual_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, ACTUAL_TYPE)
+            if target_upload and actual_upload:
+                target_rows = self.session.query(IMSRawData).filter(
+                    IMSRawData.upload_id == target_upload,
+                    IMSRawData.sheet_type == TARGET_TYPE,
+                    IMSRawData.territory != "NATIONAL",
+                ).all()
+                actual_rows = self.session.query(IMSRawData).filter(
+                    IMSRawData.upload_id == actual_upload,
+                    IMSRawData.sheet_type == ACTUAL_TYPE,
+                    IMSRawData.territory != "NATIONAL",
+                ).all()
+                actual_by_key = {(row.territory, row.product_id): row for row in actual_rows}
+                buckets = {}
+                for target in target_rows:
+                    actual = actual_by_key.get((target.territory, target.product_id))
+                    bucket = buckets.setdefault(target.territory, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), target.representative or target.territory])
+                    bucket[0] += Decimal(str(target.unit or 0))
+                    bucket[1] += Decimal(str(actual.unit or 0)) if actual else Decimal("0")
+                    bucket[2] += Decimal(str(target.tl or 0))
+                    bucket[3] += Decimal(str(actual.tl or 0)) if actual else Decimal("0")
+                return [
+                    SimpleNamespace(
+                        region=region,
+                        city=(str(values[4]).split(" ", 1)[1] if " " in str(values[4]) else str(values[4])),
+                        unit_target=values[0], unit_actual=values[1], tl_target=values[2], tl_actual=values[3],
+                        representative_count=len({rep.id for rep in Representative.query.filter(Representative.region == region).all()}),
+                    )
+                    for region, values in sorted(buckets.items())
+                ]
         targets = self.session.query(Target, Representative).join(Representative, Representative.id == Target.representative_id).filter(Target.year == filters.year, Target.month == filters.month, Representative.region.isnot(None)).all()
         buckets = {}
         for target, rep in targets:
