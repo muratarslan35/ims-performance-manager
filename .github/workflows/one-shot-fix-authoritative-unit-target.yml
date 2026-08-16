@@ -27,12 +27,12 @@ jobs:
               from app.services.target_box_calculation_service import TargetBoxCalculationService
 
               assert TargetBoxCalculationService.unit_target(1005902, 111.655) == 9009
-'''
+          '''
           new = '''def test_box_target_calculation_preserves_authoritative_unit_target():
               from app.services.target_box_calculation_service import TargetBoxCalculationService
 
               assert TargetBoxCalculationService.unit_target(1005902, 111.655) == 1005902
-'''
+          '''
           if old not in text:
               raise SystemExit('Expected stale test block was not found; refusing broad edit')
           text = text.replace(old, new, 1)
