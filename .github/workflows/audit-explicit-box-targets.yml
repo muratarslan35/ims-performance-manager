@@ -1,0 +1,75 @@
+name: Audit explicit box targets
+on:
+  push:
+    branches: [ops/full-january-source-audit]
+    paths: [.github/workflows/audit-explicit-box-targets.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile explicit box targets
+        run: |
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import re, sqlite3, unicodedata
+          from collections import defaultdict
+          from openpyxl import load_workbook
+          def norm(v):
+              t=unicodedata.normalize('NFKD',str(v or '').upper())
+              t=''.join(c for c in t if not unicodedata.combining(c))
+              return re.sub(r'[^A-Z0-9]+',' ',t).strip()
+          def rc(v):
+              m=re.search(r'\b(\d{3})\b',norm(v)); return m.group(1) if m else ''
+          wb=load_workbook('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx',data_only=True,read_only=True)
+          ws=wb['BRICK REA.']; rows=list(ws.iter_rows(values_only=True)); header=rows[1]
+          target_cols={}; section=''
+          for i,v in enumerate(header):
+              n=norm(v)
+              if 'KUTU HEDEF' in n: section='unit_target'; continue
+              if 'KUTU CIKIS' in n: section='unit_actual'; continue
+              if 'TL HEDEF' in n: section='tl_target'; continue
+              if n in {'TRAVAZOL','MONUROL','MIXOVUL'} and section=='unit_target': target_cols[n]=i
+          print('COLS|'+repr(target_cols))
+          source_region={}; source_nat={}
+          for row in rows[2:]:
+              loc=row[0] if len(row)>0 else None; rep=row[1] if len(row)>1 else None
+              rn=norm(rep); ln=norm(loc)
+              vals={p:float(row[c] or 0) for p,c in target_cols.items()}
+              if rn=='NATIONAL': source_nat=vals
+              elif rn and rn==ln: source_region[rc(loc)]=vals
+          wb.close()
+          con=sqlite3.connect('instance/ipm.db'); con.row_factory=sqlite3.Row
+          dbreg=defaultdict(lambda:defaultdict(float)); dbnat=defaultdict(float)
+          q='''SELECT COALESCE(r.region,''),UPPER(p.product_code),SUM(t.unit_target) v
+               FROM targets t JOIN representatives r ON r.id=t.representative_id JOIN products p ON p.id=t.product_id
+               WHERE t.year=2026 AND t.month=1 AND UPPER(p.product_code) IN ('TRAVAZOL','MONUROL','MIXOVUL')
+               GROUP BY COALESCE(r.region,''),UPPER(p.product_code)'''
+          for r in con.execute(q): dbreg[rc(r[0]) or str(r[0])][r[1]]=float(r[2] or 0); dbnat[r[1]]+=float(r[2] or 0)
+          con.close()
+          for rg in sorted(source_region):
+              for p in sorted(target_cols):
+                  print(f'REGION|{rg}|{p}|EXCEL_EXPLICIT={source_region[rg][p]}|DB_PERSON_SUM={dbreg[rg][p]}|DELTA={dbreg[rg][p]-source_region[rg][p]}')
+          for p in sorted(target_cols):
+              regsum=sum(v[p] for v in source_region.values())
+              print(f'NATIONAL|{p}|EXCEL_NATIONAL={source_nat.get(p)}|EXCEL_REGION_SUM={regsum}|DB_PERSON_SUM={dbnat[p]}|DB_MINUS_EXCEL={dbnat[p]-float(source_nat.get(p) or 0)}')
+          PY
+          REMOTE
