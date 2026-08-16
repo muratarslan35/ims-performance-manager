@@ -1,0 +1,50 @@
+name: Audit weekly source layout
+
+on:
+  push:
+    branches:
+      - audit/fentivag-monural-prod
+    paths:
+      - .github/workflows/audit-weekly-source-layout.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Inspect weekly layout
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          from openpyxl import load_workbook
+          p='uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx'
+          wb=load_workbook(p,data_only=True,read_only=True)
+          for s in ['TTS HAFTALIK ÇIKIŞLARI','TTS ÇIKIŞLARI','BAKİYE']:
+              ws=wb[s]
+              print(f'=== {s} rows={ws.max_row} cols={ws.max_column} ===')
+              wanted={1,2,3,4,5,18,122,125}
+              for r in sorted(x for x in wanted if x<=ws.max_row):
+                  vals=list(next(ws.iter_rows(min_row=r,max_row=r,values_only=True)))
+                  print('ROW|'+str(r)+'|'+' | '.join('' if x is None else str(x) for x in vals[:90]))
+          wb.close()
+          PY
+          REMOTE
