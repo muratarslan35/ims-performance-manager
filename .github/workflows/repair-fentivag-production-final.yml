@@ -1,0 +1,122 @@
+name: Final production Fentivag repair
+
+on:
+  push:
+    branches:
+      - audit/fentivag-monural-prod
+    paths:
+      - .github/workflows/repair-fentivag-production-final.yml
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Backup repair and verify
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "ab6ec096ca8a8e46b59d50baad75d48bb628f9d5"
+
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          backup="instance/backups/ipm-pre-final-fentivag-${stamp}.db"
+          cp instance/ipm.db "$backup"
+          sha256sum instance/ipm.db "$backup"
+
+          before_fp=$(venv/bin/python - <<'PY'
+          import sqlite3,hashlib,json
+          con=sqlite3.connect('instance/ipm.db'); cur=con.cursor()
+          payload=list(cur.execute("""
+            SELECT t.id,t.year,t.month,t.quarter,t.representative_id,t.product_id,
+                   t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,
+                   t.realization_percent,t.prime_percent,t.bonus_amount
+            FROM targets t JOIN products p ON p.id=t.product_id
+            WHERE UPPER(p.product_code)!='FENTIVAG' ORDER BY t.id
+          """))
+          print(hashlib.sha256(json.dumps(payload,separators=(',',':')).encode()).hexdigest())
+          con.close()
+          PY
+          )
+          echo "NON_FENTIVAG_FP_BEFORE|$before_fp"
+
+          venv/bin/python repair_fentivag_targets.py
+
+          venv/bin/python - <<'PY'
+          import sqlite3,math,hashlib,json
+          con=sqlite3.connect('instance/ipm.db'); con.row_factory=sqlite3.Row; cur=con.cursor()
+          fent=cur.execute("SELECT id,is_active FROM products WHERE UPPER(product_code)='FENTIVAG'").fetchone()
+          assert fent and fent['is_active']==1
+          pid=fent['id']
+          s=cur.execute("""SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,
+             SUM(tl_target) tl_target,SUM(unit_target) unit_target,
+             SUM(tl_realization) tl_actual,SUM(unit_realization) unit_actual
+             FROM targets WHERE year=2026 AND month=1 AND product_id=?""",(pid,)).fetchone()
+          print('FENTIVAG_STATS|' + json.dumps(dict(s),ensure_ascii=False))
+          assert s['rows']==113 and s['reps']==113
+          assert math.isclose(s['tl_target'] or 0,4859327.386513685,rel_tol=0,abs_tol=0.05)
+          assert math.isclose(s['unit_target'] or 0,8292.102657232139,rel_tol=0,abs_tol=0.05)
+          assert math.isclose(s['tl_actual'] or 0,0.0,rel_tol=0,abs_tol=0.05)
+          assert math.isclose(s['unit_actual'] or 0,0.0,rel_tol=0,abs_tol=0.01)
+          total=cur.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=1").fetchone()[0]
+          seven=cur.execute("""SELECT COUNT(*) FROM (SELECT representative_id,COUNT(*) n FROM targets WHERE year=2026 AND month=1 GROUP BY representative_id HAVING n=7)""").fetchone()[0]
+          summary=cur.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=1 AND product_id=?",(pid,)).fetchone()[0]
+          print(f'JAN_TOTAL_TARGET_ROWS|{total}')
+          print(f'JAN_REPS_WITH_7_TARGETS|{seven}')
+          print(f'FENTIVAG_SUMMARY_ROWS|{summary}')
+          assert total==791 and seven==113 and summary==113
+          payload=list(cur.execute("""
+            SELECT t.id,t.year,t.month,t.quarter,t.representative_id,t.product_id,
+                   t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,
+                   t.realization_percent,t.prime_percent,t.bonus_amount
+            FROM targets t JOIN products p ON p.id=t.product_id
+            WHERE UPPER(p.product_code)!='FENTIVAG' ORDER BY t.id
+          """))
+          fp=hashlib.sha256(json.dumps(payload,separators=(',',':')).encode()).hexdigest()
+          print(f'NON_FENTIVAG_FP_AFTER|{fp}')
+          for name in ('MURAT ARSLAN','DIYARBAKIR BOS'):
+              rows=cur.execute("""SELECT r.id,r.rep_name,t.tl_target,t.unit_target FROM targets t JOIN representatives r ON r.id=t.representative_id WHERE t.year=2026 AND t.month=1 AND t.product_id=? AND UPPER(r.rep_name) LIKE ?""",(pid,f'%{name}%')).fetchall()
+              print('SAMPLE|'+name+'|'+json.dumps([dict(x) for x in rows],ensure_ascii=False))
+              assert rows
+          con.close()
+          PY
+
+          after_fp=$(venv/bin/python - <<'PY'
+          import sqlite3,hashlib,json
+          con=sqlite3.connect('instance/ipm.db'); cur=con.cursor()
+          payload=list(cur.execute("""
+            SELECT t.id,t.year,t.month,t.quarter,t.representative_id,t.product_id,
+                   t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,
+                   t.realization_percent,t.prime_percent,t.bonus_amount
+            FROM targets t JOIN products p ON p.id=t.product_id
+            WHERE UPPER(p.product_code)!='FENTIVAG' ORDER BY t.id
+          """))
+          print(hashlib.sha256(json.dumps(payload,separators=(',',':')).encode()).hexdigest())
+          con.close()
+          PY
+          )
+          echo "NON_FENTIVAG_FP_AFTER_SHELL|$after_fp"
+          test "$before_fp" = "$after_fp"
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'FINAL_FENTIVAG_REPAIR|SUCCESS'
+          REMOTE
