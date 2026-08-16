@@ -306,6 +306,45 @@ def test_region_totals_include_inactive_vacant_positions(app):
         assert report["vacant_count"] == 2
 
 
+def test_region_totals_prefer_official_workbook_subtotal_but_keep_person_allocations(app):
+    from app.extensions import db
+    from app.models import IMSRawData, IMSUpload, IMSSummary, Product, Representative, Target
+    from app.query.dashboard_query import DashboardQuery
+    from app.query.filters import DashboardFilterParams
+    from app.services.region_performance_service import RegionPerformanceService
+    import json
+
+    with app.app_context():
+        product = Product(product_code="OFFICIAL-REG", product_name="Resmi Bölge Ürünü", is_active=True)
+        rep_a = Representative(rep_code="OFF-A", rep_name="Resmi A", region="901", city="Diyarbakır", active=True)
+        rep_b = Representative(rep_code="OFF-B", rep_name="Resmi B", region="901", city="Diyarbakır", active=False)
+        db.session.add_all([product, rep_a, rep_b]); db.session.flush()
+        upload = IMSUpload(file_name="official-region.xlsx", year=2035, month=1, quarter="Q1", status="COMPLETED")
+        db.session.add(upload); db.session.flush()
+        for rep, target, actual in ((rep_a, 4000, 400), (rep_b, 3000, 300)):
+            db.session.add(Target(year=2035, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
+            db.session.add(IMSSummary(upload_id=upload.id, year=2035, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl=actual, unit=2))
+        db.session.add_all([
+            IMSRawData(upload_id=upload.id, year=2035, month=1, quarter="Q1", sheet_name="BAKİYE", sheet_type="dashboard_balance_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=6000, tl=650, raw_json=json.dumps({"target_tl":6000})),
+            IMSRawData(upload_id=upload.id, year=2035, month=1, quarter="Q1", sheet_name="TTS HAFTALIK ÇIKIŞLARI", sheet_type="dashboard_weekly_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=9, tl=650, raw_json=json.dumps({"actual_tl":650,"actual_unit":9})),
+        ])
+        db.session.commit()
+
+        report = RegionPerformanceService("901", 2035, 1).report()
+        monthly = report["periods"]["monthly"]
+        assert monthly["target_tl"] == 6000
+        assert monthly["actual_tl"] == 650
+        assert sum(row["target_tl"] for row in monthly["representatives"]) == 7000
+        assert monthly["months"][0]["source"] == "OFFICIAL_REGION_SUBTOTAL"
+
+        rows = DashboardQuery().load_region_performance(DashboardFilterParams(year=2035, month=1))
+        row = next(item for item in rows if str(item.region) == "901")
+        assert row.tl_target == 6000
+        assert row.tl_actual == 650
+        assert row.unit_actual == 9
+        assert row.unit_target == 20
+
+
 def test_target_analysis_groups_products_under_one_representative(app):
     from app.extensions import db
     from app.models import Product, Representative, Target
