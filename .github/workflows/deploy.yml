@@ -24,20 +24,13 @@ jobs:
       SECRET_KEY: ci-test-secret-not-for-production
       DATABASE_URL: sqlite:////tmp/ims-ci.db
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
-
-      - name: Run every pytest test
-        run: python -m pytest tests/ -v
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
+      - run: python -m pytest tests/ -v
 
   deploy:
     name: Deploy and verify production
@@ -70,37 +63,37 @@ jobs:
             "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-
           git fetch origin main
           test "$(git branch --show-current)" = "main"
           test -z "$(git status --porcelain)"
           git pull --ff-only origin main
-
           venv/bin/python -m pip install -r requirements.txt
 
           mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
           if [ -f instance/ipm.db ]; then
-            cp instance/ipm.db "instance/backups/ipm-predeploy-$(date +%Y%m%d-%H%M%S).db"
+            cp instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
+            sha256sum instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
           fi
           if [ -f instance/persistent/users.db ]; then
-            cp instance/persistent/users.db "instance/backups/users-predeploy-$(date +%Y%m%d-%H%M%S).db"
+            cp instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
+            sha256sum instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
           fi
 
+          echo '--- MASTER SNAPSHOT BEFORE MIGRATION ---'
+          venv/bin/python production_master_snapshot.py
           venv/bin/python -m flask --app run.py db upgrade
-          repair_backup="instance/backups/ipm-pre-competition-backfill-$(date +%Y%m%d-%H%M%S).db"
+          repair_backup="instance/backups/ipm-pre-competition-backfill-${stamp}.db"
           cp instance/ipm.db "$repair_backup"
-          echo "Competition backfill backup created: $repair_backup"
           venv/bin/python backfill_competition_data.py
           venv/bin/python verify_runtime.py
           venv/bin/python production_target_audit.py
+          echo '--- MASTER SNAPSHOT AFTER MIGRATION ---'
+          venv/bin/python production_master_snapshot.py
 
           pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
-          if [ -n "$pids" ]; then
-            kill "$pids"
-          fi
-
+          if [ -n "$pids" ]; then kill "$pids"; fi
           nohup venv/bin/python run.py >/tmp/ims-performance-manager.log 2>&1 </dev/null &
-
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null; then
               echo "Production health check passed."
@@ -108,7 +101,6 @@ jobs:
             fi
             sleep 2
           done
-
           echo "Production health check failed."
           tail -n 100 /tmp/ims-performance-manager.log || true
           exit 1
