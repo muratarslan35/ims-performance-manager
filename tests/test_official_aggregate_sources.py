@@ -22,6 +22,10 @@ class Config:
     TESTING = True
     SECRET_KEY = "test-secret"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    UPLOAD_FOLDER = Path(tempfile.gettempdir()) / "official-aggregate-test-uploads"
+    REPORT_FOLDER = Path(tempfile.gettempdir()) / "official-aggregate-test-reports"
+    BACKUP_FOLDER = Path(tempfile.gettempdir()) / "official-aggregate-test-backups"
+    LOG_FOLDER = Path(tempfile.gettempdir()) / "official-aggregate-test-logs"
 
 
 class OfficialAggregateSourceTestCase(unittest.TestCase):
