@@ -130,3 +130,5 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# CI retrigger after test runtime config fix.
