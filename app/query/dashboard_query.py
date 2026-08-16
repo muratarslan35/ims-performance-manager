@@ -8,6 +8,8 @@ Integrates with AggregateBuilder and DashboardFilterParams.
 
 import hashlib
 from typing import Any, Optional, Sequence
+from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import func, desc, and_, case
 from sqlalchemy.engine.row import Row
@@ -24,6 +26,7 @@ from app.models import (
 )
 from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
+from app.services.production_result_service import ProductionResultService
 
 
 class DashboardQuery:
@@ -138,7 +141,7 @@ class DashboardQuery:
             select_entities=select_cols,
             group_by_entities=group_cols,
             joins=joins,
-            filter_callable=lambda q: DashboardFilter.apply(q, filters).filter(~Representative.rep_code.like("UNASSIGNED%")),
+            filter_callable=lambda q: DashboardFilter.apply(q, filters),
             order_by=default_order,
             limit=limit,
             offset=offset
@@ -146,13 +149,19 @@ class DashboardQuery:
 
         return query.all()
 
-    def load_period_performance(self, filters: Optional[DashboardFilterParams] = None) -> Optional[Row]:
-        """Returns the unjoined period totals used by the global dashboard."""
-        query = self.session.query(
-            func.coalesce(func.sum(IMSSummary.tl), 0.0).label("realization_tl"),
-            func.coalesce(func.sum(IMSSummary.target_tl), 0.0).label("target_tl"),
-        )
-        return DashboardFilter.apply(query, filters).one()
+    def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):
+        if not filters or filters.year is None or filters.month is None:
+            return SimpleNamespace(realization_tl=Decimal("0"), target_tl=Decimal("0"))
+        targets = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
+        if filters.representative_id is not None:
+            targets = targets.filter(Target.representative_id == filters.representative_id)
+        total_target = Decimal("0")
+        total_actual = Decimal("0")
+        for target in targets.all():
+            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
+            total_target += Decimal(str(target.tl_target or 0))
+            total_actual += Decimal(str(effective.get("actual_tl") or 0))
+        return SimpleNamespace(realization_tl=total_actual, target_tl=total_target)
 
     def load_national_dashboard_metrics(self, filters: Optional[DashboardFilterParams] = None) -> dict:
         """Return reconciled National totals captured from the source workbook."""
@@ -180,7 +189,6 @@ class DashboardQuery:
         ).join(Representative, Representative.id == Target.representative_id).filter(
             Target.year == filters.year,
             Target.month == filters.month,
-            ~Representative.rep_code.like("UNASSIGNED%"),
         ).group_by(Target.product_id).all())
         products = [{
             "product_id": row[0], "product_name": row[1],
@@ -206,25 +214,21 @@ class DashboardQuery:
             "products": products,
         }
 
-    def load_product_performance(
-        self, filters: Optional[DashboardFilterParams] = None
-    ) -> Sequence[Row]:
-        """Returns product-level totals without multiplying target rows in a join."""
-        query = (
-            self.session.query(
-                Product.id.label("product_id"),
-                Product.product_name.label("product_name"),
-                func.coalesce(func.sum(IMSSummary.tl), 0.0).label("realization_tl"),
-                func.coalesce(func.sum(IMSSummary.target_tl), 0.0).label("target_tl"),
-            )
-            .join(Product, Product.id == IMSSummary.product_id)
-        )
-        return (
-            DashboardFilter.apply(query, filters)
-            .group_by(Product.id, Product.product_name)
-            .order_by(desc("realization_tl"))
-            .all()
-        )
+    def load_product_performance(self, filters: Optional[DashboardFilterParams] = None):
+        if not filters or filters.year is None or filters.month is None:
+            return []
+        q = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
+        if filters.representative_id is not None:
+            q = q.filter(Target.representative_id == filters.representative_id)
+        totals = {}
+        products = {p.id: p for p in Product.query.all()}
+        for target in q.all():
+            bucket = totals.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
+            bucket[1] += Decimal(str(target.tl_target or 0))
+            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
+            bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
+        rows = [SimpleNamespace(product_id=pid, product_name=products[pid].product_name if pid in products else str(pid), realization_tl=vals[0], target_tl=vals[1]) for pid, vals in totals.items()]
+        return sorted(rows, key=lambda row: row.realization_tl, reverse=True)
 
     def load_city_performance(
         self, 
@@ -312,12 +316,18 @@ class DashboardQuery:
             .all()
         )
 
-    def load_region_performance(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
-        """Non-duplicated target/IMS realization by Excel region code."""
-        query = self.session.query(Representative.region.label("region"), Representative.city.label("city"), func.coalesce(func.sum(Target.unit_target), 0.0).label("unit_target"), func.coalesce(func.sum(IMSSummary.unit), 0.0).label("unit_actual"), func.coalesce(func.sum(Target.tl_target), 0.0).label("tl_target"), func.coalesce(func.sum(IMSSummary.tl), 0.0).label("tl_actual"), func.count(Representative.id.distinct()).label("representative_count")).join(Representative, Representative.id == Target.representative_id).outerjoin(IMSSummary, and_(IMSSummary.representative_id == Target.representative_id, IMSSummary.product_id == Target.product_id, IMSSummary.year == Target.year, IMSSummary.month == Target.month)).filter(Representative.region.isnot(None))
-        if filters and filters.year is not None: query = query.filter(Target.year == filters.year)
-        if filters and filters.month is not None: query = query.filter(Target.month == filters.month)
-        return query.group_by(Representative.region, Representative.city).order_by(Representative.region.asc()).all()
+    def load_region_performance(self, filters: Optional[DashboardFilterParams] = None):
+        if not filters or filters.year is None or filters.month is None:
+            return []
+        targets = self.session.query(Target, Representative).join(Representative, Representative.id == Target.representative_id).filter(Target.year == filters.year, Target.month == filters.month, Representative.region.isnot(None)).all()
+        buckets = {}
+        for target, rep in targets:
+            key = (rep.region, rep.city)
+            bucket = buckets.setdefault(key, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), set()])
+            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
+            bucket[0] += Decimal(str(target.unit_target or 0)); bucket[1] += Decimal(str(effective.get("actual_unit") or 0))
+            bucket[2] += Decimal(str(target.tl_target or 0)); bucket[3] += Decimal(str(effective.get("actual_tl") or 0)); bucket[4].add(rep.id)
+        return [SimpleNamespace(region=k[0], city=k[1], unit_target=v[0], unit_actual=v[1], tl_target=v[2], tl_actual=v[3], representative_count=len(v[4])) for k, v in sorted(buckets.items())]
 
     def load_competition_overview(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
         """Aggregate competition metrics from the latest completed workbook only."""
