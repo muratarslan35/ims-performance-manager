@@ -1,0 +1,92 @@
+name: Patch official aggregate and unit sources
+
+on:
+  push:
+    branches:
+      - fix/ims-official-aggregate-units
+    paths:
+      - .github/workflows/patch-official-aggregate-units.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ims-official-aggregate-units
+      - name: Patch source and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/services/ims_import_service.py')
+          s=p.read_text()
+          old='''                if balance_tl is not None and balance_unit not in (None, 0):\n                    # BAKİYE's MF'siz kutu block carries the representative /\n                    # product-specific net unit factor.  It is the source\n                    # used by the workbook's own remaining-box calculation.\n                    net_unit_price = balance_tl / balance_unit\n                    if net_unit_price > 0:\n                        target.unit_target = float(round(target.tl_target / net_unit_price))\n'''
+          new='''                if balance_tl is not None and balance_unit not in (None, 0):\n                    # BAKİYE's TL/KUTU bakiye ratio is the workbook's exact\n                    # representative/product net unit factor. Preserve the\n                    # resulting authoritative unit target without rounding.\n                    net_unit_price = balance_tl / balance_unit\n                    if net_unit_price > 0:\n                        target.unit_target = float(target.tl_target / net_unit_price)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          old2='''                derived_unit_actual = None\n                if target is not None and target.unit_target and target.tl_target:\n                    net_unit_price = target.tl_target / target.unit_target\n                    if net_unit_price > 0 and "tl" in metrics:\n                        derived_unit_actual = metrics["tl"] / net_unit_price\n                if derived_unit_actual is not None:\n                    summary.unit = derived_unit_actual\n                    target.unit_realization = derived_unit_actual\n                elif "unit" in metrics:\n                    summary.unit = metrics["unit"]\n                    if target is not None:\n                        target.unit_realization = metrics["unit"]\n'''
+          new2='''                # KUTU ÇIKIŞI is an explicit source metric in the TTS weekly\n                # workbook. Never re-derive it from TL or a price factor; zero\n                # is also a valid real source value (for example Fentivag).\n                if "unit" in metrics:\n                    summary.unit = metrics["unit"]\n                    if target is not None:\n                        target.unit_realization = metrics["unit"]\n'''
+          assert old2 in s
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+
+          t=Path('tests/test_ims_import_service.py')
+          ts=t.read_text()
+          append=r'''
+
+
+def test_balance_and_weekly_sources_preserve_exact_box_values(app, tmp_path):
+    from app.extensions import db
+    from app.models import IMSSummary, IMSUpload, Product, Representative, Target
+    from app.services.ims_import_service import IMSImportService
+    import pandas as pd
+
+    with app.app_context():
+        product = Product(product_code="BOX-SOURCE", product_name="Box Source", is_active=True)
+        rep = Representative(rep_code="BOX-SOURCE-REP", rep_name="BOX SOURCE REP", active=True)
+        db.session.add_all([product, rep]); db.session.flush()
+        target = Target(year=2038, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id,
+                        tl_target=1000.0, unit_target=1.0)
+        summary = IMSSummary(year=2038, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id,
+                             target_tl=1000.0, target_unit=1.0)
+        upload = IMSUpload(file_name="unit-source.xlsx", year=2038, month=1, status="COMPLETED")
+        db.session.add_all([target, summary, upload]); db.session.flush()
+
+        service = IMSImportService(file_path=str(tmp_path / "unit-source.xlsx"), upload_id=upload.id)
+        service.upload = upload
+        service.workbook = {
+            "BAKİYE": pd.DataFrame([
+                [None, "OCAK HEDEF TL", "BOX-SOURCE", None, "OCAK ÇIKIŞ TL", "BOX-SOURCE", None, "OCAK TL BAKİYE", "BOX-SOURCE", None, "OCAK MF siz KUTU BAKİYE", "BOX-SOURCE"],
+                [None, "NATIONAL", 1000.0, None, "NATIONAL", 250.0, None, "NATIONAL", 600.0, None, "NATIONAL", 60.0],
+                ["901 DIYARBAKIR", "BOX SOURCE REP", 1000.0, None, "BOX SOURCE REP", 250.0, None, "BOX SOURCE REP", 600.0, None, "BOX SOURCE REP", 60.0],
+            ]),
+            "TTS HAFTALIK ÇIKIŞLARI": pd.DataFrame([
+                [None, None, "1-18 OCAK TL ÇIKIŞI", None, "1-18 OCAK KUTU ÇIKIŞI", None],
+                [None, None, None, "BOX-SOURCE", None, "BOX-SOURCE"],
+                [None, "NATIONAL", None, 250.0, None, 17.0],
+                ["901 DIYARBAKIR", "BOX SOURCE REP", None, 250.0, None, 17.0],
+            ]),
+        }
+        service.apply_balance_summary(2038, 1)
+        db.session.flush()
+        # Net factor is 600/60=10; exact target is 100, never rounded from another source.
+        assert Target.query.get(target.id).unit_target == 100.0
+        service.apply_weekly_sales_summary(2038, 1)
+        db.session.flush()
+        refreshed = Target.query.get(target.id)
+        refreshed_summary = IMSSummary.query.get(summary.id)
+        assert refreshed.unit_realization == 17.0
+        assert refreshed_summary.unit == 17.0
+        assert refreshed.tl_realization == 250.0
+'''
+          if 'test_balance_and_weekly_sources_preserve_exact_box_values' not in ts:
+              t.write_text(ts+append)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/services/ims_import_service.py tests/test_ims_import_service.py
+          git commit -m "fix: preserve source box targets and weekly units"
+          git push origin HEAD:fix/ims-official-aggregate-units
