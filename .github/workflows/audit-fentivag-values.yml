@@ -29,15 +29,15 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read-only source values
+      - name: Read-only row classification
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          from pathlib import Path
+          import re, sqlite3, unicodedata
           from openpyxl import load_workbook
-          import unicodedata, re
+          from pathlib import Path
 
           def norm(v):
               t = unicodedata.normalize('NFKD', str(v or '').strip().upper())
@@ -45,17 +45,57 @@ jobs:
               t = t.translate(str.maketrans({'İ':'I','Ş':'S','Ğ':'G','Ü':'U','Ö':'O','Ç':'C'}))
               return re.sub(r'[^A-Z0-9]+', ' ', t).strip()
 
+          con = sqlite3.connect('instance/ipm.db')
+          db_reps = {norm(r[0]): r[1] for r in con.execute("""
+              SELECT DISTINCT r.rep_name, r.id
+              FROM targets t JOIN representatives r ON r.id=t.representative_id
+              WHERE t.year=2026 AND t.month=1
+          """)}
+          con.close()
+
           p = Path('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx')
           wb = load_workbook(p, data_only=True, read_only=True)
-          for sheet_name in ['BAKİYE', 'TTS HAFTALIK ÇIKIŞLARI', 'TTS ÇIKIŞLARI', 'BRICK REA.']:
-              ws = wb[sheet_name]
-              print(f'=== {sheet_name} ===')
-              for ridx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                  vals = list(row)
-                  joined = ' | '.join('' if v is None else str(v) for v in vals)
-                  n = norm(joined)
-                  if ridx <= 6 or 'MURAT ARSLAN' in n or 'DIYARBAKIR BOS' in n or 'DIYARBAKIR BOS KADRO' in n:
-                      print(f'ROW {ridx}: {joined[:5000]}')
+          ws = wb['BAKİYE']
+          rows = list(ws.iter_rows(values_only=True))
+          header = rows[1]
+          section = ''
+          fent_col = None
+          for i, v in enumerate(header):
+              n = norm(v)
+              if 'HEDEF' in n and 'TL' in n:
+                  section = 'target'
+                  continue
+              if 'CIKIS' in n and 'TL' in n:
+                  section = 'actual'
+                  continue
+              if n == 'FENTIVAG' and section == 'target' and fent_col is None:
+                  fent_col = i
+          print(f'FENT_COL|{fent_col}')
+          candidate_sum = 0.0
+          exact_sum = 0.0
+          candidate_count = 0
+          exact_count = 0
+          for ridx, row in enumerate(rows[2:], start=3):
+              loc = row[0] if len(row)>0 else None
+              rep = row[1] if len(row)>1 else None
+              rn = norm(rep)
+              if not rn or rn == 'NATIONAL' or rn == norm(loc):
+                  continue
+              try:
+                  value = float(row[fent_col] or 0)
+              except Exception:
+                  value = 0.0
+              candidate_count += 1
+              candidate_sum += value
+              exact = rn in db_reps
+              if exact:
+                  exact_count += 1
+                  exact_sum += value
+              print(f'ROW|{ridx}|LOC={loc}|REP={rep}|NORM={rn}|EXACT_DB={exact}|DB_ID={db_reps.get(rn)}|FENT_TL={value}')
+          national = float(rows[2][fent_col] or 0)
+          print(f'CANDIDATES|{candidate_count}|{candidate_sum}')
+          print(f'EXACT_DB_REPS|{exact_count}|{exact_sum}')
+          print(f'NATIONAL|{national}')
           wb.close()
           PY
           REMOTE
