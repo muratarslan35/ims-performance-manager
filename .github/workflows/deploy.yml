@@ -92,6 +92,7 @@ jobs:
           echo "Competition backfill backup created: $repair_backup"
           venv/bin/python backfill_competition_data.py
           venv/bin/python verify_runtime.py
+          venv/bin/python production_target_audit.py
 
           pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
           if [ -n "$pids" ]; then
