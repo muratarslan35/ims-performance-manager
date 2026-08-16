@@ -5,6 +5,7 @@ on:
       - fix/direct-weekly-unit-actuals
     paths:
       - scripts/patch_official_region_metrics.py
+      - .github/workflows/patch-official-region-metrics.yml
 permissions:
   contents: write
 jobs:
