@@ -1,0 +1,30 @@
+name: Patch official aggregate on current main
+
+on:
+  push:
+    branches:
+      - fix/official-aggregate-main-rebase
+    paths:
+      - tools/patch_official_aggregate_main.py
+      - .github/workflows/patch-official-aggregate-main.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/official-aggregate-main-rebase
+      - name: Apply official aggregate patch
+        run: |
+          python tools/patch_official_aggregate_main.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/services/ims_import_service.py app/query/dashboard_query.py
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: use official national and region aggregate targets"
+            git push origin HEAD:fix/official-aggregate-main-rebase
+          fi
