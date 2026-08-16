@@ -1,0 +1,103 @@
+name: Patch direct weekly unit actual
+on:
+  push:
+    branches: [fix/direct-weekly-unit-actuals]
+    paths: [.github/workflows/patch-direct-weekly-unit.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/direct-weekly-unit-actuals
+      - name: Apply narrow source fix and regression test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/services/ims_import_service.py')
+          text=p.read_text(encoding='utf-8')
+          old='''                derived_unit_actual = None
+                if target is not None and target.unit_target and target.tl_target:
+                    net_unit_price = target.tl_target / target.unit_target
+                    if net_unit_price > 0 and "tl" in metrics:
+                        derived_unit_actual = metrics["tl"] / net_unit_price
+                if derived_unit_actual is not None:
+                    summary.unit = derived_unit_actual
+                    target.unit_realization = derived_unit_actual
+                elif "unit" in metrics:
+                    summary.unit = metrics["unit"]
+                    if target is not None:
+                        target.unit_realization = metrics["unit"]
+'''
+          new='''                # The workbook has an explicit cumulative KUTU ÇIKIŞI block.
+                # Preserve that source value exactly; never synthesize box actuals
+                # from TL / target ratios because that changes the IMS source data.
+                if "unit" in metrics:
+                    summary.unit = metrics["unit"]
+                    if target is not None:
+                        target.unit_realization = metrics["unit"]
+'''
+          if old not in text:
+              raise SystemExit('expected weekly-unit derivation block not found')
+          p.write_text(text.replace(old,new,1),encoding='utf-8')
+
+          t=Path('tests/test_ims_import_service.py')
+          src=t.read_text(encoding='utf-8')
+          marker='''    def test_week_number_extracted_from_filename(self):'''
+          test='''    def test_weekly_summary_preserves_explicit_unit_actual_instead_of_deriving_from_tl(self):
+        from app.models import IMSSummary, Product, Representative, Target
+
+        product = Product(product_code="DIRECT-UNIT", product_name="Direct Unit", unit_price=999.0)
+        representative = Representative(rep_code="DIRECT-REP", rep_name="DIRECT UNIT REP", active=True)
+        db.session.add_all([product, representative])
+        db.session.flush()
+        target = Target(
+            year=2032, month=1, quarter="Q1", representative_id=representative.id,
+            product_id=product.id, tl_target=1000.0, unit_target=10.0,
+        )
+        summary = IMSSummary(
+            year=2032, month=1, quarter="Q1", representative_id=representative.id,
+            product_id=product.id, tl=0.0, unit=0.0,
+        )
+        db.session.add_all([target, summary])
+        db.session.flush()
+
+        service = IMSImportService("unused.xlsx")
+        service.workbook = {
+            "TTS HAFTALIK ÇIKIŞLARI": pd.DataFrame([
+                [None, None, "1-18 OCAK TL ÇIKIŞI", None, "1-18 OCAK KUTU ÇIKIŞI", None],
+                [None, None, "DIRECT-UNIT", None, "DIRECT-UNIT", None],
+                ["901 DIYARBAKIR", "DIRECT UNIT REP", 500.0, None, 37.0, None],
+            ])
+        }
+        service.resolve_product_match = lambda name: {
+            "matched": AliasService.normalize(name) == "DIRECT UNIT",
+            "object": product,
+        }
+        service.resolve_representative_match = lambda name: {
+            "matched": AliasService.normalize(name) == "DIRECT UNIT REP",
+            "object": representative,
+        }
+
+        result = service.apply_weekly_sales_summary(2032, 1)
+        db.session.flush()
+
+        assert result["updated_values"] == 1
+        assert summary.tl == 500.0
+        assert summary.unit == 37.0
+        assert target.tl_realization == 500.0
+        assert target.unit_realization == 37.0
+        assert target.unit_realization != 5.0
+
+'''
+          if marker not in src:
+              raise SystemExit('test insertion marker not found')
+          t.write_text(src.replace(marker,test+marker,1),encoding='utf-8')
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/services/ims_import_service.py tests/test_ims_import_service.py
+          git commit -m 'fix: preserve direct weekly box actuals'
+          git push origin HEAD:fix/direct-weekly-unit-actuals
