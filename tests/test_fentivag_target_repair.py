@@ -43,6 +43,33 @@ def test_fentivag_repair_uses_workbook_box_equation_not_price(tmp_path):
     assert by_rep["DIYARBAKIR BOS"]["unit_target"] == 15.0
 
 
+def test_representative_rows_remain_authoritative_when_national_differs(tmp_path):
+    source = tmp_path / "ocak-national-differs.xlsx"
+    _build_workbook(source)
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(source)
+    bakiye = workbook["BAKİYE"]
+    weekly = workbook["TTS HAFTALIK ÇIKIŞLARI"]
+    # Intentionally make NATIONAL disagree with the two representative rows.
+    bakiye.cell(3, 4, 999999.0)
+    bakiye.cell(3, 6, 999.0)
+    weekly.cell(3, 4, 0.0)
+    weekly.cell(3, 6, 0.0)
+    workbook.save(source)
+    workbook.close()
+
+    records = extract_source_records(source)
+    by_rep = {row["representative"]: row for row in records}
+
+    assert len(records) == 2
+    assert sum(row["target_tl"] for row in records) == 300.0
+    assert sum(row["unit_target"] for row in records) == 22.0
+    assert by_rep["MURAT ARSLAN"]["target_tl"] == 100.0
+    assert by_rep["DIYARBAKIR BOS"]["target_tl"] == 200.0
+
+
 def test_vacant_position_is_a_valid_target_representative_row():
     assert _is_rep_row("901 DIYARBAKIR", "DIYARBAKIR BOS") is True
     assert _is_rep_row("901 DIYARBAKIR", "DIYARBAKIR BOS KADRO") is True
