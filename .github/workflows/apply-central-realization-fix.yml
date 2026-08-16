@@ -1,0 +1,92 @@
+name: Apply central realization source fix
+
+on:
+  push:
+    branches: [fix/central-realization-source]
+    paths: [.github/workflows/apply-central-realization-fix.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: testing
+      SECRET_KEY: ci-test-secret-not-for-production
+      DATABASE_URL: sqlite:////tmp/ims-central-realization.db
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/central-realization-source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest
+      - name: Patch accepted realization hierarchy and consumers
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('app/services/production_result_service.py')
+          p.write_text('''from decimal import Decimal\n\nfrom app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target\n\n\nclass ProductionResultService:\n    """Single source of truth for accepted period realizations.\n\n    Priority is evaluated per representative/product with no waiting state:\n    production 2 > production 1 > IMS. Production percentages are final, may\n    exceed 100, and exact stored TL/unit targets are never rounded or rebuilt.\n    """\n\n    @staticmethod\n    def _d(value):\n        return Decimal(str(value or 0))\n\n    @classmethod\n    def applied_uploads(cls, year, month):\n        return (\n            ProductionResultUpload.query.filter_by(\n                year=year, month=month, status=ProductionResultUpload.STATUS_APPLIED,\n            )\n            .order_by(\n                ProductionResultUpload.production_stage.desc(),\n                ProductionResultUpload.applied_at.desc(),\n                ProductionResultUpload.id.desc(),\n            )\n            .all()\n        )\n\n    @classmethod\n    def final_upload(cls, year, month):\n        uploads = cls.applied_uploads(year, month)\n        return uploads[0] if uploads else None\n\n    @classmethod\n    def final_product_result(cls, year, month, representative_id, product_id):\n        for upload in cls.applied_uploads(year, month):\n            result = ProductionResult.query.filter_by(\n                upload_id=upload.id, representative_id=representative_id, product_id=product_id,\n            ).first()\n            if result is not None:\n                return result\n        return None\n\n    @classmethod\n    def effective_product(cls, year, month, representative_id, product_id):\n        target = Target.query.filter_by(\n            year=year, month=month, representative_id=representative_id, product_id=product_id,\n        ).first()\n        target_tl = cls._d(target.tl_target if target else 0)\n        target_unit = cls._d(target.unit_target if target else 0)\n\n        for upload in cls.applied_uploads(year, month):\n            result = ProductionResult.query.filter_by(\n                upload_id=upload.id, representative_id=representative_id, product_id=product_id,\n            ).first()\n            if result is None:\n                continue\n            percent = cls._d(result.realization_percent)\n            return {\n                "source": f"PRODUCTION_{upload.production_stage}",\n                "complete": True,\n                "target_tl": target_tl,\n                "target_unit": target_unit,\n                "realization_percent": percent,\n                "actual_tl": target_tl * percent / Decimal("100"),\n                "actual_unit": target_unit * percent / Decimal("100"),\n            }\n\n        summary = IMSSummary.query.filter_by(\n            year=year, month=month, representative_id=representative_id, product_id=product_id,\n        ).first()\n        actual_tl = cls._d(summary.tl if summary else 0)\n        actual_unit = cls._d(summary.unit if summary else 0)\n        percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")\n        return {\n            "source": "IMS",\n            "complete": summary is not None,\n            "target_tl": target_tl,\n            "target_unit": target_unit,\n            "realization_percent": percent,\n            "actual_tl": actual_tl,\n            "actual_unit": actual_unit,\n        }\n\n    @classmethod\n    def effective_representative(cls, year, month, representative_id):\n        targets = Target.query.filter_by(year=year, month=month, representative_id=representative_id).all()\n        rows = [cls.effective_product(year, month, representative_id, target.product_id) for target in targets]\n        complete = bool(rows) and all(row["complete"] for row in rows)\n        total_target = sum((row["target_tl"] for row in rows), Decimal("0"))\n        total_actual = sum((row["actual_tl"] for row in rows), Decimal("0"))\n        return {\n            "complete": complete,\n            "source": cls._source_name(year, month),\n            "target_tl": total_target,\n            "actual_tl": total_actual,\n            "realization_percent": (total_actual / total_target * Decimal("100")) if total_target else Decimal("0"),\n            "products": rows,\n        }\n\n    @classmethod\n    def _source_name(cls, year, month):\n        upload = cls.final_upload(year, month)\n        return f"PRODUCTION_{upload.production_stage}" if upload else "IMS"\n''', encoding='utf-8')
+
+          p = Path('app/services/prime_engine.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('from app.services.ai_analytics_service import AIAnalyticsService\n', 'from app.services.ai_analytics_service import AIAnalyticsService\nfrom app.services.production_result_service import ProductionResultService\n')
+          old = '''    def month_record(self, product_id, month):\n        target = self.targets_by_period.get((product_id, month))\n        summary = self.summaries_by_period.get((product_id, month))\n        return {\n            "target_unit": float(round(target.unit_target or 0)) if target else 0.0,\n            "target_tl": float(target.tl_target if target else 0),\n            "actual_unit": float(summary.unit if summary else 0),\n            "actual_tl": float(summary.tl if summary else 0),\n            "bonus_amount": float(summary.bonus_amount if summary else 0),\n        }\n'''
+          new = '''    def month_record(self, product_id, month):\n        target = self.targets_by_period.get((product_id, month))\n        summary = self.summaries_by_period.get((product_id, month))\n        effective = ProductionResultService.effective_product(self.year, month, self.rep_id, product_id)\n        return {\n            "target_unit": float(target.unit_target if target else 0),\n            "target_tl": float(target.tl_target if target else 0),\n            "actual_unit": float(effective.get("actual_unit") or 0),\n            "actual_tl": float(effective.get("actual_tl") or 0),\n            "bonus_amount": float(summary.bonus_amount if summary else 0),\n            "realization_source": effective.get("source", "IMS"),\n        }\n'''
+          if old not in text: raise SystemExit('prime month_record anchor not found')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+
+          p = Path('app/services/representative_market_service.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('from app.services.competition_import_service import CompetitionImportService\n', 'from app.services.competition_import_service import CompetitionImportService\nfrom app.services.production_result_service import ProductionResultService\n')
+          text = text.replace('products = Product.query.filter_by(is_active=True).order_by(', 'products = Product.query.order_by(')
+          old = '''            target_unit = float(targets.get(product.id).unit_target or 0.0) if targets.get(product.id) else 0.0\n            calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0\n'''
+          new = '''            target_unit = float(targets.get(product.id).unit_target or 0.0) if targets.get(product.id) else 0.0\n            effective = ProductionResultService.effective_product(self.year, self.month, self.representative.id, product.id)\n            if effective.get("source", "IMS").startswith("PRODUCTION_"):\n                actual_unit = float(effective.get("actual_unit") or 0)\n            calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0\n'''
+          if old not in text: raise SystemExit('representative target anchor not found')
+          text = text.replace(old, new)
+          text = text.replace('"target_unit": round(target_unit, 2),\n                    "realization_percent": round(actual_unit * 100.0 / target_unit, 1) if target_unit else 0.0,', '"target_unit": target_unit,\n                    "realization_percent": float(effective.get("realization_percent") or 0),\n                    "realization_source": effective.get("source", "IMS"),')
+          p.write_text(text, encoding='utf-8')
+
+          p = Path('app/query/dashboard_query.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('from typing import Any, Optional, Sequence\n', 'from typing import Any, Optional, Sequence\nfrom decimal import Decimal\nfrom types import SimpleNamespace\n')
+          text = text.replace('from app.query.filters import DashboardFilterParams, DashboardFilter\n', 'from app.query.filters import DashboardFilterParams, DashboardFilter\nfrom app.services.production_result_service import ProductionResultService\n')
+          text = text.replace('.filter(~Representative.rep_code.like("UNASSIGNED%"))', '')
+          text = text.replace('            ~Representative.rep_code.like("UNASSIGNED%"),\n', '')
+
+          start = text.index('    def load_period_performance(')
+          end = text.index('    def load_national_dashboard_metrics(', start)
+          replacement = '''    def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):\n        if not filters or filters.year is None or filters.month is None:\n            return SimpleNamespace(realization_tl=Decimal("0"), target_tl=Decimal("0"))\n        targets = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)\n        if filters.representative_id is not None:\n            targets = targets.filter(Target.representative_id == filters.representative_id)\n        total_target = Decimal("0")\n        total_actual = Decimal("0")\n        for target in targets.all():\n            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)\n            total_target += Decimal(str(target.tl_target or 0))\n            total_actual += Decimal(str(effective.get("actual_tl") or 0))\n        return SimpleNamespace(realization_tl=total_actual, target_tl=total_target)\n\n'''
+          text = text[:start] + replacement + text[end:]
+
+          start = text.index('    def load_product_performance(')
+          end = text.index('    def load_city_performance(', start)
+          replacement = '''    def load_product_performance(self, filters: Optional[DashboardFilterParams] = None):\n        if not filters or filters.year is None or filters.month is None:\n            return []\n        q = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)\n        if filters.representative_id is not None:\n            q = q.filter(Target.representative_id == filters.representative_id)\n        totals = {}\n        products = {p.id: p for p in Product.query.all()}\n        for target in q.all():\n            bucket = totals.setdefault(target.product_id, [Decimal("0"), Decimal("0")])\n            bucket[1] += Decimal(str(target.tl_target or 0))\n            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)\n            bucket[0] += Decimal(str(effective.get("actual_tl") or 0))\n        rows = [SimpleNamespace(product_id=pid, product_name=products[pid].product_name if pid in products else str(pid), realization_tl=vals[0], target_tl=vals[1]) for pid, vals in totals.items()]\n        return sorted(rows, key=lambda row: row.realization_tl, reverse=True)\n\n'''
+          text = text[:start] + replacement + text[end:]
+
+          start = text.index('    def load_region_performance(')
+          end = text.index('    def load_competition_overview(', start)
+          replacement = '''    def load_region_performance(self, filters: Optional[DashboardFilterParams] = None):\n        if not filters or filters.year is None or filters.month is None:\n            return []\n        targets = self.session.query(Target, Representative).join(Representative, Representative.id == Target.representative_id).filter(Target.year == filters.year, Target.month == filters.month, Representative.region.isnot(None)).all()\n        buckets = {}\n        for target, rep in targets:\n            key = (rep.region, rep.city)\n            bucket = buckets.setdefault(key, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), set()])\n            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)\n            bucket[0] += Decimal(str(target.unit_target or 0)); bucket[1] += Decimal(str(effective.get("actual_unit") or 0))\n            bucket[2] += Decimal(str(target.tl_target or 0)); bucket[3] += Decimal(str(effective.get("actual_tl") or 0)); bucket[4].add(rep.id)\n        return [SimpleNamespace(region=k[0], city=k[1], unit_target=v[0], unit_actual=v[1], tl_target=v[2], tl_actual=v[3], representative_count=len(v[4])) for k, v in sorted(buckets.items())]\n\n'''
+          text = text[:start] + replacement + text[end:]
+          p.write_text(text, encoding='utf-8')
+
+          # Guardrails: exact targets must not be rounded in the affected core paths.
+          assert 'float(round(target.unit_target or 0))' not in Path('app/services/prime_engine.py').read_text(encoding='utf-8')
+          assert 'Product.query.filter_by(is_active=True)' not in Path('app/services/representative_market_service.py').read_text(encoding='utf-8')
+          PY
+      - name: Run full test suite
+        run: python -m pytest tests/ -q
+      - name: Commit tested changes
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/services/production_result_service.py app/services/prime_engine.py app/services/representative_market_service.py app/query/dashboard_query.py
+          git commit -m 'fix: centralize accepted realization source'
+          git push origin HEAD:fix/central-realization-source
