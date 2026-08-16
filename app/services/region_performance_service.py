@@ -7,6 +7,7 @@ from app.extensions import db
 from app.models import Product, Representative, Target
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.production_result_service import ProductionResultService
+from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE
 
 
 class RegionPerformanceService:
@@ -55,6 +56,37 @@ class RegionPerformanceService:
             Target.year, Target.month, Target.representative_id, Target.product_id
         ).all()
 
+    def _official_period(self, months):
+        # Production result stages remain authoritative once present. For pure
+        # IMS periods, use the workbook's explicit region aggregate rows.
+        if any(ProductionResultService.final_upload(year, month) for year, month in months):
+            return None
+        product_totals = defaultdict(lambda: {"target_tl": Decimal("0"), "actual_tl": Decimal("0"), "target_unit": Decimal("0"), "actual_unit": Decimal("0")})
+        month_totals = {}
+        for year, month in months:
+            rows = OfficialAggregateService.product_totals(year, month, self.region_key)
+            actual_rows = OfficialAggregateService.rows(year, month, self.region_key, ACTUAL_TYPE)
+            if not rows or not actual_rows:
+                return None
+            month_target = month_actual = month_target_unit = month_actual_unit = Decimal("0")
+            for row in rows:
+                bucket = product_totals[row["product_id"]]
+                target_tl = Decimal(str(row["target_tl"] or 0))
+                actual_tl = Decimal(str(row["actual_tl"] or 0))
+                target_unit = Decimal(str(row["target_unit"] or 0))
+                actual_unit = Decimal(str(row["actual_unit"] or 0))
+                bucket["product_name"] = row["product_name"]
+                bucket["target_tl"] += target_tl
+                bucket["actual_tl"] += actual_tl
+                bucket["target_unit"] += target_unit
+                bucket["actual_unit"] += actual_unit
+                month_target += target_tl
+                month_actual += actual_tl
+                month_target_unit += target_unit
+                month_actual_unit += actual_unit
+            month_totals[(year, month)] = (month_target, month_actual, month_target_unit, month_actual_unit)
+        return {"products": product_totals, "months": month_totals}
+
     def aggregate(self, months):
         # Targets remain the exact company-provided values. Actual TL is always
         # resolved through the central accepted-source service: P2 > P1 > IMS.
@@ -91,7 +123,39 @@ class RegionPerformanceService:
         representative_rows = [{"representative_id": rid, "representative_name": reps[rid].rep_name, "city": reps[rid].city or "-", "active": bool(reps[rid].active), "is_vacant": "boş" in (reps[rid].rep_name or "").casefold() or (reps[rid].rep_name or "").strip().upper() == "BOS", **result_row(vals)} for rid, vals in rep_totals.items()]
         representative_rows.sort(key=lambda row: (-(row["realization_percent"] or Decimal("0")), -(row["actual_tl"] or Decimal("0"))))
         monthly_rows = [{"year": year, "month": month, "label": f"{month:02d}/{year}", **result_row(month_totals[(year, month)])} for year, month in months]
-        return {"target_tl": total_target, "actual_tl": total_actual if complete else None, "realization_percent": self.percent(total_actual, total_target) if complete else None, "gap_tl": (total_target-total_actual) if complete else None, "complete": complete, "products": product_rows, "representatives": representative_rows, "months": monthly_rows}
+        official = self._official_period(months)
+        target_unit = actual_unit = None
+        if official:
+            total_target = sum((row["target_tl"] for row in official["products"].values()), Decimal("0"))
+            total_actual = sum((row["actual_tl"] for row in official["products"].values()), Decimal("0"))
+            target_unit = sum((row["target_unit"] for row in official["products"].values()), Decimal("0"))
+            actual_unit = sum((row["actual_unit"] for row in official["products"].values()), Decimal("0"))
+            complete = True
+            product_rows = []
+            for pid, row in official["products"].items():
+                product_rows.append({
+                    "product_id": pid,
+                    "product_name": row.get("product_name", products[pid].product_name if pid in products else f"Ürün {pid}"),
+                    "target_tl": row["target_tl"], "actual_tl": row["actual_tl"],
+                    "realization_percent": self.percent(row["actual_tl"], row["target_tl"]),
+                    "gap_tl": row["target_tl"] - row["actual_tl"], "complete": True,
+                    "target_unit": row["target_unit"], "actual_unit": row["actual_unit"],
+                    "unit_realization_percent": self.percent(row["actual_unit"], row["target_unit"]),
+                })
+            product_rows.sort(key=lambda row: (-row["actual_tl"], row["product_name"]))
+            monthly_rows = []
+            for year, month in months:
+                mt, ma, mtu, mau = official["months"][(year, month)]
+                monthly_rows.append({
+                    "year": year, "month": month, "label": f"{month:02d}/{year}",
+                    "target_tl": mt, "actual_tl": ma, "realization_percent": self.percent(ma, mt),
+                    "gap_tl": mt-ma, "complete": True, "target_unit": mtu, "actual_unit": mau,
+                    "unit_realization_percent": self.percent(mau, mtu),
+                })
+        result = {"target_tl": total_target, "actual_tl": total_actual if complete else None, "realization_percent": self.percent(total_actual, total_target) if complete else None, "gap_tl": (total_target-total_actual) if complete else None, "complete": complete, "products": product_rows, "representatives": representative_rows, "months": monthly_rows}
+        if official:
+            result.update({"target_unit": target_unit, "actual_unit": actual_unit, "unit_realization_percent": self.percent(actual_unit, target_unit)})
+        return result
 
     def report(self):
         periods = {}

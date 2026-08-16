@@ -27,6 +27,7 @@ from app.models import (
 from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
 from app.services.production_result_service import ProductionResultService
+from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE
 
 
 class DashboardQuery:
@@ -167,6 +168,43 @@ class DashboardQuery:
         """Return reconciled National totals captured from the source workbook."""
         if not filters or filters.year is None or filters.month is None:
             return {}
+        official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
+        official_actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
+        if official and official_actual_rows:
+            if ProductionResultService.final_upload(filters.year, filters.month):
+                actuals = {}
+                for target_row in self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month).all():
+                    effective = ProductionResultService.effective_product(filters.year, filters.month, target_row.representative_id, target_row.product_id)
+                    bucket = actuals.setdefault(target_row.product_id, [Decimal("0"), Decimal("0")])
+                    bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
+                    bucket[1] += Decimal(str(effective.get("actual_unit") or 0))
+                for item in official:
+                    values = actuals.get(item["product_id"], [Decimal("0"), Decimal("0")])
+                    item["actual_tl"] = float(values[0])
+                    item["actual_unit"] = float(values[1])
+            products = [{
+                "product_id": item["product_id"], "product_name": item["product_name"],
+                "target_tl": round(float(item["target_tl"] or 0), 2),
+                "actual_tl": round(float(item["actual_tl"] or 0), 2),
+                "unit_target": round(float(item["target_unit"] or 0), 2),
+                "unit_actual": round(float(item["actual_unit"] or 0), 2),
+            } for item in official]
+            for item in products:
+                item["realization_percent"] = round(item["actual_tl"] * 100 / item["target_tl"], 1) if item["target_tl"] else 0.0
+                item["unit_realization_percent"] = round(item["unit_actual"] * 100 / item["unit_target"], 1) if item["unit_target"] else 0.0
+            target = sum(item["target_tl"] for item in products)
+            actual = sum(item["actual_tl"] for item in products)
+            unit_target = sum(item["unit_target"] for item in products)
+            unit_actual = sum(item["unit_actual"] for item in products)
+            return {
+                "source": "Resmi NATIONAL hedef / kabul edilen gerçekleşme kaynağı",
+                "target_tl": round(target, 2), "actual_tl": round(actual, 2),
+                "realization_percent": round(actual * 100 / target, 2) if target else 0.0,
+                "unit_target": round(unit_target, 2), "unit_actual": round(unit_actual, 2),
+                "unit_realization_percent": round(unit_actual * 100 / unit_target, 2) if unit_target else 0.0,
+                "products": products,
+            }
+
         upload_id = self.session.query(IMSUpload.id).filter(
             IMSUpload.year == filters.year, IMSUpload.month == filters.month,
             IMSUpload.status == "COMPLETED"
