@@ -2001,6 +2001,8 @@ class IMSImportService:
                             upsert(weekly_name, "dashboard_weekly_region", product_id,
                                    values["actual_unit"], values["actual_tl"], values,
                                    representative=representative, territory=territory)
+        from app.services.official_aggregate_service import persist_official_aggregates
+        persist_official_aggregates(self, year, month)
         db.session.flush()
 
     def clear_week(self, year, week_number):

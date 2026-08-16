@@ -11,6 +11,7 @@ from openpyxl import load_workbook as openpyxl_load_workbook
 
 from app.extensions import db
 from app.models import (
+    Representative,
     Target,
 )
 from app.services.alias_service import AliasService
@@ -435,6 +436,10 @@ class TargetImportService:
         normalized = AliasService.normalize(representative_name)
         if normalized not in self._representative_match_cache:
             res = AliasService.find_representative(representative_name)
+            if not res["matched"] and any(token in {"BOS", "KADRO"} for token in normalized.split()):
+                matches = [rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name) == normalized]
+                if len(matches) == 1:
+                    res = {"matched": True, "object": matches[0], "method": "VACANCY_EXACT"}
             self._representative_match_cache[normalized] = res
             if res["matched"]:
                 self.statistics["matched_representatives"] += 1
@@ -460,6 +465,8 @@ class TargetImportService:
         if bool(re.search(r"\d", normalized)):
             return False
         tokens = normalized.split()
+        if any(token in {"BOS", "KADRO"} for token in tokens) and len(tokens) >= 2:
+            return True
         if any(token in self.REPRESENTATIVE_NOISE_TOKENS for token in tokens):
             return False
         if len(tokens) < 2:
@@ -468,7 +475,7 @@ class TargetImportService:
 
     def _upsert_target(self, target_map: dict, pending_targets: list, representative_id: int, product_id: int, year: int, month: int, quarter: str, unit_target: float, tl_target: float) -> None:
         """Centralized helper method to perform insert or update on target records."""
-        unit_target = float(round(unit_target or 0))
+        unit_target = float(unit_target or 0)
         t_key = (representative_id, product_id)
         existing = target_map.get(t_key)
 
