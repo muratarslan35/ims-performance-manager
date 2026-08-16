@@ -17,26 +17,44 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/ims-official-aggregate-units
-      - name: Patch exact unit sources
+      - name: Wire official aggregates and exact target import
         run: |
           python - <<'PY'
           from pathlib import Path
+
           p = Path('app/services/ims_import_service.py')
           s = p.read_text(encoding='utf-8')
-          old = "                    if net_unit_price > 0:\n                        target.unit_target = float(round(target.tl_target / net_unit_price))"
-          new = "                    if net_unit_price > 0:\n                        target.unit_target = float(target.tl_target / net_unit_price)"
-          if old not in s:
-              raise SystemExit('unit target rounding block not found')
-          s = s.replace(old, new, 1)
-          start = s.index('                derived_unit_actual = None')
-          end_marker = '                if target is not None:\n                    target.realization_percent'
-          end = s.index(end_marker, start)
-          replacement = "                # KUTU CIKISI is an explicit workbook source metric. Never derive it from TL.\n                if \"unit\" in metrics:\n                    summary.unit = metrics[\"unit\"]\n                    if target is not None:\n                        target.unit_realization = metrics[\"unit\"]\n"
-          s = s[:start] + replacement + s[end:]
+          import_anchor = 'from app.services.target_box_calculation_service import TargetBoxCalculationService\n'
+          import_line = 'from app.services.official_aggregate_service import persist_official_aggregates\n'
+          if import_line not in s:
+              if import_anchor not in s:
+                  raise SystemExit('IMS import anchor missing')
+              s = s.replace(import_anchor, import_anchor + import_line, 1)
+          call_anchor = '        self.apply_weekly_sales_summary(year, month)\n        self.persist_national_dashboard_metrics(year, month)\n'
+          call_new = '        self.apply_weekly_sales_summary(year, month)\n        persist_official_aggregates(self, year, month)\n        self.persist_national_dashboard_metrics(year, month)\n'
+          if 'persist_official_aggregates(self, year, month)' not in s:
+              if call_anchor not in s:
+                  raise SystemExit('IMS process anchor missing')
+              s = s.replace(call_anchor, call_new, 1)
           p.write_text(s, encoding='utf-8')
+
+          t = Path('app/services/target_import_service.py')
+          x = t.read_text(encoding='utf-8')
+          x = x.replace('from app.models import (\n    Target,\n)', 'from app.models import (\n    Representative,\n    Target,\n)', 1)
+          x = x.replace('        unit_target = float(round(unit_target or 0))', '        unit_target = float(unit_target or 0)', 1)
+          vacancy_anchor = '        tokens = normalized.split()\n        if any(token in self.REPRESENTATIVE_NOISE_TOKENS for token in tokens):\n'
+          vacancy_new = '        tokens = normalized.split()\n        if any(token in {"BOS", "KADRO"} for token in tokens) and len(tokens) >= 2:\n            return True\n        if any(token in self.REPRESENTATIVE_NOISE_TOKENS for token in tokens):\n'
+          if vacancy_anchor in x:
+              x = x.replace(vacancy_anchor, vacancy_new, 1)
+          resolve_old = '            res = AliasService.find_representative(representative_name)\n            self._representative_match_cache[normalized] = res\n'
+          resolve_new = '            res = AliasService.find_representative(representative_name)\n            if not res["matched"] and any(token in {"BOS", "KADRO"} for token in normalized.split()):\n                matches = [rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name) == normalized]\n                if len(matches) == 1:\n                    res = {"matched": True, "object": matches[0], "method": "VACANCY_EXACT"}\n            self._representative_match_cache[normalized] = res\n'
+          if resolve_old not in x:
+              raise SystemExit('Target representative resolver anchor missing')
+          x = x.replace(resolve_old, resolve_new, 1)
+          t.write_text(x, encoding='utf-8')
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/services/ims_import_service.py
-          git commit -m "fix: preserve exact workbook unit sources"
+          git add app/services/ims_import_service.py app/services/target_import_service.py
+          git commit -m "fix: wire official aggregates and exact target units"
           git push origin HEAD:fix/ims-official-aggregate-units
