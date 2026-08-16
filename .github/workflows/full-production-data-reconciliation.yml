@@ -1,0 +1,284 @@
+name: Full production data reconciliation
+
+on:
+  push:
+    branches:
+      - audit/fentivag-monural-prod
+    paths:
+      - .github/workflows/full-production-data-reconciliation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile source workbook against production
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test "$(git rev-parse HEAD)" = "ab6ec096ca8a8e46b59d50baad75d48bb628f9d5"
+          venv/bin/python - <<'PY'
+          from collections import defaultdict, Counter
+          from pathlib import Path
+          import math, re, json
+          from openpyxl import load_workbook
+
+          from app import create_app
+          from app.models import Target, IMSSummary, IMSUpload, CompetitionData, Product
+          from app.services.alias_service import AliasService
+          from app.services.competition_import_service import CompetitionImportService
+          from repair_fentivag_targets import _period_representatives, _resolve_rep, _is_rep_row
+
+          PRODUCTS=['TRAVAZOL','MONUROL','MIXOVUL','FENTIVAG','STIDERM','ACNEMIX','BRIMODER']
+          YEAR=2026; MONTH=1
+          def norm(v): return AliasService.normalize(v)
+          def nkey(v): return ''.join(ch for ch in norm(v) if ch.isalnum())
+          def num(v):
+              if v is None: return 0.0
+              if isinstance(v,(int,float)): return float(v)
+              s=str(v).strip().replace('\u00a0','')
+              if not s: return 0.0
+              s=re.sub(r'[^0-9,.-]','',s)
+              if ',' in s and '.' in s:
+                  s=s.replace('.','').replace(',','.') if s.rfind(',')>s.rfind('.') else s.replace(',','')
+              elif ',' in s: s=s.replace('.','').replace(',','.')
+              try: return float(s)
+              except: return 0.0
+          def rcode(v):
+              m=re.match(r'^(\d{3})\b',norm(v))
+              return m.group(1) if m else ''
+          def close(a,b,tol): return math.isclose(float(a or 0),float(b or 0),rel_tol=0,abs_tol=tol)
+
+          source_path=Path('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx')
+          wb=load_workbook(source_path,data_only=True,read_only=True)
+
+          # ----- BAKIYE: target TL and remaining box -----
+          ws=wb['BAKİYE']; rows=list(ws.iter_rows(values_only=True))
+          hidx=next(i for i,row in enumerate(rows[:12]) if 'HEDEF' in norm(' '.join(str(x or '') for x in row)) and 'BAKIYE' in norm(' '.join(str(x or '') for x in row)))
+          header=rows[hidx]
+          tcols={}; bcols={}; section=''
+          for i,v in enumerate(header):
+              lab=norm(v)
+              if 'HEDEF' in lab and 'TL' in lab: section='target'; continue
+              if 'BAKIYE' in lab and ('KUTU' in lab or 'UNIT' in lab): section='balance'; continue
+              if 'BAKIYE' in lab and 'TL' in lab: section='balance_tl'; continue
+              if 'CIKIS' in lab and 'TL' in lab: section='actual_tl'; continue
+              if lab in PRODUCTS:
+                  if section=='target' and lab not in tcols: tcols[lab]=i
+                  if section=='balance' and lab not in bcols: bcols[lab]=i
+          assert set(tcols)==set(PRODUCTS), (tcols, bcols)
+          assert set(bcols)==set(PRODUCTS), (tcols, bcols)
+
+          bakiye_national={p:{'target_tl':0.0,'balance_unit':0.0} for p in PRODUCTS}
+          bakiye_regions={}
+          people={}
+          for row in rows[hidx+1:]:
+              loc=row[0] if len(row)>0 else None; rep=row[1] if len(row)>1 else None
+              rn=norm(rep); ln=norm(loc); code=rcode(loc)
+              if rn=='NATIONAL':
+                  for p in PRODUCTS:
+                      bakiye_national[p]={'target_tl':num(row[tcols[p]]),'balance_unit':num(row[bcols[p]])}
+                  continue
+              if rn and rn==ln and code:
+                  bakiye_regions[code]={p:{'target_tl':num(row[tcols[p]]),'balance_unit':num(row[bcols[p]])} for p in PRODUCTS}
+                  continue
+              if not _is_rep_row(loc,rep): continue
+              people[rn]={'location':str(loc or '').strip(),'representative':str(rep or '').strip(),'region':code,
+                          'products':{p:{'target_tl':num(row[tcols[p]]),'balance_unit':num(row[bcols[p]])} for p in PRODUCTS}}
+
+          # ----- canonical cumulative TTS actual TL and boxes -----
+          ws2=wb['TTS HAFTALIK ÇIKIŞLARI']; wr=list(ws2.iter_rows(values_only=True))
+          phidx=next(i for i,row in enumerate(wr[:12]) if sum(1 for x in row if norm(x) in PRODUCTS)>=5)
+          section_row=wr[phidx-1]; product_row=wr[phidx]
+          sections={}; current=''; seen={'tl':False,'unit':False}
+          for i,v in enumerate(section_row):
+              lab=norm(v)
+              if lab:
+                  if 'CIKIS' in lab and 'TL' in lab:
+                      if not seen['tl']: current='tl'; seen['tl']=True
+                      else: current=''
+                  elif 'CIKIS' in lab and ('KUTU' in lab or 'UNIT' in lab):
+                      if not seen['unit']: current='unit'; seen['unit']=True
+                      else: current=''
+                  elif 'HAFTA' in lab and seen['tl'] and seen['unit']:
+                      current=''
+              sections[i]=current
+          acols={'tl':{},'unit':{}}
+          for i,v in enumerate(product_row):
+              p=norm(v); metric=sections.get(i)
+              if p in PRODUCTS and metric in acols and p not in acols[metric]: acols[metric][p]=i
+          assert set(acols['tl'])==set(PRODUCTS), acols
+          assert set(acols['unit'])==set(PRODUCTS), acols
+
+          actual_national={p:{'tl':0.0,'unit':0.0} for p in PRODUCTS}; actual_regions={}; actual_people={}
+          for row in wr[phidx+1:]:
+              loc=row[0] if len(row)>0 else None; rep=row[1] if len(row)>1 else None
+              rn=norm(rep); ln=norm(loc); code=rcode(loc)
+              vals={p:{'tl':num(row[acols['tl'][p]]),'unit':num(row[acols['unit'][p]])} for p in PRODUCTS}
+              if rn=='NATIONAL': actual_national=vals; continue
+              if rn and rn==ln and code: actual_regions[code]=vals; continue
+              if not _is_rep_row(loc,rep): continue
+              actual_people[rn]=vals
+          wb.close()
+
+          # ----- exact person/product -> production DB reconciliation -----
+          app=create_app()
+          with app.app_context():
+              rep_ids,reps,exact=_period_representatives()
+              source_rows=[]; unresolved=[]
+              for rn,person in people.items():
+                  rec={'source_key':rn,'representative':person['representative'],'location':person['location']}
+                  obj=_resolve_rep(rec,reps,exact)
+                  if not obj: unresolved.append(person['representative']); continue
+                  for p in PRODUCTS:
+                      a=actual_people.get(rn,{}).get(p,{'tl':0.0,'unit':0.0})
+                      b=person['products'][p]
+                      source_rows.append({'rep_id':obj.id,'rep_name':obj.rep_name,'region':person['region'],'product':p,
+                        'target_tl':b['target_tl'],'target_unit':b['balance_unit']+a['unit'],'actual_tl':a['tl'],'actual_unit':a['unit']})
+              print(f'SOURCE_PERSON_ROWS|{len(people)}')
+              print(f'SOURCE_PERSON_PRODUCT_ROWS|{len(source_rows)}')
+              print(f'UNRESOLVED_PERSON_ROWS|{len(unresolved)}|{unresolved}')
+              assert len(people)==113 and not unresolved and len(source_rows)==791
+
+              products={norm(x.product_code):x for x in Product.query.all()}
+              target_m=[]; summary_m=[]
+              src_by_region=defaultdict(lambda:defaultdict(lambda:{'target_tl':0.0,'target_unit':0.0,'actual_tl':0.0,'actual_unit':0.0}))
+              for s in source_rows:
+                  pid=products[s['product']].id
+                  t=Target.query.filter_by(year=YEAR,month=MONTH,representative_id=s['rep_id'],product_id=pid).first()
+                  sm=IMSSummary.query.filter_by(year=YEAR,month=MONTH,representative_id=s['rep_id'],product_id=pid).first()
+                  if not t:
+                      target_m.append((s['rep_name'],s['product'],'MISSING_TARGET')); continue
+                  checks=[('target_tl',t.tl_target,s['target_tl'],0.05),('target_unit',t.unit_target,s['target_unit'],0.01),('actual_tl',t.tl_realization,s['actual_tl'],0.05),('actual_unit',t.unit_realization,s['actual_unit'],0.01)]
+                  for fld,dv,sv,tol in checks:
+                      if not close(dv,sv,tol): target_m.append((s['rep_name'],s['product'],fld,float(dv or 0),sv))
+                  if not sm:
+                      summary_m.append((s['rep_name'],s['product'],'MISSING_SUMMARY'))
+                  else:
+                      checks2=[('target_tl',sm.target_tl,s['target_tl'],0.05),('target_unit',sm.target_unit,s['target_unit'],0.01),('actual_tl',sm.tl,s['actual_tl'],0.05),('actual_unit',sm.unit,s['actual_unit'],0.01)]
+                      for fld,dv,sv,tol in checks2:
+                          if not close(dv,sv,tol): summary_m.append((s['rep_name'],s['product'],fld,float(dv or 0),sv))
+                  b=src_by_region[s['region']][s['product']]
+                  for fld in ('target_tl','target_unit','actual_tl','actual_unit'): b[fld]+=s[fld]
+
+              print(f'TARGET_VALUE_MISMATCH_COUNT|{len(target_m)}')
+              for x in target_m[:30]: print('TARGET_MISMATCH|'+json.dumps(x,ensure_ascii=False))
+              print(f'SUMMARY_VALUE_MISMATCH_COUNT|{len(summary_m)}')
+              for x in summary_m[:30]: print('SUMMARY_MISMATCH|'+json.dumps(x,ensure_ascii=False))
+
+              db_by_region=defaultdict(lambda:defaultdict(lambda:{'target_tl':0.0,'target_unit':0.0,'actual_tl':0.0,'actual_unit':0.0}))
+              for t in Target.query.filter_by(year=YEAR,month=MONTH).all():
+                  p=norm(t.product.product_code); region=str(t.representative.region or '')
+                  if p not in PRODUCTS: continue
+                  b=db_by_region[region][p]
+                  b['target_tl']+=float(t.tl_target or 0); b['target_unit']+=float(t.unit_target or 0); b['actual_tl']+=float(t.tl_realization or 0); b['actual_unit']+=float(t.unit_realization or 0)
+
+              region_m=[]
+              for region in sorted(src_by_region):
+                  st={'target_tl':0,'target_unit':0,'actual_tl':0,'actual_unit':0}; dt={k:0 for k in st}
+                  for p in PRODUCTS:
+                      for fld in st:
+                          st[fld]+=src_by_region[region][p][fld]; dt[fld]+=db_by_region[region][p][fld]
+                          tol=0.05 if 'tl' in fld else 0.01
+                          if not close(src_by_region[region][p][fld],db_by_region[region][p][fld],tol): region_m.append((region,p,fld,src_by_region[region][p][fld],db_by_region[region][p][fld]))
+                  print('REGION_TOTAL|{}|SRC_TARGET_TL={:.6f}|DB_TARGET_TL={:.6f}|SRC_TARGET_UNIT={:.6f}|DB_TARGET_UNIT={:.6f}|SRC_ACTUAL_TL={:.6f}|DB_ACTUAL_TL={:.6f}|SRC_ACTUAL_UNIT={:.6f}|DB_ACTUAL_UNIT={:.6f}'.format(region,st['target_tl'],dt['target_tl'],st['target_unit'],dt['target_unit'],st['actual_tl'],dt['actual_tl'],st['actual_unit'],dt['actual_unit']))
+              print(f'REGION_PRODUCT_MISMATCH_COUNT|{len(region_m)}')
+              for x in region_m[:30]: print('REGION_MISMATCH|'+json.dumps(x,ensure_ascii=False))
+
+              # National -> region subtotal -> person regions -> DB regions reconciliation
+              metrics=['target_tl','target_unit','actual_tl','actual_unit']
+              grand={m:{'national':0.0,'region_subtotal':0.0,'persons':0.0,'db':0.0} for m in metrics}
+              for p in PRODUCTS:
+                  vals={m:{'national':0.0,'region_subtotal':0.0,'persons':0.0,'db':0.0} for m in metrics}
+                  vals['target_tl']['national']=bakiye_national[p]['target_tl']
+                  vals['target_unit']['national']=bakiye_national[p]['balance_unit']+actual_national[p]['unit']
+                  vals['actual_tl']['national']=actual_national[p]['tl']; vals['actual_unit']['national']=actual_national[p]['unit']
+                  for region in bakiye_regions:
+                      vals['target_tl']['region_subtotal']+=bakiye_regions[region][p]['target_tl']
+                      vals['target_unit']['region_subtotal']+=bakiye_regions[region][p]['balance_unit']+actual_regions.get(region,{}).get(p,{}).get('unit',0.0)
+                  for region in actual_regions:
+                      vals['actual_tl']['region_subtotal']+=actual_regions[region][p]['tl']; vals['actual_unit']['region_subtotal']+=actual_regions[region][p]['unit']
+                  for region in src_by_region:
+                      for m in metrics: vals[m]['persons']+=src_by_region[region][p][m]
+                  for region in db_by_region:
+                      for m in metrics: vals[m]['db']+=db_by_region[region][p][m]
+                  for m in metrics:
+                      v=vals[m]; tol=0.05 if 'tl' in m else 0.01
+                      print('RECON|{}|{}|NATIONAL={:.6f}|REGION_SUBTOTAL={:.6f}|PERSON_REGIONS={:.6f}|DB_REGIONS={:.6f}|NAT_MINUS_REGION={:.6f}|NAT_MINUS_PERSON={:.6f}|PERSON_MINUS_DB={:.6f}'.format(m.upper(),p,v['national'],v['region_subtotal'],v['persons'],v['db'],v['national']-v['region_subtotal'],v['national']-v['persons'],v['persons']-v['db']))
+                      for k in grand[m]: grand[m][k]+=v[k]
+              for m,v in grand.items():
+                  print('RECON_TOTAL|{}|NATIONAL={:.6f}|REGION_SUBTOTAL={:.6f}|PERSON_REGIONS={:.6f}|DB_REGIONS={:.6f}|NAT_MINUS_REGION={:.6f}|NAT_MINUS_PERSON={:.6f}|PERSON_MINUS_DB={:.6f}'.format(m.upper(),v['national'],v['region_subtotal'],v['persons'],v['db'],v['national']-v['region_subtotal'],v['national']-v['persons'],v['persons']-v['db']))
+
+              # ----- competition exact source -> DB reconciliation -----
+              upload=IMSUpload.query.filter_by(year=YEAR,month=MONTH,status='COMPLETED').order_by(IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
+              assert upload
+              cp=Path('uploads')/upload.file_name
+              svc=CompetitionImportService(file_path=str(cp),upload_id=upload.id,year=upload.year,month=upload.month,week_number=upload.week_number)
+              svc.load_workbook(str(cp)); svc.validate_workbook()
+              source_comp={}; source_sheet=Counter(); conflicts=[]
+              supported=svc.get_supported_sheets()
+              for sheet in supported:
+                  st=svc._parse_sheet_structure(sheet)
+                  recs=svc._parse_sheet_records(st)
+                  for rec in recs:
+                      n=svc.normalize_record(rec)
+                      key=(n.get('sheet_name'),n.get('period_type'),n.get('year'),n.get('month'),n.get('week_number'),n.get('territory'),n.get('subterritory',''),n.get('product_group'),n.get('product_name'),n.get('metric_type'))
+                      val=float(n.get('metric_value') or 0)
+                      if key in source_comp and not close(source_comp[key],val,1e-9): conflicts.append((key,source_comp[key],val))
+                      source_comp[key]=val; source_sheet[n.get('sheet_name')]+=1
+              invalid=list(svc.invalid_cells); numeric=svc.parse_statistics['numeric_cells']
+              if svc._workbook: svc._workbook.close()
+
+              dbrows=CompetitionData.query.filter_by(upload_id=upload.id).all(); db_comp={}; db_sheet=Counter()
+              for r in dbrows:
+                  key=(r.sheet_name,r.period_type,r.year,r.month,r.week_number,r.territory,r.subterritory or '',r.product_group,r.product_name,r.metric_type)
+                  db_comp[key]=float(r.metric_value or 0); db_sheet[r.sheet_name]+=1
+              sk=set(source_comp); dk=set(db_comp); missing=sorted(sk-dk,key=str); extra=sorted(dk-sk,key=str)
+              vm=[(k,source_comp[k],db_comp[k]) for k in sk&dk if not close(source_comp[k],db_comp[k],1e-9)]
+              print(f'COMPETITION_SUPPORTED_SHEETS|{len(supported)}|{supported}')
+              print(f'COMPETITION_NUMERIC_SOURCE_CELLS|{numeric}')
+              print(f'COMPETITION_SOURCE_UNIQUE_KEYS|{len(source_comp)}')
+              print(f'COMPETITION_DB_KEYS|{len(db_comp)}')
+              print(f'COMPETITION_SOURCE_CONFLICTS|{len(conflicts)}')
+              print(f'COMPETITION_INVALID_CELLS|{len(invalid)}')
+              print(f'COMPETITION_MISSING_IN_DB|{len(missing)}')
+              print(f'COMPETITION_EXTRA_IN_DB|{len(extra)}')
+              print(f'COMPETITION_VALUE_MISMATCHES|{len(vm)}')
+              for x in missing[:10]: print('COMP_MISSING|'+json.dumps(x,ensure_ascii=False,default=str))
+              for x in extra[:10]: print('COMP_EXTRA|'+json.dumps(x,ensure_ascii=False,default=str))
+              for x in vm[:10]: print('COMP_VALUE_MISMATCH|'+json.dumps(x,ensure_ascii=False,default=str))
+              for sheet in sorted(set(source_sheet)|set(db_sheet)):
+                  print(f'COMP_SHEET|{sheet}|SOURCE={source_sheet[sheet]}|DB={db_sheet[sheet]}')
+              monthly_unit=[k for k in sk if k[-1]=='UNIT' and 'AYLIK' in norm(k[0]) and 'REKABET' in norm(k[0]) and 'KUTU' in norm(k[0])]
+              print(f'MONTHLY_COMPETITION_UNIT_KEYS|{len(monthly_unit)}')
+              distinct=sorted({k[8] for k in monthly_unit})
+              print('MONTHLY_COMPETITION_PRODUCTS|' + json.dumps(distinct[:80],ensure_ascii=False))
+              exact_comp=(not conflicts and not invalid and not missing and not extra and not vm)
+              print(f'COMPETITION_SOURCE_DB_EXACT|{exact_comp}')
+
+              all_ok=(len(target_m)==0 and len(summary_m)==0 and len(region_m)==0 and exact_comp)
+              print(f'PERSON_REGION_DB_EXACT|{len(target_m)==0 and len(summary_m)==0 and len(region_m)==0}')
+              print(f'FULL_DATA_SOURCE_DB_EXACT|{all_ok}')
+          PY
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'FULL_RECON_HEALTH|PASS'
+          REMOTE
