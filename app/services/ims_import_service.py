@@ -46,6 +46,7 @@ from app.services.alias_service import AliasService
 from app.services.competition_import_service import CompetitionImportService
 from app.services.target_import_service import TargetImportService
 from app.services.target_box_calculation_service import TargetBoxCalculationService
+from app.services.official_aggregate_service import persist_official_aggregates
 
 
 # Regex to extract week number from typical IMS file names.
@@ -2057,6 +2058,7 @@ class IMSImportService:
         self.rebuild_summary(year, month)
         self.apply_balance_summary(year, month)
         self.apply_weekly_sales_summary(year, month)
+        persist_official_aggregates(self, year, month)
         self.persist_national_dashboard_metrics(year, month)
 
         available_sheets = (self.workbook or {}).keys()
