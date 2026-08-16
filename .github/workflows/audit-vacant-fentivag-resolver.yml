@@ -1,0 +1,61 @@
+name: Audit vacant Fentivag resolver
+
+on:
+  push:
+    branches:
+      - audit/fentivag-monural-prod
+    paths:
+      - .github/workflows/audit-vacant-fentivag-resolver.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only resolver audit
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test "$(git rev-parse HEAD)" = "ab6ec096ca8a8e46b59d50baad75d48bb628f9d5"
+          venv/bin/python - <<'PY'
+          from app import create_app
+          from repair_fentivag_targets import _find_source_file, extract_source_records, _period_representatives, _resolve_rep, norm
+          app=create_app()
+          with app.app_context():
+              rep_ids, reps, exact = _period_representatives()
+              print(f'PERIOD_REPS|{len(rep_ids)}')
+              for r in sorted(reps, key=lambda x:x.id):
+                  if 'ATANMAMIS' in norm(r.rep_name) or 'BOS' in norm(r.rep_name):
+                      print(f'VACANT_DB|{r.id}|{r.rep_name}|region={r.region}|city={r.city}|territory={r.territory}|active={r.active}')
+              source=extract_source_records(_find_source_file())
+              print(f'SOURCE_ROWS|{len(source)}')
+              unmatched=[]
+              for rec in source:
+                  obj=_resolve_rep(rec,reps,exact)
+                  if obj is None:
+                      unmatched.append(rec['representative'])
+                      print(f'UNMATCHED|{rec["representative"]}|loc={rec["location"]}')
+                  elif 'BOS' in norm(rec['representative']):
+                      print(f'VACANT_MATCH|{rec["representative"]}|loc={rec["location"]}|db={obj.id}:{obj.rep_name}')
+              print(f'UNMATCHED_COUNT|{len(unmatched)}')
+          PY
+          REMOTE
