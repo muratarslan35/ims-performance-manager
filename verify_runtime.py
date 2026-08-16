@@ -30,7 +30,6 @@ REPO_ROOT = Path(__file__).resolve().parent
 MIGRATIONS_DIR = REPO_ROOT / "migrations"
 ALEMBIC_INI = MIGRATIONS_DIR / "alembic.ini"
 DEFAULT_DB_URL = f"sqlite:///{(REPO_ROOT / 'instance' / 'ipm.db').resolve()}"
-SAMPLE_WORKBOOK = REPO_ROOT / "Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx"
 
 
 @dataclass
@@ -76,34 +75,22 @@ def run_checks() -> tuple[list[Check], dict]:
     diagnostics["git"] = {"branch": branch, "commit": commit}
     checks.append(Check("git.branch", bool(branch), branch or "missing"))
     checks.append(Check("git.commit", len(commit) == 40, commit))
-
-    cwd_ok = Path.cwd().resolve() == REPO_ROOT.resolve()
-    checks.append(Check("working_directory", cwd_ok, f"cwd={Path.cwd()} expected={REPO_ROOT}"))
-
-    python_detail = platform.python_version()
-    checks.append(Check("python.version", sys.version_info >= (3, 10), python_detail))
+    checks.append(Check("working_directory", Path.cwd().resolve() == REPO_ROOT.resolve(), f"cwd={Path.cwd()} expected={REPO_ROOT}"))
+    checks.append(Check("python.version", sys.version_info >= (3, 10), platform.python_version()))
 
     app = create_app(RuntimeCheckConfig)
     checks.append(Check("flask.app_load", app is not None, "create_app() ok"))
     diagnostics["sqlalchemy_uri"] = app.config["SQLALCHEMY_DATABASE_URI"]
 
     with app.app_context():
-        # Idempotent safety for clean deployments that forgot the explicit db upgrade step.
         upgrade(directory=str(MIGRATIONS_DIR))
         initialize_database()
-
         current_revision = _alembic_current_revision()
         head_revision = _alembic_head_revision()
         diagnostics["alembic"] = {"current": current_revision, "head": head_revision}
         checks.append(Check("alembic.current_revision", bool(current_revision), str(current_revision)))
         checks.append(Check("alembic.head_revision", bool(head_revision), str(head_revision)))
-        checks.append(
-            Check(
-                "alembic.current_equals_head",
-                current_revision == head_revision,
-                f"current={current_revision}, head={head_revision}",
-            )
-        )
+        checks.append(Check("alembic.current_equals_head", current_revision == head_revision, f"current={current_revision}, head={head_revision}"))
 
         db_path = _sqlite_db_path(app.config["SQLALCHEMY_DATABASE_URI"])
         diagnostics["db_file_path"] = str(db_path) if db_path else "<non-sqlite>"
@@ -112,15 +99,8 @@ def run_checks() -> tuple[list[Check], dict]:
             checks.append(Check("db.file_exists", db_path.exists(), str(db_path)))
 
         inspector = inspect(db.engine)
-        required_models = {
-            "representatives": Representative,
-            "products": Product,
-            "ims_uploads": IMSUpload,
-            "ims_raw_data": IMSRawData,
-            "ims_facts": IMSFact,
-            "ims_summary": IMSSummary,
-        }
-        schema_drift: dict = {}
+        required_models = {"representatives": Representative, "products": Product, "ims_uploads": IMSUpload, "ims_raw_data": IMSRawData, "ims_facts": IMSFact, "ims_summary": IMSSummary}
+        schema_drift = {}
         schema_ok = True
         for table_name, model in required_models.items():
             model_columns = {column.name for column in model.__table__.columns}
@@ -133,13 +113,8 @@ def run_checks() -> tuple[list[Check], dict]:
         diagnostics["schema_drift"] = schema_drift
         checks.append(Check("schema_drift.required_ims_tables", schema_ok, json.dumps(schema_drift, ensure_ascii=False)))
 
-        required_columns = {
-            "ims_uploads": {"week_number", "raw_record_count", "fact_record_count", "summary_record_count"},
-            "ims_raw_data": {"week_number", "value_share"},
-            "ims_facts": {"week_number", "value_share"},
-            "ims_summary": {"value_share"},
-        }
-        missing_required: dict = {}
+        required_columns = {"ims_uploads": {"week_number", "raw_record_count", "fact_record_count", "summary_record_count"}, "ims_raw_data": {"week_number", "value_share"}, "ims_facts": {"week_number", "value_share"}, "ims_summary": {"value_share"}}
+        missing_required = {}
         required_ok = True
         for table_name, columns in required_columns.items():
             db_columns = {column["name"] for column in inspector.get_columns(table_name)}
@@ -150,55 +125,23 @@ def run_checks() -> tuple[list[Check], dict]:
         diagnostics["required_columns_missing"] = missing_required
         checks.append(Check("required_columns_presence", required_ok, json.dumps(missing_required, ensure_ascii=False)))
 
-        clean_counts = {
-            "representatives": db.session.query(Representative).count(),
-            "ims_uploads": db.session.query(IMSUpload).count(),
-            "ims_raw_data": db.session.query(IMSRawData).count(),
-            "ims_facts": db.session.query(IMSFact).count(),
-            "ims_summary": db.session.query(IMSSummary).count(),
-        }
+        clean_counts = {"representatives": db.session.query(Representative).count(), "ims_uploads": db.session.query(IMSUpload).count(), "ims_raw_data": db.session.query(IMSRawData).count(), "ims_facts": db.session.query(IMSFact).count(), "ims_summary": db.session.query(IMSSummary).count()}
         diagnostics["row_counts_clean_state"] = clean_counts
         checks.append(Check("clean_state.row_counts", True, str(clean_counts)))
 
-        seed_counts = {
-            "admin_users": db.session.query(User).filter_by(email="admin@ipm.local").count(),
-            "settings": db.session.query(Setting).count(),
-            "products": db.session.query(Product).count(),
-            "prime_rules": db.session.query(PrimeRule).count(),
-        }
+        seed_counts = {"admin_users": db.session.query(User).filter_by(email="admin@ipm.local").count(), "settings": db.session.query(Setting).count(), "products": db.session.query(Product).count(), "prime_rules": db.session.query(PrimeRule).count()}
         diagnostics["seed_counts"] = seed_counts
         checks.append(Check("seed.admin_exists", seed_counts["admin_users"] >= 1, str(seed_counts["admin_users"])))
         checks.append(Check("seed.settings_exist", seed_counts["settings"] > 0, str(seed_counts["settings"])))
         checks.append(Check("seed.products_exist", seed_counts["products"] > 0, str(seed_counts["products"])))
-        checks.append(
-            Check(
-                "seed.prime_rules_consistency",
-                seed_counts["prime_rules"] >= seed_counts["products"],
-                str(seed_counts),
-            )
-        )
+        checks.append(Check("seed.prime_rules_consistency", seed_counts["prime_rules"] >= seed_counts["products"], str(seed_counts)))
 
-        import_ready = {
-            "sample_workbook_exists": SAMPLE_WORKBOOK.exists(),
-            "service_health": IMSImportService.health(),
-            "supported_reports_count": len(IMSImportService.supported_reports()),
-        }
+        # Production verification must validate the live import service and live
+        # database, not a historical workbook that is intentionally not tracked.
+        import_ready = {"service_health": IMSImportService.health(), "supported_reports_count": len(IMSImportService.supported_reports())}
         diagnostics["import_readiness"] = import_ready
-        checks.append(Check("import.sample_workbook_exists", import_ready["sample_workbook_exists"], str(SAMPLE_WORKBOOK)))
-        checks.append(
-            Check(
-                "import.service_health",
-                import_ready["service_health"].get("status") == "READY",
-                json.dumps(import_ready["service_health"], ensure_ascii=False),
-            )
-        )
-        checks.append(
-            Check(
-                "import.supported_reports",
-                import_ready["supported_reports_count"] > 0,
-                str(import_ready["supported_reports_count"]),
-            )
-        )
+        checks.append(Check("import.service_health", import_ready["service_health"].get("status") == "READY", json.dumps(import_ready["service_health"], ensure_ascii=False)))
+        checks.append(Check("import.supported_reports", import_ready["supported_reports_count"] > 0, str(import_ready["supported_reports_count"])))
 
     return checks, diagnostics
 
@@ -206,19 +149,14 @@ def run_checks() -> tuple[list[Check], dict]:
 def main() -> int:
     checks, diagnostics = run_checks()
     failed = [check for check in checks if not check.passed]
-
     print("=== verify_runtime.py ===")
     for check in checks:
-        status = "PASS" if check.passed else "FAIL"
-        print(f"[{status}] {check.name} :: {check.detail}")
-
+        print(f"[{'PASS' if check.passed else 'FAIL'}] {check.name} :: {check.detail}")
     print("\n=== diagnostics ===")
     print(json.dumps(diagnostics, indent=2, ensure_ascii=False))
-
     if failed:
         print(f"\nRuntime verification failed: {len(failed)} check(s) failed.", file=sys.stderr)
         return 1
-
     print("\nRuntime verification passed.")
     return 0
 
