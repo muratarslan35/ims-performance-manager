@@ -75,6 +75,7 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
             unit_target=9999.0,
         )
         self.summary = IMSSummary(
+            upload_id=self.upload.id,
             year=2038,
             month=1,
             quarter="Q1",
