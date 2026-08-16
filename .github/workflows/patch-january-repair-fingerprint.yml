@@ -1,0 +1,45 @@
+name: Patch January repair competition fingerprint
+
+on:
+  push:
+    branches: [fix/january-repair-competition-fingerprint]
+    paths: [.github/workflows/patch-january-repair-fingerprint.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/january-repair-competition-fingerprint
+      - name: Fix CompetitionData fingerprint fields
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('repair_january_ims_actuals.py')
+          s = p.read_text()
+          old = '''        payload = [
+              row.id, row.upload_id, row.sheet_name, row.sheet_type, row.year, row.month,
+              row.week_number, row.territory, row.subterritory, row.product_group,
+              row.product_name, row.metric_type, row.metric_value,
+              row.is_subtotal, row.is_grand_total,
+          ]'''
+          new = '''        payload = [
+              row.id, row.upload_id, row.sheet_name, row.period_type, row.year, row.month,
+              row.week_number, row.territory, row.subterritory, row.product_group,
+              row.product_name, row.is_company_product, row.is_competitor,
+              row.metric_type, row.metric_value, row.is_subtotal, row.is_grand_total,
+              row.source_row,
+          ]'''
+          if old not in s:
+              raise SystemExit('competition fingerprint block not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repair_january_ims_actuals.py
+          git commit -m "fix: fingerprint real CompetitionData fields in January repair"
+          git push origin HEAD:fix/january-repair-competition-fingerprint
