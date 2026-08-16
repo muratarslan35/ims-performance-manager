@@ -1,10 +1,12 @@
 from collections import defaultdict
+from decimal import Decimal
 
 from sqlalchemy import and_, func, or_
 
 from app.extensions import db
-from app.models import IMSSummary, Product, Representative, Target
+from app.models import Product, Representative, Target
 from app.services.annual_realization_service import AnnualRealizationService
+from app.services.production_result_service import ProductionResultService
 
 
 class RegionPerformanceService:
@@ -16,8 +18,8 @@ class RegionPerformanceService:
         self.month = int(month)
         if not self.region_key or self.month < 1 or self.month > 12:
             raise ValueError("Geçersiz bölge veya dönem.")
-        # Bölge toplamı kadro doluluğundan bağımsızdır. Boş kadrolara atanmış
-        # hedefler de bölgenin sorumluluğudur ve toplamdan düşürülmemelidir.
+        # Kadro doluluğu hesaplamayı etkilemez. BOŞ/BOS dahil bölgeye bağlı
+        # bütün ticari kadrolar hedef ve gerçekleşmelerde korunur.
         self.representatives = Representative.query.filter(
             or_(
                 Representative.region == self.region_key,
@@ -41,7 +43,8 @@ class RegionPerformanceService:
 
     @staticmethod
     def percent(actual, target):
-        return round(actual * 100 / target, 1) if target else 0.0
+        actual, target = Decimal(str(actual or 0)), Decimal(str(target or 0))
+        return actual * Decimal("100") / target if target else Decimal("0")
 
     def _target_rows(self, months):
         conditions = [and_(Target.year == year, Target.month == month) for year, month in months]
@@ -52,39 +55,43 @@ class RegionPerformanceService:
             Target.year, Target.month, Target.representative_id, Target.product_id
         ).all()
 
-    def _actual_rows(self, months):
-        conditions = [and_(IMSSummary.year == year, IMSSummary.month == month) for year, month in months]
-        return db.session.query(
-            IMSSummary.year, IMSSummary.month, IMSSummary.representative_id, IMSSummary.product_id,
-            func.coalesce(func.sum(IMSSummary.tl), 0.0),
-        ).filter(IMSSummary.representative_id.in_(self.rep_ids), or_(*conditions)).group_by(
-            IMSSummary.year, IMSSummary.month, IMSSummary.representative_id, IMSSummary.product_id
-        ).all()
-
     def aggregate(self, months):
-        cells = defaultdict(lambda: {"target": 0.0, "actual": 0.0})
+        # Targets remain the exact company-provided values. Actual TL is always
+        # resolved through the central accepted-source service: P2 > P1 > IMS.
+        cells = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
         for year, month, rep_id, product_id, target in self._target_rows(months):
-            cells[(year, month, rep_id, product_id)]["target"] += float(target or 0)
-        for year, month, rep_id, product_id, actual in self._actual_rows(months):
-            cells[(year, month, rep_id, product_id)]["actual"] += float(actual or 0)
+            key = (year, month, rep_id, product_id)
+            exact_target = Decimal(str(target or 0))
+            cells[key]["target"] += exact_target
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if not effective["complete"] or effective["actual_tl"] is None:
+                cells[key]["complete"] = False
+            else:
+                cells[key]["actual"] += Decimal(str(effective["actual_tl"]))
 
         products = {item.id: item for item in Product.query.filter(Product.id.in_({key[3] for key in cells})).all()} if cells else {}
         reps = {item.id: item for item in self.representatives}
-        product_totals, rep_totals, month_totals = defaultdict(lambda: [0.0, 0.0]), defaultdict(lambda: [0.0, 0.0]), defaultdict(lambda: [0.0, 0.0])
-        total_target = total_actual = 0.0
+        product_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        rep_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        month_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        total_target = total_actual = Decimal("0")
+        complete = True
         for (year, month, rep_id, product_id), values in cells.items():
-            target, actual = values["target"], values["actual"]
-            product_totals[product_id][0] += target; product_totals[product_id][1] += actual
-            rep_totals[rep_id][0] += target; rep_totals[rep_id][1] += actual
-            month_totals[(year, month)][0] += target; month_totals[(year, month)][1] += actual
-            total_target += target; total_actual += actual
+            target, actual, row_complete = values["target"], values["actual"], values["complete"]
+            for bucket in (product_totals[product_id], rep_totals[rep_id], month_totals[(year, month)]):
+                bucket[0] += target; bucket[1] += actual; bucket[2] = bucket[2] and row_complete
+            total_target += target; total_actual += actual; complete = complete and row_complete
 
-        product_rows = [{"product_id": pid, "product_name": products[pid].product_name if pid in products else f"Ürün {pid}", "target_tl": round(vals[0], 2), "actual_tl": round(vals[1], 2), "realization_percent": self.percent(vals[1], vals[0]), "gap_tl": round(vals[0] - vals[1], 2)} for pid, vals in product_totals.items()]
-        product_rows.sort(key=lambda row: (-row["actual_tl"], row["product_name"]))
-        representative_rows = [{"representative_id": rid, "representative_name": reps[rid].rep_name, "city": reps[rid].city or "-", "active": bool(reps[rid].active), "is_vacant": "boş" in (reps[rid].rep_name or "").casefold(), "target_tl": round(vals[0], 2), "actual_tl": round(vals[1], 2), "realization_percent": self.percent(vals[1], vals[0]), "gap_tl": round(vals[0] - vals[1], 2)} for rid, vals in rep_totals.items()]
-        representative_rows.sort(key=lambda row: (-row["realization_percent"], -row["actual_tl"]))
-        monthly_rows = [{"year": year, "month": month, "label": f"{month:02d}/{year}", "target_tl": round(month_totals[(year, month)][0], 2), "actual_tl": round(month_totals[(year, month)][1], 2), "realization_percent": self.percent(month_totals[(year, month)][1], month_totals[(year, month)][0]), "gap_tl": round(month_totals[(year, month)][0] - month_totals[(year, month)][1], 2)} for year, month in months]
-        return {"target_tl": round(total_target, 2), "actual_tl": round(total_actual, 2), "realization_percent": self.percent(total_actual, total_target), "gap_tl": round(total_target - total_actual, 2), "products": product_rows, "representatives": representative_rows, "months": monthly_rows}
+        def result_row(vals):
+            target, actual, row_complete = vals
+            return {"target_tl": target, "actual_tl": actual if row_complete else None, "realization_percent": self.percent(actual, target) if row_complete else None, "gap_tl": (target - actual) if row_complete else None, "complete": row_complete}
+
+        product_rows = [{"product_id": pid, "product_name": products[pid].product_name if pid in products else f"Ürün {pid}", **result_row(vals)} for pid, vals in product_totals.items()]
+        product_rows.sort(key=lambda row: (-(row["actual_tl"] or Decimal("0")), row["product_name"]))
+        representative_rows = [{"representative_id": rid, "representative_name": reps[rid].rep_name, "city": reps[rid].city or "-", "active": bool(reps[rid].active), "is_vacant": "boş" in (reps[rid].rep_name or "").casefold() or (reps[rid].rep_name or "").strip().upper() == "BOS", **result_row(vals)} for rid, vals in rep_totals.items()]
+        representative_rows.sort(key=lambda row: (-(row["realization_percent"] or Decimal("0")), -(row["actual_tl"] or Decimal("0"))))
+        monthly_rows = [{"year": year, "month": month, "label": f"{month:02d}/{year}", **result_row(month_totals[(year, month)])} for year, month in months]
+        return {"target_tl": total_target, "actual_tl": total_actual if complete else None, "realization_percent": self.percent(total_actual, total_target) if complete else None, "gap_tl": (total_target-total_actual) if complete else None, "complete": complete, "products": product_rows, "representatives": representative_rows, "months": monthly_rows}
 
     def report(self):
         periods = {}
@@ -97,6 +104,6 @@ class RegionPerformanceService:
             city_counts[rep.city or ""] += 1
         city = max(city_counts, key=city_counts.get) if city_counts else ""
         active_count = sum(1 for rep in self.representatives if rep.active)
-        vacant_count = sum(1 for rep in self.representatives if "boş" in (rep.rep_name or "").casefold())
+        vacant_count = sum(1 for rep in self.representatives if "boş" in (rep.rep_name or "").casefold() or (rep.rep_name or "").strip().upper() == "BOS")
         display_name = (city or self.region_key).upper()
-        return {"region_key": self.region_key, "region_name": display_name, "year": self.year, "month": self.month, "representative_count": active_count, "active_count": active_count, "vacant_count": vacant_count, "manager": primary.manager or "-", "periods": periods, "annual_realization": AnnualRealizationService.build(self.year, self.rep_ids)}
+        return {"region_key": self.region_key, "region_name": display_name, "year": self.year, "month": self.month, "representative_count": len(self.representatives), "active_count": active_count, "vacant_count": vacant_count, "manager": primary.manager or "-", "periods": periods, "annual_realization": AnnualRealizationService.build(self.year, self.rep_ids)}
