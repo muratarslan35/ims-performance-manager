@@ -29,34 +29,121 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read-only production source audit
+      - name: Repair and verify production Fentivag targets
+        shell: bash
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse HEAD)" = "74aa0917c7cd9cb9dde2d60157d78010431c4557"
+
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          cp instance/ipm.db "instance/backups/ipm-pre-fentivag-repair-${stamp}.db"
+          sha256sum instance/ipm.db "instance/backups/ipm-pre-fentivag-repair-${stamp}.db"
+
+          echo '--- BEFORE FENTIVAG REPAIR ---'
           venv/bin/python - <<'PY'
-          from pathlib import Path
-          from openpyxl import load_workbook
-          import re, unicodedata
-
-          def norm(value):
-              text = unicodedata.normalize('NFKD', str(value or '').strip().upper())
-              text = ''.join(c for c in text if not unicodedata.combining(c))
-              text = text.translate(str.maketrans({'İ':'I','Ş':'S','Ğ':'G','Ü':'U','Ö':'O','Ç':'C'}))
-              return re.sub(r'[^A-Z0-9]+', ' ', text).strip()
-
-          p = Path('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx')
-          wb = load_workbook(p, data_only=True, read_only=True)
-          wanted = {'MURAT ARSLAN', 'DIYARBAKIR BOS', 'DIYARBAKIR BOS KADRO'}
-          for sheet_name in ['BAKİYE', 'TTS HAFTALIK ÇIKIŞLARI', 'TTS ÇIKIŞLARI', 'BRICK REA.']:
-              ws = wb[sheet_name]
-              print(f'=== {sheet_name} ===')
-              for ridx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                  vals = list(row)
-                  joined = ' | '.join('' if v is None else str(v) for v in vals)
-                  n = norm(joined)
-                  if ridx <= 4 or any(name in n for name in wanted):
-                      print(f'ROW {ridx}: {joined[:6000]}')
-          wb.close()
+          import hashlib, json, sqlite3
+          con = sqlite3.connect('instance/ipm.db')
+          con.row_factory = sqlite3.Row
+          cur = con.cursor()
+          fent = cur.execute("SELECT id, product_code, product_name, is_active FROM products WHERE UPPER(product_code)='FENTIVAG'").fetchone()
+          print('PRODUCT|' + json.dumps(dict(fent), ensure_ascii=False) if fent else 'PRODUCT|MISSING')
+          rows = cur.execute("SELECT COUNT(*) c FROM targets t JOIN products p ON p.id=t.product_id WHERE t.year=2026 AND t.month=1 AND UPPER(p.product_code)='FENTIVAG'").fetchone()['c']
+          print(f'FENTIVAG_TARGET_ROWS_BEFORE|{rows}')
+          payload = [tuple(r) for r in cur.execute("""
+              SELECT t.id,t.year,t.month,t.quarter,t.representative_id,t.product_id,
+                     t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,
+                     t.realization_percent,t.prime_percent,t.bonus_amount
+              FROM targets t JOIN products p ON p.id=t.product_id
+              WHERE UPPER(p.product_code)!='FENTIVAG'
+              ORDER BY t.id
+          """)]
+          fp = hashlib.sha256(json.dumps(payload, separators=(',',':')).encode()).hexdigest()
+          print(f'NON_FENTIVAG_FP_BEFORE|{fp}')
+          con.close()
           PY
+
+          venv/bin/python repair_fentivag_targets.py
+
+          echo '--- AFTER FENTIVAG REPAIR ---'
+          venv/bin/python - <<'PY'
+          import hashlib, json, math, sqlite3, sys
+          con = sqlite3.connect('instance/ipm.db')
+          con.row_factory = sqlite3.Row
+          cur = con.cursor()
+          fent = cur.execute("SELECT id, product_code, product_name, is_active FROM products WHERE UPPER(product_code)='FENTIVAG'").fetchone()
+          if not fent or fent['is_active'] != 1:
+              raise SystemExit('Fentivag is not active after repair')
+          product_id = fent['id']
+          print('PRODUCT|' + json.dumps(dict(fent), ensure_ascii=False))
+
+          stats = cur.execute("""
+              SELECT COUNT(*) rows,
+                     COUNT(DISTINCT representative_id) reps,
+                     SUM(unit_target) unit_sum,
+                     SUM(tl_target) tl_sum,
+                     SUM(unit_realization) unit_actual_sum,
+                     SUM(tl_realization) tl_actual_sum
+              FROM targets
+              WHERE year=2026 AND month=1 AND product_id=?
+          """, (product_id,)).fetchone()
+          print('FENTIVAG_STATS|' + json.dumps(dict(stats), ensure_ascii=False))
+          if stats['rows'] != 113 or stats['reps'] != 113:
+              raise SystemExit(f"Fentivag coverage mismatch: {dict(stats)}")
+          if not math.isclose(stats['tl_sum'] or 0, 4675320.0, rel_tol=0, abs_tol=0.05):
+              raise SystemExit(f"Fentivag TL total mismatch: {stats['tl_sum']}")
+          if not math.isclose(stats['unit_sum'] or 0, 7522.184235517633, rel_tol=0, abs_tol=0.05):
+              raise SystemExit(f"Fentivag unit total mismatch: {stats['unit_sum']}")
+          if not math.isclose(stats['unit_actual_sum'] or 0, 0.0, rel_tol=0, abs_tol=0.001):
+              raise SystemExit(f"Unexpected Fentivag unit actual: {stats['unit_actual_sum']}")
+          if not math.isclose(stats['tl_actual_sum'] or 0, 0.0, rel_tol=0, abs_tol=0.01):
+              raise SystemExit(f"Unexpected Fentivag TL actual: {stats['tl_actual_sum']}")
+
+          total_targets = cur.execute("SELECT COUNT(*) c FROM targets WHERE year=2026 AND month=1").fetchone()['c']
+          seven_rep_count = cur.execute("""
+              SELECT COUNT(*) c FROM (
+                SELECT representative_id, COUNT(*) n
+                FROM targets WHERE year=2026 AND month=1
+                GROUP BY representative_id HAVING n=7
+              )
+          """).fetchone()['c']
+          summary_rows = cur.execute("SELECT COUNT(*) c FROM ims_summary WHERE year=2026 AND month=1 AND product_id=?", (product_id,)).fetchone()['c']
+          print(f'JAN_TOTAL_TARGET_ROWS|{total_targets}')
+          print(f'JAN_REPS_WITH_7_TARGETS|{seven_rep_count}')
+          print(f'FENTIVAG_SUMMARY_ROWS|{summary_rows}')
+          if total_targets != 791 or seven_rep_count != 113 or summary_rows != 113:
+              raise SystemExit('January seven-product coverage verification failed')
+
+          for requested in ('MURAT ARSLAN', 'DIYARBAKIR BOS'):
+              rows = cur.execute("""
+                  SELECT r.id rep_id,r.rep_name,t.unit_target,t.tl_target,t.unit_realization,t.tl_realization
+                  FROM targets t JOIN representatives r ON r.id=t.representative_id
+                  WHERE t.year=2026 AND t.month=1 AND t.product_id=?
+                    AND UPPER(r.rep_name) LIKE ?
+                  ORDER BY r.id
+              """, (product_id, f'%{requested}%')).fetchall()
+              print('SAMPLE|' + requested + '|' + json.dumps([dict(r) for r in rows], ensure_ascii=False))
+              if not rows:
+                  raise SystemExit(f'Missing sample target: {requested}')
+
+          payload = [tuple(r) for r in cur.execute("""
+              SELECT t.id,t.year,t.month,t.quarter,t.representative_id,t.product_id,
+                     t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,
+                     t.realization_percent,t.prime_percent,t.bonus_amount
+              FROM targets t JOIN products p ON p.id=t.product_id
+              WHERE UPPER(p.product_code)!='FENTIVAG'
+              ORDER BY t.id
+          """)]
+          fp = hashlib.sha256(json.dumps(payload, separators=(',',':')).encode()).hexdigest()
+          print(f'NON_FENTIVAG_FP_AFTER|{fp}')
+          con.close()
+          PY
+
+          venv/bin/python production_target_audit.py
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'Fentivag production repair verification passed.'
           REMOTE
