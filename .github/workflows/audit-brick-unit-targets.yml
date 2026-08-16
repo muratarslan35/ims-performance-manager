@@ -1,0 +1,108 @@
+name: Audit explicit brick unit targets
+on:
+  push:
+    branches: [ops/full-january-source-audit]
+    paths: [.github/workflows/audit-brick-unit-targets.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile explicit unit targets
+        run: |
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import re, sqlite3, unicodedata
+          from collections import defaultdict
+          from openpyxl import load_workbook
+
+          PRODUCTS=('TRAVAZOL','MONUROL','MIXOVUL')
+          def norm(v):
+              t=unicodedata.normalize('NFKD',str(v or '').upper())
+              t=''.join(c for c in t if not unicodedata.combining(c))
+              return re.sub(r'[^A-Z0-9]+',' ',t).strip()
+          def rc(v):
+              m=re.search(r'\b(\d{3})\b',norm(v)); return m.group(1) if m else ''
+          def close(a,b): return abs(float(a or 0)-float(b or 0)) <= 0.05
+
+          wb=load_workbook('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx',data_only=True,read_only=True)
+          ws=wb['BRICK REA.']; rows=list(ws.iter_rows(values_only=True)); header=rows[1]
+          cols={}
+          for i,v in enumerate(header):
+              n=norm(v)
+              for p in PRODUCTS:
+                  if p in n and 'KUTU HEDEF' in n: cols[p]=i
+          if set(cols)!=set(PRODUCTS): raise SystemExit(f'COLUMN_FAIL|{cols}')
+          national={p:float(rows[2][cols[p]] or 0) for p in PRODUCTS}
+          region=defaultdict(lambda:defaultdict(float)); rep=defaultdict(lambda:defaultdict(float)); all_sum=defaultdict(float)
+          source_reps=defaultdict(set)
+          for row in rows[3:]:
+              rg=rc(row[0] if len(row)>0 else None)
+              name=norm(row[2] if len(row)>2 else None)
+              if not rg or not name or name=='NATIONAL': continue
+              source_reps[rg].add(name)
+              for p in PRODUCTS:
+                  val=float(row[cols[p]] or 0)
+                  region[rg][p]+=val; rep[name][p]+=val; all_sum[p]+=val
+          wb.close()
+
+          con=sqlite3.connect('instance/ipm.db'); con.row_factory=sqlite3.Row
+          db_rep=defaultdict(lambda:defaultdict(float)); db_region=defaultdict(lambda:defaultdict(float)); db_name_by_norm={}
+          q='''SELECT r.rep_name,r.region,UPPER(p.product_code) p,t.unit_target
+               FROM targets t JOIN representatives r ON r.id=t.representative_id JOIN products p ON p.id=t.product_id
+               WHERE t.year=2026 AND t.month=1 AND UPPER(p.product_code) IN ('TRAVAZOL','MONUROL','MIXOVUL')'''
+          for row in con.execute(q):
+              rn=norm(row['rep_name']); rg=rc(row['region']) or str(row['region'] or '')
+              db_rep[rn][row['p']]+=float(row['unit_target'] or 0); db_region[rg][row['p']]+=float(row['unit_target'] or 0); db_name_by_norm[rn]=row['rep_name']
+          con.close()
+
+          print('COLUMNS|'+repr(cols))
+          failures=[]
+          for p in PRODUCTS:
+              print(f'NATIONAL|{p}|EXPLICIT={national[p]}|BRICK_SUM={all_sum[p]}|DELTA={all_sum[p]-national[p]}|DB_PERSON_SUM={sum(v[p] for v in db_rep.values())}')
+              if not close(national[p],all_sum[p]): failures.append(('NATIONAL_BRICK',p,national[p],all_sum[p]))
+          for rg in sorted(region):
+              for p in PRODUCTS:
+                  print(f'REGION|{rg}|{p}|BRICK_SUM={region[rg][p]}|DB_PERSON_SUM={db_region[rg][p]}|DELTA={db_region[rg][p]-region[rg][p]}')
+          exact=0; mismatch=0; unmatched=[]
+          for rn,vals in rep.items():
+              candidates=[key for key in db_rep if key==rn or key in rn or rn in key]
+              if len(candidates)!=1:
+                  # Vacancy wording can differ. Resolve only by a unique vacant DB row in source region.
+                  src_region=next((rg for rg,names in source_reps.items() if rn in names), '')
+                  if 'BOS' in rn or 'BRICK' in rn or 'KADRO' in rn:
+                      candidates=[key for key in db_rep if (rc(next((r['region'] for r in []),''))=='')]  # replaced below
+                      candidates=[key for key in db_rep if ('BOS' in key or 'KADRO' in key)]
+                      # restrict through region totals by matching DB representative name later is unavailable in this compact audit
+                  if len(candidates)!=1:
+                      unmatched.append(rn); continue
+              key=candidates[0]
+              for p in PRODUCTS:
+                  if close(vals[p],db_rep[key][p]): exact+=1
+                  else:
+                      mismatch+=1
+                      if mismatch<=30: print(f'PERSON_MISMATCH|SOURCE={rn}|DB={key}|{p}|EXPLICIT={vals[p]}|DB={db_rep[key][p]}')
+          print(f'PERSON_COMPARE|EXACT_CELLS={exact}|MISMATCH_CELLS={mismatch}|UNMATCHED_REPS={len(unmatched)}')
+          for x in unmatched[:20]: print('UNMATCHED|'+x)
+          print(f'RECONCILE|NATIONAL_BRICK_FAILURES={len(failures)}')
+          if failures: raise SystemExit(2)
+          PY
+          REMOTE
