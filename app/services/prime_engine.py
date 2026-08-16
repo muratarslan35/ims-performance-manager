@@ -11,6 +11,7 @@ from flask import current_app
 from openpyxl import Workbook
 from app.models import IMSSummary, PrimeRule, Product, Setting, Target
 from app.services.ai_analytics_service import AIAnalyticsService
+from app.services.production_result_service import ProductionResultService
 
 _AI_SERVICE_INSTANCE = None
 _AI_SERVICE_LOCK = threading.Lock()
@@ -212,12 +213,14 @@ class PrimeEngine:
     def month_record(self, product_id, month):
         target = self.targets_by_period.get((product_id, month))
         summary = self.summaries_by_period.get((product_id, month))
+        effective = ProductionResultService.effective_product(self.year, month, self.rep_id, product_id)
         return {
-            "target_unit": float(round(target.unit_target or 0)) if target else 0.0,
+            "target_unit": float(target.unit_target if target else 0),
             "target_tl": float(target.tl_target if target else 0),
-            "actual_unit": float(summary.unit if summary else 0),
-            "actual_tl": float(summary.tl if summary else 0),
+            "actual_unit": float(effective.get("actual_unit") or 0),
+            "actual_tl": float(effective.get("actual_tl") or 0),
             "bonus_amount": float(summary.bonus_amount if summary else 0),
+            "realization_source": effective.get("source", "IMS"),
         }
 
     def apply_override(self, product, month, record):

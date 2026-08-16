@@ -12,6 +12,7 @@ from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, RepresentativeBrickAssignment, Target
 from app.services.alias_service import AliasService
 from app.services.competition_import_service import CompetitionImportService
+from app.services.production_result_service import ProductionResultService
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class RepresentativeMarketService:
         return "".join(ch for ch in AliasService.normalize(value) if ch.isalnum())
 
     def _products(self):
-        products = Product.query.filter_by(is_active=True).order_by(
+        products = Product.query.order_by(
             Product.display_order.asc(), Product.product_name.asc()
         ).all()
         by_key = {self._key(product.product_name): product for product in products}
@@ -458,6 +459,9 @@ class RepresentativeMarketService:
             competitor_change_unit = competitor_unit - previous_competitor_unit
             actual_change_percent = actual_change_unit * 100.0 / previous_actual_unit if previous_actual_unit else None
             target_unit = float(targets.get(product.id).unit_target or 0.0) if targets.get(product.id) else 0.0
+            effective = ProductionResultService.effective_product(self.year, self.month, self.representative.id, product.id)
+            if effective.get("source", "IMS").startswith("PRODUCTION_"):
+                actual_unit = float(effective.get("actual_unit") or 0)
             calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0
             rivals = sorted(market["rivals"].items(), key=lambda item: item[1], reverse=True)[:5]
             rows.append(
@@ -474,8 +478,9 @@ class RepresentativeMarketService:
                     "actual_change_percent": round(actual_change_percent, 1) if actual_change_percent is not None else None,
                     "previous_competitor_unit": round(previous_competitor_unit, 2),
                     "competitor_change_unit": round(competitor_change_unit, 2),
-                    "target_unit": round(target_unit, 2),
-                    "realization_percent": round(actual_unit * 100.0 / target_unit, 1) if target_unit else 0.0,
+                    "target_unit": target_unit,
+                    "realization_percent": float(effective.get("realization_percent") or 0),
+                    "realization_source": effective.get("source", "IMS"),
                     "attention": "critical" if competitor_unit > actual_unit * 1.5 and competitor_unit > 0 else "warning" if competitor_unit > actual_unit else "strong",
                     "rivals": [{"name": name, "unit": round(value, 2)} for name, value in rivals],
                 }
