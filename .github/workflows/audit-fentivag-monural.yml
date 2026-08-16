@@ -37,44 +37,26 @@ jobs:
           venv/bin/python - <<'PY'
           from pathlib import Path
           from openpyxl import load_workbook
+          import re, unicodedata
 
-          roots = [Path('instance/uploads'), Path('uploads'), Path('instance')]
-          seen = set()
-          files = []
-          for root in roots:
-              if not root.exists():
-                  continue
-              for p in root.rglob('*.xlsx'):
-                  rp = str(p.resolve())
-                  if rp not in seen:
-                      seen.add(rp)
-                      files.append(p)
-          print('=== XLSX_FILES ===')
-          for p in files:
-              print(p)
+          def norm(value):
+              text = unicodedata.normalize('NFKD', str(value or '').strip().upper())
+              text = ''.join(c for c in text if not unicodedata.combining(c))
+              text = text.translate(str.maketrans({'İ':'I','Ş':'S','Ğ':'G','Ü':'U','Ö':'O','Ç':'C'}))
+              return re.sub(r'[^A-Z0-9]+', ' ', text).strip()
 
-          for p in files:
-              try:
-                  wb = load_workbook(p, data_only=True, read_only=True)
-              except Exception as exc:
-                  print('OPEN_ERROR', p, exc)
-                  continue
-              try:
-                  for ws in wb.worksheets:
-                      matches = []
-                      for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                          vals = ['' if v is None else str(v) for v in row]
-                          joined = ' | '.join(vals)
-                          up = joined.upper()
-                          if 'FENTIVAG' in up or 'MONUROL' in up or ('HEDEF' in up and row_idx <= 15):
-                              matches.append((row_idx, joined[:2000]))
-                          if row_idx > 150 and matches:
-                              break
-                      if matches:
-                          print(f'=== FILE {p} SHEET {ws.title} ===')
-                          for row_idx, text in matches[:40]:
-                              print(f'ROW {row_idx}: {text}')
-              finally:
-                  wb.close()
+          p = Path('uploads/Tayfun-1_3.Hafta_Ocak_Brick_Analizi_.xlsx')
+          wb = load_workbook(p, data_only=True, read_only=True)
+          wanted = {'MURAT ARSLAN', 'DIYARBAKIR BOS', 'DIYARBAKIR BOS KADRO'}
+          for sheet_name in ['BAKİYE', 'TTS HAFTALIK ÇIKIŞLARI', 'TTS ÇIKIŞLARI', 'BRICK REA.']:
+              ws = wb[sheet_name]
+              print(f'=== {sheet_name} ===')
+              for ridx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                  vals = list(row)
+                  joined = ' | '.join('' if v is None else str(v) for v in vals)
+                  n = norm(joined)
+                  if ridx <= 4 or any(name in n for name in wanted):
+                      print(f'ROW {ridx}: {joined[:6000]}')
+          wb.close()
           PY
           REMOTE
