@@ -51,12 +51,10 @@ def test_representative_rows_remain_authoritative_when_national_differs(tmp_path
 
     workbook = load_workbook(source)
     bakiye = workbook["BAKİYE"]
-    weekly = workbook["TTS HAFTALIK ÇIKIŞLARI"]
-    # Intentionally make NATIONAL disagree with the two representative rows.
+    # Intentionally make NATIONAL target/box cells disagree with the two representative rows.
+    # Actual NATIONAL remains internally consistent so this test isolates target-source authority.
     bakiye.cell(3, 4, 999999.0)
     bakiye.cell(3, 6, 999.0)
-    weekly.cell(3, 4, 0.0)
-    weekly.cell(3, 6, 0.0)
     workbook.save(source)
     workbook.close()
 
