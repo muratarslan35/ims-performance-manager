@@ -173,7 +173,6 @@ def _persist_actuals(importer, year, month):
         (
             index for index in range(1, min(12, len(frame)))
             if "TRAVAZOL" in " ".join(_norm(value) for value in frame.iloc[index])
-            and "MONUROL" in " ".join(_norm(value) for value in frame.iloc[index])
         ),
         None,
     )
