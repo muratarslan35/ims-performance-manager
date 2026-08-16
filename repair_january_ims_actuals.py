@@ -236,10 +236,11 @@ def _competition_fingerprint(upload_id):
     query = CompetitionData.query.filter_by(upload_id=upload_id).order_by(CompetitionData.id)
     for row in query.yield_per(1000):
         payload = [
-            row.id, row.upload_id, row.sheet_name, row.sheet_type, row.year, row.month,
+            row.id, row.upload_id, row.sheet_name, row.period_type, row.year, row.month,
             row.week_number, row.territory, row.subterritory, row.product_group,
-            row.product_name, row.metric_type, row.metric_value,
-            row.is_subtotal, row.is_grand_total,
+            row.product_name, row.is_company_product, row.is_competitor,
+            row.metric_type, row.metric_value, row.is_subtotal, row.is_grand_total,
+            row.source_row,
         ]
         digest.update(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         digest.update(b"\n")
