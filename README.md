@@ -22,7 +22,7 @@ python verify_runtime.py
 python -m flask --app run.py run
 ```
 
-Bu akış sonunda uygulama ilk IMS yüklemesi için hazırdır.
+Bu akış sonunda uygulama IMS yüklemesi için hazırdır.
 
 ## Migration flow
 
@@ -80,25 +80,6 @@ Yüklemez:
 python bootstrap_system_data.py
 ```
 
-## Import validation (real sample workbook)
-
-Geliştirmede kullanılan gerçek örnek dosya ile otomatik doğrulama:
-
-```bash
-python validate_sample_import.py
-```
-
-Bu doğrulama şunları kanıtlar:
-
-- import tamamlanır
-- sqlite `OperationalError` oluşmaz
-- missing-column hatası oluşmaz
-- `ims_summary` insert başarılıdır
-- `value_share` insert başarılıdır
-- stage metrics/logging üretilir
-
-Bu komut deploy için opsiyoneldir; app boot sırasında zorunlu değildir.
-
 ## DB reset (güvenli yaklaşım)
 
 Sadece temiz ortam yeniden kurulumunda:
@@ -111,7 +92,7 @@ Sadece temiz ortam yeniden kurulumunda:
 
 Not: canlı ortamda veri koruma gereksinimi varsa manuel dosya silme yerine yedek/restore prosedürü uygulayın.
 
-## İlk IMS upload
+## IMS upload
 
 1. uygulamayı başlatın
 2. admin hesabıyla giriş yapın (`admin@ipm.local`)
@@ -133,7 +114,6 @@ Adımlar:
 2. `python -m flask --app run.py db heads`
 3. current != head ise `python -m flask --app run.py db upgrade`
 4. `python verify_runtime.py` çalıştırın
-5. `python validate_sample_import.py` ile import pipeline doğrulayın
 
 ## Test
 
