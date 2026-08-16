@@ -1,0 +1,27 @@
+name: Patch final official source edges
+
+on:
+  push:
+    branches: [fix/official-aggregate-main-rebase]
+    paths:
+      - tools/patch_final_official_source_edges.py
+      - .github/workflows/patch-final-official-source-edges.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/official-aggregate-main-rebase
+      - name: Apply final source edge patch
+        run: |
+          python tools/patch_final_official_source_edges.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/services/official_aggregate_service.py app/services/target_import_service.py
+          git commit -m "fix: keep vacant targets and exact official units"
+          git push origin HEAD:fix/official-aggregate-main-rebase
