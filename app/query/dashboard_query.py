@@ -27,6 +27,7 @@ from app.models import (
 from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
 from app.services.production_result_service import ProductionResultService
+from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
 
 
 class DashboardQuery:
@@ -164,68 +165,83 @@ class DashboardQuery:
         return SimpleNamespace(realization_tl=total_actual, target_tl=total_target)
 
     def load_national_dashboard_metrics(self, filters: Optional[DashboardFilterParams] = None) -> dict:
-        """Return workbook-reconciled company totals for the selected IMS period."""
+        """Return official company targets with the accepted actual-sales source."""
         if not filters or filters.year is None or filters.month is None:
             return {}
-        upload_id = self.session.query(IMSUpload.id).filter(
-            IMSUpload.year == filters.year, IMSUpload.month == filters.month,
-            IMSUpload.status == "COMPLETED"
-        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
-        if not upload_id:
-            return {}
-        balance_rows = self.session.query(
-            Product.id, Product.product_name, IMSRawData.unit, IMSRawData.tl
-        ).join(Product, Product.id == IMSRawData.product_id).filter(
-            IMSRawData.upload_id == upload_id,
-            IMSRawData.sheet_type == "dashboard_balance_national"
-        ).all()
-        if not balance_rows:
-            return {}
-        weekly_by_product = {
-            row[0]: (float(row[1] or 0), float(row[2] or 0))
-            for row in self.session.query(
-                IMSRawData.product_id, IMSRawData.unit, IMSRawData.tl
-            ).filter(
-                IMSRawData.upload_id == upload_id,
-                IMSRawData.sheet_type == "dashboard_weekly_units",
-            ).all()
-        }
-        target_unit_by_product = dict(self.session.query(
-            Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
-        ).filter(
-            Target.year == filters.year,
-            Target.month == filters.month,
-        ).group_by(Target.product_id).all())
-        products = []
-        for row in balance_rows:
-            weekly_unit, weekly_tl = weekly_by_product.get(row[0], (0.0, float(row[3] or 0)))
-            products.append({
-                "product_id": row[0], "product_name": row[1],
-                "target_tl": round(float(row[2] or 0), 2),
-                "actual_tl": round(float(weekly_tl or 0), 2),
-                "unit_target": round(float(target_unit_by_product.get(row[0], 0) or 0), 2),
-                "unit_actual": round(float(weekly_unit or 0), 2),
-            })
-        target = sum(item["target_tl"] for item in products)
-        actual = sum(item["actual_tl"] for item in products)
-        for item in products:
-            item["realization_percent"] = round(item["actual_tl"] * 100 / item["target_tl"], 1) if item["target_tl"] else 0.0
-            item["unit_realization_percent"] = round(item["unit_actual"] * 100 / item["unit_target"], 1) if item["unit_target"] else 0.0
-        unit_target = sum(item["unit_target"] for item in products)
-        unit_actual = sum(item["unit_actual"] for item in products)
-        return {
-            "source": "BAKİYE / TTS HAFTALIK ÇIKIŞLARI · NATIONAL",
-            "target_tl": round(target, 2), "actual_tl": round(actual, 2),
-            "realization_percent": round(actual * 100 / target, 2) if target else 0.0,
-            "unit_target": round(unit_target, 2),
-            "unit_actual": round(unit_actual, 2),
-            "unit_realization_percent": round(unit_actual * 100 / unit_target, 2) if unit_target else 0.0,
-            "products": products,
-        }
+        official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
+        actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
+        if official and actual_rows:
+            if ProductionResultService.final_upload(filters.year, filters.month):
+                production = {}
+                for target in self.session.query(Target).filter(
+                    Target.year == filters.year, Target.month == filters.month
+                ).all():
+                    effective = ProductionResultService.effective_product(
+                        filters.year, filters.month, target.representative_id, target.product_id
+                    )
+                    bucket = production.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
+                    bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
+                    bucket[1] += Decimal(str(effective.get("actual_unit") or 0))
+                for item in official:
+                    values = production.get(item["product_id"], [Decimal("0"), Decimal("0")])
+                    item["actual_tl"] = float(values[0])
+                    item["actual_unit"] = float(values[1])
+            products = []
+            for item in official:
+                row = {
+                    "product_id": item["product_id"],
+                    "product_name": item["product_name"],
+                    "target_tl": round(float(item["target_tl"] or 0), 2),
+                    "actual_tl": round(float(item["actual_tl"] or 0), 2),
+                    "unit_target": round(float(item["target_unit"] or 0), 2),
+                    "unit_actual": round(float(item["actual_unit"] or 0), 2),
+                }
+                row["realization_percent"] = round(row["actual_tl"] * 100 / row["target_tl"], 1) if row["target_tl"] else 0.0
+                row["unit_realization_percent"] = round(row["unit_actual"] * 100 / row["unit_target"], 1) if row["unit_target"] else 0.0
+                products.append(row)
+            target = sum(item["target_tl"] for item in products)
+            actual = sum(item["actual_tl"] for item in products)
+            unit_target = sum(item["unit_target"] for item in products)
+            unit_actual = sum(item["unit_actual"] for item in products)
+            return {
+                "source": "Resmi NATIONAL hedef / kabul edilen gerçekleşme kaynağı",
+                "target_tl": round(target, 2),
+                "actual_tl": round(actual, 2),
+                "realization_percent": round(actual * 100 / target, 2) if target else 0.0,
+                "unit_target": round(unit_target, 2),
+                "unit_actual": round(unit_actual, 2),
+                "unit_realization_percent": round(unit_actual * 100 / unit_target, 2) if unit_target else 0.0,
+                "products": products,
+            }
+        return {}
 
     def load_product_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
+        if filters.representative_id is None:
+            official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
+            actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
+            if official and actual_rows:
+                production = None
+                if ProductionResultService.final_upload(filters.year, filters.month):
+                    production = {}
+                    for target in self.session.query(Target).filter(
+                        Target.year == filters.year, Target.month == filters.month
+                    ).all():
+                        effective = ProductionResultService.effective_product(
+                            filters.year, filters.month, target.representative_id, target.product_id
+                        )
+                        production[target.product_id] = production.get(target.product_id, Decimal("0")) + Decimal(str(effective.get("actual_tl") or 0))
+                rows = []
+                for item in official:
+                    actual = production.get(item["product_id"], Decimal("0")) if production is not None else Decimal(str(item["actual_tl"] or 0))
+                    rows.append(SimpleNamespace(
+                        product_id=item["product_id"],
+                        product_name=item["product_name"],
+                        realization_tl=actual,
+                        target_tl=Decimal(str(item["target_tl"] or 0)),
+                    ))
+                return sorted(rows, key=lambda row: row.realization_tl, reverse=True)
         q = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
         if filters.representative_id is not None:
             q = q.filter(Target.representative_id == filters.representative_id)
@@ -328,74 +344,62 @@ class DashboardQuery:
     def load_region_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
-
-        if ProductionResultService.final_upload(filters.year, filters.month) is None:
-            upload_id = self.session.query(IMSUpload.id).filter(
-                IMSUpload.year == filters.year,
-                IMSUpload.month == filters.month,
-                IMSUpload.status == "COMPLETED",
-            ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
-            if upload_id:
-                balance_rows = self.session.query(
-                    IMSRawData.territory, Product.id, IMSRawData.unit
-                ).join(Product, Product.id == IMSRawData.product_id).filter(
-                    IMSRawData.upload_id == upload_id,
-                    IMSRawData.sheet_type == "dashboard_balance_region",
-                ).all()
-                if balance_rows:
-                    weekly_rows = self.session.query(
-                        IMSRawData.territory, IMSRawData.product_id, IMSRawData.unit, IMSRawData.tl
-                    ).filter(
-                        IMSRawData.upload_id == upload_id,
-                        IMSRawData.sheet_type == "dashboard_weekly_region",
-                    ).all()
-
-                    def region_key(value):
-                        value = str(value or "").strip()
-                        first = value.split()[0] if value else ""
-                        return first if first.isdigit() else value
-
-                    weekly = {
-                        (region_key(row[0]), row[1]): (Decimal(str(row[2] or 0)), Decimal(str(row[3] or 0)))
-                        for row in weekly_rows
-                    }
-                    unit_targets = {
-                        (region_key(row[0]), row[1]): Decimal(str(row[2] or 0))
-                        for row in self.session.query(
-                            Representative.region, Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
-                        ).join(Target, Target.representative_id == Representative.id).filter(
-                            Target.year == filters.year,
-                            Target.month == filters.month,
-                            Representative.region.isnot(None),
-                        ).group_by(Representative.region, Target.product_id).all()
-                    }
-                    representative_ids = {}
-                    city_by_region = {}
-                    for rep in self.session.query(Representative).filter(Representative.region.isnot(None)).all():
-                        rk = region_key(rep.region)
-                        representative_ids.setdefault(rk, set()).add(rep.id)
-                        if rep.city and rk not in city_by_region:
-                            city_by_region[rk] = rep.city
-                    buckets = {}
-                    for territory, product_id, target_tl in balance_rows:
-                        rk = region_key(territory)
-                        bucket = buckets.setdefault(rk, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")])
-                        actual_unit, actual_tl = weekly.get((rk, product_id), (Decimal("0"), Decimal("0")))
-                        bucket[0] += unit_targets.get((rk, product_id), Decimal("0"))
-                        bucket[1] += actual_unit
-                        bucket[2] += Decimal(str(target_tl or 0))
-                        bucket[3] += actual_tl
-                    return [
-                        SimpleNamespace(
-                            region=rk,
-                            city=city_by_region.get(rk),
-                            unit_target=vals[0], unit_actual=vals[1],
-                            tl_target=vals[2], tl_actual=vals[3],
-                            representative_count=len(representative_ids.get(rk, set())),
+        target_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, TARGET_TYPE)
+        if target_upload:
+            target_rows = self.session.query(IMSRawData).filter(
+                IMSRawData.upload_id == target_upload,
+                IMSRawData.sheet_type == TARGET_TYPE,
+                IMSRawData.territory != "NATIONAL",
+            ).all()
+            if target_rows:
+                production_exists = ProductionResultService.final_upload(filters.year, filters.month) is not None
+                actual_by_key = {}
+                if production_exists:
+                    for target in self.session.query(Target).filter(
+                        Target.year == filters.year, Target.month == filters.month
+                    ).all():
+                        rep = self.session.get(Representative, target.representative_id)
+                        if rep is None or not rep.region:
+                            continue
+                        region_key = str(rep.region).strip().split()[0]
+                        effective = ProductionResultService.effective_product(
+                            filters.year, filters.month, target.representative_id, target.product_id
                         )
-                        for rk, vals in sorted(buckets.items())
-                    ]
-
+                        bucket = actual_by_key.setdefault((region_key, target.product_id), [Decimal("0"), Decimal("0")])
+                        bucket[0] += Decimal(str(effective.get("actual_unit") or 0))
+                        bucket[1] += Decimal(str(effective.get("actual_tl") or 0))
+                else:
+                    actual_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, ACTUAL_TYPE)
+                    if actual_upload:
+                        for row in self.session.query(IMSRawData).filter(
+                            IMSRawData.upload_id == actual_upload,
+                            IMSRawData.sheet_type == ACTUAL_TYPE,
+                            IMSRawData.territory != "NATIONAL",
+                        ).all():
+                            actual_by_key[(str(row.territory), row.product_id)] = [Decimal(str(row.unit or 0)), Decimal(str(row.tl or 0))]
+                reps_by_region = {}
+                city_by_region = {}
+                for rep in self.session.query(Representative).filter(Representative.region.isnot(None)).all():
+                    region_key = str(rep.region).strip().split()[0]
+                    reps_by_region.setdefault(region_key, set()).add(rep.id)
+                    if rep.city and region_key not in city_by_region:
+                        city_by_region[region_key] = rep.city
+                buckets = {}
+                for target in target_rows:
+                    region_key = str(target.territory)
+                    bucket = buckets.setdefault(region_key, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")])
+                    actual_unit, actual_tl = actual_by_key.get((region_key, target.product_id), [Decimal("0"), Decimal("0")])
+                    bucket[0] += Decimal(str(target.unit or 0))
+                    bucket[1] += actual_unit
+                    bucket[2] += Decimal(str(target.tl or 0))
+                    bucket[3] += actual_tl
+                return [SimpleNamespace(
+                    region=region_key,
+                    city=city_by_region.get(region_key),
+                    unit_target=vals[0], unit_actual=vals[1],
+                    tl_target=vals[2], tl_actual=vals[3],
+                    representative_count=len(reps_by_region.get(region_key, set())),
+                ) for region_key, vals in sorted(buckets.items())]
         targets = self.session.query(Target, Representative).join(
             Representative, Representative.id == Target.representative_id
         ).filter(
