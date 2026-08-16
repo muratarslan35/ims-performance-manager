@@ -1850,15 +1850,9 @@ class IMSImportService:
                     summary.tl = metrics["tl"]
                     if target is not None:
                         target.tl_realization = metrics["tl"]
-                derived_unit_actual = None
-                if target is not None and target.unit_target and target.tl_target:
-                    net_unit_price = target.tl_target / target.unit_target
-                    if net_unit_price > 0 and "tl" in metrics:
-                        derived_unit_actual = metrics["tl"] / net_unit_price
-                if derived_unit_actual is not None:
-                    summary.unit = derived_unit_actual
-                    target.unit_realization = derived_unit_actual
-                elif "unit" in metrics:
+                # Preserve the explicit cumulative KUTU ÇIKIŞI source value.
+                # Never synthesize box actuals from TL / target ratios.
+                if "unit" in metrics:
                     summary.unit = metrics["unit"]
                     if target is not None:
                         target.unit_realization = metrics["unit"]
