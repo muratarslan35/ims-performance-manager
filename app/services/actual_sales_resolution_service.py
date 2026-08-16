@@ -1,13 +1,12 @@
-"""Accepted actual-sales resolution layer.
+"""Accepted realization source resolution layer.
 
-This module intentionally does not parse production files yet. It defines the
-stable business contract used by dashboards/prime calculations once production
-imports are connected.
+Production files provide authoritative realization percentages, not reconstructed
+sales TL. Do not infer or clamp production percentages. A value such as 230%
+is a valid final company result and must remain 230%.
 
-Priority is availability based, never wait based:
+Period source priority is availability based and never waits:
     PRODUCTION_2 > PRODUCTION_1 > IMS
 
-A missing later production source never blocks an earlier accepted source.
 BOŞ/BOS rows are ordinary business rows and must not be filtered here.
 """
 from __future__ import annotations
@@ -32,31 +31,31 @@ SOURCE_PRIORITY = {
 
 
 @dataclass(frozen=True)
-class ActualSalesValue:
-    """One immutable accepted-sales candidate for a period/business key."""
+class RealizationValue:
+    """One immutable realization candidate for a period/business key."""
 
     source: ActualSource
-    amount_tl: Decimal
-    units: Optional[Decimal] = None
+    realization_percent: Decimal
     source_record_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
-class ResolvedActual:
-    """The currently accepted actual value and its audit provenance."""
+class ResolvedRealization:
+    """Currently accepted realization and its audit provenance."""
 
     source: ActualSource
-    amount_tl: Decimal
-    units: Optional[Decimal]
+    realization_percent: Decimal
     source_record_id: Optional[int]
 
 
 class ActualSalesResolutionService:
-    """Resolve the latest available nationwide actual-sales source.
+    """Resolve the accepted nationwide realization source for a period.
 
-    Production files are nationwide snapshots. The caller first determines
-    which sources exist for the selected period, then uses that single source
-    consistently for Turkey/region/representative/product calculations.
+    A production workbook is a nationwide company-approved snapshot. Once an
+    applied production snapshot exists, its percentages are authoritative for
+    that period. Percentages are never recalculated from IMS and never capped
+    at 100. If production 2 does not exist, production 1 remains final; if no
+    production exists, IMS remains the current source.
     """
 
     @staticmethod
@@ -68,38 +67,31 @@ class ActualSalesResolutionService:
             return ActualSource.PRODUCTION_1
         if ActualSource.IMS in normalized:
             return ActualSource.IMS
-        raise ValueError("Selected period has no IMS or production actual-sales source")
+        raise ValueError("Selected period has no IMS or production realization source")
 
     @staticmethod
-    def resolve(candidates: Iterable[ActualSalesValue]) -> ResolvedActual:
+    def resolve(candidates: Iterable[RealizationValue]) -> ResolvedRealization:
         values = list(candidates)
         if not values:
-            raise ValueError("No actual-sales candidate supplied")
+            raise ValueError("No realization candidate supplied")
         chosen = max(values, key=lambda item: SOURCE_PRIORITY[item.source])
-        return ResolvedActual(
+        return ResolvedRealization(
             source=chosen.source,
-            amount_tl=Decimal(chosen.amount_tl),
-            units=None if chosen.units is None else Decimal(chosen.units),
+            realization_percent=Decimal(chosen.realization_percent),
             source_record_id=chosen.source_record_id,
         )
 
     @staticmethod
     def resolve_nationwide_snapshot(
-        rows_by_source: Mapping[ActualSource | str, Iterable[ActualSalesValue]],
-    ) -> tuple[ActualSource, list[ResolvedActual]]:
-        """Select one nationwide source and return only rows from that source.
-
-        This prevents mixing IMS and production rows inside the same accepted
-        Turkey snapshot. Production import validation will be responsible for
-        completeness before a production snapshot is marked accepted.
-        """
+        rows_by_source: Mapping[ActualSource | str, Iterable[RealizationValue]],
+    ) -> tuple[ActualSource, list[ResolvedRealization]]:
+        """Select exactly one nationwide source; never mix IMS/production rows."""
         normalized = {ActualSource(source): list(rows) for source, rows in rows_by_source.items()}
         selected = ActualSalesResolutionService.choose_period_source(normalized.keys())
         return selected, [
-            ResolvedActual(
+            ResolvedRealization(
                 source=row.source,
-                amount_tl=Decimal(row.amount_tl),
-                units=None if row.units is None else Decimal(row.units),
+                realization_percent=Decimal(row.realization_percent),
                 source_record_id=row.source_record_id,
             )
             for row in normalized[selected]
