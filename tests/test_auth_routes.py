@@ -340,10 +340,10 @@ def test_target_analysis_groups_products_under_one_representative(app):
     assert "Hedef Ürün B" in html
 
 
-def test_box_target_calculation_returns_whole_boxes():
+def test_box_target_calculation_preserves_authoritative_unit_target():
     from app.services.target_box_calculation_service import TargetBoxCalculationService
 
-    assert TargetBoxCalculationService.unit_target(1005902, 111.655) == 9009
+    assert TargetBoxCalculationService.unit_target(1005902, 111.655) == 1005902
 
 
 def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(app):
