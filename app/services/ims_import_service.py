@@ -1850,15 +1850,9 @@ class IMSImportService:
                     summary.tl = metrics["tl"]
                     if target is not None:
                         target.tl_realization = metrics["tl"]
-                derived_unit_actual = None
-                if target is not None and target.unit_target and target.tl_target:
-                    net_unit_price = target.tl_target / target.unit_target
-                    if net_unit_price > 0 and "tl" in metrics:
-                        derived_unit_actual = metrics["tl"] / net_unit_price
-                if derived_unit_actual is not None:
-                    summary.unit = derived_unit_actual
-                    target.unit_realization = derived_unit_actual
-                elif "unit" in metrics:
+                # Preserve the explicit cumulative KUTU ÇIKIŞI source value.
+                # Never synthesize box actuals from TL / target ratios.
+                if "unit" in metrics:
                     summary.unit = metrics["unit"]
                     if target is not None:
                         target.unit_realization = metrics["unit"]
@@ -1876,25 +1870,30 @@ class IMSImportService:
         }
 
     def persist_national_dashboard_metrics(self, year, month):
-        """Persist the workbook's National KPI rows for the executive dashboard.
+        """Persist source-authoritative National and region subtotal KPI rows.
 
-        Detailed brick rows remain the source for representative reporting.  The
-        National rows in BAKIYE and TTS HAFTALIK ÇIKIŞLARI are already Excel's
-        reconciled period totals, so retaining them separately prevents a
-        dashboard aggregation from double-counting shared bricks or totals.
+        Person rows remain untouched for representative reporting. Company and
+        region KPI totals use the workbook's own subtotal rows so a workbook
+        whose person allocations do not reconcile cannot inflate executive or
+        region totals.
         """
         if not self.upload or not self.workbook:
             return
 
-        def upsert(sheet_name, sheet_type, product_id, unit, tl, metadata):
+        def upsert(sheet_name, sheet_type, product_id, unit, tl, metadata, representative="NATIONAL", territory=None):
             record = IMSRawData.query.filter_by(
-                upload_id=self.upload.id, sheet_type=sheet_type, product_id=product_id
+                upload_id=self.upload.id,
+                sheet_type=sheet_type,
+                product_id=product_id,
+                representative=representative,
+                territory=territory,
             ).first()
             values = dict(
                 year=year, month=month, quarter=self.quarter_for(month),
                 week_number=self.upload.week_number, sheet_name=sheet_name,
                 sheet_type=sheet_type, source_row=0, product_id=product_id,
-                representative="NATIONAL", unit=float(unit or 0), tl=float(tl or 0),
+                representative=representative, territory=territory,
+                unit=float(unit or 0), tl=float(tl or 0),
                 raw_json=json.dumps(metadata, ensure_ascii=False),
             )
             if record:
@@ -1903,31 +1902,62 @@ class IMSImportService:
             else:
                 db.session.add(IMSRawData(upload_id=self.upload.id, **values))
 
+        def is_region_subtotal(row):
+            if len(row) < 2:
+                return False
+            territory = self.clean_text(row.iloc[0])
+            representative = self.clean_text(row.iloc[1])
+            if not territory or not representative:
+                return False
+            return (
+                AliasService.normalize(territory) == AliasService.normalize(representative)
+                and bool(re.match(r"^\d{3}\b", AliasService.normalize(territory)))
+            )
+
         balance_name = next((name for name in self.workbook if "BAKIYE" in AliasService.normalize(name)), None)
         if balance_name:
             frame = self.workbook[balance_name]
-            header_row = next((i for i in range(min(12, len(frame))) if "HEDEF" in " ".join(AliasService.normalize(v) for v in frame.iloc[i]) and "CIKIS" in " ".join(AliasService.normalize(v) for v in frame.iloc[i])), None)
-            if header_row is not None and header_row + 1 < len(frame):
+            header_row = next((
+                i for i in range(min(12, len(frame)))
+                if "HEDEF" in " ".join(AliasService.normalize(v) for v in frame.iloc[i])
+                and "CIKIS" in " ".join(AliasService.normalize(v) for v in frame.iloc[i])
+            ), None)
+            if header_row is not None:
                 sections, current = {}, ""
                 for column in range(frame.shape[1]):
                     label = AliasService.normalize(self.clean_text(frame.iloc[header_row, column]))
                     if any(token in label for token in ("HEDEF", "CIKIS", "BAKIYE")):
                         current = label
                     sections[column] = current
-                national = frame.iloc[header_row + 1]
-                metric_values = {}
-                for column, section in sections.items():
-                    product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))
-                    if not product_match["matched"]:
-                        continue
-                    product_id = product_match["object"].id
-                    values = metric_values.setdefault(product_id, {"target_tl": 0.0, "actual_tl": 0.0})
-                    if "HEDEF" in section:
-                        values["target_tl"] = self.safe_float(national.iloc[column])
-                    elif "CIKIS" in section:
-                        values["actual_tl"] = self.safe_float(national.iloc[column])
-                for product_id, values in metric_values.items():
-                    upsert(balance_name, "dashboard_balance_national", product_id, values["target_tl"], values["actual_tl"], values)
+
+                def balance_values(row):
+                    metric_values = {}
+                    for column, section in sections.items():
+                        product_match = self.resolve_product_match(self.clean_text(frame.iloc[header_row, column]))
+                        if not product_match["matched"]:
+                            continue
+                        product_id = product_match["object"].id
+                        values = metric_values.setdefault(product_id, {"target_tl": 0.0, "actual_tl": 0.0})
+                        if "HEDEF" in section:
+                            values["target_tl"] = self.safe_float(row.iloc[column])
+                        elif "CIKIS" in section:
+                            values["actual_tl"] = self.safe_float(row.iloc[column])
+                    return metric_values
+
+                for row_index in range(header_row + 1, len(frame)):
+                    row = frame.iloc[row_index]
+                    territory = self.clean_text(row.iloc[0]) if frame.shape[1] > 0 else ""
+                    representative = self.clean_text(row.iloc[1]) if frame.shape[1] > 1 else ""
+                    normalized_rep = AliasService.normalize(representative)
+                    if normalized_rep == "NATIONAL":
+                        for product_id, values in balance_values(row).items():
+                            upsert(balance_name, "dashboard_balance_national", product_id,
+                                   values["target_tl"], values["actual_tl"], values)
+                    elif is_region_subtotal(row):
+                        for product_id, values in balance_values(row).items():
+                            upsert(balance_name, "dashboard_balance_region", product_id,
+                                   values["target_tl"], values["actual_tl"], values,
+                                   representative=representative, territory=territory)
 
         weekly_name = next((name for name in self.workbook if "HAFTALIK" in AliasService.normalize(name) and "CIKIS" in AliasService.normalize(name)), None)
         if weekly_name:
@@ -1939,21 +1969,38 @@ class IMSImportService:
                     if label:
                         current = label
                     sections[column] = current
-                national = frame.iloc[2]
-                # A weekly workbook can contain both cumulative month-to-date
-                # and current-week box blocks.  The dashboard's IMS Kutu
-                # Çıkışı is MTD, therefore keep the first KUTU ÇIKIŞI block.
-                selected_section = next(
-                    (section for section in sections.values() if "KUTU" in section),
-                    ""
-                )
-                for column, section in sections.items():
-                    if not selected_section or section != selected_section:
-                        continue
-                    product_match = self.resolve_product_match(self.clean_text(frame.iloc[1, column]))
-                    if product_match["matched"]:
-                        unit = self.safe_float(national.iloc[column])
-                        upsert(weekly_name, "dashboard_weekly_units", product_match["object"].id, unit, 0.0, {"unit_actual": unit})
+                selected_tl = next((s for s in sections.values() if "CIKIS" in s and "TL" in s), "")
+                selected_unit = next((s for s in sections.values() if "CIKIS" in s and "KUTU" in s), "")
+
+                def weekly_values(row):
+                    values = {}
+                    for column, section in sections.items():
+                        if section not in {selected_tl, selected_unit}:
+                            continue
+                        product_match = self.resolve_product_match(self.clean_text(frame.iloc[1, column]))
+                        if not product_match["matched"]:
+                            continue
+                        bucket = values.setdefault(product_match["object"].id, {"actual_tl": 0.0, "actual_unit": 0.0})
+                        if section == selected_tl:
+                            bucket["actual_tl"] = self.safe_float(row.iloc[column])
+                        elif section == selected_unit:
+                            bucket["actual_unit"] = self.safe_float(row.iloc[column])
+                    return values
+
+                for row_index in range(2, len(frame)):
+                    row = frame.iloc[row_index]
+                    territory = self.clean_text(row.iloc[0]) if frame.shape[1] > 0 else ""
+                    representative = self.clean_text(row.iloc[1]) if frame.shape[1] > 1 else ""
+                    normalized_rep = AliasService.normalize(representative)
+                    if normalized_rep == "NATIONAL":
+                        for product_id, values in weekly_values(row).items():
+                            upsert(weekly_name, "dashboard_weekly_units", product_id,
+                                   values["actual_unit"], values["actual_tl"], values)
+                    elif is_region_subtotal(row):
+                        for product_id, values in weekly_values(row).items():
+                            upsert(weekly_name, "dashboard_weekly_region", product_id,
+                                   values["actual_unit"], values["actual_tl"], values,
+                                   representative=representative, territory=territory)
         db.session.flush()
 
     def clear_week(self, year, week_number):
