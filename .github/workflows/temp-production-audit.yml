@@ -43,8 +43,7 @@ jobs:
           echo "AUDIT_PORT_8000|$(ss -ltn | grep -c ':8000 ' || true)"
 
           venv/bin/python - <<'PY'
-          import json
-          import sqlite3
+          import json, sqlite3
           from pathlib import Path
 
           db_path = Path('instance/ipm.db').resolve()
@@ -56,53 +55,59 @@ jobs:
               print(f'AUDIT_DB|journal_mode={mode}|integrity={integrity}')
 
               tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-              for table in ('ims_uploads','ims_raw_data','ims_facts','ims_summary','representatives'):
-                  if table in tables:
-                      count = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-                      print(f'AUDIT_TABLE_COUNT|{table}|{count}')
+              upload_cols = [r[1] for r in con.execute('PRAGMA table_info(ims_uploads)')]
+              full_cols = [c for c in (
+                  'id','file_name','year','month','quarter','week_number','status','uploaded_by',
+                  'uploaded_at','completed_at','sheet_count','raw_record_count','fact_record_count',
+                  'summary_record_count','source_record_count','stored_source_record_count',
+                  'zero_metric_count','blank_metric_count','invalid_metric_count',
+                  'excluded_aggregate_count','reconciliation_status','warning_message','error_message',
+                  'processing_time'
+              ) if c in upload_cols]
+              latest = con.execute(
+                  f"SELECT {','.join(full_cols)} FROM ims_uploads ORDER BY uploaded_at DESC LIMIT 1"
+              ).fetchone()
+              print('AUDIT_LATEST_UPLOAD|' + json.dumps(dict(latest), ensure_ascii=False, default=str))
+              latest_id = latest['id']
 
-              if 'ims_uploads' in tables:
-                  cols = [r[1] for r in con.execute('PRAGMA table_info(ims_uploads)')]
-                  print('AUDIT_UPLOAD_COLUMNS|' + ','.join(cols))
-                  select_cols = [c for c in (
-                      'id','file_name','year','month','week_number','status','uploaded_by',
-                      'uploaded_at','completed_at','source_metric_records','stored_source_records',
-                      'invalid_metric_records','raw_count','fact_count','summary_count'
-                  ) if c in cols]
-                  ordering = 'uploaded_at DESC' if 'uploaded_at' in cols else 'id DESC'
-                  rows = con.execute(
-                      f"SELECT {','.join(select_cols)} FROM ims_uploads ORDER BY {ordering} LIMIT 5"
-                  ).fetchall()
-                  for row in rows:
-                      print('AUDIT_UPLOAD|' + json.dumps(dict(row), ensure_ascii=False, default=str))
+              for table in ('ims_raw_data','ims_facts','ims_summary'):
+                  cols = [r[1] for r in con.execute(f'PRAGMA table_info({table})')]
+                  print(f'AUDIT_SCHEMA|{table}|' + ','.join(cols))
+                  if 'upload_id' in cols:
+                      count = con.execute(f'SELECT COUNT(*) FROM {table} WHERE upload_id=?', (latest_id,)).fetchone()[0]
+                      print(f'AUDIT_LATEST_COUNT|{table}|{count}')
+                  if 'representative_id' in cols:
+                      for rep_id in (111,114):
+                          params = [rep_id]
+                          predicate = 'representative_id=?'
+                          if 'upload_id' in cols:
+                              predicate += ' AND upload_id=?'
+                              params.append(latest_id)
+                          count = con.execute(f'SELECT COUNT(*) FROM {table} WHERE {predicate}', params).fetchone()[0]
+                          print(f'AUDIT_REP_COUNT|{table}|rep_id={rep_id}|count={count}')
 
-                  if rows and 'id' in select_cols:
-                      latest_id = rows[0]['id']
-                      for table in ('ims_raw_data','ims_facts','ims_summary'):
-                          if table not in tables:
-                              continue
-                          table_cols = [r[1] for r in con.execute(f'PRAGMA table_info({table})')]
-                          if 'upload_id' in table_cols:
-                              count = con.execute(f'SELECT COUNT(*) FROM {table} WHERE upload_id=?', (latest_id,)).fetchone()[0]
-                              print(f'AUDIT_LATEST_UPLOAD_COUNT|{table}|upload_id={latest_id}|count={count}')
+              raw_cols = [r[1] for r in con.execute('PRAGMA table_info(ims_raw_data)')]
+              for candidate in ('representative_name','representative','rep_name','representative_raw'):
+                  if candidate in raw_cols:
+                      rows = con.execute(
+                          f"SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=? AND upper(COALESCE({candidate},'')) LIKE '%DIYARBAKIR%BOS%'",
+                          (latest_id,),
+                      ).fetchone()[0]
+                      print(f'AUDIT_RAW_DIYARBAKIR_BOS|column={candidate}|count={rows}')
 
-              if 'representatives' in tables:
-                  rep_cols = [r[1] for r in con.execute('PRAGMA table_info(representatives)')]
-                  wanted = [c for c in ('id','rep_code','rep_name','region','territory','city','active') if c in rep_cols]
-                  rows = con.execute(
-                      f"SELECT {','.join(wanted)} FROM representatives "
-                      "WHERE upper(rep_name) LIKE '%DIYARBAKIR%BOS%' OR upper(COALESCE(territory,'')) LIKE '%DIYARBAKIR%BOS%' "
-                      "ORDER BY id"
-                  ).fetchall()
-                  for row in rows:
-                      print('AUDIT_DIYARBAKIR_VACANCY|' + json.dumps(dict(row), ensure_ascii=False, default=str))
+              rep_cols = [r[1] for r in con.execute('PRAGMA table_info(representatives)')]
+              wanted = [c for c in ('id','rep_code','rep_name','region','territory','city','active') if c in rep_cols]
+              rows = con.execute(
+                  f"SELECT {','.join(wanted)} FROM representatives "
+                  "WHERE id IN (111,114) ORDER BY id"
+              ).fetchall()
+              for row in rows:
+                  print('AUDIT_DIYARBAKIR_VACANCY|' + json.dumps(dict(row), ensure_ascii=False, default=str))
           finally:
               con.close()
           PY
 
           echo 'AUDIT_RECENT_LOCK_ERRORS_BEGIN'
-          if [ -f /tmp/ims-performance-manager.log ]; then
-            grep -n -E 'database is locked|database table is locked|auth_primary_db_locked|ims_upload_rejected_busy' /tmp/ims-performance-manager.log | tail -n 50 || true
-          fi
+          grep -n -E 'database is locked|database table is locked|auth_primary_db_locked|ims_upload_rejected_busy' /tmp/ims-performance-manager.log 2>/dev/null | tail -n 50 || true
           echo 'AUDIT_RECENT_LOCK_ERRORS_END'
           REMOTE
