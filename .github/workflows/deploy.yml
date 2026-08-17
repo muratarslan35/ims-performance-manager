@@ -72,24 +72,38 @@ jobs:
           mkdir -p instance/backups
           stamp=$(date +%Y%m%d-%H%M%S)
           if [ -f instance/ipm.db ]; then
-            cp instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
-            sha256sum instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
+            venv/bin/python sqlite_online_backup.py \
+              instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
           fi
           if [ -f instance/persistent/users.db ]; then
-            cp instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
-            sha256sum instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
+            venv/bin/python sqlite_online_backup.py \
+              instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
           fi
 
           echo '--- MASTER SNAPSHOT BEFORE MIGRATION ---'
           venv/bin/python production_master_snapshot.py
           venv/bin/python -m flask --app run.py db upgrade
           repair_backup="instance/backups/ipm-pre-competition-backfill-${stamp}.db"
-          cp instance/ipm.db "$repair_backup"
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "$repair_backup"
           venv/bin/python backfill_competition_data.py
           venv/bin/python verify_runtime.py
           venv/bin/python production_target_audit.py
           echo '--- MASTER SNAPSHOT AFTER MIGRATION ---'
           venv/bin/python production_master_snapshot.py
+
+          venv/bin/python - <<'PY'
+          import sqlite3
+          connection = sqlite3.connect('instance/ipm.db', timeout=30)
+          try:
+              mode = connection.execute('PRAGMA journal_mode').fetchone()[0]
+              timeout = connection.execute('PRAGMA busy_timeout').fetchone()[0]
+              integrity = connection.execute('PRAGMA integrity_check').fetchone()[0]
+          finally:
+              connection.close()
+          print(f'SQLITE_RUNTIME|journal_mode={mode}|busy_timeout={timeout}|integrity={integrity}')
+          if str(mode).lower() != 'wal' or str(integrity).lower() != 'ok':
+              raise SystemExit('SQLite production runtime verification failed')
+          PY
 
           pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
           if [ -n "$pids" ]; then kill "$pids"; fi
