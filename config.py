@@ -38,6 +38,18 @@ if _IS_PRODUCTION and not _SECRET_KEY_ENV:
     )
 
 _SECRET_KEY = _SECRET_KEY_ENV or (_development_secret_key() if not _IS_PRODUCTION else None)
+_DATABASE_URI = os.getenv(
+    "DATABASE_URL",
+    "sqlite:///" + str(BASE_DIR / "instance" / "ipm.db"),
+)
+_SQLITE_ENGINE_OPTIONS = {
+    "pool_pre_ping": True,
+    "connect_args": {
+        "timeout": 30,
+        "check_same_thread": False,
+    },
+}
+_DEFAULT_ENGINE_OPTIONS = {"pool_pre_ping": True}
 
 
 class Config:
@@ -60,12 +72,15 @@ class Config:
     # Database
     # ------------------------------------------------------------------
 
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL",
-        "sqlite:///" + str(BASE_DIR / "instance" / "ipm.db"),
-    )
+    SQLALCHEMY_DATABASE_URI = _DATABASE_URI
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # SQLite is the current single-server production store.  A bounded DB-API
+    # timeout complements the WAL/busy_timeout pragmas installed at runtime.
+    SQLALCHEMY_ENGINE_OPTIONS = (
+        _SQLITE_ENGINE_OPTIONS if _DATABASE_URI.startswith("sqlite:") else _DEFAULT_ENGINE_OPTIONS
+    )
 
     USER_VAULT_PATH = Path(
         os.getenv("USER_VAULT_PATH", str(BASE_DIR / "instance" / "persistent" / "users.db"))
@@ -108,6 +123,8 @@ class Config:
     DEFAULT_MONTH = 1
 
     DEFAULT_QUARTER = "Q1"
+
+    IMS_IMPORT_LOCK_WAIT_SECONDS = float(os.getenv("IMS_IMPORT_LOCK_WAIT_SECONDS", "2"))
 
     # ------------------------------------------------------------------
     # Prim Sistemi
