@@ -13,6 +13,11 @@ from app.extensions import login_manager
 import app.login_manager
 
 from app.database import initialize_database
+from app.services.sqlite_runtime import (
+    configure_sqlite_runtime,
+    install_sqlite_connection_pragmas,
+)
+from app.services.vacancy_matching import install_vacancy_matcher
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -55,6 +60,7 @@ def register_template_context(app):
             return {"active_period": period_label, "latest_upload_date": upload_label}
         except Exception:
             return {"active_period": "—", "latest_upload_date": "—"}
+
 
 def register_extensions(app):
 
@@ -107,7 +113,9 @@ def create_directories(app):
 
         app.config["BACKUP_FOLDER"],
 
-        app.config["LOG_FOLDER"]
+        app.config["LOG_FOLDER"],
+
+        app.config.get("TEMP_FOLDER", Path(app.instance_path) / "temp"),
 
     ]
 
@@ -121,7 +129,7 @@ def create_directories(app):
 
     for folder in folders:
 
-        folder.mkdir(
+        Path(folder).mkdir(
             parents=True,
             exist_ok=True
         )
@@ -139,10 +147,11 @@ def register_error_handlers(app):
 
     @app.errorhandler(500)
     def internal_error(error):
-
-        return render_template(
-            "errors/500.html"
-        ), 500
+        # Do not run Flask context processors here.  If the original failure is
+        # an authentication/database lookup, context processors can query the
+        # same database again and recursively fail while rendering the 500.
+        template = app.jinja_env.get_template("errors/500.html")
+        return template.render(), 500
 
 
 def create_database(app):
@@ -171,7 +180,15 @@ def create_app(config_object=Config):
 
     create_directories(app)
 
+    # Register SQLite connection pragmas before SQLAlchemy creates its first
+    # connection, then make WAL persistent before serving writable traffic.
+    install_sqlite_connection_pragmas()
     register_extensions(app)
+    configure_sqlite_runtime(app)
+
+    # Make explicit BOS/KADRO rows deterministic across every importer that
+    # uses AliasService, including target and sales sheets.
+    install_vacancy_matcher()
 
     register_template_context(app)
 

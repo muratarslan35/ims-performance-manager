@@ -24,6 +24,10 @@ from app.services.dashboard_service import (
 from app.services.ims_import_service import (
     IMSImportService
 )
+from app.services.import_coordinator import (
+    ImportBusyError,
+    ImportCoordinator,
+)
 
 
 ims_bp = Blueprint(
@@ -180,59 +184,44 @@ def upload():
 
         )
 
-    filename = secure_filename(
+    filename = secure_filename(file.filename)
+    extension = Path(filename).suffix.lower()
+    if not filename or extension not in {".xlsx", ".xls"}:
+        flash("IMS için yalnızca .xlsx veya .xls dosyası yüklenebilir.", "danger")
+        return redirect(url_for("ims.index"))
 
-        file.filename
+    try:
+        year = int(request.form.get("year", ""))
+        month = int(request.form.get("month", ""))
+        if year < 2020 or year > 2100 or month not in range(1, 13):
+            raise ValueError
+    except (TypeError, ValueError):
+        flash("IMS dönemi geçersiz. Yıl ve ay bilgisini kontrol edin.", "danger")
+        return redirect(url_for("ims.index"))
 
-    )
-
+    uploaded_by = current_user.full_name
     upload_path = current_app.config["UPLOAD_FOLDER"] / filename
 
     try:
+        with ImportCoordinator.acquire(
+            uploaded_by=uploaded_by,
+            file_name=filename,
+            wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
+        ):
+            # Save only after the cross-process lock is ours.  Two managers can
+            # therefore never overwrite/process the same upload path at once.
+            file.save(upload_path)
 
-        file.save(
-
-            upload_path
-
-        )
-
-        year = int(
-
-            request.form.get(
-
-                "year"
-
+            service = IMSImportService(
+                file_path=upload_path,
+                uploaded_by=uploaded_by,
             )
 
-        )
-
-        month = int(
-
-            request.form.get(
-
-                "month"
-
+            result = service.run(
+                year=year,
+                month=month,
+                clear_before_import=False,
             )
-
-        )
-
-        service = IMSImportService(
-
-            file_path=upload_path,
-
-            uploaded_by=current_user.full_name
-
-        )
-
-        result = service.run(
-
-            year=year,
-
-            month=month,
-
-            clear_before_import=False
-
-        )
 
         if result["success"]:
 
@@ -265,36 +254,41 @@ def upload():
 
         else:
 
+            current_app.logger.error(
+                "ims_upload_failed file=%s errors=%s",
+                filename,
+                result.get("errors", []),
+            )
             flash(
-
-                "\n".join(
-
-                    result.get(
-
-                        "errors",
-
-                        [
-
-                            "İçe aktarma başarısız."
-
-                        ]
-
-                    )
-
-                ),
-
-                "danger"
-
+                "IMS dosyası doğrulama sırasında tamamlanamadı. Mevcut dönem verileri korunmuştur; sistem yöneticisi logları inceleyebilir.",
+                "danger",
             )
 
-    except Exception as exc:
-
+    except ImportBusyError as exc:
+        current = exc.metadata
+        owner = current.get("uploaded_by")
+        started_at = current.get("started_at")
+        current_app.logger.warning(
+            "ims_upload_rejected_busy requested_by=%s file=%s active=%s",
+            uploaded_by,
+            filename,
+            current,
+        )
+        detail = ""
+        if owner:
+            detail = f" Aktif işlem: {owner}"
+            if started_at:
+                detail += "."
         flash(
-
-            f"IMS içe aktarılırken hata oluştu: {exc}",
-
-            "danger"
-
+            "Başka bir IMS dosyası şu anda güvenli biçimde işleniyor. Lütfen mevcut işlem tamamlandıktan sonra tekrar deneyin." + detail,
+            "warning",
+        )
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("ims_upload_unexpected_failure file=%s", filename)
+        flash(
+            "IMS yükleme sırasında beklenmeyen bir teknik sorun oluştu. Mevcut veriler korunmuştur; tekrar deneyebilirsiniz.",
+            "danger",
         )
 
     return redirect(
