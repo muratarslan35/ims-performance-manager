@@ -47,7 +47,15 @@ jobs:
           sha256sum instance/ipm.db "instance/backups/ipm-pre-january-final-audit-${stamp}.db"
 
           echo '--- GUARDED JANUARY ACTUAL REPAIR ---'
-          venv/bin/python repair_january_ims_actuals.py
+          venv/bin/python - <<'PYREPAIR'
+          from app.services.ims_import_service import IMSImportService
+          original_load_workbook = IMSImportService.load_workbook
+          def compatible_load_workbook(self, *args, **kwargs):
+              return original_load_workbook(self)
+          IMSImportService.load_workbook = compatible_load_workbook
+          import repair_january_ims_actuals as repair
+          repair.run_repair()
+          PYREPAIR
 
           echo '--- FINAL JANUARY SOURCE RECONCILIATION ---'
           venv/bin/python - <<'PY'
@@ -81,10 +89,9 @@ jobs:
                   raise RuntimeError('January completed upload missing')
               source_file = _resolve_source_file(upload)
 
-              # Refresh exact NATIONAL and 11-region aggregate rows with the new production parser.
               service = IMSImportService(str(source_file))
               service.upload = upload
-              service.load_workbook(str(source_file))
+              service.load_workbook()
               aggregate_write = persist_official_aggregates(service, YEAR, MONTH)
               db.session.commit()
 
@@ -126,7 +133,6 @@ jobs:
               if abs(region_unit - national_unit) > Decimal('0.001'):
                   raise RuntimeError(f'Region/NATIONAL UNIT mismatch: regions={region_unit} national={national_unit}')
 
-              # Verify every person/cadre actual against the canonical workbook TL + KUTU source.
               source_records = extract_weekly_actuals(source_file)
               period_ids, representatives, exact = _period_representatives(YEAR, MONTH)
               actual_mismatches = []
@@ -151,7 +157,6 @@ jobs:
               if checked_actuals != 791 or actual_mismatches:
                   raise RuntimeError(f'Person actual reconciliation failed checked={checked_actuals} mismatches={len(actual_mismatches)} sample={actual_mismatches[:5]}')
 
-              # Verify person/cadre target TL and derivable exact box target against BAKIYE source rows.
               balance_name = next(name for name in service.workbook if 'BAKIYE' in norm(name))
               frame = service.workbook[balance_name]
               header_row = next(index for index in range(min(12, len(frame)))
