@@ -13,6 +13,9 @@
  */
 (function () {
     const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA"]);
+    const NUMBER_PATTERN = "-?\\d+(?:[.,]\\d+)?(?:[eE][+-]?\\d+)?";
+    const PREFIX_PERCENT_RE = new RegExp(`%\\s*(${NUMBER_PATTERN})`, "g");
+    const SUFFIX_PERCENT_RE = new RegExp(`(${NUMBER_PATTERN})\\s*%`, "g");
 
     function roundRealizationForDisplay(value) {
         const numeric = Number(String(value ?? 0).replace(",", "."));
@@ -38,10 +41,10 @@
             return text;
         }
 
-        let next = text.replace(/%\s*(-?\d+(?:[.,]\d+)?)/g, function (_match, value) {
+        let next = text.replace(PREFIX_PERCENT_RE, function (_match, value) {
             return `%${roundRealizationForDisplay(value)}`;
         });
-        next = next.replace(/(-?\d+(?:[.,]\d+)?)\s*%/g, function (_match, value) {
+        next = next.replace(SUFFIX_PERCENT_RE, function (_match, value) {
             return `${roundRealizationForDisplay(value)}%`;
         });
         return next;
