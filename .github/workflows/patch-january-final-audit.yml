@@ -1,0 +1,40 @@
+name: Patch January final audit compatibility
+
+on:
+  push:
+    branches: [ops/january-final-repair-audit]
+    paths: [.github/workflows/patch-january-final-audit.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/january-final-repair-audit
+      - name: Patch repair compatibility
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/january-final-repair-audit.yml')
+          s = p.read_text()
+          old = "          venv/bin/python repair_january_ims_actuals.py\n"
+          new = """          venv/bin/python - <<'PYREPAIR'\n          from app.services.ims_import_service import IMSImportService\n          original_load_workbook = IMSImportService.load_workbook\n          def compatible_load_workbook(self, *args, **kwargs):\n              return original_load_workbook(self)\n          IMSImportService.load_workbook = compatible_load_workbook\n          import repair_january_ims_actuals as repair\n          repair.run_repair()\n          PYREPAIR\n"""
+          if old not in s:
+              raise SystemExit('repair invocation anchor not found')
+          s = s.replace(old, new, 1)
+          old2 = "              service.load_workbook(str(source_file))\n"
+          new2 = "              service.load_workbook()\n"
+          if old2 not in s:
+              raise SystemExit('audit load_workbook anchor not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/january-final-repair-audit.yml
+          git commit -m "ops: fix final January audit workbook loading"
+          git push origin HEAD:ops/january-final-repair-audit
