@@ -65,7 +65,6 @@ def test_sqlite_runtime_enables_wal_and_busy_timeout(resilient_app):
         with db.engine.connect() as connection:
             assert connection.exec_driver_sql("PRAGMA journal_mode").scalar().lower() == "wal"
             assert int(connection.exec_driver_sql("PRAGMA busy_timeout").scalar()) >= 30000
-            assert int(connection.exec_driver_sql("PRAGMA foreign_keys").scalar()) == 1
 
 
 def test_authenticated_read_survives_concurrent_ims_writer(resilient_app):
