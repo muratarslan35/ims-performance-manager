@@ -17,6 +17,7 @@ from app.services.sqlite_runtime import (
     configure_sqlite_runtime,
     install_sqlite_connection_pragmas,
 )
+from app.services.vacancy_matching import install_vacancy_matcher
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -184,6 +185,10 @@ def create_app(config_object=Config):
     install_sqlite_connection_pragmas()
     register_extensions(app)
     configure_sqlite_runtime(app)
+
+    # Make explicit BOS/KADRO rows deterministic across every importer that
+    # uses AliasService, including target and sales sheets.
+    install_vacancy_matcher()
 
     register_template_context(app)
 
