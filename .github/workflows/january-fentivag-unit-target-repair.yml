@@ -1,0 +1,162 @@
+name: January Fentivag exact unit target repair
+
+on:
+  push:
+    branches: [ops/january-final-repair-audit]
+    paths: [.github/workflows/january-fentivag-unit-target-repair.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Backup and repair Fentivag unit targets
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          git pull --ff-only origin main
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          cp instance/ipm.db "instance/backups/ipm-pre-fentivag-unit-repair-${stamp}.db"
+          sha256sum instance/ipm.db "instance/backups/ipm-pre-fentivag-unit-repair-${stamp}.db"
+
+          venv/bin/python - <<'PY'
+          import hashlib, json
+          from app import create_app
+          from app.extensions import db
+          from app.models import CompetitionData, IMSUpload, IMSSummary, Product, Target
+          from app.services.ims_import_service import IMSImportService
+          from app.services.official_aggregate_service import _balance_columns
+          from repair_january_ims_actuals import (
+              PRODUCT_CODES, _competition_fingerprint, _period_representatives,
+              _resolve_source_file, is_person_row, norm, region_code, resolve_representative,
+          )
+
+          YEAR, MONTH = 2026, 1
+          app = create_app()
+          with app.app_context():
+              upload = (IMSUpload.query.filter_by(year=YEAR, month=MONTH, status='COMPLETED')
+                        .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first())
+              if upload is None:
+                  raise RuntimeError('January completed upload missing')
+              source_file = _resolve_source_file(upload)
+              service = IMSImportService(str(source_file))
+              service.upload = upload
+              service.load_workbook()
+              balance_name = next(name for name in service.workbook if 'BAKIYE' in norm(name))
+              frame = service.workbook[balance_name]
+              header_row = next(index for index in range(min(12, len(frame)))
+                                if 'HEDEF' in ' '.join(norm(v) for v in frame.iloc[index])
+                                and 'BAKIYE' in ' '.join(norm(v) for v in frame.iloc[index]))
+              columns = _balance_columns(service, frame, header_row)
+
+              fentivag = Product.query.filter(db.func.upper(Product.product_code) == 'FENTIVAG').first()
+              if fentivag is None or not fentivag.is_active:
+                  raise RuntimeError('Active Fentivag product missing')
+              metrics = columns.get(fentivag.id) or {}
+              required = {'target_tl', 'balance_tl', 'balance_unit'}
+              if not required.issubset(metrics):
+                  raise RuntimeError(f'Fentivag balance columns missing: {metrics}')
+
+              rep_ids, representatives, exact = _period_representatives(YEAR, MONTH)
+              before_comp_fp, before_comp_count = _competition_fingerprint(upload.id)
+              other_before = {}
+              fentivag_tl_before = {}
+              for row in Target.query.filter_by(year=YEAR, month=MONTH).order_by(Target.id).all():
+                  if row.product_id == fentivag.id:
+                      fentivag_tl_before[row.id] = float(row.tl_target or 0)
+                  else:
+                      other_before[row.id] = (float(row.unit_target or 0), float(row.tl_target or 0))
+
+              mapped = set()
+              updated = 0
+              total_unit = 0.0
+              for row_index in range(header_row + 1, len(frame)):
+                  row = frame.iloc[row_index]
+                  location = row.iloc[0] if len(row) else None
+                  rep_name = row.iloc[1] if len(row) > 1 else None
+                  if not is_person_row(location, rep_name):
+                      continue
+                  record = {
+                      'representative': str(rep_name or '').strip(),
+                      'source_key': norm(rep_name),
+                      'region_code': region_code(location),
+                  }
+                  rep = resolve_representative(record, representatives, exact)
+                  if rep is None:
+                      raise RuntimeError(f'Unmatched Fentivag representative: {rep_name}')
+                  if rep.id in mapped:
+                      raise RuntimeError(f'Duplicate Fentivag representative mapping: {rep.rep_name}')
+                  mapped.add(rep.id)
+
+                  target = Target.query.filter_by(year=YEAR, month=MONTH, representative_id=rep.id, product_id=fentivag.id).first()
+                  if target is None:
+                      raise RuntimeError(f'Fentivag target missing: {rep.rep_name}')
+                  source_tl = service.safe_float(row.iloc[metrics['target_tl']])
+                  if abs(float(target.tl_target or 0) - source_tl) > 0.01:
+                      raise RuntimeError(f'Fentivag TL target mismatch before repair: {rep.rep_name} source={source_tl} db={target.tl_target}')
+                  balance_tl = service.safe_float(row.iloc[metrics['balance_tl']])
+                  balance_unit = service.safe_float(row.iloc[metrics['balance_unit']])
+                  if abs(balance_tl) <= 1e-12 or abs(balance_unit) <= 1e-12:
+                      raise RuntimeError(f'Fentivag unit factor unavailable: {rep.rep_name}')
+                  unit_factor = balance_tl / balance_unit
+                  if unit_factor <= 0:
+                      raise RuntimeError(f'Fentivag unit factor invalid: {rep.rep_name} factor={unit_factor}')
+                  exact_unit = source_tl / unit_factor
+                  target.unit_target = exact_unit
+                  summary = IMSSummary.query.filter_by(year=YEAR, month=MONTH, representative_id=rep.id, product_id=fentivag.id).first()
+                  if summary is None:
+                      raise RuntimeError(f'Fentivag summary missing: {rep.rep_name}')
+                  summary.target_unit = exact_unit
+                  total_unit += exact_unit
+                  updated += 1
+
+              if mapped != rep_ids or updated != 113:
+                  raise RuntimeError(f'Fentivag coverage mismatch updated={updated} mapped={len(mapped)} period={len(rep_ids)}')
+              db.session.flush()
+
+              for row in Target.query.filter_by(year=YEAR, month=MONTH).all():
+                  if row.product_id == fentivag.id:
+                      if abs(float(row.tl_target or 0) - fentivag_tl_before[row.id]) > 1e-9:
+                          raise RuntimeError('Fentivag TL target changed unexpectedly')
+                  else:
+                      current = (float(row.unit_target or 0), float(row.tl_target or 0))
+                      if current != other_before[row.id]:
+                          raise RuntimeError(f'Non-Fentivag target changed unexpectedly: target_id={row.id}')
+              after_comp_fp, after_comp_count = _competition_fingerprint(upload.id)
+              if (before_comp_fp, before_comp_count) != (after_comp_fp, after_comp_count):
+                  raise RuntimeError('CompetitionData changed during Fentivag unit repair')
+
+              db.session.commit()
+              print('FENTIVAG_UNIT_REPAIR|' + json.dumps({
+                  'status': 'SUCCESS', 'updated': updated, 'representatives': len(mapped),
+                  'total_person_unit_target': total_unit,
+                  'competition_rows': after_comp_count,
+                  'source_file': str(source_file),
+              }, ensure_ascii=False, sort_keys=True))
+          PY
+          REMOTE
