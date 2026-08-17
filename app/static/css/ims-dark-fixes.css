@@ -1,0 +1,129 @@
+/* IMS Merkezi dark-mode corrections. Presentation only. */
+[data-theme="dark"] body.authenticated .ims-upload-card,
+[data-theme="dark"] body.authenticated .ims-stat-card,
+[data-theme="dark"] body.authenticated .ims-info-card,
+[data-theme="dark"] body.authenticated .ims-detail-modal {
+    background: #15233a !important;
+    border-color: #33445f !important;
+    color: #e7eef8 !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .22) !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-upload-card-header {
+    background: #1b2c46 !important;
+    border-color: #33445f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-upload-card-title,
+[data-theme="dark"] body.authenticated .ims-info-card-title,
+[data-theme="dark"] body.authenticated .ims-stat-value,
+[data-theme="dark"] body.authenticated .ims-detail-modal-title,
+[data-theme="dark"] body.authenticated .ims-detail-value,
+[data-theme="dark"] body.authenticated .ims-file-selected-name {
+    color: #eef5fd !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-info-card-text,
+[data-theme="dark"] body.authenticated .ims-stat-label,
+[data-theme="dark"] body.authenticated .ims-detail-label,
+[data-theme="dark"] body.authenticated .ims-progress-label,
+[data-theme="dark"] body.authenticated .ims-file-selected-size,
+[data-theme="dark"] body.authenticated .ims-step-label {
+    color: #aebed2 !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-step-circle {
+    background: #243955 !important;
+    color: #c7d5e6 !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-step.active .ims-step-circle {
+    background: #2d7ff9 !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-step.done .ims-step-circle {
+    background: #18b368 !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-step::after {
+    background: #33445f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-dropzone {
+    background: #101d31 !important;
+    border-color: #46617f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-dropzone:hover,
+[data-theme="dark"] body.authenticated .ims-dropzone.dragover {
+    background: #172b48 !important;
+    border-color: #5b9cff !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-dropzone-title {
+    color: #eef5fd !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-dropzone-sub {
+    color: #aebed2 !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-dropzone-icon {
+    color: #75b8ff !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-file-selected {
+    background: rgba(24, 179, 104, .12) !important;
+    border-color: rgba(70, 220, 150, .35) !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-progress-bar-wrap {
+    background: #33445f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-history-controls {
+    border-color: #33445f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-history-search input,
+[data-theme="dark"] body.authenticated .ims-history-filter select,
+[data-theme="dark"] body.authenticated .ims-export-btn {
+    background: #0f1c2e !important;
+    border-color: #3a4d69 !important;
+    color: #dce7f5 !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-history-search input:focus,
+[data-theme="dark"] body.authenticated .ims-history-filter select:focus,
+[data-theme="dark"] body.authenticated .ims-export-btn:hover {
+    background: #172b48 !important;
+    border-color: #5b9cff !important;
+    color: #fff !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-detail-row {
+    border-color: #33445f !important;
+}
+
+[data-theme="dark"] body.authenticated .ims-detail-close {
+    color: #aebed2 !important;
+}
+
+/* Fixed inline informational alert and table head used by production-result panel. */
+[data-theme="dark"] body.authenticated #production-results .alert,
+[data-theme="dark"] body.authenticated #production-results thead {
+    background: #172740 !important;
+    color: #e7eef8 !important;
+    border-color: #3a4d69 !important;
+}
+
+[data-theme="dark"] body.authenticated #production-results .badge[style*="background:#fff4cf"],
+[data-theme="dark"] body.authenticated #production-results .badge[style*="background: #fff4cf"] {
+    background: #493b12 !important;
+    color: #ffe69a !important;
+    border-color: #806c25 !important;
+}

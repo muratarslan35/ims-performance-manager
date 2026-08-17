@@ -1,0 +1,251 @@
+/*
+ * Presentation-only compatibility layer.
+ * Loaded last so dark mode remains readable even on legacy pages that still
+ * carry fixed light-theme inline colors. No layout, data or business rules are
+ * changed here.
+ */
+
+[data-theme="dark"] body.authenticated,
+[data-theme="dark"] body.authenticated .page,
+[data-theme="dark"] body.authenticated .page-wrapper,
+[data-theme="dark"] body.authenticated .page-body,
+[data-theme="dark"] body.authenticated .page-header {
+    color: #e7eef8;
+}
+
+/* Common surfaces */
+[data-theme="dark"] body.authenticated .card,
+[data-theme="dark"] body.authenticated .card-body,
+[data-theme="dark"] body.authenticated .card-footer,
+[data-theme="dark"] body.authenticated .list-group-item,
+[data-theme="dark"] body.authenticated .dropdown-menu,
+[data-theme="dark"] body.authenticated .modal-content,
+[data-theme="dark"] body.authenticated .offcanvas {
+    color: #e7eef8;
+}
+
+[data-theme="dark"] body.authenticated .card-header,
+[data-theme="dark"] body.authenticated .modal-header,
+[data-theme="dark"] body.authenticated .modal-footer {
+    color: #eef5fd;
+    border-color: #33445f;
+}
+
+[data-theme="dark"] body.authenticated .text-muted,
+[data-theme="dark"] body.authenticated .text-secondary,
+[data-theme="dark"] body.authenticated .form-text,
+[data-theme="dark"] body.authenticated .form-hint,
+[data-theme="dark"] body.authenticated small:not(.badge),
+[data-theme="dark"] body.authenticated .page-pretitle,
+[data-theme="dark"] body.authenticated .breadcrumb,
+[data-theme="dark"] body.authenticated .breadcrumb a {
+    color: #aebed2 !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .page-title,
+[data-theme="dark"] body.authenticated h1,
+[data-theme="dark"] body.authenticated h2,
+[data-theme="dark"] body.authenticated h3,
+[data-theme="dark"] body.authenticated h4,
+[data-theme="dark"] body.authenticated h5,
+[data-theme="dark"] body.authenticated h6,
+[data-theme="dark"] body.authenticated label,
+[data-theme="dark"] body.authenticated legend {
+    color: #eef5fd;
+}
+
+/* Forms, selects, search fields and upload controls */
+[data-theme="dark"] body.authenticated .form-control,
+[data-theme="dark"] body.authenticated .form-select,
+[data-theme="dark"] body.authenticated .form-file-text,
+[data-theme="dark"] body.authenticated input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+[data-theme="dark"] body.authenticated textarea,
+[data-theme="dark"] body.authenticated select {
+    background-color: #0f1c2e !important;
+    border-color: #3a4d69 !important;
+    color: #f1f5f9 !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .form-control:disabled,
+[data-theme="dark"] body.authenticated .form-select:disabled,
+[data-theme="dark"] body.authenticated input:disabled,
+[data-theme="dark"] body.authenticated textarea:disabled,
+[data-theme="dark"] body.authenticated select:disabled {
+    background-color: #16243a !important;
+    color: #b7c6d9 !important;
+    opacity: .9 !important;
+}
+
+[data-theme="dark"] body.authenticated input::placeholder,
+[data-theme="dark"] body.authenticated textarea::placeholder {
+    color: #91a4bd !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .form-check-input {
+    background-color: #0f1c2e;
+    border-color: #60748f;
+}
+
+[data-theme="dark"] body.authenticated .form-check-input:checked {
+    background-color: #2d7ff9;
+    border-color: #2d7ff9;
+}
+
+[data-theme="dark"] body.authenticated .btn-outline-secondary,
+[data-theme="dark"] body.authenticated .btn-outline-dark {
+    color: #dce7f5;
+    border-color: #60748f;
+}
+
+[data-theme="dark"] body.authenticated .btn-outline-secondary:hover,
+[data-theme="dark"] body.authenticated .btn-outline-dark:hover {
+    background: #243955;
+    color: #fff;
+}
+
+/* Alerts / status panels that were authored with fixed light backgrounds. */
+[data-theme="dark"] body.authenticated .alert:not(.alert-success):not(.alert-danger):not(.alert-warning) {
+    background: #172740 !important;
+    border-color: #3a4d69 !important;
+    color: #e7eef8 !important;
+}
+
+[data-theme="dark"] body.authenticated [style*="background:#f4f8ff"],
+[data-theme="dark"] body.authenticated [style*="background: #f4f8ff"],
+[data-theme="dark"] body.authenticated [style*="background:#f8fafc"],
+[data-theme="dark"] body.authenticated [style*="background: #f8fafc"],
+[data-theme="dark"] body.authenticated [style*="background:#f6f9fc"],
+[data-theme="dark"] body.authenticated [style*="background: #f6f9fc"],
+[data-theme="dark"] body.authenticated [style*="background:#eef4fb"],
+[data-theme="dark"] body.authenticated [style*="background: #eef4fb"] {
+    background: #172740 !important;
+    border-color: #3a4d69 !important;
+}
+
+/* Legacy fixed text colors visible in IMS Merkezi and older administration cards. */
+[data-theme="dark"] body.authenticated [style*="color:#1c3558"],
+[data-theme="dark"] body.authenticated [style*="color: #1c3558"],
+[data-theme="dark"] body.authenticated [style*="color:#233954"],
+[data-theme="dark"] body.authenticated [style*="color: #233954"],
+[data-theme="dark"] body.authenticated [style*="color:#2d4059"],
+[data-theme="dark"] body.authenticated [style*="color: #2d4059"] {
+    color: #eef5fd !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated [style*="color:#6a7a90"],
+[data-theme="dark"] body.authenticated [style*="color: #6a7a90"],
+[data-theme="dark"] body.authenticated [style*="color:#7a8fa6"],
+[data-theme="dark"] body.authenticated [style*="color: #7a8fa6"],
+[data-theme="dark"] body.authenticated [style*="color:#8496ae"],
+[data-theme="dark"] body.authenticated [style*="color: #8496ae"],
+[data-theme="dark"] body.authenticated [style*="color:#8798ad"],
+[data-theme="dark"] body.authenticated [style*="color: #8798ad"] {
+    color: #aebed2 !important;
+    opacity: 1 !important;
+}
+
+/* IMS Merkezi */
+[data-theme="dark"] body.authenticated .upload-zone,
+[data-theme="dark"] body.authenticated .drop-zone,
+[data-theme="dark"] body.authenticated .dropzone,
+[data-theme="dark"] body.authenticated .ims-upload-zone {
+    background: #122238 !important;
+    border-color: #46617f !important;
+    color: #dce7f5 !important;
+}
+
+[data-theme="dark"] body.authenticated .upload-zone *,
+[data-theme="dark"] body.authenticated .drop-zone *,
+[data-theme="dark"] body.authenticated .dropzone *,
+[data-theme="dark"] body.authenticated .ims-upload-zone * {
+    opacity: 1;
+}
+
+[data-theme="dark"] body.authenticated .upload-zone p,
+[data-theme="dark"] body.authenticated .upload-zone small,
+[data-theme="dark"] body.authenticated .drop-zone p,
+[data-theme="dark"] body.authenticated .drop-zone small,
+[data-theme="dark"] body.authenticated .dropzone p,
+[data-theme="dark"] body.authenticated .dropzone small,
+[data-theme="dark"] body.authenticated .ims-upload-zone p,
+[data-theme="dark"] body.authenticated .ims-upload-zone small {
+    color: #aebed2 !important;
+}
+
+/* Tables / DataTables */
+[data-theme="dark"] body.authenticated .dataTables_wrapper,
+[data-theme="dark"] body.authenticated .dt-container,
+[data-theme="dark"] body.authenticated .dt-info,
+[data-theme="dark"] body.authenticated .dt-length,
+[data-theme="dark"] body.authenticated .dt-search,
+[data-theme="dark"] body.authenticated .dt-paging {
+    color: #c9d6e6 !important;
+}
+
+[data-theme="dark"] body.authenticated .dt-input {
+    background: #0f1c2e !important;
+    color: #f1f5f9 !important;
+    border-color: #3a4d69 !important;
+}
+
+/* Tabs, navigation, accordion and empty-state copy. */
+[data-theme="dark"] body.authenticated .nav-tabs .nav-link,
+[data-theme="dark"] body.authenticated .nav-pills .nav-link,
+[data-theme="dark"] body.authenticated .accordion-button,
+[data-theme="dark"] body.authenticated .empty,
+[data-theme="dark"] body.authenticated .empty-title,
+[data-theme="dark"] body.authenticated .empty-subtitle {
+    color: #c9d6e6;
+}
+
+[data-theme="dark"] body.authenticated .nav-tabs .nav-link.active,
+[data-theme="dark"] body.authenticated .nav-pills .nav-link.active {
+    color: #fff;
+}
+
+/* Make icon/text rows and legacy feature cards readable without changing their palette identity. */
+[data-theme="dark"] body.authenticated .feature-card,
+[data-theme="dark"] body.authenticated .status-card,
+[data-theme="dark"] body.authenticated .info-card,
+[data-theme="dark"] body.authenticated .metric-card,
+[data-theme="dark"] body.authenticated .summary-card {
+    color: #e7eef8 !important;
+}
+
+[data-theme="dark"] body.authenticated .feature-card p,
+[data-theme="dark"] body.authenticated .feature-card small,
+[data-theme="dark"] body.authenticated .status-card p,
+[data-theme="dark"] body.authenticated .status-card small,
+[data-theme="dark"] body.authenticated .info-card p,
+[data-theme="dark"] body.authenticated .info-card small,
+[data-theme="dark"] body.authenticated .metric-card p,
+[data-theme="dark"] body.authenticated .metric-card small,
+[data-theme="dark"] body.authenticated .summary-card p,
+[data-theme="dark"] body.authenticated .summary-card small {
+    color: #aebed2 !important;
+    opacity: 1 !important;
+}
+
+/* Keep semantic badges readable. */
+[data-theme="dark"] body.authenticated .badge {
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] body.authenticated .badge.bg-light,
+[data-theme="dark"] body.authenticated .badge.text-dark {
+    background: #243955 !important;
+    color: #eef5fd !important;
+}
+
+/* Browser autofill can otherwise restore a bright field inside dark forms. */
+[data-theme="dark"] body.authenticated input:-webkit-autofill,
+[data-theme="dark"] body.authenticated input:-webkit-autofill:hover,
+[data-theme="dark"] body.authenticated input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #f1f5f9;
+    -webkit-box-shadow: 0 0 0 1000px #0f1c2e inset;
+    transition: background-color 9999s ease-out 0s;
+}

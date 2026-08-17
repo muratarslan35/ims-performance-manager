@@ -40,3 +40,8 @@
 
     </div>
 </footer>
+
+{# Presentation-only fixes are intentionally loaded last on every page. #}
+<link href="{{ url_for('static', filename='css/presentation-fixes.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/ims-dark-fixes.css') }}" rel="stylesheet">
+<script src="{{ url_for('static', filename='js/presentation-fixes.js') }}" defer></script>
