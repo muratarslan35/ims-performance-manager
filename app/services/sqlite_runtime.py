@@ -1,9 +1,13 @@
 """SQLite runtime hardening for a single-server IMS deployment.
 
-The IMS import pipeline intentionally commits atomically.  SQLite therefore has
-one long-lived writer while a workbook is being finalized.  WAL mode lets normal
+The IMS import pipeline intentionally commits atomically. SQLite therefore has
+one long-lived writer while a workbook is being finalized. WAL mode lets normal
 application reads continue during that writer, while busy_timeout gives short
 competing writes a bounded wait instead of an immediate ``database is locked``.
+
+Foreign-key enforcement is deliberately left at the application's existing
+behaviour because legacy migrations and sentinel rows depend on it being off.
+This module changes concurrency semantics only, not historical data rules.
 """
 
 from __future__ import annotations
@@ -29,7 +33,6 @@ def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA wal_autocheckpoint=1000")
     finally:
@@ -51,7 +54,7 @@ def install_sqlite_connection_pragmas() -> None:
 def configure_sqlite_runtime(app) -> dict:
     """Enable WAL for the configured SQLite database and return diagnostics.
 
-    ``journal_mode=WAL`` is persistent in the database file.  We still execute
+    ``journal_mode=WAL`` is persistent in the database file. We still execute
     the statement at startup so a restored/copied database is automatically
     brought back to the expected production mode before writable traffic.
     """
