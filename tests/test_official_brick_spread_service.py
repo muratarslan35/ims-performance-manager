@@ -58,6 +58,7 @@ def spread_app():
 def _seed_master_data():
     from app.extensions import db
     from app.models import IMSUpload, Product, Representative
+    from app.services.alias_service import AliasService
 
     representative = Representative(
         rep_code="REP001",
@@ -98,6 +99,7 @@ def _seed_master_data():
     )
     db.session.add(upload)
     db.session.commit()
+    AliasService.clear_cache()
     return representative, products, upload
 
 
