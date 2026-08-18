@@ -11,7 +11,7 @@ jobs:
   audit:
     if: github.head_ref == 'ops/verify-ims-concurrency-production'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,65 +29,46 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-
-      - name: Classify unparsed workbook sheets
+      - name: Fast classify skipped sheets
         shell: bash
         run: |
-          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
-            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          import json, re, sqlite3
+          import json,re,sqlite3
           from pathlib import Path
           import openpyxl
-
-          con=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
-          con.row_factory=sqlite3.Row
-          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC, uploaded_at DESC LIMIT 1").fetchone()
-          path=Path('uploads')/latest['file_name']
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30); con.row_factory=sqlite3.Row
+          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone()
           parsed={r[0] for r in con.execute('SELECT DISTINCT sheet_name FROM ims_raw_data WHERE upload_id=?',(latest['id'],))}
-          wb_formula=openpyxl.load_workbook(path, read_only=False, data_only=False)
-          wb_values=openpyxl.load_workbook(path, read_only=True, data_only=True)
-          unparsed=[s for s in wb_formula.sheetnames if s not in parsed]
-          print('CLASSIFY_CONTEXT|'+json.dumps({'upload_id':latest['id'],'week':latest['week_number'],'file':latest['file_name'],'parsed':sorted(parsed),'unparsed':unparsed},ensure_ascii=False))
-
-          def clean(v):
-              if v is None: return None
-              s=str(v)
-              return s if len(s)<=180 else s[:177]+'...'
-
-          for name in wb_formula.sheetnames:
-              wsf=wb_formula[name]; wsv=wb_values[name]
-              total=0; formulas=0; constants=0; refs={}
-              for row in wsf.iter_rows():
-                  for c in row:
-                      if c.value is None: continue
-                      total += 1
-                      if c.data_type=='f' or (isinstance(c.value,str) and c.value.startswith('=')):
-                          formulas += 1
-                          formula=str(c.value)
-                          for ref in re.findall(r"(?:'([^']+)'|([A-Za-z0-9_ .ÇĞİÖŞÜçğıöşü-]+))!\$?[A-Z]+\$?\d+", formula):
-                              target=(ref[0] or ref[1]).strip()
-                              refs[target]=refs.get(target,0)+1
-                      else:
-                          constants += 1
-              samples=[]
-              for r in range(1,min(wsv.max_row,14)+1):
-                  vals=[clean(wsv.cell(r,c).value) for c in range(1,min(wsv.max_column,30)+1)]
-                  if any(v is not None for v in vals): samples.append({'row':r,'values':vals})
-              print('SHEET_CLASS|'+json.dumps({'name':name,'parsed':name in parsed,'max_row':wsf.max_row,'max_column':wsf.max_column,'nonempty':total,'formulas':formulas,'constants':constants,'formula_ratio':round(formulas/total,4) if total else 0,'refs':refs,'sample_rows':samples},ensure_ascii=False,default=str))
-
-          # Compare representative/product universe in master-looking wide sheets to DB mappings.
+          path=Path('uploads')/latest['file_name']
+          wbf=openpyxl.load_workbook(path,read_only=True,data_only=False)
+          wbv=openpyxl.load_workbook(path,read_only=True,data_only=True)
+          unparsed=[s for s in wbf.sheetnames if s not in parsed]
+          print('CTX|'+json.dumps({'parsed':sorted(parsed),'unparsed':unparsed},ensure_ascii=False))
           for name in unparsed:
-              ws=wb_values[name]
-              text=[]
-              for r in range(1,min(ws.max_row,40)+1):
-                  for c in range(1,min(ws.max_column,60)+1):
-                      v=ws.cell(r,c).value
-                      if v is not None: text.append(str(v).upper())
-              markers={k:any(k in t for t in text) for k in ['TEMSİLCİ','TEMSILCI','HEDEF','TARGET','KUTU','TL','PAZAR','BRICK','BÖLGE','BOLGE','ÇIKIŞ','CIKIS']}
-              print('SHEET_MARKERS|'+json.dumps({'name':name,'markers':markers},ensure_ascii=False))
-          wb_formula.close(); wb_values.close(); con.close()
+              wsf=wbf[name]; wsv=wbv[name]
+              total=formulas=constants=0; refs={}; examples=[]
+              for ridx,row in enumerate(wsf.iter_rows(),start=1):
+                  if ridx>120: break
+                  for c in row:
+                      v=c.value
+                      if v is None: continue
+                      total+=1
+                      if isinstance(v,str) and v.startswith('='):
+                          formulas+=1
+                          if len(examples)<8: examples.append(v[:220])
+                          for m in re.findall(r"'([^']+)'!|([A-Za-z0-9_ .ÇĞİÖŞÜçğıöşü-]+)!",v):
+                              ref=(m[0] or m[1]).strip(); refs[ref]=refs.get(ref,0)+1
+                      else: constants+=1
+              samples=[]
+              for ridx,row in enumerate(wsv.iter_rows(min_row=1,max_row=min(wsv.max_row,12),max_col=min(wsv.max_column,25),values_only=True),start=1):
+                  vals=[None if v is None else str(v)[:120] for v in row]
+                  if any(v is not None for v in vals): samples.append({'row':ridx,'values':vals})
+              text=' '.join(' '.join(x['values'][i] or '' for i in range(len(x['values']))) for x in samples).upper()
+              markers=[k for k in ['TEMSİLCİ','TEMSILCI','HEDEF','TARGET','KUTU','TL','PAZAR','BRICK','BÖLGE','BOLGE','ÇIKIŞ','CIKIS','SUBTOTAL','GRAND TOTAL'] if k in text]
+              print('CLASS|'+json.dumps({'name':name,'max_row':wsf.max_row,'max_column':wsf.max_column,'sample_nonempty':total,'sample_formulas':formulas,'sample_constants':constants,'sample_formula_ratio':round(formulas/total,3) if total else 0,'refs':refs,'formula_examples':examples,'markers':markers,'sample_rows':samples},ensure_ascii=False))
+          wbf.close(); wbv.close(); con.close()
           PY
           REMOTE
