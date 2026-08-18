@@ -28,6 +28,7 @@ from app.services.import_coordinator import (
     ImportBusyError,
     ImportCoordinator,
 )
+from app.services.official_brick_spread_service import OfficialBrickSpreadService
 
 
 ims_bp = Blueprint(
@@ -223,6 +224,34 @@ def upload():
                 clear_before_import=False,
             )
 
+            # Satış Brick Yayılımı is an official aggregate master source.  It
+            # intentionally lives outside sales FACT/SUMMARY calculations, but
+            # is persisted before the import lock is released so another
+            # manager can never observe a half-integrated workbook.
+            if result["success"]:
+                spread_result = OfficialBrickSpreadService.persist(
+                    file_path=upload_path,
+                    upload_id=result["upload_id"],
+                    year=year,
+                    month=month,
+                )
+                result["statistics"]["official_brick_spread_records"] = spread_result["records"]
+                result["statistics"]["official_brick_spread_representatives"] = spread_result["representatives"]
+
+                # The generic parser previously reported this specialized
+                # master sheet as skipped.  Once the dedicated parser succeeds,
+                # remove only that obsolete warning and persist the corrected
+                # audit state.
+                result["warnings"] = [
+                    warning
+                    for warning in result.get("warnings", [])
+                    if "SATIS BRICK YAYILIMI" not in OfficialBrickSpreadService._normalize(warning)
+                ]
+                upload_record = db.session.get(IMSUpload, result["upload_id"])
+                if upload_record is not None:
+                    upload_record.warning_message = "\n".join(result["warnings"]) or None
+                db.session.commit()
+
         if result["success"]:
 
             flash(
@@ -231,7 +260,8 @@ def upload():
                     f"{filename} başarıyla içe aktarıldı. Veri bütünlüğü doğrulandı: "
                     f"{result['statistics'].get('stored_source_records', 0)}/"
                     f"{result['statistics'].get('source_metric_records', 0)} kayıt; "
-                    f"{result['statistics'].get('zero_metric_records', 0)} sıfır satış kaydı korundu."
+                    f"{result['statistics'].get('zero_metric_records', 0)} sıfır satış kaydı korundu; "
+                    f"{result['statistics'].get('official_brick_spread_records', 0)} resmi brick yayılım kaydı saklandı."
                 ),
 
                 "success"
