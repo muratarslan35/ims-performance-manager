@@ -29,46 +29,36 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Fast classify skipped sheets
+      - name: Verify competition and source coverage
         shell: bash
         run: |
           ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          import json,re,sqlite3
-          from pathlib import Path
-          import openpyxl
+          import json,sqlite3
           con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30); con.row_factory=sqlite3.Row
-          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone()
-          parsed={r[0] for r in con.execute('SELECT DISTINCT sheet_name FROM ims_raw_data WHERE upload_id=?',(latest['id'],))}
-          path=Path('uploads')/latest['file_name']
-          wbf=openpyxl.load_workbook(path,read_only=True,data_only=False)
-          wbv=openpyxl.load_workbook(path,read_only=True,data_only=True)
-          unparsed=[s for s in wbf.sheetnames if s not in parsed]
-          print('CTX|'+json.dumps({'parsed':sorted(parsed),'unparsed':unparsed},ensure_ascii=False))
-          for name in unparsed:
-              wsf=wbf[name]; wsv=wbv[name]
-              total=formulas=constants=0; refs={}; examples=[]
-              for ridx,row in enumerate(wsf.iter_rows(),start=1):
-                  if ridx>120: break
-                  for c in row:
-                      v=c.value
-                      if v is None: continue
-                      total+=1
-                      if isinstance(v,str) and v.startswith('='):
-                          formulas+=1
-                          if len(examples)<8: examples.append(v[:220])
-                          for m in re.findall(r"'([^']+)'!|([A-Za-z0-9_ .ÇĞİÖŞÜçğıöşü-]+)!",v):
-                              ref=(m[0] or m[1]).strip(); refs[ref]=refs.get(ref,0)+1
-                      else: constants+=1
-              samples=[]
-              for ridx,row in enumerate(wsv.iter_rows(min_row=1,max_row=min(wsv.max_row,12),max_col=min(wsv.max_column,25),values_only=True),start=1):
-                  vals=[None if v is None else str(v)[:120] for v in row]
-                  if any(v is not None for v in vals): samples.append({'row':ridx,'values':vals})
-              text=' '.join(' '.join(x['values'][i] or '' for i in range(len(x['values']))) for x in samples).upper()
-              markers=[k for k in ['TEMSİLCİ','TEMSILCI','HEDEF','TARGET','KUTU','TL','PAZAR','BRICK','BÖLGE','BOLGE','ÇIKIŞ','CIKIS','SUBTOTAL','GRAND TOTAL'] if k in text]
-              print('CLASS|'+json.dumps({'name':name,'max_row':wsf.max_row,'max_column':wsf.max_column,'sample_nonempty':total,'sample_formulas':formulas,'sample_constants':constants,'sample_formula_ratio':round(formulas/total,3) if total else 0,'refs':refs,'formula_examples':examples,'markers':markers,'sample_rows':samples},ensure_ascii=False))
-          wbf.close(); wbv.close(); con.close()
+          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone(); uid=latest['id']
+          tables={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          def emit(tag,obj): print(tag+'|'+json.dumps(obj,ensure_ascii=False,default=str,sort_keys=True))
+          def cols(t): return [r[1] for r in con.execute(f'PRAGMA table_info({t})')]
+          if 'ims_competition_data' in tables:
+              c=cols('ims_competition_data'); emit('COMP_SCHEMA',c)
+              where=[]; p=[]
+              if 'upload_id' in c: where.append('upload_id=?'); p.append(uid)
+              elif 'year' in c and 'month' in c: where.extend(['year=?','month=?']); p.extend([2026,1])
+              pred=(' WHERE '+' AND '.join(where)) if where else ''
+              emit('COMP_COUNT',{'count':con.execute('SELECT COUNT(*) FROM ims_competition_data'+pred,p).fetchone()[0]})
+              groupcols=[x for x in ('source_sheet','sheet_name','metric_type','period_type','representative_id','product_name','competitor_name','territory','subterritory') if x in c]
+              for gc in groupcols[:5]:
+                  q=f'SELECT {gc},COUNT(*) n FROM ims_competition_data'+pred+f' GROUP BY {gc} ORDER BY n DESC LIMIT 30'
+                  emit('COMP_GROUP_'+gc.upper(),[dict(r) for r in con.execute(q,p)])
+          # Sample parsed rows for one known brick to compare against OCAK/KUTU/TL master sheets.
+          for sheet in ('1001 BRICK SATIS','AYLIK REKABET KUTU','AYLIK REKABET TL','BRICK REA.'):
+              rs=con.execute("SELECT sheet_name,sheet_type,brick,territory,representative,product,competitor,unit,tl,market_share,value_share,growth,raw_json FROM ims_raw_data WHERE upload_id=? AND sheet_name=? AND (upper(COALESCE(brick,'')) LIKE '%EDIRNE SARICAPASA%' OR upper(COALESCE(territory,'')) LIKE '%EDIRNE SARICAPASA%') LIMIT 30",(uid,sheet)).fetchall()
+              emit('BRICK_SAMPLE_'+sheet.replace(' ','_'),[dict(r) for r in rs])
+          # show rows currently classified as competition sources in raw
+          emit('RAW_COMP_TYPES',[dict(r) for r in con.execute("SELECT sheet_name,sheet_type,COUNT(*) n,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products FROM ims_raw_data WHERE upload_id=? AND (lower(sheet_type) LIKE '%compet%' OR upper(sheet_name) LIKE '%REKABET%') GROUP BY sheet_name,sheet_type",(uid,))])
+          con.close()
           PY
           REMOTE
