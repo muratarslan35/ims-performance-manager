@@ -66,11 +66,28 @@ def _seed_master_data():
         city="DIYARBAKIR",
         active=True,
     )
+    db.session.add(representative)
+
+    # Product master is seeded by migrations in the real application.  Reuse
+    # those rows instead of creating duplicate names in the fixture.
     product_names = ["Travazol", "Monurol", "Mixovul", "Fentivag", "Stiderm", "Acnemix", "Brimoder"]
-    products = [
-        Product(product_code=f"P{index}", product_name=name, is_active=True)
-        for index, name in enumerate(product_names, start=1)
-    ]
+    products = []
+    for index, name in enumerate(product_names, start=1):
+        product = Product.query.filter_by(product_name=name).first()
+        if product is None:
+            product = Product(product_code=f"P{index}", product_name=name, is_active=True)
+            db.session.add(product)
+        else:
+            product.is_active = True
+        products.append(product)
+
+    # Keep this fixture scoped to the seven managed workbook products even if
+    # a future migration introduces another product for another workflow.
+    selected_ids = {product.id for product in products if product.id is not None}
+    for product in Product.query.filter_by(is_active=True).all():
+        if product.id not in selected_ids and product.product_name not in product_names:
+            product.is_active = False
+
     upload = IMSUpload(
         file_name="4.Hafta.xlsx",
         year=2026,
@@ -79,7 +96,7 @@ def _seed_master_data():
         quarter="Q1",
         status="COMPLETED",
     )
-    db.session.add_all([representative, *products, upload])
+    db.session.add(upload)
     db.session.commit()
     return representative, products, upload
 
@@ -189,7 +206,7 @@ def test_official_spread_can_differ_from_derived_brick_count_by_design(spread_ap
 
         # Only three sale-bearing bricks exist in raw sales, while the official
         # workbook states six distributed bricks for the representative.
-        for brick in ("BRICK A", "BRICK B", "BRICK C"):
+        for source_row, brick in enumerate(("BRICK A", "BRICK B", "BRICK C"), start=10):
             db.session.add(IMSRawData(
                 upload_id=upload.id,
                 year=2026,
@@ -198,7 +215,7 @@ def test_official_spread_can_differ_from_derived_brick_count_by_design(spread_ap
                 quarter="Q1",
                 sheet_name="1001 BRICK SATIS",
                 sheet_type="brick_sales",
-                source_row=10,
+                source_row=source_row,
                 representative_id=representative.id,
                 product_id=products[0].id,
                 representative=representative.rep_name,
@@ -207,6 +224,7 @@ def test_official_spread_can_differ_from_derived_brick_count_by_design(spread_ap
                 territory=brick,
                 unit=1,
                 tl=100,
+                raw_json="{}",
             ))
         db.session.commit()
 
