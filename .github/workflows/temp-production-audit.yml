@@ -30,130 +30,64 @@ jobs:
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deep read-only IMS integration audit
+      - name: Classify unparsed workbook sheets
         shell: bash
         run: |
           ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
             "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "AUDIT_GIT|branch=$(git branch --show-current)|commit=$(git rev-parse HEAD)|dirty=$(git status --porcelain | wc -l)"
-
           venv/bin/python - <<'PY'
-          import json, sqlite3
+          import json, re, sqlite3
           from pathlib import Path
+          import openpyxl
 
-          db_path = Path('instance/ipm.db').resolve()
-          con = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=30)
-          con.row_factory = sqlite3.Row
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
+          con.row_factory=sqlite3.Row
+          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC, uploaded_at DESC LIMIT 1").fetchone()
+          path=Path('uploads')/latest['file_name']
+          parsed={r[0] for r in con.execute('SELECT DISTINCT sheet_name FROM ims_raw_data WHERE upload_id=?',(latest['id'],))}
+          wb_formula=openpyxl.load_workbook(path, read_only=False, data_only=False)
+          wb_values=openpyxl.load_workbook(path, read_only=True, data_only=True)
+          unparsed=[s for s in wb_formula.sheetnames if s not in parsed]
+          print('CLASSIFY_CONTEXT|'+json.dumps({'upload_id':latest['id'],'week':latest['week_number'],'file':latest['file_name'],'parsed':sorted(parsed),'unparsed':unparsed},ensure_ascii=False))
 
-          def rows(sql, params=()):
-              return con.execute(sql, params).fetchall()
-          def one(sql, params=()):
-              return con.execute(sql, params).fetchone()
-          def emit(tag, obj):
-              print(tag + '|' + json.dumps(obj, ensure_ascii=False, default=str, sort_keys=True))
+          def clean(v):
+              if v is None: return None
+              s=str(v)
+              return s if len(s)<=180 else s[:177]+'...'
 
-          try:
-              emit('DB_HEALTH', {'journal_mode': one('PRAGMA journal_mode')[0], 'integrity': one('PRAGMA integrity_check')[0]})
-              tables = {r[0] for r in rows("SELECT name FROM sqlite_master WHERE type='table'")}
-              emit('RELEVANT_TABLES', sorted(t for t in tables if any(k in t.lower() for k in ('ims','target','aggregate','representative','brick','product'))))
+          for name in wb_formula.sheetnames:
+              wsf=wb_formula[name]; wsv=wb_values[name]
+              total=0; formulas=0; constants=0; refs={}
+              for row in wsf.iter_rows():
+                  for c in row:
+                      if c.value is None: continue
+                      total += 1
+                      if c.data_type=='f' or (isinstance(c.value,str) and c.value.startswith('=')):
+                          formulas += 1
+                          formula=str(c.value)
+                          for ref in re.findall(r"(?:'([^']+)'|([A-Za-z0-9_ .ÇĞİÖŞÜçğıöşü-]+))!\$?[A-Z]+\$?\d+", formula):
+                              target=(ref[0] or ref[1]).strip()
+                              refs[target]=refs.get(target,0)+1
+                      else:
+                          constants += 1
+              samples=[]
+              for r in range(1,min(wsv.max_row,14)+1):
+                  vals=[clean(wsv.cell(r,c).value) for c in range(1,min(wsv.max_column,30)+1)]
+                  if any(v is not None for v in vals): samples.append({'row':r,'values':vals})
+              print('SHEET_CLASS|'+json.dumps({'name':name,'parsed':name in parsed,'max_row':wsf.max_row,'max_column':wsf.max_column,'nonempty':total,'formulas':formulas,'constants':constants,'formula_ratio':round(formulas/total,4) if total else 0,'refs':refs,'sample_rows':samples},ensure_ascii=False,default=str))
 
-              uploads = rows("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 ORDER BY week_number, uploaded_at")
-              for u in uploads:
-                  d = dict(u); d['warning_message'] = None if not d.get('warning_message') else '[present]'; emit('UPLOAD', d)
-              completed = [u for u in uploads if str(u['status']).upper() == 'COMPLETED']
-              if len(completed) < 2:
-                  emit('FATAL', {'reason':'fewer_than_two_completed_january_uploads','count':len(completed)}); raise SystemExit(2)
-              prev, latest = completed[-2], completed[-1]
-              prev_id, latest_id = prev['id'], latest['id']
-              emit('COMPARE_UPLOADS', {'previous_id':prev_id,'previous_week':prev['week_number'],'latest_id':latest_id,'latest_week':latest['week_number']})
-
-              for u in (prev, latest):
-                  uid = u['id']; actual = {}
-                  for t in ('ims_raw_data','ims_facts','ims_summary'):
-                      actual[t] = one(f'SELECT COUNT(*) FROM {t} WHERE upload_id=?',(uid,))[0]
-                  emit('UPLOAD_RECON', {'id':uid,'week':u['week_number'],'status':u['status'],'source_record_count':u['source_record_count'],'stored_source_record_count':u['stored_source_record_count'],'invalid_metric_count':u['invalid_metric_count'],'blank_metric_count':u['blank_metric_count'],'zero_metric_count':u['zero_metric_count'],'excluded_aggregate_count':u['excluded_aggregate_count'],'reconciliation_status':u['reconciliation_status'],'metadata_raw_record_count':u['raw_record_count'],'metadata_fact_record_count':u['fact_record_count'],'metadata_summary_record_count':u['summary_record_count'],'actual_counts':actual})
-
-              for uid, wk in ((prev_id, prev['week_number']), (latest_id, latest['week_number'])):
-                  emit('RAW_SHEETS', {'week':wk, 'rows':[dict(r) for r in rows("SELECT sheet_name,sheet_type,COUNT(*) AS n,COUNT(DISTINCT representative_id) AS reps,COUNT(DISTINCT product_id) AS products FROM ims_raw_data WHERE upload_id=? GROUP BY sheet_name,sheet_type ORDER BY sheet_name",(uid,))]})
-                  coverage = dict(one("""
-                      SELECT COUNT(DISTINCT representative_id) reps,
-                             COUNT(DISTINCT product_id) products,
-                             COUNT(DISTINCT NULLIF(trim(brick),'')) bricks,
-                             COUNT(DISTINCT NULLIF(trim(province),'')) provinces,
-                             COUNT(DISTINCT NULLIF(trim(territory),'')) territories,
-                             SUM(CASE WHEN representative_id IS NULL THEN 1 ELSE 0 END) raw_unmatched_rep,
-                             SUM(CASE WHEN product_id IS NULL THEN 1 ELSE 0 END) raw_unmatched_product
-                      FROM ims_raw_data WHERE upload_id=?
-                  """,(uid,)))
-                  coverage['week'] = wk
-                  emit('COVERAGE', coverage)
-                  f = dict(one("SELECT COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,COUNT(*) n FROM ims_facts WHERE upload_id=?",(uid,))); f['week']=wk; emit('FACT_COVERAGE', f)
-                  s = dict(one("SELECT COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,COUNT(*) n FROM ims_summary WHERE upload_id=?",(uid,))); s['week']=wk; emit('SUMMARY_COVERAGE', s)
-
-              dup_summary = rows("SELECT representative_id,product_id,COUNT(*) n FROM ims_summary WHERE upload_id=? GROUP BY representative_id,product_id HAVING COUNT(*)>1",(latest_id,))
-              emit('SUMMARY_DUPLICATES', {'count':len(dup_summary),'sample':[dict(r) for r in dup_summary[:20]]})
-
-              def keyset(table, uid):
-                  return {(r['representative_id'],r['product_id']) for r in rows(f"SELECT DISTINCT representative_id,product_id FROM {table} WHERE upload_id=? AND representative_id IS NOT NULL AND product_id IS NOT NULL",(uid,))}
-              for t in ('ims_facts','ims_summary'):
-                  a,b=keyset(t,prev_id),keyset(t,latest_id)
-                  emit('KEYSET_DELTA', {'table':t,'previous_keys':len(a),'latest_keys':len(b),'only_previous_count':len(a-b),'only_latest_count':len(b-a),'only_previous_sample':sorted(a-b)[:50],'only_latest_sample':sorted(b-a)[:50]})
-
-              target_period = rows("SELECT representative_id,product_id,unit_target,tl_target FROM targets WHERE year=2026 AND month=1") if 'targets' in tables else []
-              target_keys={(r['representative_id'],r['product_id']) for r in target_period}
-              summary_keys=keyset('ims_summary',latest_id)
-              missing_target_keys=sorted(target_keys-summary_keys); extra_summary_keys=sorted(summary_keys-target_keys)
-              emit('TARGET_SUMMARY_KEY_RECON', {'target_rows':len(target_period),'target_keys':len(target_keys),'summary_keys':len(summary_keys),'missing_target_keys':len(missing_target_keys),'extra_summary_keys':len(extra_summary_keys),'missing_sample':missing_target_keys[:50],'extra_sample':extra_summary_keys[:50]})
-
-              rep_names={r['id']:dict(r) for r in rows('SELECT id,rep_code,rep_name,region,city,territory,active FROM representatives')}
-              prod_names={r['id']:dict(r) for r in rows('SELECT id,product_code,product_name,is_active FROM products')}
-              def explain(keys):
-                  return [{'representative':rep_names.get(rid,{'id':rid}), 'product':prod_names.get(pid,{'id':pid})} for rid,pid in keys[:100]]
-              emit('MISSING_TARGET_SUMMARY_DETAIL', explain(missing_target_keys))
-              emit('EXTRA_SUMMARY_DETAIL', explain(extra_summary_keys))
-
-              if 'targets' in tables:
-                  emit('TARGET_HEALTH', dict(one("SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,SUM(CASE WHEN unit_target=0 THEN 1 ELSE 0 END) zero_unit_targets,SUM(CASE WHEN tl_target=0 THEN 1 ELSE 0 END) zero_tl_targets,SUM(unit_target) unit_target_total,SUM(tl_target) tl_target_total FROM targets WHERE year=2026 AND month=1")))
-                  emit('TARGET_BY_REGION', [dict(r) for r in rows("SELECT COALESCE(r.region,'<NULL>') region,COUNT(DISTINCT t.representative_id) reps,COUNT(*) rows,SUM(t.unit_target) unit_target,SUM(t.tl_target) tl_target FROM targets t JOIN representatives r ON r.id=t.representative_id WHERE t.year=2026 AND t.month=1 GROUP BY COALESCE(r.region,'<NULL>') ORDER BY region")])
-
-              for uid,wk in ((prev_id,prev['week_number']),(latest_id,latest['week_number'])):
-                  st=dict(one("SELECT SUM(unit) unit,SUM(tl) tl,SUM(target_unit) target_unit,SUM(target_tl) target_tl FROM ims_summary WHERE upload_id=?",(uid,))); st['week']=wk; emit('SUMMARY_TOTALS', st)
-                  emit('SUMMARY_BY_REGION', {'week':wk,'regions':[dict(r) for r in rows("SELECT COALESCE(rep.region,'<NULL>') region,COUNT(DISTINCT s.representative_id) reps,SUM(s.unit) unit,SUM(s.tl) tl,SUM(s.target_unit) target_unit,SUM(s.target_tl) target_tl FROM ims_summary s JOIN representatives rep ON rep.id=s.representative_id WHERE s.upload_id=? GROUP BY COALESCE(rep.region,'<NULL>') ORDER BY region",(uid,))]})
-
-              target_mismatch=rows("SELECT s.representative_id,s.product_id,s.target_unit summary_unit_target,t.unit_target db_unit_target,s.target_tl summary_tl_target,t.tl_target db_tl_target FROM ims_summary s JOIN targets t ON t.representative_id=s.representative_id AND t.product_id=s.product_id AND t.year=2026 AND t.month=1 WHERE s.upload_id=? AND (ABS(COALESCE(s.target_unit,0)-COALESCE(t.unit_target,0))>0.000001 OR ABS(COALESCE(s.target_tl,0)-COALESCE(t.tl_target,0))>0.01)",(latest_id,))
-              emit('SUMMARY_TARGET_MISMATCH', {'count':len(target_mismatch),'sample':[dict(r) for r in target_mismatch[:50]]})
-
-              emit('ORPHANS', {'raw_rep_orphans':one("SELECT COUNT(*) FROM ims_raw_data x LEFT JOIN representatives r ON r.id=x.representative_id WHERE x.upload_id=? AND x.representative_id IS NOT NULL AND r.id IS NULL",(latest_id,))[0],'fact_rep_orphans':one("SELECT COUNT(*) FROM ims_facts x LEFT JOIN representatives r ON r.id=x.representative_id WHERE x.upload_id=? AND x.representative_id IS NOT NULL AND r.id IS NULL",(latest_id,))[0],'summary_rep_orphans':one("SELECT COUNT(*) FROM ims_summary x LEFT JOIN representatives r ON r.id=x.representative_id WHERE x.upload_id=? AND r.id IS NULL",(latest_id,))[0],'summary_product_orphans':one("SELECT COUNT(*) FROM ims_summary x LEFT JOIN products p ON p.id=x.product_id WHERE x.upload_id=? AND p.id IS NULL",(latest_id,))[0]})
-              emit('LATEST_REPS_WITHOUT_REGION', [dict(r) for r in rows("SELECT DISTINCT r.id,r.rep_code,r.rep_name,r.region,r.city,r.territory,r.active FROM ims_summary s JOIN representatives r ON r.id=s.representative_id WHERE s.upload_id=? AND (r.region IS NULL OR trim(r.region)='') ORDER BY r.rep_name",(latest_id,))])
-
-              upload_root = Path('instance/uploads')
-              if not upload_root.exists(): upload_root=Path('uploads')
-              emit('UPLOAD_ROOT', {'path':str(upload_root.resolve()),'exists':upload_root.exists()})
-              try:
-                  import openpyxl
-              except Exception as exc:
-                  emit('WORKBOOK_AUDIT_ERROR', {'error':str(exc)})
-              else:
-                  for u in (prev,latest):
-                      candidates=list(upload_root.rglob(u['file_name'])) if upload_root.exists() else []
-                      emit('WORKBOOK_FILE', {'week':u['week_number'],'file':u['file_name'],'matches':[str(p) for p in candidates]})
-                      if candidates:
-                          wb=openpyxl.load_workbook(candidates[0], read_only=True, data_only=True)
-                          inv=[{'name':ws.title,'max_row':ws.max_row,'max_column':ws.max_column} for ws in wb.worksheets]
-                          emit('WORKBOOK_SHEETS', {'week':u['week_number'],'count':len(inv),'sheets':inv})
-                          parsed={r['sheet_name'] for r in rows('SELECT DISTINCT sheet_name FROM ims_raw_data WHERE upload_id=?',(u['id'],))}; workbook={x['name'] for x in inv}
-                          emit('WORKBOOK_PARSED_RECON', {'week':u['week_number'],'workbook_sheet_count':len(workbook),'parsed_sheet_count':len(parsed),'parsed':sorted(parsed),'unparsed':sorted(workbook-parsed),'db_only':sorted(parsed-workbook)})
-                          wb.close()
-
-              master_terms=('HEDEF','TARGET','BOLGE','BÖLGE','TEMSILCI','TEMSİLCİ','BRICK','CIKIS','ÇIKIŞ','SATIS','SATIŞ','PAZAR','KUTU','TL','OCAK')
-              warn=(latest['warning_message'] or '').splitlines(); risk=[line for line in warn if any(term in line.upper() for term in master_terms)]
-              emit('LATEST_WARNINGS', {'line_count':len(warn),'master_risk_line_count':len(risk),'master_risk_lines':risk})
-
-              gates={'latest_completed':str(latest['status']).upper()=='COMPLETED','latest_reconciliation_passed':str(latest['reconciliation_status']).upper()=='PASSED','source_equals_stored':latest['source_record_count']==latest['stored_source_record_count'],'invalid_zero':latest['invalid_metric_count']==0,'summary_no_duplicates':len(dup_summary)==0,'summary_matches_all_target_keys':len(missing_target_keys)==0,'summary_targets_equal_db_targets':len(target_mismatch)==0}
-              emit('AUDIT_GATES', gates); emit('AUDIT_GATE_RESULT', {'pass':all(gates.values()),'failed':[k for k,v in gates.items() if not v]})
-          finally:
-              con.close()
+          # Compare representative/product universe in master-looking wide sheets to DB mappings.
+          for name in unparsed:
+              ws=wb_values[name]
+              text=[]
+              for r in range(1,min(ws.max_row,40)+1):
+                  for c in range(1,min(ws.max_column,60)+1):
+                      v=ws.cell(r,c).value
+                      if v is not None: text.append(str(v).upper())
+              markers={k:any(k in t for t in text) for k in ['TEMSİLCİ','TEMSILCI','HEDEF','TARGET','KUTU','TL','PAZAR','BRICK','BÖLGE','BOLGE','ÇIKIŞ','CIKIS']}
+              print('SHEET_MARKERS|'+json.dumps({'name':name,'markers':markers},ensure_ascii=False))
+          wb_formula.close(); wb_values.close(); con.close()
           PY
           REMOTE
