@@ -1,4 +1,4 @@
-name: Temporary Production IMS Read-Only Audit
+name: Temporary Production IMS Master Backfill Verification
 
 on:
   pull_request:
@@ -11,13 +11,14 @@ jobs:
   audit:
     if: github.head_ref == 'ops/verify-ims-concurrency-production'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+      EXPECTED_COMMIT: d17c6c70d22e047e2893bed7b469aa206c4f06c7
     steps:
       - name: Configure production SSH key
         shell: bash
@@ -29,63 +30,145 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Reconcile dashboard and brick spread
+
+      - name: Backfill and verify master source
         shell: bash
         run: |
-          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' EXPECTED_COMMIT='$EXPECTED_COMMIT' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          venv/bin/python - <<'PY'
-          import json,re,sqlite3,openpyxl
-          from pathlib import Path
-          def norm(s):
-              s=str(s or '').upper().replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C')
-              return re.sub(r'[^A-Z0-9]+',' ',s).strip()
-          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30); con.row_factory=sqlite3.Row
-          u=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone(); uid=u['id']
-          wb=openpyxl.load_workbook(Path('uploads')/u['file_name'],read_only=True,data_only=True)
-          reps={norm(r['rep_name']):dict(r) for r in con.execute('SELECT id,rep_name,region,active FROM representatives')}
-          products=[dict(r) for r in con.execute('SELECT id,product_name FROM products WHERE is_active=1 ORDER BY id')]
-          # TTS ÇIKIŞLARI: rep-level target TL columns C:I and actual TL columns N:T.
-          ws=wb['TTS ÇIKIŞLARI']; checked=0; mism=[]; unmatched=[]
-          for row in ws.iter_rows(min_row=5,max_row=ws.max_row,values_only=True):
-              name=row[1] if len(row)>1 else None
-              key=norm(name)
-              if not key or key not in reps: continue
-              rep=reps[key]; rid=rep['id']
-              excel_target=sum(float(row[i] or 0) for i in range(2,9) if i<len(row))
-              excel_actual=sum(float(row[i] or 0) for i in range(13,20) if i<len(row))
-              db_target=con.execute('SELECT COALESCE(SUM(tl_target),0) FROM targets WHERE year=2026 AND month=1 AND representative_id=?',(rid,)).fetchone()[0]
-              db_actual=con.execute('SELECT COALESCE(SUM(tl),0) FROM ims_summary WHERE upload_id=? AND representative_id=?',(uid,rid)).fetchone()[0]
-              checked+=1
-              if abs(excel_target-db_target)>0.05 or abs(excel_actual-db_actual)>0.05:
-                  mism.append({'rep':name,'excel_target':excel_target,'db_target':db_target,'excel_actual':excel_actual,'db_actual':db_actual})
-          print('TTS_RECON|'+json.dumps({'checked_reps':checked,'mismatch_count':len(mism),'sample':mism[:20]},ensure_ascii=False,default=str))
 
-          # Satış Brick Yayılımı: total distinct bricks and product-specific positive-exit brick counts.
-          ws=wb['Satış Brick Yayılımı']; spread_checked=0; spread_mism=[]
-          prod_by_norm={norm(p['product_name']):p for p in products}
-          headers=[norm(v) for v in next(ws.iter_rows(min_row=2,max_row=2,values_only=True))]
-          for row in ws.iter_rows(min_row=5,max_row=ws.max_row,values_only=True):
-              name=row[1] if len(row)>1 else None; key=norm(name)
-              if not key or key not in reps: continue
-              rid=reps[key]['id']; spread_checked+=1
-              excel_total=int(float(row[2] or 0))
-              db_total=con.execute("SELECT COUNT(DISTINCT COALESCE(NULLIF(brick,''),territory)) FROM ims_raw_data WHERE upload_id=? AND sheet_name='1001 BRICK SATIS' AND representative_id=?",(uid,rid)).fetchone()[0]
-              detail=[]
-              for idx in range(3,min(10,len(row))):
-                  h=headers[idx] if idx<len(headers) else ''
-                  # Match displayed product header to DB product.
-                  pid=None
-                  for pn,p in prod_by_norm.items():
-                      if pn and (pn in h or h in pn): pid=p['id']; break
-                  if pid is None: continue
-                  excel_n=int(float(row[idx] or 0))
-                  db_n=con.execute("SELECT COUNT(DISTINCT COALESCE(NULLIF(brick,''),territory)) FROM ims_raw_data WHERE upload_id=? AND sheet_name='1001 BRICK SATIS' AND representative_id=? AND product_id=? AND COALESCE(unit,0)>0",(uid,rid,pid)).fetchone()[0]
-                  if excel_n!=db_n: detail.append({'header':h,'excel':excel_n,'db':db_n})
-              if excel_total!=db_total or detail:
-                  spread_mism.append({'rep':name,'excel_total':excel_total,'db_total':db_total,'detail':detail})
-          print('SPREAD_RECON|'+json.dumps({'checked_reps':spread_checked,'mismatch_count':len(spread_mism),'sample':spread_mism[:20]},ensure_ascii=False,default=str))
-          wb.close(); con.close()
+          for attempt in $(seq 1 30); do
+            current=$(git rev-parse HEAD)
+            if [ "$current" = "$EXPECTED_COMMIT" ]; then break; fi
+            echo "WAIT_DEPLOY|attempt=$attempt|current=$current|expected=$EXPECTED_COMMIT"
+            sleep 10
+          done
+          current=$(git rev-parse HEAD)
+          echo "PRODUCTION_COMMIT|$current"
+          test "$current" = "$EXPECTED_COMMIT"
+          test -f app/services/official_brick_spread_service.py
+
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          venv/bin/python sqlite_online_backup.py \
+            instance/ipm.db "instance/backups/ipm-pre-brick-spread-backfill-${stamp}.db"
+
+          venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSRawData, IMSSummary, IMSFact, IMSUpload
+          from app.services.alias_service import AliasService
+          from app.services.import_coordinator import ImportCoordinator
+          from app.services.official_brick_spread_service import OfficialBrickSpreadService
+
+          app = create_app()
+          with app.app_context():
+              upload = IMSUpload.query.filter_by(
+                  year=2026, month=1, week_number=4, status='COMPLETED'
+              ).order_by(IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()).first()
+              if upload is None:
+                  raise SystemExit('Week-4 completed upload not found')
+
+              upload_id = upload.id
+              source_path = Path(app.config['UPLOAD_FOLDER']) / upload.file_name
+              if not source_path.is_file():
+                  raise SystemExit(f'Source workbook missing: {source_path}')
+
+              def snapshot():
+                  facts = IMSFact.query.filter_by(upload_id=upload_id).all()
+                  summaries = IMSSummary.query.filter_by(upload_id=upload_id).all()
+                  return {
+                      'fact_count': len(facts),
+                      'fact_unit': round(sum(float(x.unit or 0) for x in facts), 6),
+                      'fact_tl': round(sum(float(x.tl or 0) for x in facts), 6),
+                      'summary_count': len(summaries),
+                      'summary_unit': round(sum(float(x.unit or 0) for x in summaries), 6),
+                      'summary_tl': round(sum(float(x.tl or 0) for x in summaries), 6),
+                      'summary_target_unit': round(sum(float(x.target_unit or 0) for x in summaries), 6),
+                      'summary_target_tl': round(sum(float(x.target_tl or 0) for x in summaries), 6),
+                  }
+
+              before = snapshot()
+              print('BEFORE|' + json.dumps(before, sort_keys=True))
+
+              with ImportCoordinator.acquire(
+                  uploaded_by='SYSTEM MASTER BACKFILL',
+                  file_name=upload.file_name,
+                  wait_seconds=2,
+              ):
+                  AliasService.clear_cache()
+                  result = OfficialBrickSpreadService.persist(
+                      file_path=source_path,
+                      upload_id=upload_id,
+                      year=upload.year,
+                      month=upload.month,
+                      week_number=upload.week_number,
+                  )
+                  warnings = (upload.warning_message or '').splitlines()
+                  warnings = [
+                      line for line in warnings
+                      if 'SATIS BRICK YAYILIMI' not in OfficialBrickSpreadService._normalize(line)
+                  ]
+                  upload.warning_message = '\n'.join(warnings) or None
+                  db.session.commit()
+
+              db.session.remove()
+              after = snapshot()
+              print('BACKFILL_RESULT|' + json.dumps(result, ensure_ascii=False, sort_keys=True))
+              print('AFTER|' + json.dumps(after, sort_keys=True))
+              if before != after:
+                  raise SystemExit(f'Sales/summary snapshot changed: before={before} after={after}')
+
+              official = IMSRawData.query.filter_by(
+                  upload_id=upload_id,
+                  sheet_type=OfficialBrickSpreadService.SHEET_TYPE,
+              ).all()
+              rep_ids = {row.representative_id for row in official}
+              null_product_ids = sum(1 for row in official if row.product_id is None)
+              expected_records = result['representatives'] * (result['product_columns'] + 1)
+              duplicate_keys = db.session.execute(db.text('''
+                  SELECT representative_id, product, COUNT(*) AS n
+                  FROM ims_raw_data
+                  WHERE upload_id=:upload_id AND sheet_type=:sheet_type
+                  GROUP BY representative_id, product
+                  HAVING COUNT(*) > 1
+              '''), {'upload_id': upload_id, 'sheet_type': OfficialBrickSpreadService.SHEET_TYPE}).fetchall()
+              integrity = {
+                  'upload_id': upload_id,
+                  'official_records': len(official),
+                  'expected_records': expected_records,
+                  'representatives': len(rep_ids),
+                  'parser_representatives': result['representatives'],
+                  'product_columns': result['product_columns'],
+                  'all_product_ids_null': null_product_ids == len(official),
+                  'duplicate_keys': len(duplicate_keys),
+                  'reconciliation_status': upload.reconciliation_status,
+              }
+              print('OFFICIAL_INTEGRITY|' + json.dumps(integrity, ensure_ascii=False, sort_keys=True))
+              if len(official) != expected_records:
+                  raise SystemExit('Official spread record count mismatch')
+              if len(rep_ids) != result['representatives']:
+                  raise SystemExit('Official spread representative count mismatch')
+              if null_product_ids != len(official):
+                  raise SystemExit('Official spread leaked into product fact domain')
+              if duplicate_keys:
+                  raise SystemExit(f'Duplicate official spread keys: {duplicate_keys[:10]}')
+              if result['product_columns'] != 7:
+                  raise SystemExit(f'Expected 7 product columns, got {result["product_columns"]}')
+
+              # Core production invariants must remain exactly as audited.
+              if after['fact_count'] != 3164 or after['summary_count'] != 791:
+                  raise SystemExit(f'Core row counts changed: {after}')
+              if abs(after['summary_unit'] - 1497003.0) > 0.000001:
+                  raise SystemExit(f'Week-4 summary unit changed: {after["summary_unit"]}')
+              if abs(after['summary_tl'] - 125767119.32) > 0.01:
+                  raise SystemExit(f'Week-4 summary TL changed: {after["summary_tl"]}')
+
+              print('MASTER_BACKFILL_VERIFIED|PASS')
           PY
           REMOTE
