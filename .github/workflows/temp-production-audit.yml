@@ -29,36 +29,63 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Verify competition and source coverage
+      - name: Reconcile dashboard and brick spread
         shell: bash
         run: |
           ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          import json,sqlite3
+          import json,re,sqlite3,openpyxl
+          from pathlib import Path
+          def norm(s):
+              s=str(s or '').upper().replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C')
+              return re.sub(r'[^A-Z0-9]+',' ',s).strip()
           con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30); con.row_factory=sqlite3.Row
-          latest=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone(); uid=latest['id']
-          tables={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-          def emit(tag,obj): print(tag+'|'+json.dumps(obj,ensure_ascii=False,default=str,sort_keys=True))
-          def cols(t): return [r[1] for r in con.execute(f'PRAGMA table_info({t})')]
-          if 'ims_competition_data' in tables:
-              c=cols('ims_competition_data'); emit('COMP_SCHEMA',c)
-              where=[]; p=[]
-              if 'upload_id' in c: where.append('upload_id=?'); p.append(uid)
-              elif 'year' in c and 'month' in c: where.extend(['year=?','month=?']); p.extend([2026,1])
-              pred=(' WHERE '+' AND '.join(where)) if where else ''
-              emit('COMP_COUNT',{'count':con.execute('SELECT COUNT(*) FROM ims_competition_data'+pred,p).fetchone()[0]})
-              groupcols=[x for x in ('source_sheet','sheet_name','metric_type','period_type','representative_id','product_name','competitor_name','territory','subterritory') if x in c]
-              for gc in groupcols[:5]:
-                  q=f'SELECT {gc},COUNT(*) n FROM ims_competition_data'+pred+f' GROUP BY {gc} ORDER BY n DESC LIMIT 30'
-                  emit('COMP_GROUP_'+gc.upper(),[dict(r) for r in con.execute(q,p)])
-          # Sample parsed rows for one known brick to compare against OCAK/KUTU/TL master sheets.
-          for sheet in ('1001 BRICK SATIS','AYLIK REKABET KUTU','AYLIK REKABET TL','BRICK REA.'):
-              rs=con.execute("SELECT sheet_name,sheet_type,brick,territory,representative,product,competitor,unit,tl,market_share,value_share,growth,raw_json FROM ims_raw_data WHERE upload_id=? AND sheet_name=? AND (upper(COALESCE(brick,'')) LIKE '%EDIRNE SARICAPASA%' OR upper(COALESCE(territory,'')) LIKE '%EDIRNE SARICAPASA%') LIMIT 30",(uid,sheet)).fetchall()
-              emit('BRICK_SAMPLE_'+sheet.replace(' ','_'),[dict(r) for r in rs])
-          # show rows currently classified as competition sources in raw
-          emit('RAW_COMP_TYPES',[dict(r) for r in con.execute("SELECT sheet_name,sheet_type,COUNT(*) n,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products FROM ims_raw_data WHERE upload_id=? AND (lower(sheet_type) LIKE '%compet%' OR upper(sheet_name) LIKE '%REKABET%') GROUP BY sheet_name,sheet_type",(uid,))])
-          con.close()
+          u=con.execute("SELECT * FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY week_number DESC,uploaded_at DESC LIMIT 1").fetchone(); uid=u['id']
+          wb=openpyxl.load_workbook(Path('uploads')/u['file_name'],read_only=True,data_only=True)
+          reps={norm(r['rep_name']):dict(r) for r in con.execute('SELECT id,rep_name,region,active FROM representatives')}
+          products=[dict(r) for r in con.execute('SELECT id,product_name FROM products WHERE is_active=1 ORDER BY id')]
+          # TTS ÇIKIŞLARI: rep-level target TL columns C:I and actual TL columns N:T.
+          ws=wb['TTS ÇIKIŞLARI']; checked=0; mism=[]; unmatched=[]
+          for row in ws.iter_rows(min_row=5,max_row=ws.max_row,values_only=True):
+              name=row[1] if len(row)>1 else None
+              key=norm(name)
+              if not key or key not in reps: continue
+              rep=reps[key]; rid=rep['id']
+              excel_target=sum(float(row[i] or 0) for i in range(2,9) if i<len(row))
+              excel_actual=sum(float(row[i] or 0) for i in range(13,20) if i<len(row))
+              db_target=con.execute('SELECT COALESCE(SUM(tl_target),0) FROM targets WHERE year=2026 AND month=1 AND representative_id=?',(rid,)).fetchone()[0]
+              db_actual=con.execute('SELECT COALESCE(SUM(tl),0) FROM ims_summary WHERE upload_id=? AND representative_id=?',(uid,rid)).fetchone()[0]
+              checked+=1
+              if abs(excel_target-db_target)>0.05 or abs(excel_actual-db_actual)>0.05:
+                  mism.append({'rep':name,'excel_target':excel_target,'db_target':db_target,'excel_actual':excel_actual,'db_actual':db_actual})
+          print('TTS_RECON|'+json.dumps({'checked_reps':checked,'mismatch_count':len(mism),'sample':mism[:20]},ensure_ascii=False,default=str))
+
+          # Satış Brick Yayılımı: total distinct bricks and product-specific positive-exit brick counts.
+          ws=wb['Satış Brick Yayılımı']; spread_checked=0; spread_mism=[]
+          prod_by_norm={norm(p['product_name']):p for p in products}
+          headers=[norm(v) for v in next(ws.iter_rows(min_row=2,max_row=2,values_only=True))]
+          for row in ws.iter_rows(min_row=5,max_row=ws.max_row,values_only=True):
+              name=row[1] if len(row)>1 else None; key=norm(name)
+              if not key or key not in reps: continue
+              rid=reps[key]['id']; spread_checked+=1
+              excel_total=int(float(row[2] or 0))
+              db_total=con.execute("SELECT COUNT(DISTINCT COALESCE(NULLIF(brick,''),territory)) FROM ims_raw_data WHERE upload_id=? AND sheet_name='1001 BRICK SATIS' AND representative_id=?",(uid,rid)).fetchone()[0]
+              detail=[]
+              for idx in range(3,min(10,len(row))):
+                  h=headers[idx] if idx<len(headers) else ''
+                  # Match displayed product header to DB product.
+                  pid=None
+                  for pn,p in prod_by_norm.items():
+                      if pn and (pn in h or h in pn): pid=p['id']; break
+                  if pid is None: continue
+                  excel_n=int(float(row[idx] or 0))
+                  db_n=con.execute("SELECT COUNT(DISTINCT COALESCE(NULLIF(brick,''),territory)) FROM ims_raw_data WHERE upload_id=? AND sheet_name='1001 BRICK SATIS' AND representative_id=? AND product_id=? AND COALESCE(unit,0)>0",(uid,rid,pid)).fetchone()[0]
+                  if excel_n!=db_n: detail.append({'header':h,'excel':excel_n,'db':db_n})
+              if excel_total!=db_total or detail:
+                  spread_mism.append({'rep':name,'excel_total':excel_total,'db_total':db_total,'detail':detail})
+          print('SPREAD_RECON|'+json.dumps({'checked_reps':spread_checked,'mismatch_count':len(spread_mism),'sample':spread_mism[:20]},ensure_ascii=False,default=str))
+          wb.close(); con.close()
           PY
           REMOTE
