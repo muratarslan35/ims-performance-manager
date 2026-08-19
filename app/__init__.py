@@ -18,6 +18,17 @@ from app.services.sqlite_runtime import (
     install_sqlite_connection_pragmas,
 )
 from app.services.vacancy_matching import install_vacancy_matcher
+from app.services.representative_resolver import install_representative_resolver
+from app.services.semantic_import_discovery import install_semantic_import_discovery
+from app.services.workbook_preflight import install_workbook_preflight
+from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
+from app.services.derived_master_verification import install_derived_verification_gate
+from app.services.ims_delta_audit import install_previous_ims_delta_audit
+from app.services.import_result_report import (
+    install_import_result_reporting,
+    latest_import_report,
+    register_import_result_flash,
+)
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -34,7 +45,7 @@ from app.regions import regions_bp
 
 
 def register_template_context(app):
-    """Expose the current IMS period consistently to the application shell."""
+    """Expose current IMS period and compact import audit report consistently."""
     @app.template_filter("istanbul_datetime")
     def istanbul_datetime(value, format_string="%d.%m.%Y %H:%M"):
         """Render UTC database timestamps in the application's local timezone."""
@@ -48,152 +59,99 @@ def register_template_context(app):
         try:
             from app.models import IMSUpload
             from app.services.period_service import PeriodService
-
             period = PeriodService.get_active_period()
-            upload = (
-                IMSUpload.query.filter_by(status="COMPLETED")
-                .order_by(IMSUpload.uploaded_at.desc())
-                .first()
-            )
+            upload = IMSUpload.query.filter_by(status="COMPLETED").order_by(IMSUpload.uploaded_at.desc()).first()
             period_label = f"{period['year']}/{int(period['month']):02d} · {period.get('week_number') or '-'} . Hafta"
             upload_label = upload.uploaded_at.strftime("%d.%m.%Y") if upload and upload.uploaded_at else "—"
-            return {"active_period": period_label, "latest_upload_date": upload_label}
+            return {
+                "active_period": period_label,
+                "latest_upload_date": upload_label,
+                "latest_import_report": latest_import_report(),
+            }
         except Exception:
-            return {"active_period": "—", "latest_upload_date": "—"}
+            return {
+                "active_period": "—",
+                "latest_upload_date": "—",
+                "latest_import_report": None,
+            }
 
 
 def register_extensions(app):
-
     db.init_app(app)
-
     migrate.init_app(app, db)
-
     login_manager.init_app(app)
-
     login_manager.login_view = "auth.login"
-
     login_manager.login_message = "Bu sayfayı görüntülemek için giriş yapın."
-
     login_manager.login_message_category = "warning"
 
 
 def register_blueprints(app):
-
     app.register_blueprint(main_bp)
-
     app.register_blueprint(auth_bp)
-
     app.register_blueprint(products_bp)
-
     app.register_blueprint(settings_bp)
-
     app.register_blueprint(targets_bp)
-
     app.register_blueprint(matching_bp)
-
     app.register_blueprint(competition_bp)
-
     app.register_blueprint(ims_bp)
-
     app.register_blueprint(dashboard_bp)
-
     app.register_blueprint(representatives_bp)
-
     app.register_blueprint(simulation_bp)
     app.register_blueprint(regions_bp)
 
 
 def create_directories(app):
-
     folders = [
-
-        app.config["UPLOAD_FOLDER"],
-
-        app.config["REPORT_FOLDER"],
-
-        app.config["BACKUP_FOLDER"],
-
-        app.config["LOG_FOLDER"],
-
+        app.config["UPLOAD_FOLDER"], app.config["REPORT_FOLDER"],
+        app.config["BACKUP_FOLDER"], app.config["LOG_FOLDER"],
         app.config.get("TEMP_FOLDER", Path(app.instance_path) / "temp"),
-
     ]
-
     database_uri = app.config["SQLALCHEMY_DATABASE_URI"]
-
     if database_uri.startswith("sqlite:///") and database_uri != "sqlite:///":
-
-        folders.append(
-            Path(database_uri.removeprefix("sqlite:///" )).parent
-        )
-
+        folders.append(Path(database_uri.removeprefix("sqlite:///" )).parent)
     for folder in folders:
-
-        Path(folder).mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        Path(folder).mkdir(parents=True, exist_ok=True)
 
 
 def register_error_handlers(app):
-
     @app.errorhandler(404)
     def page_not_found(error):
-
-        return render_template(
-            "errors/404.html"
-        ), 404
-
+        return render_template("errors/404.html"), 404
 
     @app.errorhandler(500)
     def internal_error(error):
-        # Do not run Flask context processors here.  If the original failure is
-        # an authentication/database lookup, context processors can query the
-        # same database again and recursively fail while rendering the 500.
         template = app.jinja_env.get_template("errors/500.html")
         return template.render(), 500
 
 
 def create_database(app):
-
     with app.app_context():
-
         initialize_database()
-
         from app.services.user_vault_service import UserVaultService
         UserVaultService.reconcile()
 
 
 def create_app(config_object=Config):
-
-    app = Flask(
-
-        __name__,
-
-        template_folder="templates",
-
-        static_folder="static"
-
-    )
-
+    app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(config_object)
-
     create_directories(app)
 
-    # Register SQLite connection pragmas before SQLAlchemy creates its first
-    # connection, then make WAL persistent before serving writable traffic.
     install_sqlite_connection_pragmas()
     register_extensions(app)
     configure_sqlite_runtime(app)
 
-    # Make explicit BOS/KADRO rows deterministic across every importer that
-    # uses AliasService, including target and sales sheets.
     install_vacancy_matcher()
+    install_representative_resolver()
+    install_semantic_import_discovery()
+    install_workbook_preflight()
+    install_official_brick_spread_atomic()
+    install_derived_verification_gate()
+    install_previous_ims_delta_audit()
+    install_import_result_reporting()
+    register_import_result_flash(app)
 
     register_template_context(app)
-
     register_blueprints(app)
-
     register_error_handlers(app)
 
     if not app.config.get("TESTING", False):
