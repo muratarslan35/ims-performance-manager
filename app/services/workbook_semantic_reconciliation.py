@@ -192,7 +192,7 @@ class WorkbookSemanticReconciler:
             "REPORT", "VALUES", "VALUE", "UNITS", "UNIT", "TL", "KUTU", "BOX", "ADET",
             "CIRO", "TUTAR", "MONTH", "MONTHS", "WEEK", "WEEKS", "HAFTA", "AY",
             "PRODUCTS", "MARKETPRODUCTS", "MKT", "NONE", "CIKIS", "ÇIKIŞ", "HEDEF",
-            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP",
+            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP", "METRIK", "METRİK",
         }
         return not tokens or tokens <= generic or tokens <= self.MONTH_TOKENS
 
@@ -288,11 +288,21 @@ class WorkbookSemanticReconciler:
         duplicate_conflicts = []
         for obs in observations:
             key = obs["semantic_key"]
-            previous = by_sheet_key[obs["sheet_name"]].get(key)
-            if previous is not None and not self._equal(previous["value"], obs["value"]):
-                duplicate_conflicts.append({"first": previous, "second": obs})
-            else:
-                by_sheet_key[obs["sheet_name"]][key] = obs
+            sheet_name = obs["sheet_name"]
+            previous = by_sheet_key[sheet_name].get(key)
+            if previous is None:
+                by_sheet_key[sheet_name][key] = dict(obs)
+                continue
+            if profiles.get(sheet_name, {}).get("pivot_candidate"):
+                if not self._equal(previous["value"], obs["value"]):
+                    duplicate_conflicts.append({"first": previous, "second": obs})
+                continue
+            # Repeated raw/fact rows are legitimate source granularity. Collapse
+            # them deterministically for cross-sheet reconciliation instead of
+            # treating them as duplicate-master conflicts.
+            previous["value"] = float(previous["value"]) + float(obs["value"])
+            previous.setdefault("source_cells", [(previous["row"], previous["column"])])
+            previous["source_cells"].append((obs["row"], obs["column"]))
 
         relations = []
         sheets = list(by_sheet_key)
@@ -351,7 +361,15 @@ class WorkbookSemanticReconciler:
             obs = obs_by_coord.get(coord)
             profile = profiles.get(cell["sheet_name"], {})
             if obs is None:
-                if profile.get("pivot_candidate") or cell.get("classification") == "VERIFIED_DERIVED":
+                if profile.get("pivot_candidate"):
+                    # Header/metadata are non-data, but row dimensions inside a
+                    # pivot are themselves master identity and must be audited.
+                    if cell["row"] > int(profile.get("header_row", 0)) + 1:
+                        cell["classification"] = "IMPORTED_MASTER"
+                    else:
+                        cell["classification"] = "EXPLICIT_NONDATA"
+                        explicit_nondata += 1
+                elif cell.get("classification") == "VERIFIED_DERIVED":
                     cell["classification"] = "EXPLICIT_NONDATA"
                     explicit_nondata += 1
                 continue
