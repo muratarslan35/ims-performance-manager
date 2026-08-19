@@ -189,7 +189,7 @@ def decode_report(notes):
 
 
 def latest_import_report():
-    audit = ImportAuditLog.query.order_by(ImportAuditLog.created_at.desc(), ImportAuditLog.id.desc()).first()
+    audit = ImportAuditLog.query.order_by(ImportAuditLog.uploaded_at.desc(), ImportAuditLog.id.desc()).first()
     return decode_report(audit.notes) if audit else None
 
 
