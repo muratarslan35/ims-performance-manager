@@ -25,6 +25,7 @@ from app.models import (
     Target,
 )
 from app.services.ims_import_service import IMSImportService
+from config import Config
 
 
 EXCLUDED_COLUMNS = {
@@ -36,6 +37,12 @@ BLOCKING_STATS = (
     "unresolved_product", "invalid_metric", "row_error", "conflicting_match",
     "duplicate_conflict",
 )
+
+
+class AcceptanceConfig(Config):
+    """Use the copied IMS DB while disabling startup mutations/user-vault reconciliation."""
+    TESTING = True
+    USER_VAULT_PATH = Path("/tmp/ims-acceptance-users-disabled.db")
 
 
 def _json_value(value):
@@ -67,8 +74,7 @@ def _sorted_rows(rows):
 
 
 def _period_query(model, upload):
-    query = model.query.filter_by(year=upload.year, month=upload.month)
-    return query
+    return model.query.filter_by(year=upload.year, month=upload.month)
 
 
 def _snapshot(upload):
@@ -128,14 +134,15 @@ def main():
     if not db_path.name.startswith("ims-acceptance-"):
         raise RuntimeError(f"Canlı DB üzerinde acceptance çalıştırma engellendi: {db_path}")
 
-    app = create_app()
+    app = create_app(AcceptanceConfig)
     with app.app_context():
         requested_id = os.environ.get("IMS_ACCEPTANCE_UPLOAD_ID")
         query = IMSUpload.query.filter_by(status="COMPLETED")
-        if requested_id:
-            baseline_upload = query.filter_by(id=int(requested_id)).first()
-        else:
-            baseline_upload = query.order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
+        baseline_upload = (
+            query.filter_by(id=int(requested_id)).first()
+            if requested_id
+            else query.order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
+        )
         if baseline_upload is None:
             raise RuntimeError("Acceptance için COMPLETED IMS upload bulunamadı.")
 
@@ -220,7 +227,10 @@ def main():
                 "target_unit": after["target_unit"],
                 "target_tl": after["target_tl"],
             },
-            "fingerprints": {domain: after[domain]["sha256"] for domain in ("fact", "summary", "target", "competition", "official_brick_spread", "official_aggregates")},
+            "fingerprints": {
+                domain: after[domain]["sha256"]
+                for domain in ("fact", "summary", "target", "competition", "official_brick_spread", "official_aggregates")
+            },
             "semantic_relationships": result.get("semantic_relationships", []),
             "previous_ims_delta": result.get("previous_ims_delta"),
         }
