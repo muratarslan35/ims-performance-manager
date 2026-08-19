@@ -187,6 +187,39 @@ def test_vacancy_matching_resolves_diyarbakir_rows_without_guessing(resilient_ap
         assert ordinary["matched"] is False
 
 
+def test_unresolved_vacancy_is_rechecked_after_bootstrap_creates_stable_slot(resilient_app):
+    """A pre-bootstrap miss must not poison later master parsers in the same import."""
+    from app.extensions import db
+    from app.models import Representative
+    from app.services.alias_service import AliasService
+    from app.services.vacancy_matching import clear_vacancy_match_cache
+
+    with resilient_app.app_context():
+        clear_vacancy_match_cache()
+        AliasService.clear_cache()
+
+        before = AliasService.find_representative("ISTANBUL BOS")
+        assert before["matched"] is False
+        assert before["method"] == "VACANCY_UNRESOLVED"
+
+        vacancy = Representative(
+            rep_code="UNASSIGNED101BOSISTANBULBOS",
+            rep_name="ATANMAMIŞ · 101 ISTANBUL · ISTANBUL BOS",
+            region="101 ISTANBUL",
+            city="ISTANBUL",
+            active=False,
+        )
+        db.session.add(vacancy)
+        db.session.flush()
+
+        # No manual cache clear here: this is the production order. BAKIYE
+        # bootstrap creates the slot after an earlier parser could have missed it.
+        after = AliasService.find_representative("ISTANBUL BOS")
+        assert after["matched"] is True
+        assert after["object"].id == vacancy.id
+        assert after["method"] == "VACANCY_SUFFIX"
+
+
 def test_online_backup_is_consistent_in_wal_mode(resilient_app):
     from sqlite_online_backup import backup
 
