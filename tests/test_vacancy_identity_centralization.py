@@ -4,6 +4,7 @@ from app.services.vacancy_matching import (
     vacancy_slot_token,
     vacancy_stable_suffix,
 )
+from app.services.representative_resolver import RepresentativeResolver
 
 
 def test_bos_and_bos_cedilla_are_distinct_slots():
@@ -11,6 +12,7 @@ def test_bos_and_bos_cedilla_are_distinct_slots():
     assert vacancy_slot_token("DİYARBAKIR BOŞ") == "BOŞ"
     assert vacancy_identity("DIYARBAKIR BOS") != vacancy_identity("DİYARBAKIR BOŞ")
     assert vacancy_stable_suffix("DIYARBAKIR BOS") != vacancy_stable_suffix("DİYARBAKIR BOŞ")
+    assert RepresentativeResolver.cache_key("DIYARBAKIR BOS") != RepresentativeResolver.cache_key("DİYARBAKIR BOŞ")
 
 
 def test_kadro_qualifier_preserves_distinct_slot_identity():
@@ -25,6 +27,7 @@ def test_bostanci_is_not_vacancy_and_brick_is_context_only():
     assert vacancy_slot_token("BOSTANCI BRICK") is None
     assert vacancy_slot_token("DIYARBAKIR BOS BRICK") == "BOS"
     assert vacancy_slot_token("DİYARBAKIR BOŞ BRICK") == "BOŞ"
+    assert RepresentativeResolver.cache_key("BOSTANCI")[0] == "PERSON"
 
 
 def test_conflicting_bos_and_bos_cedilla_is_never_guessed():
