@@ -27,6 +27,7 @@ from app.services.ims_delta_audit import install_previous_ims_delta_audit
 from app.services.import_result_report import (
     install_import_result_reporting,
     latest_import_report,
+    register_import_result_flash,
 )
 
 from app.routes import main_bp
@@ -147,6 +148,7 @@ def create_app(config_object=Config):
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
     install_import_result_reporting()
+    register_import_result_flash(app)
 
     register_template_context(app)
     register_blueprints(app)
