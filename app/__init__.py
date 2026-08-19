@@ -19,6 +19,7 @@ from app.services.sqlite_runtime import (
 )
 from app.services.vacancy_matching import install_vacancy_matcher
 from app.services.workbook_preflight import install_workbook_preflight
+from app.services.ims_delta_audit import install_previous_ims_delta_audit
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -184,6 +185,7 @@ def create_app(config_object=Config):
 
     install_vacancy_matcher()
     install_workbook_preflight()
+    install_previous_ims_delta_audit()
 
     register_template_context(app)
 
