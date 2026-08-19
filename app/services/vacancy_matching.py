@@ -24,12 +24,7 @@ def canonical_vacancy_text(value) -> str:
 
 
 def vacancy_slot_token(value):
-    """Return an accent-sensitive vacancy slot token, or None for normal names.
-
-    BOS/BOŞ and their KADRO-qualified forms are intentionally distinct. BRICK is
-    context only. A value containing both BOS and BOŞ is conflicting and is not
-    resolved automatically. Token matching means BOSTANCI can never become BOS.
-    """
+    """Return an accent-sensitive vacancy slot token, or None for normal names."""
     tokens = canonical_vacancy_text(value).split()
     has_bos = "BOS" in tokens
     has_bos_cedilla = "BOŞ" in tokens
@@ -50,13 +45,21 @@ def vacancy_identity(value):
     return (canonical, token) if token else None
 
 
+# Backward-compatible private aliases retained for existing tests/callers while
+# all implementations use the same centralized accent-sensitive semantics.
+def _canonical_text(value) -> str:
+    return canonical_vacancy_text(value)
+
+
+def _vacancy_identity(value):
+    return vacancy_identity(value)
+
+
 def vacancy_stable_suffix(value) -> str:
-    """Build a stable accent-sensitive code suffix without collapsing Ş to S."""
     identity = vacancy_identity(value)
     if identity is None:
         return "VACANCY"
     canonical, token = identity
-    # ASCII rep_code-safe but explicitly encode BOŞ before stripping accents.
     encoded = canonical.replace("BOŞ", "BOSH").replace("Ş", "SH")
     encoded = re.sub(r"[^A-Z0-9]+", "", encoded)[:40]
     qualifier = re.sub(r"[^A-Z0-9]+", "", token.replace("Ş", "SH"))
@@ -133,10 +136,6 @@ def install_vacancy_matcher() -> None:
             return original(value, minimum_score)
 
         AliasService.find_representative = classmethod(find_representative_with_vacancies)
-
-        # IMSImportService historically had local vacancy helpers that used
-        # accent-insensitive AliasService.normalize(). Replace only those helper
-        # seams so every importer shares the same vacancy identity semantics.
         from app.services.ims_import_service import IMSImportService
 
         def is_vacancy_representative(self, text):
