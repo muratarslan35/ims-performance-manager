@@ -1,14 +1,17 @@
 """Manager-facing compact IMS import result reporting.
 
 The complete parser ledger stays in runtime/audit logs; this service persists a
-small structured summary in the existing ImportAuditLog.notes field so an admin
-can see PASS/FAIL and critical counters without reading server logs. No schema or
-dashboard/prime data model changes are required.
+small structured summary in the existing ImportAuditLog.notes field and surfaces
+it once on the IMS Centre after an upload. No schema, dashboard or prime data model
+changes are required.
 """
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
+
+from flask import flash, request, session
 
 from app.extensions import db
 from app.models import (
@@ -17,7 +20,6 @@ from app.models import (
     IMSFact,
     IMSRawData,
     IMSSummary,
-    Product,
     Representative,
     Target,
 )
@@ -104,12 +106,7 @@ def build_import_result_summary(service, *, success=None):
     upload = service.upload
     if success is None:
         success = not bool(service.errors)
-    blocking = {
-        key: _stat(stats, key)
-        for key in BLOCKING_KEYS
-    }
-    # Alias counters collapse to one manager-facing value while raw counters
-    # remain in the statistics/audit stream.
+    blocking = {key: _stat(stats, key) for key in BLOCKING_KEYS}
     unresolved_rep = max(
         blocking.get("unresolved_representative", 0),
         _stat(stats, "unresolved_representative_rows", "unmatched_representatives"),
@@ -139,8 +136,6 @@ def build_import_result_summary(service, *, success=None):
     final_result = "PASS" if success and not service.errors and not any(critical.values()) else "FAIL"
     manifest = getattr(service, "workbook_manifest", []) or []
     counts = _period_counts(service)
-    national = getattr(service, "national_region_reconciliation", None)
-    delta = getattr(service, "previous_ims_delta", None)
     summary = {
         "marker": REPORT_MARKER,
         "final_result": final_result,
@@ -169,8 +164,8 @@ def build_import_result_summary(service, *, success=None):
         },
         "counts": counts,
         "critical": critical,
-        "national_region": national,
-        "previous_ims_delta": delta,
+        "national_region": getattr(service, "national_region_reconciliation", None),
+        "previous_ims_delta": getattr(service, "previous_ims_delta", None),
         "semantic_relationship_count": int(stats.get("semantic_relationship_count", 0) or 0),
         "warnings_count": len(service.warnings),
         "errors_count": len(service.errors),
@@ -188,7 +183,7 @@ def decode_report(notes):
         return None
     try:
         parsed = json.loads(notes)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return None
     return parsed if parsed.get("marker") == REPORT_MARKER else None
 
@@ -196,6 +191,53 @@ def decode_report(notes):
 def latest_import_report():
     audit = ImportAuditLog.query.order_by(ImportAuditLog.created_at.desc(), ImportAuditLog.id.desc()).first()
     return decode_report(audit.notes) if audit else None
+
+
+def _manager_message(report):
+    counts = report.get("counts", {})
+    source = report.get("source", {})
+    sheets = report.get("sheets", {})
+    critical = report.get("critical", {})
+    delta = report.get("previous_ims_delta") or {}
+    problem_total = sum(int(value or 0) for value in critical.values())
+    headline = (
+        "IMS eksiksiz ve hatasız içe aktarıldı"
+        if report.get("final_result") == "PASS" and problem_total == 0
+        else "IMS içe aktarımı doğrulama sorunları nedeniyle yayınlanmadı"
+    )
+    return (
+        f"{headline}. "
+        f"Sayfa {sheets.get('verified', 0)}/{sheets.get('total', 0)}; "
+        f"kaynak/kayıt {source.get('records', 0)}/{source.get('stored', 0)}; "
+        f"fact {counts.get('facts', 0)}, summary {counts.get('summary', 0)}, hedef {counts.get('targets', 0)}, "
+        f"rekabet {counts.get('competition', 0)}, resmi brick {counts.get('official_brick_spread', 0)}; "
+        f"temsilci {counts.get('representatives', 0)}, vacancy {counts.get('vacancies', 0)}, ürün {counts.get('products', 0)}, "
+        f"bölge {counts.get('regions', 0)}; auto-repair {report.get('matches', {}).get('auto_repaired', 0)}; "
+        f"unresolved {critical.get('unresolved_representative', 0) + critical.get('unresolved_product', 0)}, "
+        f"invalid {critical.get('invalid_metric', 0)}, conflict {critical.get('conflicting_match', 0) + critical.get('duplicate_conflict', 0)}; "
+        f"önceki IMS delta: satış {delta.get('sales_changed', 0)}, hedef {delta.get('targets_changed', 0)}, "
+        f"bölge/kadro {delta.get('region_cadre_changed', 0)}, brick {delta.get('brick_spread_changed', 0)}, rekabet {delta.get('competition_changed', 0)}."
+    )
+
+
+def register_import_result_flash(app):
+    """Surface each persisted manager report once per user session on IMS Centre."""
+    @app.before_request
+    def _surface_latest_import_report():
+        if request.endpoint != "ims.index":
+            return None
+        report = latest_import_report()
+        if not report or report.get("upload_id") is None:
+            return None
+        token = f"{report.get('upload_id')}:{report.get('final_result')}:{report.get('generated_at')}"
+        if session.get("_ims_report_seen") == token:
+            return None
+        flash(
+            _manager_message(report),
+            "success" if report.get("final_result") == "PASS" else "danger",
+        )
+        session["_ims_report_seen"] = token
+        return None
 
 
 def install_import_result_reporting():
@@ -210,7 +252,6 @@ def install_import_result_reporting():
     def write_audit_with_report(self, year, month, week_number, success):
         original_write(self, year, month, week_number, success)
         summary = build_import_result_summary(self, success=success)
-        # Original method adds exactly one ImportAuditLog to the pending session.
         for obj in reversed(list(db.session.new)):
             if isinstance(obj, ImportAuditLog) and obj.upload_id == self.upload.id:
                 obj.notes = encode_report(summary)
@@ -237,7 +278,7 @@ def install_import_result_reporting():
             ),
             rows_error=max(1, _stat(self.statistics, "rows_error") + len(self.errors)),
             queued_for_manual=_stat(self.statistics, "queued_for_manual"),
-            processing_time=round(__import__("time").monotonic() - self.started, 2),
+            processing_time=round(time.monotonic() - self.started, 2),
             status="FAILED",
             notes=encode_report(summary),
         )
