@@ -2,7 +2,9 @@
 
 Vacancy identity deliberately stays outside AliasService.normalize(): Turkish
 BOS and BOŞ are distinct stable slots. KADRO is retained as a slot qualifier,
-so BOS and BOS KADRO (and their BOŞ counterparts) never collapse.
+so BOS and BOS KADRO (and their BOŞ counterparts) never collapse. Existing
+legacy UNASSIGNED vacancy rows are reused by primary key when their token and
+location context are uniquely deterministic; ambiguity always fails closed.
 """
 from __future__ import annotations
 import re
@@ -103,12 +105,9 @@ def _vacancy_candidate(source_value):
         if score:
             scored.append((score, representative.id, method, representative))
     if not scored:
-        # IMPORTANT: a miss is intentionally NOT cached. During one IMS
-        # transaction BAKIYE/bootstrap can create the deterministic vacancy
-        # placeholder after an earlier parser first asked for it. Caching None
-        # would make all later parsers (notably official brick spread) keep
-        # seeing a stale unresolved result even though the stable slot now
-        # exists. Successful stable matches remain cacheable.
+        # A miss is intentionally NOT cached. During one IMS transaction
+        # BAKIYE/bootstrap may create the deterministic slot after an earlier
+        # parser first asked for it. Successful stable matches remain cacheable.
         return None
     scored.sort(key=lambda item: (-item[0], item[1]))
     best_score = scored[0][0]
@@ -117,6 +116,37 @@ def _vacancy_candidate(source_value):
     if result is not None:
         _VACANCY_CACHE[identity] = result
     return result
+
+
+def _legacy_placeholder_candidates(vacancy_name):
+    """Find legacy UNASSIGNED rows for exactly the same accent-sensitive slot."""
+    source_identity = vacancy_identity(vacancy_name)
+    if source_identity is None:
+        return []
+    source_canonical, source_token = source_identity
+    ignored = {"BOS", "BOŞ", "KADRO", "BRICK"}
+    source_context = " ".join(token for token in source_canonical.split() if token not in ignored)
+    matches = []
+    for representative in Representative.query.filter(Representative.rep_code.like("UNASSIGNED%")).all():
+        candidate_token = vacancy_slot_token(representative.rep_name) or vacancy_slot_token(representative.territory)
+        if candidate_token != source_token:
+            continue
+        city = canonical_vacancy_text(representative.city or "")
+        territory = canonical_vacancy_text(representative.territory or "")
+        labels = _candidate_labels(representative)
+        exact_or_suffix = source_canonical in labels or any(label.endswith(" " + source_canonical) for label in labels)
+        context_match = bool(
+            source_context
+            and (
+                (city and (city.startswith(source_context) or source_context.startswith(city)))
+                or (territory and source_context in territory)
+            )
+        )
+        if exact_or_suffix or context_match:
+            matches.append(representative)
+    # A repeated SQLAlchemy object must not make an otherwise deterministic
+    # candidate look ambiguous.
+    return list({representative.id: representative for representative in matches}.values())
 
 
 def resolve_vacancy_match(value):
@@ -147,6 +177,7 @@ def install_vacancy_matcher() -> None:
 
         AliasService.find_representative = classmethod(find_representative_with_vacancies)
         from app.services.ims_import_service import IMSImportService
+        original_ensure_vacancy = IMSImportService._ensure_vacancy_representative
 
         def is_vacancy_representative(self, text):
             return vacancy_slot_token(text) is not None
@@ -155,25 +186,48 @@ def install_vacancy_matcher() -> None:
             return f"UNASSIGNED{region or 'GENERAL'}{vacancy_stable_suffix(vacancy_name)}"
 
         def find_vacancy_placeholder(self, vacancy_name):
-            source_identity = vacancy_identity(vacancy_name)
-            if source_identity is None:
-                return None
-            source_canonical, source_token = source_identity
-            ignored = {"BOS", "BOŞ", "KADRO", "BRICK"}
-            source_context = " ".join(t for t in source_canonical.split() if t not in ignored)
-            matches = []
-            for representative in Representative.query.filter(Representative.rep_code.like("UNASSIGNED%")).all():
-                candidate_token = vacancy_slot_token(representative.rep_name) or vacancy_slot_token(representative.territory)
-                if candidate_token != source_token:
-                    continue
-                city = canonical_vacancy_text(representative.city or "")
-                if source_context and city and (city.startswith(source_context) or source_context.startswith(city)):
-                    matches.append(representative)
+            matches = _legacy_placeholder_candidates(vacancy_name)
             return matches[0] if len(matches) == 1 else None
+
+        def ensure_vacancy_representative(self, vacancy_name, region_value=None, city=None):
+            """Preserve an existing stable slot ID before creating a new canonical code."""
+            region, location_city = self._region_context(region_value=region_value, city=city)
+            code = self._vacancy_code(region, vacancy_name)
+            by_code = Representative.query.filter_by(rep_code=code).first()
+            if by_code is not None:
+                return by_code
+
+            legacy = _legacy_placeholder_candidates(vacancy_name)
+            if len(legacy) > 1:
+                ids = ", ".join(str(item.id) for item in sorted(legacy, key=lambda item: item.id))
+                raise ValueError(
+                    f"Belirsiz vacancy slot eşleşmesi: {vacancy_name} birden fazla stable ID ile eşleşiyor ({ids})"
+                )
+            if len(legacy) == 1:
+                representative = legacy[0]
+                # Preserve the primary key/history. Only backfill missing
+                # organisational metadata; do not rewrite prior IMS ownership.
+                if region and not representative.region:
+                    representative.region = region
+                if location_city and not representative.city:
+                    representative.city = location_city
+                representative.active = False
+                _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
+                return representative
+
+            representative = original_ensure_vacancy(
+                self,
+                vacancy_name,
+                region_value=region_value,
+                city=city,
+            )
+            _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
+            return representative
 
         IMSImportService._is_vacancy_representative = is_vacancy_representative
         IMSImportService._vacancy_code = staticmethod(vacancy_code)
         IMSImportService._find_vacancy_placeholder = find_vacancy_placeholder
+        IMSImportService._ensure_vacancy_representative = ensure_vacancy_representative
         _INSTALLED = True
 
 
