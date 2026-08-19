@@ -1,12 +1,13 @@
-"""Integrate official brick-spread master into the IMS publish transaction.
+"""Integrate an official brick-spread master into the IMS publish transaction.
 
-The official sheet is discovered from content, not its title.  Persistence runs
-inside IMSImportService.process_workbook, therefore any unresolved row rolls the
-entire staged upload back before it can become COMPLETED.  The legacy route's
-post-run call becomes an idempotent no-op because the upload already contains
-its official side-channel master rows.
+Presence is discovered from content, never from a required sheet title. Workbooks
+that do not contain this capability remain valid; when the capability is present,
+it is persisted inside the same IMS transaction and any ambiguity/unresolved row
+blocks publication. The legacy route call is idempotent.
 """
 from __future__ import annotations
+
+from openpyxl import load_workbook
 
 from app.models import IMSRawData
 from app.services.alias_service import AliasService
@@ -27,8 +28,6 @@ def _discover_spread_sheet(cls, workbook):
             score += 2
         if "TOPLAM" in text or "TOTAL" in text:
             score += 1
-        # Product-like headers plus a brick-count header distinguish this
-        # master from ordinary brick sales/realisation sheets.
         if "BRICK SAYISI" in text and len(set(scanned)) >= 6:
             score += 2
         if score >= 10:
@@ -40,8 +39,19 @@ def _discover_spread_sheet(cls, workbook):
     best = [name for score, name in candidates if score == best_score]
     if len(best) != 1:
         from app.services.official_brick_spread_service import OfficialBrickSpreadError
-        raise OfficialBrickSpreadError("Resmi brick yayılım masterı birden fazla sheet ile aynı güven skorunda eşleşti: " + ", ".join(best))
+        raise OfficialBrickSpreadError(
+            "Resmi brick yayılım masterı birden fazla sheet ile aynı güven skorunda eşleşti: "
+            + ", ".join(best)
+        )
     return best[0]
+
+
+def _file_has_spread(cls, file_path):
+    workbook = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        return cls._sheet_name(workbook) is not None
+    finally:
+        workbook.close()
 
 
 def install_official_brick_spread_atomic():
@@ -66,7 +76,27 @@ def install_official_brick_spread_atomic():
                 "aggregate_rows_ignored": 0,
                 "already_persisted": True,
             }
-        return original_persist(file_path=file_path, upload_id=upload_id, year=year, month=month, week_number=week_number)
+        # Capability-aware behavior: absence is not an error. If content says
+        # the master exists, the original strict parser owns all validation.
+        if not _file_has_spread(cls, file_path):
+            return {
+                "sheet_name": None,
+                "representatives": 0,
+                "product_columns": 0,
+                "records": 0,
+                "aggregate_rows_ignored": 0,
+                "already_persisted": False,
+                "present": False,
+            }
+        result = original_persist(
+            file_path=file_path,
+            upload_id=upload_id,
+            year=year,
+            month=month,
+            week_number=week_number,
+        )
+        result["present"] = True
+        return result
 
     OfficialBrickSpreadService.persist = classmethod(persist_idempotent)
     original_process = IMSImportService.process_workbook
@@ -83,6 +113,7 @@ def install_official_brick_spread_atomic():
         self.statistics["official_brick_spread_records"] = spread["records"]
         self.statistics["official_brick_spread_representatives"] = spread["representatives"]
         self.statistics["official_brick_spread_product_columns"] = spread["product_columns"]
+        self.statistics["official_brick_spread_present"] = int(bool(spread.get("present", spread["records"])))
         self.statistics["official_brick_spread_atomic"] = 1
         return result
 
