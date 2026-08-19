@@ -20,6 +20,7 @@ from app.services.sqlite_runtime import (
 from app.services.vacancy_matching import install_vacancy_matcher
 from app.services.representative_resolver import install_representative_resolver
 from app.services.workbook_preflight import install_workbook_preflight
+from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
 
@@ -52,13 +53,8 @@ def register_template_context(app):
         try:
             from app.models import IMSUpload
             from app.services.period_service import PeriodService
-
             period = PeriodService.get_active_period()
-            upload = (
-                IMSUpload.query.filter_by(status="COMPLETED")
-                .order_by(IMSUpload.uploaded_at.desc())
-                .first()
-            )
+            upload = IMSUpload.query.filter_by(status="COMPLETED").order_by(IMSUpload.uploaded_at.desc()).first()
             period_label = f"{period['year']}/{int(period['month']):02d} · {period.get('week_number') or '-'} . Hafta"
             upload_label = upload.uploaded_at.strftime("%d.%m.%Y") if upload and upload.uploaded_at else "—"
             return {"active_period": period_label, "latest_upload_date": upload_label}
@@ -92,10 +88,8 @@ def register_blueprints(app):
 
 def create_directories(app):
     folders = [
-        app.config["UPLOAD_FOLDER"],
-        app.config["REPORT_FOLDER"],
-        app.config["BACKUP_FOLDER"],
-        app.config["LOG_FOLDER"],
+        app.config["UPLOAD_FOLDER"], app.config["REPORT_FOLDER"],
+        app.config["BACKUP_FOLDER"], app.config["LOG_FOLDER"],
         app.config.get("TEMP_FOLDER", Path(app.instance_path) / "temp"),
     ]
     database_uri = app.config["SQLALCHEMY_DATABASE_URI"]
@@ -135,6 +129,7 @@ def create_app(config_object=Config):
     install_vacancy_matcher()
     install_representative_resolver()
     install_workbook_preflight()
+    install_official_brick_spread_atomic()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
 
