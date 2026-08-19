@@ -1,11 +1,9 @@
 """Content-driven, coordinate-independent workbook reconciliation.
 
-The engine never uses a sheet name, row number or column number as business
-identity.  Physical coordinates are retained only for audit evidence.  Metric
-identity is derived from row dimensions + product/market + metric family +
-phase + period scope.  Pivot-like sheets with no upstream equivalent remain
-explicit master sources; once a strong cross-sheet relationship is discovered,
-missing or conflicting cells become blocking errors.
+Business identity is derived from dimensions, product/market, metric family,
+phase and period scope. Sheet names and physical coordinates are audit metadata
+only. Independent pivots remain explicit masters; once a strong relationship is
+discovered, conflicting or missing derived metrics fail closed.
 """
 from __future__ import annotations
 
@@ -22,22 +20,16 @@ class WorkbookSemanticReconciler:
         "BOLGE", "REGION", "IAM BRICK", "BRICK", "TEMSILCI", "TTS ISMI",
         "REPRESENTATIVE", "1 TTS ISMI", "2 TTS ISMI",
     }
-    GENERIC_TOKENS = {
-        "PIVOTTABLE", "GROUPTABLE", "LIDS", "REPORT", "VALUES", "VALUE",
-        "UNITS", "UNIT", "TL", "KUTU", "BOX", "ADET", "CIRO", "TUTAR",
-        "MONTH", "MONTHS", "WEEK", "WEEKS", "HAFTA", "AY", "PRODUCTS",
-        "MARKETPRODUCTS", "MKT", "NONE", "CIKIS", "ÇIKIŞ", "HEDEF", "TARGET",
-        "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP",
-    }
     MONTH_TOKENS = {
         "OCAK", "SUBAT", "ŞUBAT", "MART", "NISAN", "NİSAN", "MAYIS",
         "HAZIRAN", "HAZİRAN", "TEMMUZ", "AGUSTOS", "AĞUSTOS", "EYLUL",
         "EYLÜL", "EKIM", "EKİM", "KASIM", "ARALIK", "JAN", "JANUARY",
-        "FEB", "FEBRUARY", "MAR", "MARCH", "APR", "APRIL", "MAY", "JUN",
-        "JUNE", "JUL", "JULY", "AUG", "AUGUST", "SEP", "SEPTEMBER", "OCT",
+        "FEB", "FEBRUARY", "MAR", "MARCH", "APR", "APRIL", "JUN", "JUNE",
+        "JUL", "JULY", "AUG", "AUGUST", "SEP", "SEPTEMBER", "OCT",
         "OCTOBER", "NOV", "NOVEMBER", "DEC", "DECEMBER",
     }
     DERIVED_HINT_TYPES = {"master_pivot_derived", "brick_realization"}
+    MONTHLY_HINT_TYPES = {"competition_tl", "competition_box", "competition_pp"}
     MIN_RELATION_MATCHES = 5
     RELATION_MATCH_RATIO = 0.90
     RELATION_COVERAGE_RATIO = 0.80
@@ -72,16 +64,11 @@ class WorkbookSemanticReconciler:
             number = float(value)
             return number if math.isfinite(number) else None
         text = str(value).strip().replace("\u00a0", "")
-        if not text or cls._norm(text) in {"NAN", "NONE", "-"}:
-            return None
-        if not re.search(r"\d", text):
+        if not text or cls._norm(text) in {"NAN", "NONE", "-"} or not re.search(r"\d", text):
             return None
         text = re.sub(r"[^0-9,.-]", "", text)
         if text.count(",") and text.count("."):
-            if text.rfind(",") > text.rfind("."):
-                text = text.replace(".", "").replace(",", ".")
-            else:
-                text = text.replace(",", "")
+            text = text.replace(".", "").replace(",", ".") if text.rfind(",") > text.rfind(".") else text.replace(",", "")
         elif text.count(","):
             text = text.replace(".", "").replace(",", ".")
         try:
@@ -91,18 +78,14 @@ class WorkbookSemanticReconciler:
             return None
 
     def _header_row(self, sheet_name, frame):
-        manifest = self._manifest_by_name.get(str(sheet_name), {})
-        header = manifest.get("header_row")
-        if header is not None:
-            return int(header)
-        best = None
-        best_score = -1
+        item = self._manifest_by_name.get(str(sheet_name), {})
+        if item.get("header_row") is not None:
+            return int(item["header_row"])
+        best, best_score = 0, -1
         for row in range(min(40, len(frame))):
-            values = [self._norm(v) for v in frame.iloc[row].tolist() if self._meaningful(v)]
-            joined = " | ".join(values)
-            score = sum(2 for token in self.DIMENSION_TOKENS if token in joined)
-            if any(token in joined for token in ("VALUES REPORT", "UNITS REPORT", "TL", "KUTU", "HEDEF", "CIKIS", "ÇIKIŞ", "REAL")):
-                score += 2
+            text = " | ".join(self._norm(v) for v in frame.iloc[row].tolist() if self._meaningful(v))
+            score = sum(2 for token in self.DIMENSION_TOKENS if token in text)
+            score += 2 if any(token in text for token in ("VALUES REPORT", "UNITS REPORT", "TL", "KUTU", "HEDEF", "CIKIS", "ÇIKIŞ", "REAL")) else 0
             if score > best_score:
                 best, best_score = row, score
         return best if best_score >= 2 else min(5, max(0, len(frame) - 1))
@@ -111,10 +94,7 @@ class WorkbookSemanticReconciler:
         matrix = []
         for row in range(header_row + 1):
             raw = [self._norm(v) if self._meaningful(v) else "" for v in frame.iloc[row].tolist()]
-            # Excel merged section headings are commonly stored only in the
-            # first cell.  Carry them rightward for semantic context only.
-            carried = []
-            active = ""
+            carried, active = [], ""
             for value in raw:
                 if value:
                     active = value
@@ -122,7 +102,8 @@ class WorkbookSemanticReconciler:
             matrix.append((raw, carried))
         return matrix
 
-    def _column_context(self, matrix, column):
+    @staticmethod
+    def _column_context(matrix, column):
         raw_parts, carried_parts = [], []
         for raw, carried in matrix:
             if column < len(raw) and raw[column] and raw[column] not in raw_parts:
@@ -140,18 +121,15 @@ class WorkbookSemanticReconciler:
                 columns.append(col)
         if columns:
             return sorted(set(columns))[:4]
-        # Fallback for unnamed pivots: leading columns whose data is mostly text.
         candidates = []
         for col in range(min(4, frame.shape[1])):
-            text_count = 0
-            total = 0
+            text_count = total = 0
             for row in range(header_row + 1, min(len(frame), header_row + 80)):
                 value = frame.iloc[row, col]
                 if not self._meaningful(value):
                     continue
                 total += 1
-                if self._number(value) is None:
-                    text_count += 1
+                text_count += self._number(value) is None
             if total and text_count / total >= 0.70:
                 candidates.append(col)
         return candidates or [0]
@@ -166,7 +144,8 @@ class WorkbookSemanticReconciler:
                 parts.append(value)
         return tuple(parts)
 
-    def _metric_family(self, raw_parts, carried_parts):
+    @staticmethod
+    def _metric_family(raw_parts, carried_parts):
         text = " ".join(raw_parts + carried_parts)
         if any(token in text for token in ("REAL%", "REALIZASYON", "REALİZASYON")):
             return "ratio"
@@ -178,7 +157,8 @@ class WorkbookSemanticReconciler:
             return "tl"
         return None
 
-    def _phase(self, raw_parts, carried_parts):
+    @staticmethod
+    def _phase(raw_parts, carried_parts):
         text = " ".join(raw_parts + carried_parts)
         if "HEDEF" in text or "TARGET" in text:
             return "target"
@@ -190,66 +170,75 @@ class WorkbookSemanticReconciler:
             return "actual"
         return "market"
 
-    def _period_scope(self, raw_parts, carried_parts):
+    def _period_scope(self, raw_parts, carried_parts, sheet_type):
         text = " ".join(raw_parts + carried_parts)
         if "HAFTA" in text or "WEEK" in text:
             return "weekly"
         if "MONTH" in text or re.search(r"\bAY\b", text) or any(token in text for token in self.MONTH_TOKENS):
             return "monthly"
+        if sheet_type in self.MONTHLY_HINT_TYPES or str(sheet_type).startswith("monthly_master"):
+            return "monthly"
         return "unspecified"
+
+    def _is_metadata_part(self, part):
+        if not part:
+            return True
+        if part.startswith("PIVOTTABLE") or part.startswith("GROUPTABLE"):
+            return True
+        if "=" in part and any(token in part for token in ("MONTH", "WEEK", "AY", "HAFTA")):
+            return True
+        tokens = set(re.findall(r"[A-Z0-9ÇĞİÖŞÜ]+", part))
+        generic = {
+            "REPORT", "VALUES", "VALUE", "UNITS", "UNIT", "TL", "KUTU", "BOX", "ADET",
+            "CIRO", "TUTAR", "MONTH", "MONTHS", "WEEK", "WEEKS", "HAFTA", "AY",
+            "PRODUCTS", "MARKETPRODUCTS", "MKT", "NONE", "CIKIS", "ÇIKIŞ", "HEDEF",
+            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP",
+        }
+        return not tokens or tokens <= generic or tokens <= self.MONTH_TOKENS
 
     def _product_key(self, raw_parts, carried_parts):
         all_parts = raw_parts + [part for part in carried_parts if part not in raw_parts]
         joined = " ".join(all_parts)
         if "GRAND TOTAL" in joined or "GENEL TOPLAM" in joined:
             return "__TOTAL__"
-        subtotal_parts = [part for part in all_parts if "SUBTOTAL" in part or "ARA TOPLAM" in part]
-        if subtotal_parts:
-            candidate = subtotal_parts[-1]
-            return re.sub(r"\b(SUBTOTAL|ARA TOPLAM|TOPLAM|TOTAL)\b", "", candidate).strip() or "__TOTAL__"
-        candidates = []
-        for part in all_parts:
-            tokens = set(re.findall(r"[A-Z0-9ÇĞİÖŞÜ]+", part))
-            if not tokens:
+        subtotal = [p for p in all_parts if "SUBTOTAL" in p or "ARA TOPLAM" in p]
+        if subtotal:
+            return re.sub(r"\b(SUBTOTAL|ARA TOPLAM|TOPLAM|TOTAL)\b", "", subtotal[-1]).strip() or "__TOTAL__"
+        for part in reversed(raw_parts):
+            if self._is_metadata_part(part) or any(dim in part for dim in self.DIMENSION_TOKENS):
                 continue
-            if any(dim in part for dim in self.DIMENSION_TOKENS):
-                continue
-            if tokens <= self.GENERIC_TOKENS or tokens <= self.MONTH_TOKENS:
-                continue
-            cleaned = part
-            for generic in self.GENERIC_TOKENS | self.MONTH_TOKENS:
-                cleaned = re.sub(rf"\b{re.escape(generic)}\b", " ", cleaned)
-            cleaned = re.sub(r"\b20\d{2}\b|\b\d{1,2}[./-]\d{1,2}\b", " ", cleaned)
+            cleaned = re.sub(r"\b(VALUES?|UNITS?|REPORT|TL|KUTU|BOX|ADET)\b", " ", part)
             cleaned = " ".join(cleaned.split()).strip()
-            if cleaned:
-                candidates.append(cleaned)
-        if not candidates:
-            return "__TOTAL__"
-        # The lowest/last header level is normally the most specific product.
-        return candidates[-1]
+            if cleaned and not self._is_metadata_part(cleaned):
+                return cleaned
+        for part in reversed(carried_parts):
+            if self._is_metadata_part(part) or any(dim in part for dim in self.DIMENSION_TOKENS):
+                continue
+            cleaned = re.sub(r"\b(VALUES?|UNITS?|REPORT|TL|KUTU|BOX|ADET)\b", " ", part)
+            cleaned = " ".join(cleaned.split()).strip()
+            if cleaned and not self._is_metadata_part(cleaned):
+                return cleaned
+        return "__TOTAL__"
 
-    def _is_pivot_candidate(self, sheet_name, frame, sheet_type):
+    def _is_pivot_candidate(self, frame, sheet_type):
         if sheet_type in self.DERIVED_HINT_TYPES or str(sheet_type).startswith("monthly_master"):
             return True
         sample = " ".join(
-            self._norm(v)
-            for row in range(min(8, len(frame)))
-            for v in frame.iloc[row].tolist()
-            if self._meaningful(v)
+            self._norm(v) for row in range(min(8, len(frame))) for v in frame.iloc[row].tolist() if self._meaningful(v)
         )
-        return "PIVOTTABLE" in sample or "GROUPTABLE" in sample or "REALIZASYON" in sample or "REALİZASYON" in sample
+        return any(token in sample for token in ("PIVOTTABLE", "GROUPTABLE", "REALIZASYON", "REALİZASYON"))
 
     def _observations(self):
-        observations = []
-        profiles = {}
+        observations, profiles = [], {}
         for sheet_name, frame in self.workbook.items():
             item = self._manifest_by_name.get(str(sheet_name), {})
             if item.get("coverage") in {"unclassified", "explicit_nondata"}:
                 continue
+            sheet_type = item.get("sheet_type")
             header_row = self._header_row(sheet_name, frame)
             matrix = self._header_matrix(frame, header_row)
             dims = self._dimension_columns(frame, header_row, matrix)
-            pivot_candidate = self._is_pivot_candidate(sheet_name, frame, item.get("sheet_type"))
+            pivot_candidate = self._is_pivot_candidate(frame, sheet_type)
             profiles[str(sheet_name)] = {"pivot_candidate": pivot_candidate, "header_row": header_row, "dimension_columns": dims}
             for row in range(header_row + 1, len(frame)):
                 row_key = self._row_key(frame, row, dims)
@@ -265,29 +254,33 @@ class WorkbookSemanticReconciler:
                     family = self._metric_family(raw_parts, carried_parts)
                     if family is None:
                         continue
-                    observation = {
-                        "sheet_name": str(sheet_name),
-                        "row": row + 1,
-                        "column": col + 1,
-                        "value": value,
-                        "row_key": row_key,
-                        "metric_family": family,
+                    obs = {
+                        "sheet_name": str(sheet_name), "row": row + 1, "column": col + 1,
+                        "value": value, "row_key": row_key, "metric_family": family,
                         "phase": self._phase(raw_parts, carried_parts),
-                        "period_scope": self._period_scope(raw_parts, carried_parts),
+                        "period_scope": self._period_scope(raw_parts, carried_parts, sheet_type),
                         "product_key": self._product_key(raw_parts, carried_parts),
                         "pivot_candidate": pivot_candidate,
                     }
-                    observation["semantic_key"] = (
-                        observation["row_key"], observation["metric_family"],
-                        observation["phase"], observation["period_scope"],
-                        observation["product_key"],
-                    )
-                    observations.append(observation)
+                    obs["semantic_key"] = (obs["row_key"], obs["metric_family"], obs["phase"], obs["period_scope"], obs["product_key"])
+                    observations.append(obs)
         return observations, profiles
 
     @classmethod
     def _equal(cls, left, right):
         return abs(float(left) - float(right)) <= cls.TOLERANCE
+
+    @staticmethod
+    def _relation_key(key):
+        row_key, family, phase, _period, product = key
+        return row_key, family, phase, product
+
+    @staticmethod
+    def _relation_index(mapping):
+        index = defaultdict(list)
+        for key, obs in mapping.items():
+            index[WorkbookSemanticReconciler._relation_key(key)].append((key, obs))
+        return index
 
     def reconcile(self):
         observations, profiles = self._observations()
@@ -304,68 +297,60 @@ class WorkbookSemanticReconciler:
         relations = []
         sheets = list(by_sheet_key)
         for index, left_name in enumerate(sheets):
-            left = by_sheet_key[left_name]
+            left_rel = self._relation_index(by_sheet_key[left_name])
             for right_name in sheets[index + 1:]:
-                right = by_sheet_key[right_name]
-                common = set(left) & set(right)
-                if len(common) < self.MIN_RELATION_MATCHES:
+                right_rel = self._relation_index(by_sheet_key[right_name])
+                pairs = []
+                for rel_key in set(left_rel) & set(right_rel):
+                    for lkey, lobs in left_rel[rel_key]:
+                        for rkey, robs in right_rel[rel_key]:
+                            if lkey[3] != rkey[3] and "unspecified" not in {lkey[3], rkey[3]}:
+                                continue
+                            pairs.append((lkey, rkey, lobs, robs))
+                if len(pairs) < self.MIN_RELATION_MATCHES:
                     continue
-                matched = [key for key in common if self._equal(left[key]["value"], right[key]["value"])]
-                match_ratio = len(matched) / len(common)
-                coverage = len(common) / max(1, min(len(left), len(right)))
+                matched = [(lk, rk, lo, ro) for lk, rk, lo, ro in pairs if self._equal(lo["value"], ro["value"])]
+                match_ratio = len(matched) / len(pairs)
+                coverage = len({self._relation_key(lk) for lk, *_ in pairs}) / max(1, min(len(left_rel), len(right_rel)))
                 if match_ratio >= self.RELATION_MATCH_RATIO and coverage >= self.RELATION_COVERAGE_RATIO:
-                    relations.append({
-                        "left": left_name, "right": right_name,
-                        "common": common, "matched": set(matched),
-                        "match_ratio": match_ratio, "coverage": coverage,
-                    })
+                    relations.append({"left": left_name, "right": right_name, "pairs": pairs, "matched": matched, "match_ratio": match_ratio, "coverage": coverage})
 
-        evidence = {}
-        conflicts = []
-        related_keys = defaultdict(set)
+        evidence, conflicts = {}, []
         for relation in relations:
-            left_name, right_name = relation["left"], relation["right"]
-            left, right = by_sheet_key[left_name], by_sheet_key[right_name]
-            for key in relation["common"]:
-                lobs, robs = left[key], right[key]
-                related_keys[left_name].add(key); related_keys[right_name].add(key)
-                if key in relation["matched"]:
+            matched_pairs = {(lk, rk) for lk, rk, *_ in relation["matched"]}
+            for lkey, rkey, lobs, robs in relation["pairs"]:
+                if (lkey, rkey) in matched_pairs:
                     evidence[(lobs["sheet_name"], lobs["row"], lobs["column"])] = {
-                        "matched": True, "semantic_key": repr(key),
-                        "source_sheet": robs["sheet_name"], "source_row": robs["row"], "source_column": robs["column"],
-                        "source_value": robs["value"], "derived_value": lobs["value"],
+                        "matched": True, "semantic_key": repr(lkey), "source_sheet": robs["sheet_name"],
+                        "source_row": robs["row"], "source_column": robs["column"], "source_value": robs["value"], "derived_value": lobs["value"],
                     }
                     evidence[(robs["sheet_name"], robs["row"], robs["column"])] = {
-                        "matched": True, "semantic_key": repr(key),
-                        "source_sheet": lobs["sheet_name"], "source_row": lobs["row"], "source_column": lobs["column"],
-                        "source_value": lobs["value"], "derived_value": robs["value"],
+                        "matched": True, "semantic_key": repr(rkey), "source_sheet": lobs["sheet_name"],
+                        "source_row": lobs["row"], "source_column": lobs["column"], "source_value": lobs["value"], "derived_value": robs["value"],
                     }
                 else:
                     conflicts.append({"type": "VALUE_CONFLICT", "left": lobs, "right": robs})
 
-            # Once a high-coverage relation exists, a small number of missing
-            # semantic cells is evidence of an incomplete pivot rather than a
-            # reason to silently reclassify it as a new master.
-            smaller_name, larger_name = (left_name, right_name) if len(left) <= len(right) else (right_name, left_name)
-            smaller, larger = by_sheet_key[smaller_name], by_sheet_key[larger_name]
-            missing = set(larger) - set(smaller)
-            allowed_missing = max(1, int(len(larger) * (1.0 - self.RELATION_COVERAGE_RATIO)))
+            left_name, right_name = relation["left"], relation["right"]
+            left_rel, right_rel = self._relation_index(by_sheet_key[left_name]), self._relation_index(by_sheet_key[right_name])
+            left_set, right_set = set(left_rel), set(right_rel)
+            if len(left_set) <= len(right_set):
+                smaller_name, missing, source_index = left_name, right_set - left_set, right_rel
+            else:
+                smaller_name, missing, source_index = right_name, left_set - right_set, left_rel
+            allowed_missing = max(1, int(max(len(left_set), len(right_set)) * (1.0 - self.RELATION_COVERAGE_RATIO)))
             if profiles.get(smaller_name, {}).get("pivot_candidate") and 0 < len(missing) <= allowed_missing:
-                for key in sorted(missing, key=repr):
-                    conflicts.append({"type": "MISSING_DERIVED_CELL", "sheet_name": smaller_name, "semantic_key": repr(key), "source": larger[key]})
+                for rel_key in sorted(missing, key=repr):
+                    conflicts.append({"type": "MISSING_DERIVED_CELL", "sheet_name": smaller_name, "semantic_key": repr(rel_key), "source": source_index[rel_key][0][1]})
 
         ledger = getattr(self.importer, "workbook_cell_ledger", []) or []
         obs_by_coord = {(o["sheet_name"], o["row"], o["column"]): o for o in observations}
-        verified = 0
-        imported_master = 0
-        explicit_nondata = 0
+        verified = imported_master = explicit_nondata = 0
         for cell in ledger:
             coord = (cell["sheet_name"], cell["row"], cell["column"])
             obs = obs_by_coord.get(coord)
             profile = profiles.get(cell["sheet_name"], {})
             if obs is None:
-                # Header/label/metadata cells are intentional non-data, not
-                # fake derived metrics requiring numeric evidence.
                 if profile.get("pivot_candidate") or cell.get("classification") == "VERIFIED_DERIVED":
                     cell["classification"] = "EXPLICIT_NONDATA"
                     explicit_nondata += 1
@@ -382,8 +367,7 @@ class WorkbookSemanticReconciler:
 
         self.importer.derived_verification_evidence = evidence
         self.importer.semantic_relationships = [
-            {k: v for k, v in relation.items() if k not in {"common", "matched"}}
-            for relation in relations
+            {"left": r["left"], "right": r["right"], "match_ratio": r["match_ratio"], "coverage": r["coverage"]} for r in relations
         ]
         self.importer.statistics["verified_derived_cells"] = verified
         self.importer.statistics["independent_master_cells"] = imported_master
@@ -395,11 +379,5 @@ class WorkbookSemanticReconciler:
 
         problems = duplicate_conflicts + conflicts
         if problems:
-            sample = problems[:5]
-            raise ValueError(f"Workbook semantic reconciliation başarısız; {len(problems)} conflict/missing cell: {sample}")
-        return {
-            "relationships": self.importer.semantic_relationships,
-            "verified_derived_cells": verified,
-            "independent_master_cells": imported_master,
-            "conflicts": 0,
-        }
+            raise ValueError(f"Workbook semantic reconciliation başarısız; {len(problems)} conflict/missing cell: {problems[:5]}")
+        return {"relationships": self.importer.semantic_relationships, "verified_derived_cells": verified, "independent_master_cells": imported_master, "conflicts": 0}
