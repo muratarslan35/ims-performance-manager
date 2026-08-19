@@ -17,14 +17,20 @@ _ORIGINAL_FIND_REPRESENTATIVE = None
 _VACANCY_CACHE = {}
 
 
-def _canonical_text(value) -> str:
+def canonical_vacancy_text(value) -> str:
     text = unicodedata.normalize("NFC", str(value or "")).upper().strip()
     text = re.sub(r"[^0-9A-ZÇĞİÖŞÜ]+", " ", text, flags=re.UNICODE)
     return " ".join(text.split())
 
 
-def _vacancy_token(value):
-    tokens = _canonical_text(value).split()
+def vacancy_slot_token(value):
+    """Return an accent-sensitive vacancy slot token, or None for normal names.
+
+    BOS/BOŞ and their KADRO-qualified forms are intentionally distinct. BRICK is
+    context only. A value containing both BOS and BOŞ is conflicting and is not
+    resolved automatically. Token matching means BOSTANCI can never become BOS.
+    """
+    tokens = canonical_vacancy_text(value).split()
     has_bos = "BOS" in tokens
     has_bos_cedilla = "BOŞ" in tokens
     if has_bos and has_bos_cedilla:
@@ -38,27 +44,40 @@ def _vacancy_token(value):
     return None
 
 
-def _is_explicit_vacancy(value) -> bool:
-    return _vacancy_token(value) is not None
-
-
-def _vacancy_identity(value):
-    canonical = _canonical_text(value)
-    token = _vacancy_token(canonical)
+def vacancy_identity(value):
+    canonical = canonical_vacancy_text(value)
+    token = vacancy_slot_token(canonical)
     return (canonical, token) if token else None
+
+
+def vacancy_stable_suffix(value) -> str:
+    """Build a stable accent-sensitive code suffix without collapsing Ş to S."""
+    identity = vacancy_identity(value)
+    if identity is None:
+        return "VACANCY"
+    canonical, token = identity
+    # ASCII rep_code-safe but explicitly encode BOŞ before stripping accents.
+    encoded = canonical.replace("BOŞ", "BOSH").replace("Ş", "SH")
+    encoded = re.sub(r"[^A-Z0-9]+", "", encoded)[:40]
+    qualifier = re.sub(r"[^A-Z0-9]+", "", token.replace("Ş", "SH"))
+    return f"{qualifier}{encoded}"[:48] or "VACANCY"
+
+
+def _is_explicit_vacancy(value) -> bool:
+    return vacancy_slot_token(value) is not None
 
 
 def _candidate_labels(representative):
     return tuple(label for label in (
-        _canonical_text(representative.rep_name),
-        _canonical_text(representative.territory),
-        _canonical_text(representative.rep_code),
-        _canonical_text(representative.ims_code),
+        canonical_vacancy_text(representative.rep_name),
+        canonical_vacancy_text(representative.territory),
+        canonical_vacancy_text(representative.rep_code),
+        canonical_vacancy_text(representative.ims_code),
     ) if label)
 
 
 def _vacancy_candidate(source_value):
-    identity = _vacancy_identity(source_value)
+    identity = vacancy_identity(source_value)
     if identity is None:
         return None
     source_canonical, source_token = identity
@@ -67,9 +86,9 @@ def _vacancy_candidate(source_value):
     scored = []
     for representative in Representative.query.all():
         labels = _candidate_labels(representative)
-        label_tokens = {_vacancy_token(label) for label in labels}
+        label_tokens = {vacancy_slot_token(label) for label in labels}
         label_tokens.discard(None)
-        code = _canonical_text(representative.rep_code)
+        code = canonical_vacancy_text(representative.rep_code)
         if source_token not in label_tokens and not (source_token == "KADRO" and code.startswith("UNASSIGNED")):
             continue
         score = 0
@@ -114,6 +133,38 @@ def install_vacancy_matcher() -> None:
             return original(value, minimum_score)
 
         AliasService.find_representative = classmethod(find_representative_with_vacancies)
+
+        # IMSImportService historically had local vacancy helpers that used
+        # accent-insensitive AliasService.normalize(). Replace only those helper
+        # seams so every importer shares the same vacancy identity semantics.
+        from app.services.ims_import_service import IMSImportService
+
+        def is_vacancy_representative(self, text):
+            return vacancy_slot_token(text) is not None
+
+        def vacancy_code(region, vacancy_name):
+            return f"UNASSIGNED{region or 'GENERAL'}{vacancy_stable_suffix(vacancy_name)}"
+
+        def find_vacancy_placeholder(self, vacancy_name):
+            source_identity = vacancy_identity(vacancy_name)
+            if source_identity is None:
+                return None
+            source_canonical, source_token = source_identity
+            ignored = {"BOS", "BOŞ", "KADRO", "BRICK"}
+            source_context = " ".join(t for t in source_canonical.split() if t not in ignored)
+            matches = []
+            for representative in Representative.query.filter(Representative.rep_code.like("UNASSIGNED%")).all():
+                candidate_token = vacancy_slot_token(representative.rep_name) or vacancy_slot_token(representative.territory)
+                if candidate_token != source_token:
+                    continue
+                city = canonical_vacancy_text(representative.city or "")
+                if source_context and city and (city.startswith(source_context) or source_context.startswith(city)):
+                    matches.append(representative)
+            return matches[0] if len(matches) == 1 else None
+
+        IMSImportService._is_vacancy_representative = is_vacancy_representative
+        IMSImportService._vacancy_code = staticmethod(vacancy_code)
+        IMSImportService._find_vacancy_placeholder = find_vacancy_placeholder
         _INSTALLED = True
 
 
