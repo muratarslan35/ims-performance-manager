@@ -18,6 +18,7 @@ from app.services.sqlite_runtime import (
     install_sqlite_connection_pragmas,
 )
 from app.services.vacancy_matching import install_vacancy_matcher
+from app.services.representative_resolver import install_representative_resolver
 from app.services.workbook_preflight import install_workbook_preflight
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
@@ -66,87 +67,48 @@ def register_template_context(app):
 
 
 def register_extensions(app):
-
     db.init_app(app)
-
     migrate.init_app(app, db)
-
     login_manager.init_app(app)
-
     login_manager.login_view = "auth.login"
-
     login_manager.login_message = "Bu sayfayı görüntülemek için giriş yapın."
-
     login_manager.login_message_category = "warning"
 
 
 def register_blueprints(app):
-
     app.register_blueprint(main_bp)
-
     app.register_blueprint(auth_bp)
-
     app.register_blueprint(products_bp)
-
     app.register_blueprint(settings_bp)
-
     app.register_blueprint(targets_bp)
-
     app.register_blueprint(matching_bp)
-
     app.register_blueprint(competition_bp)
-
     app.register_blueprint(ims_bp)
-
     app.register_blueprint(dashboard_bp)
-
     app.register_blueprint(representatives_bp)
-
     app.register_blueprint(simulation_bp)
     app.register_blueprint(regions_bp)
 
 
 def create_directories(app):
-
     folders = [
-
         app.config["UPLOAD_FOLDER"],
-
         app.config["REPORT_FOLDER"],
-
         app.config["BACKUP_FOLDER"],
-
         app.config["LOG_FOLDER"],
-
         app.config.get("TEMP_FOLDER", Path(app.instance_path) / "temp"),
-
     ]
-
     database_uri = app.config["SQLALCHEMY_DATABASE_URI"]
-
     if database_uri.startswith("sqlite:///") and database_uri != "sqlite:///":
-
-        folders.append(
-            Path(database_uri.removeprefix("sqlite:///" )).parent
-        )
-
+        folders.append(Path(database_uri.removeprefix("sqlite:///" )).parent)
     for folder in folders:
-
-        Path(folder).mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        Path(folder).mkdir(parents=True, exist_ok=True)
 
 
 def register_error_handlers(app):
-
     @app.errorhandler(404)
     def page_not_found(error):
-
-        return render_template(
-            "errors/404.html"
-        ), 404
-
+        return render_template("errors/404.html"), 404
 
     @app.errorhandler(500)
     def internal_error(error):
@@ -155,29 +117,15 @@ def register_error_handlers(app):
 
 
 def create_database(app):
-
     with app.app_context():
-
         initialize_database()
-
         from app.services.user_vault_service import UserVaultService
         UserVaultService.reconcile()
 
 
 def create_app(config_object=Config):
-
-    app = Flask(
-
-        __name__,
-
-        template_folder="templates",
-
-        static_folder="static"
-
-    )
-
+    app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(config_object)
-
     create_directories(app)
 
     install_sqlite_connection_pragmas()
@@ -185,14 +133,13 @@ def create_app(config_object=Config):
     configure_sqlite_runtime(app)
 
     install_vacancy_matcher()
+    install_representative_resolver()
     install_workbook_preflight()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
 
     register_template_context(app)
-
     register_blueprints(app)
-
     register_error_handlers(app)
 
     if not app.config.get("TESTING", False):
