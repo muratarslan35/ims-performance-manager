@@ -78,7 +78,12 @@ def _period_query(model, upload):
 
 
 def _snapshot(upload):
-    facts = _sorted_rows(_rows(IMSFact, _period_query(IMSFact, upload)))
+    # FACT rows are versioned by upload_id. Comparing the whole month would
+    # incorrectly mix baseline and acceptance uploads in the isolated DB and
+    # produce a false fingerprint mismatch after a successful re-import.
+    facts = _sorted_rows(_rows(IMSFact, IMSFact.query.filter_by(upload_id=upload.id)))
+    # Summary and Target are intentionally period-scoped in the existing
+    # production model, so they continue to be compared by year/month.
     summaries = _sorted_rows(_rows(IMSSummary, _period_query(IMSSummary, upload)))
     targets = _sorted_rows(_rows(Target, _period_query(Target, upload)))
     competition = _sorted_rows(_rows(CompetitionData, CompetitionData.query.filter_by(upload_id=upload.id)))
