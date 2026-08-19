@@ -112,6 +112,8 @@ jobs:
           venv/bin/python sqlite_online_backup.py instance/ipm.db "$acceptance_db"
           DATABASE_URL="sqlite:///$acceptance_db" \
             venv/bin/python verify_ims_acceptance.py
+          DATABASE_URL="sqlite:///$acceptance_db" \
+            venv/bin/python verify_ims_acceptance_extras.py
           cleanup_acceptance
           trap - EXIT
 
