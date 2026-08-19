@@ -37,7 +37,7 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -104,6 +104,16 @@ jobs:
           if str(mode).lower() != 'wal' or str(integrity).lower() != 'ok':
               raise SystemExit('SQLite production runtime verification failed')
           PY
+
+          echo '--- ISOLATED IMS ACCEPTANCE / FINGERPRINT ---'
+          acceptance_db="/tmp/ims-acceptance-${stamp}.db"
+          cleanup_acceptance() { rm -f "$acceptance_db" "$acceptance_db-wal" "$acceptance_db-shm"; }
+          trap cleanup_acceptance EXIT
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "$acceptance_db"
+          DATABASE_URL="sqlite:///$acceptance_db" \
+            venv/bin/python verify_ims_acceptance.py
+          cleanup_acceptance
+          trap - EXIT
 
           pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
           if [ -n "$pids" ]; then kill "$pids"; fi
