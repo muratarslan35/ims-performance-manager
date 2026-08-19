@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 
 from app import create_app
-from app.extensions import db
-from app.models import IMSFact, IMSUpload, Representative
+from app.models import IMSUpload, Representative
 from app.services.import_result_report import latest_import_report
 from app.services.vacancy_matching import canonical_vacancy_text, vacancy_slot_token
 from config import Config
@@ -30,18 +28,22 @@ def _assert_isolated_db():
 
 def _vacancy_context(value):
     canonical = canonical_vacancy_text(value)
-    tokens = [token for token in canonical.split() if token not in {"BOS", "BOŞ", "KADRO", "BRICK"}]
-    return " ".join(tokens)
+    ignored = {"BOS", "BOŞ", "KADRO", "BRICK", "ATANMAMIŞ"}
+    tokens = [token for token in canonical.split() if token not in ignored]
+    # Keep context order but remove repeated tokens so legacy/new display-label
+    # differences do not hide that BOS and BOŞ belong to the same slot context.
+    unique = []
+    for token in tokens:
+        if token not in unique:
+            unique.append(token)
+    return " ".join(unique)
 
 
-def _vacancy_identity_check(upload_id):
-    representatives = (
-        db.session.query(Representative)
-        .join(IMSFact, IMSFact.representative_id == Representative.id)
-        .filter(IMSFact.upload_id == upload_id)
-        .distinct()
-        .all()
-    )
+def _vacancy_identity_check():
+    # Stable cadre identity lives in Representative, not only in the current
+    # upload's FACT set. This proves the persisted registry keeps BOS and BOŞ
+    # separate even when one slot has zero sales in a particular IMS period.
+    representatives = Representative.query.all()
     slots = {}
     for representative in representatives:
         labels = [representative.rep_name, representative.territory, representative.city]
@@ -69,7 +71,6 @@ def _vacancy_identity_check(upload_id):
                 "bos_cedilla_ids": sorted(bos_cedilla_ids),
             })
 
-    # BOSTANCI-like normal names must never acquire a vacancy token.
     bad_normal_names = []
     for representative in representatives:
         for label in (representative.rep_name, representative.territory, representative.city):
@@ -78,6 +79,10 @@ def _vacancy_identity_check(upload_id):
                 bad_normal_names.append({"id": representative.id, "label": label})
     if bad_normal_names:
         raise AssertionError(f"BOSTANCI vacancy olarak yorumlandı: {bad_normal_names}")
+    if not verified_pairs:
+        raise AssertionError(
+            "Production representative registry içinde aynı bağlamda BOS ve BOŞ çifti bulunamadı; ayrı stable ID doğrulaması yapılamadı."
+        )
     return verified_pairs
 
 
@@ -110,7 +115,7 @@ def main():
         if national and (not national.get("passed") or national.get("conflicts")):
             raise AssertionError(f"NATIONAL/region reconciliation PASS değil: {national}")
 
-        vacancy_pairs = _vacancy_identity_check(current.id)
+        vacancy_pairs = _vacancy_identity_check()
         payload = {
             "result": "PASS",
             "upload_id": current.id,
