@@ -19,6 +19,7 @@ from app.services.sqlite_runtime import (
 )
 from app.services.vacancy_matching import install_vacancy_matcher
 from app.services.representative_resolver import install_representative_resolver
+from app.services.semantic_import_discovery import install_semantic_import_discovery
 from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.derived_master_verification import install_derived_verification_gate
@@ -128,6 +129,7 @@ def create_app(config_object=Config):
 
     install_vacancy_matcher()
     install_representative_resolver()
+    install_semantic_import_discovery()
     install_workbook_preflight()
     install_official_brick_spread_atomic()
     install_derived_verification_gate()
