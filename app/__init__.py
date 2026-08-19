@@ -18,6 +18,7 @@ from app.services.sqlite_runtime import (
     install_sqlite_connection_pragmas,
 )
 from app.services.vacancy_matching import install_vacancy_matcher
+from app.services.workbook_preflight import install_workbook_preflight
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -147,9 +148,6 @@ def register_error_handlers(app):
 
     @app.errorhandler(500)
     def internal_error(error):
-        # Do not run Flask context processors here.  If the original failure is
-        # an authentication/database lookup, context processors can query the
-        # same database again and recursively fail while rendering the 500.
         template = app.jinja_env.get_template("errors/500.html")
         return template.render(), 500
 
@@ -180,15 +178,12 @@ def create_app(config_object=Config):
 
     create_directories(app)
 
-    # Register SQLite connection pragmas before SQLAlchemy creates its first
-    # connection, then make WAL persistent before serving writable traffic.
     install_sqlite_connection_pragmas()
     register_extensions(app)
     configure_sqlite_runtime(app)
 
-    # Make explicit BOS/KADRO rows deterministic across every importer that
-    # uses AliasService, including target and sales sheets.
     install_vacancy_matcher()
+    install_workbook_preflight()
 
     register_template_context(app)
 
