@@ -24,6 +24,10 @@ from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
+from app.services.import_result_report import (
+    install_import_result_reporting,
+    latest_import_report,
+)
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -40,7 +44,7 @@ from app.regions import regions_bp
 
 
 def register_template_context(app):
-    """Expose the current IMS period consistently to the application shell."""
+    """Expose current IMS period and compact import audit report consistently."""
     @app.template_filter("istanbul_datetime")
     def istanbul_datetime(value, format_string="%d.%m.%Y %H:%M"):
         """Render UTC database timestamps in the application's local timezone."""
@@ -58,9 +62,17 @@ def register_template_context(app):
             upload = IMSUpload.query.filter_by(status="COMPLETED").order_by(IMSUpload.uploaded_at.desc()).first()
             period_label = f"{period['year']}/{int(period['month']):02d} · {period.get('week_number') or '-'} . Hafta"
             upload_label = upload.uploaded_at.strftime("%d.%m.%Y") if upload and upload.uploaded_at else "—"
-            return {"active_period": period_label, "latest_upload_date": upload_label}
+            return {
+                "active_period": period_label,
+                "latest_upload_date": upload_label,
+                "latest_import_report": latest_import_report(),
+            }
         except Exception:
-            return {"active_period": "—", "latest_upload_date": "—"}
+            return {
+                "active_period": "—",
+                "latest_upload_date": "—",
+                "latest_import_report": None,
+            }
 
 
 def register_extensions(app):
@@ -134,6 +146,7 @@ def create_app(config_object=Config):
     install_official_brick_spread_atomic()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
+    install_import_result_reporting()
 
     register_template_context(app)
     register_blueprints(app)
