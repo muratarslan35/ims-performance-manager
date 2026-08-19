@@ -25,15 +25,13 @@ from app.models import (
 )
 
 REPORT_MARKER = "IMS_IMPORT_REPORT_V1"
-BLOCKING_KEYS = (
+CANONICAL_BLOCKING_KEYS = (
     "unclassified_sheet",
     "unclassified_master_cell",
     "unresolved_representative",
     "unresolved_product",
     "invalid_metric",
-    "invalid_metric_records",
     "row_error",
-    "rows_error",
     "conflicting_match",
     "duplicate_conflict",
 )
@@ -106,34 +104,15 @@ def build_import_result_summary(service, *, success=None):
     upload = service.upload
     if success is None:
         success = not bool(service.errors)
-    blocking = {key: _stat(stats, key) for key in BLOCKING_KEYS}
-    unresolved_rep = max(
-        blocking.get("unresolved_representative", 0),
-        _stat(stats, "unresolved_representative_rows", "unmatched_representatives"),
-    )
-    unresolved_product = max(
-        blocking.get("unresolved_product", 0),
-        _stat(stats, "unmatched_products"),
-    )
-    invalid = max(
-        blocking.get("invalid_metric", 0),
-        blocking.get("invalid_metric_records", 0),
-    )
-    row_error = max(
-        blocking.get("row_error", 0),
-        blocking.get("rows_error", 0),
-    )
-    critical = {
-        "unclassified_sheet": blocking.get("unclassified_sheet", 0),
-        "unclassified_master_cell": blocking.get("unclassified_master_cell", 0),
-        "unresolved_representative": unresolved_rep,
-        "unresolved_product": unresolved_product,
-        "invalid_metric": invalid,
-        "row_error": row_error,
-        "conflicting_match": blocking.get("conflicting_match", 0),
-        "duplicate_conflict": blocking.get("duplicate_conflict", 0),
-    }
+
+    # Keep the visible PASS/FAIL decision exactly aligned with the publication
+    # gate. Legacy "unmatched" counters are diagnostics: for example a safe
+    # deterministic first-time representative auto-create increments
+    # unmatched_representatives before becoming matched, so it must not turn a
+    # successful published upload into a false manager-facing FAIL.
+    critical = {key: _stat(stats, key) for key in CANONICAL_BLOCKING_KEYS}
     final_result = "PASS" if success and not service.errors and not any(critical.values()) else "FAIL"
+
     manifest = getattr(service, "workbook_manifest", []) or []
     counts = _period_counts(service)
     summary = {
@@ -161,6 +140,8 @@ def build_import_result_summary(service, *, success=None):
             "vacancies": counts.get("vacancies", 0),
             "products": counts.get("products", 0),
             "auto_repaired": int(stats.get("auto_repaired", 0) or 0),
+            "diagnostic_unmatched_representatives": int(stats.get("unmatched_representatives", 0) or 0),
+            "diagnostic_unmatched_products": int(stats.get("unmatched_products", 0) or 0),
         },
         "counts": counts,
         "critical": critical,
