@@ -24,9 +24,18 @@ def _canonical_text(value) -> str:
     return " ".join(text.split())
 
 def _vacancy_token(value):
-    found = [t for t in _canonical_text(value).split() if t in _VACANCY_TOKENS]
-    unique = list(dict.fromkeys(found))
-    return unique[0] if len(unique) == 1 else None
+    tokens = _canonical_text(value).split()
+    has_bos = "BOS" in tokens
+    has_bos_cedilla = "BOŞ" in tokens
+    if has_bos and has_bos_cedilla:
+        return None
+    if has_bos_cedilla:
+        return "BOŞ"
+    if has_bos:
+        return "BOS"
+    if "KADRO" in tokens:
+        return "KADRO"
+    return None
 
 def _is_explicit_vacancy(value) -> bool:
     return _vacancy_token(value) is not None
@@ -64,11 +73,15 @@ def _vacancy_candidate(source_value):
         if source_canonical in labels:
             score, method = 100, "VACANCY_EXACT"
         else:
-            suffix = " " + source_canonical
-            if _canonical_text(representative.rep_name).endswith(suffix):
-                score, method = 99, "VACANCY_SUFFIX"
-            elif _canonical_text(representative.territory).endswith(suffix):
-                score, method = 98, "VACANCY_TERRITORY_SUFFIX"
+            source_core = " ".join(token for token in source_canonical.split() if token != "KADRO")
+            for label in labels:
+                label_core = " ".join(token for token in label.split() if token != "KADRO")
+                if source_core == label_core:
+                    score, method = 99, "VACANCY_QUALIFIER"
+                    break
+                if source_core and label_core.endswith(" " + source_core):
+                    score, method = 98, "VACANCY_SUFFIX"
+                    break
         if score:
             scored.append((score, representative.id, method, representative))
     if not scored:
@@ -91,8 +104,6 @@ def install_vacancy_matcher() -> None:
         original = AliasService.find_representative
         _ORIGINAL_FIND_REPRESENTATIVE = original
         def find_representative_with_vacancies(cls, value, minimum_score=None):
-            # Explicit vacancies bypass accent-insensitive AliasService. This is
-            # the critical guard that prevents BOŞ -> BOS identity collapse.
             if _is_explicit_vacancy(value):
                 candidate = _vacancy_candidate(value)
                 if candidate is None:
