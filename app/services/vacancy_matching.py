@@ -24,7 +24,6 @@ def canonical_vacancy_text(value) -> str:
 
 
 def vacancy_slot_token(value):
-    """Return an accent-sensitive vacancy slot token, or None for normal names."""
     tokens = canonical_vacancy_text(value).split()
     has_bos = "BOS" in tokens
     has_bos_cedilla = "BOŞ" in tokens
@@ -45,8 +44,6 @@ def vacancy_identity(value):
     return (canonical, token) if token else None
 
 
-# Backward-compatible private aliases retained for existing tests/callers while
-# all implementations use the same centralized accent-sensitive semantics.
 def _canonical_text(value) -> str:
     return canonical_vacancy_text(value)
 
@@ -116,6 +113,17 @@ def _vacancy_candidate(source_value):
     return result
 
 
+def resolve_vacancy_match(value):
+    """Resolve only explicit vacancy labels, never normal people or place names."""
+    if vacancy_identity(value) is None:
+        return AliasService.build_match(False, 0, "NOT_VACANCY", None)
+    candidate = _vacancy_candidate(value)
+    if candidate is None:
+        return AliasService.build_match(False, 0, "VACANCY_UNRESOLVED", None)
+    score, _identifier, method, representative = candidate
+    return AliasService.build_match(True, score, method, representative)
+
+
 def install_vacancy_matcher() -> None:
     global _INSTALLED, _ORIGINAL_FIND_REPRESENTATIVE
     if _INSTALLED:
@@ -128,11 +136,7 @@ def install_vacancy_matcher() -> None:
 
         def find_representative_with_vacancies(cls, value, minimum_score=None):
             if _is_explicit_vacancy(value):
-                candidate = _vacancy_candidate(value)
-                if candidate is None:
-                    return AliasService.build_match(False, 0, "VACANCY_UNRESOLVED", None)
-                score, _identifier, method, representative = candidate
-                return AliasService.build_match(True, score, method, representative)
+                return resolve_vacancy_match(value)
             return original(value, minimum_score)
 
         AliasService.find_representative = classmethod(find_representative_with_vacancies)
