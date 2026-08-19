@@ -103,13 +103,19 @@ def _vacancy_candidate(source_value):
         if score:
             scored.append((score, representative.id, method, representative))
     if not scored:
-        result = None
-    else:
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        best_score = scored[0][0]
-        best = [item for item in scored if item[0] == best_score]
-        result = best[0] if len(best) == 1 else None
-    _VACANCY_CACHE[identity] = result
+        # IMPORTANT: a miss is intentionally NOT cached. During one IMS
+        # transaction BAKIYE/bootstrap can create the deterministic vacancy
+        # placeholder after an earlier parser first asked for it. Caching None
+        # would make all later parsers (notably official brick spread) keep
+        # seeing a stale unresolved result even though the stable slot now
+        # exists. Successful stable matches remain cacheable.
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    best_score = scored[0][0]
+    best = [item for item in scored if item[0] == best_score]
+    result = best[0] if len(best) == 1 else None
+    if result is not None:
+        _VACANCY_CACHE[identity] = result
     return result
 
 
