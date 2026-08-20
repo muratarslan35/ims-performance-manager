@@ -575,6 +575,37 @@ class IMSImportService:
             self._product_match_cache[normalized] = AliasService.find_product(product_group_name)
         return self._product_match_cache[normalized]
 
+    def _unique_product_code(self, product_name):
+        base = re.sub(r"[^A-Z0-9]+", "", AliasService.normalize(product_name))[:24] or "PRODUCT"
+        candidate = base
+        suffix = 1
+        while Product.query.filter_by(product_code=candidate).first() is not None:
+            suffix += 1
+            suffix_text = f"-{suffix}"
+            candidate = f"{base[:30-len(suffix_text)]}{suffix_text}"
+        return candidate
+
+    def _ensure_product(self, product_group_name):
+        """Resolve or create a product from an explicit IMS product-group value."""
+        match = self.resolve_product_match(product_group_name)
+        if match["matched"]:
+            return match["object"], True
+        name = self.clean_text(product_group_name)
+        normalized = AliasService.normalize(name)
+        if not normalized:
+            return None, False
+        product = Product(
+            product_code=self._unique_product_code(name), product_name=name, ims_name=name,
+            category="IMS AUTO", competitor_group=name, is_active=True,
+            is_prime_product=False, include_total_tl=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+        AliasService.refresh()
+        self._product_match_cache[normalized] = AliasService.find_product(name)
+        self.warnings.append(f"Yeni ürün grubu otomatik oluşturuldu ({name}).")
+        return product, False
+
     def analyze_sheet(self, sheet_name, dataframe):
         header_row = self.find_header_row(dataframe)
         if header_row is None:
@@ -818,6 +849,7 @@ class IMSImportService:
             manager=manager,
             region=region,
             city=city,
+            team=self._team_for_context(region, city),
             active=True,
         )
         db.session.add(representative)
@@ -826,6 +858,19 @@ class IMSImportService:
         self._representative_match_cache[normalized] = AliasService.find_representative(name)
         self.statistics["matched_representatives"] += 1
         return representative.id, False
+
+    @staticmethod
+    def _team_for_context(region=None, city=None):
+        """Reuse the area's team only when the workbook context is unambiguous."""
+        query = Representative.query.filter(Representative.team.isnot(None), Representative.team != "")
+        if region:
+            query = query.filter_by(region=region)
+        elif city:
+            query = query.filter_by(city=city)
+        else:
+            return None
+        teams = {str(row.team).strip() for row in query.all() if str(row.team or "").strip()}
+        return next(iter(teams)) if len(teams) == 1 else None
 
     def _resolve_representative(
         self,
@@ -836,12 +881,16 @@ class IMSImportService:
         source_row,
         territory=None,
         manager=None,
+        region=None,
+        city=None,
     ):
         if allow_auto_create:
             return self._ensure_representative(
                 representative_name,
                 territory=territory,
                 manager=manager,
+                region=region,
+                city=city,
             )
 
         representative_match = self.resolve_representative_match(representative_name)
@@ -895,10 +944,18 @@ class IMSImportService:
                 continue
             normalized_header = AliasService.normalize(header)
             match = AliasService.find_product(header)
-            if not match["matched"] or match["method"] not in self.STRICT_PRODUCT_MATCH_METHODS:
-                continue
-
-            product = match["object"]
+            product = (
+                match.get("object")
+                if match.get("matched") and match.get("method") in self.STRICT_PRODUCT_MATCH_METHODS
+                else None
+            )
+            if product is None:
+                product_label = self._product_label_from_metric_header(header)
+                if not product_label:
+                    continue
+                product, _ = self._ensure_product(product_label)
+                if product is None:
+                    continue
 
             product_id = getattr(product, "id", None)
             product_code = getattr(product, "product_code", "") or ""
@@ -950,6 +1007,23 @@ class IMSImportService:
             seen_metric_pairs.add(metric_pair)
             self.statistics["matched_products"] += 1
         return products
+
+    def _product_label_from_metric_header(self, header):
+        """Extract a new product only from a column that explicitly carries a metric."""
+        normalized = AliasService.normalize(self.clean_text(header))
+        dimension_tokens = (
+            self.REPRESENTATIVE_HEADERS | self.REGION_HEADERS
+            | self.PROVINCE_HEADERS | self.PRODUCT_GROUP_HEADERS
+        )
+        if not normalized or normalized in dimension_tokens:
+            return None
+        metric_pattern = r"(?:\bTL\b|\bCIRO\b|\bVALUE\b|\bKUTU\b|\bBOX\b|\bUNIT\b|\bADET\b)"
+        if not re.search(metric_pattern, normalized):
+            return None
+        label = re.sub(metric_pattern, " ", normalized)
+        label = re.sub(r"\b(?:SATIS|CIKIS|TOPLAM)\b", " ", label)
+        label = re.sub(r"\s+", " ", label).strip(" -_/|:.")
+        return label or None
 
     def clean_dataframe(self, dataframe, representative_column):
         result = dataframe.copy()
@@ -1110,59 +1184,43 @@ class IMSImportService:
             self.statistics["source_metric_records"] += 1
             representative_name = item["representative_name"]
             try:
+                region_value = self.clean_text(item.get("region"))
+                province_value = self.clean_text(item.get("province"))
+                parsed_region, parsed_city = self._region_context(region_value, province_value)
                 representative_match = self.resolve_representative_match(representative_name)
-                representative_id = None
                 if representative_match["matched"]:
                     representative_id = representative_match["object"].id
                     self.statistics["matched_representatives"] += 1
+                elif parsed_region or province_value:
+                    representative_id, _ = self._ensure_representative(
+                        representative_name,
+                        region=parsed_region or region_value or None,
+                        city=province_value or parsed_city,
+                    )
+                    representative_match = self.resolve_representative_match(representative_name)
+                    self.warnings.append(
+                        f"Yeni temsilci bölge bağlamıyla otomatik oluşturuldu ({representative_name})."
+                    )
                 else:
                     self.statistics["unresolved_representative_rows"] += 1
                     self.statistics["unmatched_representatives"] += 1
                     self.statistics["queued_for_manual"] += 1
                     self._log_skipped_row(
-                        reason="unmatched_representative",
+                        reason="unmatched_representative_without_region_context",
                         sheet_name=" | ".join(sorted(item["sheet_names"])),
                         source_row=min(item["source_rows"]),
                         representative=representative_name,
                     )
-                    best = representative_match.get("object")
-                    AliasService.enqueue_unmatched_representative(
-                        ims_name=representative_name,
-                        upload_id=self.upload.id,
-                        best_candidate=best.rep_name if best else None,
-                        best_score=representative_match.get("score", 0.0),
-                        worksheet=" | ".join(sorted(item["sheet_names"])),
-                        row_number=min(item["source_rows"]),
-                        reason="unmatched_representative",
-                    )
+                    representative_id = None
 
                 product_group_name = item["product_group"]
-                product_match = self.resolve_product_match(product_group_name)
-                if not product_match["matched"]:
+                product, _ = self._ensure_product(product_group_name)
+                if product is None:
                     self.statistics["skipped_records"] += 1
-                    self.statistics["unmatched_products"] += 1
                     self.statistics["unmatched_product_records"] += 1
-                    self.unknown_products.append(product_group_name)
-                    self._log_skipped_row(
-                        reason="unmatched_product_group",
-                        sheet_name=" | ".join(sorted(item["sheet_names"])),
-                        source_row=min(item["source_rows"]),
-                        representative=representative_name,
-                        product_group=product_group_name,
-                    )
-                    best = product_match.get("object")
-                    AliasService.enqueue_unmatched_product(
-                        ims_name=product_group_name,
-                        upload_id=self.upload.id,
-                        best_candidate=best.product_name if best else None,
-                        best_score=product_match.get("score", 0.0),
-                        worksheet=" | ".join(sorted(item["sheet_names"])),
-                        row_number=min(item["source_rows"]),
-                        reason="unmatched_product_group",
-                    )
                     continue
+                product_match = {"matched": True, "object": product}
 
-                region_value = self.clean_text(item.get("region"))
                 if region_value:
                     region_suggestion = AliasService.suggest_region(region_value)
                     if not region_suggestion["matched"]:
@@ -1390,6 +1448,7 @@ class IMSImportService:
                     territory_value = self.clean_text(row[brick_column]) if brick_column else None
                     region_value = self.clean_text(row[region_column]) if region_column else None
                     province_value = self.clean_text(row[province_column]) if province_column else None
+                    parsed_region, parsed_city = self._region_context(region_value, province_value)
                     manager_value = self.clean_text(row[manager_column]) if manager_column else None
                     source_row = dataframe_index + sheet["header_row"] + 2
 
@@ -1419,11 +1478,13 @@ class IMSImportService:
                         else:
                             representative_id, existed = self._resolve_representative(
                                 representative_name=representative_name,
-                                allow_auto_create=auto_create_representatives,
+                                allow_auto_create=bool(auto_create_representatives or parsed_region or province_value),
                                 sheet_name=sheet["sheet_name"],
                                 source_row=source_row,
                                 territory=territory_value,
                                 manager=manager_value,
+                                region=parsed_region or region_value or None,
+                                city=province_value or parsed_city,
                             )
                         if representative_id is None:
                             self.statistics["unresolved_representative_rows"] += 1
