@@ -801,6 +801,8 @@ def test_ims_manager_report_confirms_business_completeness(app):
     from app.models import IMSUpload, IMSSummary, Product, Representative, Target
 
     with app.app_context():
+        Representative.query.update({Representative.active: False}, synchronize_session=False)
+        Product.query.update({Product.is_active: False}, synchronize_session=False)
         representative = Representative(rep_code="MGR-REP", rep_name="Yönetici Rapor Temsilcisi", region="901 DIYARBAKIR", active=True)
         product = Product(product_code="MGR-PROD", product_name="Yönetici Rapor Ürünü", is_active=True)
         upload = IMSUpload(
