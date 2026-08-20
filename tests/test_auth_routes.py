@@ -811,7 +811,7 @@ def test_ims_manager_report_confirms_business_completeness(app):
         db.session.add_all([representative, product, upload])
         db.session.flush()
         db.session.add(Target(year=2034, month=2, representative_id=representative.id, product_id=product.id, tl_target=100, unit_target=10))
-        db.session.add(IMSSummary(upload_id=upload.id, year=2034, month=2, representative_id=representative.id, product_id=product.id, tl=90, unit=9))
+        db.session.add(IMSSummary(upload_id=upload.id, year=2034, month=2, quarter="Q1", representative_id=representative.id, product_id=product.id, tl=90, unit=9))
         db.session.commit()
 
         report = _manager_report(upload)
