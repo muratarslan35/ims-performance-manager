@@ -733,7 +733,7 @@ class IMSImportService:
                 legacy.city = city or legacy.city
 
     def _ensure_vacancy_representative(self, region_value=None, city=None, vacancy_name=None):
-        """Store vacant brick activity under an inactive region-owned placeholder."""
+        """Store vacant brick activity under an active, region-owned cadre slot."""
         region, location_city = self._region_context(region_value, city)
         if not region and vacancy_name:
             matched = self._find_vacancy_placeholder(vacancy_name)
@@ -748,7 +748,9 @@ class IMSImportService:
                 rep_name=self._vacancy_label(region or "GENEL", location_city, vacancy_name or "BOŞ KADRO"),
                 region=region,
                 city=location_city,
-                active=False,
+                territory=location_city,
+                team="TAYFUN-1",
+                active=True,
             )
             db.session.add(representative)
             db.session.flush()

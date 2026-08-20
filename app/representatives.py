@@ -428,7 +428,13 @@ def view(
         item.product_id: item
         for item in IMSSummary.query.filter_by(representative_id=id, year=year, month=month).all()
     }
-    product_rows, totals = [], {"target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0, "actual_unit": 0.0}
+    product_rows, totals = [], {
+        "target_tl": 0.0,
+        "actual_tl": 0.0,
+        "target_unit": 0.0,
+        "actual_unit": 0.0,
+        "remaining_tl": 0.0,
+    }
     for target in targets:
         summary = summaries.get(target.product_id)
         actual_tl = float(summary.tl if summary else 0.0)
@@ -447,8 +453,10 @@ def view(
         totals["actual_tl"] += actual_tl
         totals["target_unit"] += target_unit
         totals["actual_unit"] += actual_unit
+        # One product's over-performance must not hide another product's
+        # remaining target. Total realization remains uncapped.
+        totals["remaining_tl"] += max(target_tl - actual_tl, 0.0)
     totals = {key: round(value, 2) for key, value in totals.items()}
-    totals["remaining_tl"] = round(max(totals["target_tl"] - totals["actual_tl"], 0.0), 2)
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     market_analysis = RepresentativeMarketService(representative, year, month).build()
     annual_realization = AnnualRealizationService.build(year, [representative.id])
