@@ -352,6 +352,53 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(len(travazol_lookups), 1)
         self.assertEqual(IMSRawData.query.count(), 1)
 
+    def test_new_representative_and_product_are_created_from_region_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "5.Hafta yeni-kadro-urun.xlsx"
+            pd.DataFrame(
+                [
+                    ["Bilim İlaç Brick Analizi", None, None, None, None],
+                    ["Coğrafya", "Coğrafya", "Saha", "Ürün", "Metrik"],
+                    ["Bölge", "İl", "Temsilci", "Ürün Grubu", "TL"],
+                    ["901 DİYARBAKIR", "Diyarbakır", "Yeni Temsilci", "Yeni Ürün", 425.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="TL")
+
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 2)
+
+        self.assertTrue(result["success"], result["errors"])
+        representative = Representative.query.filter_by(rep_name="Yeni Temsilci").one()
+        product = Product.query.filter_by(product_name="YENI URUN").first()
+        if product is None:
+            product = Product.query.filter_by(product_name="Yeni Ürün").one()
+        self.assertEqual(representative.region, "901")
+        self.assertEqual(representative.city, "Diyarbakır")
+        self.assertTrue(representative.active)
+        self.assertEqual(product.competitor_group, product.product_name)
+        raw = IMSRawData.query.one()
+        self.assertEqual(raw.representative_id, representative.id)
+        self.assertEqual(raw.product_id, product.id)
+        self.assertEqual(raw.tl, 425.0)
+
+    def test_wide_metric_headers_create_new_product(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "5.Hafta yeni-urun-wide.xlsx"
+            pd.DataFrame(
+                [
+                    ["IMS Performans Raporu", None, None, None, None],
+                    ["Bölge", "İl", "Representative", "Yeni Ürün Box", "Yeni Ürün TL"],
+                    ["901 DİYARBAKIR", "Diyarbakır", "Ayşe Kaya", 8, 240.0],
+                ]
+            ).to_excel(workbook_path, index=False, header=False, sheet_name="BRICK SATIS")
+
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 2)
+
+        self.assertTrue(result["success"], result["errors"])
+        product = Product.query.filter(Product.product_code.like("YENIURUN%")).one()
+        rows = IMSRawData.query.filter_by(product_id=product.id).all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0].unit, rows[0].tl), (8.0, 240.0))
+
     def test_shifted_header_and_noise_rows_are_tolerated(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "shifted_noise.xlsx"
