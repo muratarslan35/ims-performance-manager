@@ -596,6 +596,9 @@ class IMSImportService:
         normalized = AliasService.normalize(name)
         if not normalized:
             return None, False
+        tokens = set(normalized.split())
+        if tokens & {AliasService.normalize(token) for token in self.PRODUCT_HEADER_NOISE_TOKENS}:
+            return None, False
         product = Product(
             product_code=self._unique_product_code(name), product_name=name, ims_name=name,
             category="IMS AUTO", competitor_group=name, is_active=True,
