@@ -438,6 +438,8 @@ class IMSImportService:
                 continue
             if dimensions["product_group"] is None and any(
                 token in normalized for token in self.PRODUCT_GROUP_HEADERS
+            ) and not any(
+                token in normalized for token in ("TL", "CIRO", "VALUE", "KUTU", "BOX", "UNIT", "ADET")
             ):
                 dimensions["product_group"] = column
                 continue
@@ -939,6 +941,12 @@ class IMSImportService:
     def detect_product_columns(self, dataframe, representative_column):
         products = {}
         seen_metric_pairs = set()
+        new_label_counts = Counter(
+            label
+            for column in dataframe.columns
+            if column != representative_column
+            if (label := self._product_label_from_metric_header(column))
+        )
         for column_index, header in enumerate(dataframe.columns):
             if header == representative_column:
                 continue
@@ -951,7 +959,10 @@ class IMSImportService:
             )
             if product is None:
                 product_label = self._product_label_from_metric_header(header)
-                if not product_label:
+                # Wide layouts do not have an explicit product-group cell.
+                # Require two corroborating metric columns (normally box + TL)
+                # so a lone competitor column cannot become a managed product.
+                if not product_label or new_label_counts[product_label] < 2:
                     continue
                 product, _ = self._ensure_product(product_label)
                 if product is None:
