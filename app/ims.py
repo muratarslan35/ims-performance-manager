@@ -29,6 +29,7 @@ from app.services.import_coordinator import (
     ImportCoordinator,
 )
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
+from app.services.period_service import PeriodService
 
 
 ims_bp = Blueprint(
@@ -60,6 +61,9 @@ def index():
         ProductionResultUpload.uploaded_at.desc()
     ).all()
 
+    active_period = PeriodService.get_active_period()
+    import_status = ImportCoordinator.status()
+
     # TEMP DEBUG
     dashboard = {}
     # dashboard = {}
@@ -72,7 +76,11 @@ def index():
 
         production_uploads=production_uploads,
 
-        dashboard=dashboard
+        dashboard=dashboard,
+
+        active_period=active_period,
+
+        import_status=import_status,
 
     )
 
@@ -307,8 +315,12 @@ def upload():
         detail = ""
         if owner:
             detail = f" Aktif işlem: {owner}"
+            active_file = current.get("file_name")
+            if active_file:
+                detail += f" · {active_file}"
             if started_at:
-                detail += "."
+                detail += f" · başlangıç {started_at}"
+            detail += ". Sayfayı yenileyerek durumu kontrol edin; dosyayı tekrar göndermeyin."
         flash(
             "Başka bir IMS dosyası şu anda güvenli biçimde işleniyor. Lütfen mevcut işlem tamamlandıktan sonra tekrar deneyin." + detail,
             "warning",
