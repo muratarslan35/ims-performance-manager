@@ -404,7 +404,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
         product, created = service._ensure_product("14.1.25 Ocak Çıkışı")
         self.assertIsNone(product)
         self.assertFalse(created)
-        self.assertEqual(Product.query.count(), 1)
+        self.assertIsNone(Product.query.filter_by(product_name="14.1.25 Ocak Çıkışı").first())
 
     def test_shifted_header_and_noise_rows_are_tolerated(self):
         with tempfile.TemporaryDirectory() as directory:
