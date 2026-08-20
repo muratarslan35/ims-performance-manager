@@ -10,6 +10,7 @@ from flask_login import login_required
 from flask_login import current_user
 from sqlalchemy import or_
 import unicodedata
+import re
 from datetime import datetime
 
 from app.extensions import db
@@ -36,20 +37,31 @@ def _search_key(value):
     return "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
 
 
-def _is_unassigned_representative(representative):
-    """Keep vacancy identities in data while hiding them from end-user rep pickers."""
-    rep_code = str(getattr(representative, "rep_code", "") or "").upper()
-    rep_name = _search_key(getattr(representative, "rep_name", ""))
-    return rep_code.startswith("UNASSIGNED") or rep_name.startswith("atanmamis")
+def _representative_display_name(value):
+    """Remove the technical vacancy prefix without changing the stored identity."""
+    display_name = re.sub(
+        r"^\s*ATANMAMI[ŞS]\s*(?:[·\-–—:]\s*)?", "", str(value or ""), flags=re.IGNORECASE
+    ).strip()
+    # Canonical vacancy names contain both a region context and a vacancy name:
+    # "901 DIYARBAKIR · DIYARBAKIR BOS". Keep the region code without
+    # repeating the city, yielding "901 DIYARBAKIR BOS".
+    context, separator, vacancy_name = display_name.partition("·")
+    region_code = re.match(r"^\s*(\d+)\b", context)
+    if separator and region_code and vacancy_name.strip():
+        return f"{region_code.group(1)} {vacancy_name.strip()}"
+    return display_name
 
 
 def _visible_representative_filter():
-    """SQL counterpart used only by representative-facing UI queries."""
+    """Hide only the non-regional general placeholder from representative UI."""
     return ~or_(
-        db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
-        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIŞ%"),
-        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIS%"),
+        db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNEDGENERAL%"),
+        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIŞ%GENEL%"),
+        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIS%GENEL%"),
     )
+
+
+representatives_bp.add_app_template_filter(_representative_display_name, "representative_display_name")
 
 
 @representatives_bp.route(
@@ -71,8 +83,8 @@ def index():
         for assignment in rows:
             assignments_by_rep.setdefault(assignment.representative_id, []).append(assignment)
 
-    # Vacancy identities remain available to IMS and target calculations, but
-    # are not people and therefore do not belong in the representative UI.
+    # Regional vacancy portfolios carry targets and must remain selectable;
+    # only the duplicate general placeholder is omitted from the UI.
     representatives = Representative.query.filter(_visible_representative_filter()).order_by(
         Representative.region.asc().nullslast(), Representative.city.asc(), Representative.rep_name.asc()
     ).all()
@@ -475,7 +487,9 @@ def view(
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     market_analysis = RepresentativeMarketService(representative, year, month).build()
     annual_realization = AnnualRealizationService.build(year, [representative.id])
-    representatives = Representative.query.filter_by(active=True).order_by(Representative.rep_name.asc()).all()
+    representatives = Representative.query.filter(
+        Representative.active.is_(True), _visible_representative_filter()
+    ).order_by(Representative.rep_name.asc()).all()
     return render_template(
         "representative_detail.html",
         representative=representative,
@@ -520,14 +534,14 @@ def search():
         })
         if len(region_results) >= 4:
             break
-    reps = [rep for rep in all_representatives if not _is_unassigned_representative(rep) and any(
+    reps = [rep for rep in all_representatives if _representative_display_name(rep.rep_name).casefold() != "genel" and any(
         normalized_query in _search_key(value) for value in (rep.rep_name, rep.rep_code, rep.city)
     )]
     reps.sort(key=lambda rep: (not rep.active, _search_key(rep.rep_name)))
     reps = reps[:7]
     results = region_results + [{
         "kind": "representative",
-        "title": rep.rep_name,
+        "title": _representative_display_name(rep.rep_name),
         "meta": " · ".join(part for part in [rep.region, rep.city, rep.territory] if part) or "Temsilci",
         "url": url_for("representatives.view", id=rep.id, year=active_period["year"], month=active_period["month"]),
     } for rep in reps]
@@ -547,7 +561,7 @@ def search():
         results.append({
             "kind": "brick",
             "title": assignment.brick,
-            "meta": f"{assignment.representative.rep_name} · {assignment.territory or assignment.city or 'Brick'}",
+            "meta": f"{_representative_display_name(assignment.representative.rep_name)} · {assignment.territory or assignment.city or 'Brick'}",
             "url": url,
         })
         known_reps.add(url)

@@ -664,11 +664,17 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "annual-realization-chart.js" in response.get_data(as_text=True)
 
 
-def test_unassigned_vacancies_stay_in_database_but_are_hidden_from_representative_ui(app):
+def test_regional_vacancies_are_visible_without_technical_prefix_and_general_is_hidden(app):
     from app.extensions import db
     from app.models import Representative, RepresentativeBrickAssignment
+    from app.representatives import _representative_display_name
+    from app.services.period_service import PeriodService
+
+    assert _representative_display_name("ATANMAMIŞ · 901 DIYARBAKIR · DIYARBAKIR BOS") == "901 DIYARBAKIR BOS"
+    assert _representative_display_name("ATANMAMIS-901 DIYARBAKIR BOS") == "901 DIYARBAKIR BOS"
 
     with app.app_context():
+        active_period = PeriodService.get_active_period()
         vacancy = Representative(
             rep_code="UNASSIGNED201-KADIKOY-BOS",
             rep_name="ATANMAMIŞ · 201 KADIKÖY · KADIKÖY BOŞ",
@@ -677,12 +683,17 @@ def test_unassigned_vacancies_stay_in_database_but_are_hidden_from_representativ
             active=True,
         )
         db.session.add(vacancy)
+        db.session.add(Representative(
+            rep_code="UNASSIGNEDGENERAL",
+            rep_name="ATANMAMIŞ · GENEL",
+            active=True,
+        ))
         db.session.flush()
         db.session.add(RepresentativeBrickAssignment(
             representative_id=vacancy.id,
-            year=2026,
-            month=1,
-            quarter="Q1",
+            year=active_period["year"],
+            month=active_period["month"],
+            quarter=f"Q{((active_period['month'] - 1) // 3) + 1}",
             brick="KADIKÖY MERKEZ",
             source="AUTO",
             active=True,
@@ -694,12 +705,13 @@ def test_unassigned_vacancies_stay_in_database_but_are_hidden_from_representativ
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
 
     representative_page = client.get("/representatives/").get_data(as_text=True)
-    representative_search = client.get("/representatives/search?q=atanmamis").get_json()
+    representative_search = client.get("/representatives/search?q=KADIKOY BOS").get_json()
     brick_search = client.get("/representatives/search?q=KADIKÖY MERKEZ").get_json()
 
-    assert "ATANMAMIŞ" not in representative_page
-    assert not any(item["kind"] == "representative" for item in representative_search["results"])
-    assert not any(item["kind"] == "brick" and "ATANMAMIŞ" in item["meta"] for item in brick_search["results"])
+    assert "201 KADIKÖY BOŞ" in representative_page
+    assert "ATANMAMIŞ · GENEL" not in representative_page
+    assert any(item["kind"] == "representative" and "ATANMAMIŞ" not in item["title"] for item in representative_search["results"])
+    assert any(item["kind"] == "brick" and "ATANMAMIŞ" not in item["meta"] for item in brick_search["results"])
     with app.app_context():
         assert db.session.get(Representative, vacancy_id) is not None
 
