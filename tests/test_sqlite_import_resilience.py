@@ -249,6 +249,32 @@ def test_bootstrap_reuses_legacy_vacancy_primary_key_instead_of_creating_duplica
         assert resolved.rep_code == "UNASSIGNED101ISTANBULBOS"
 
 
+def test_latest_manager_report_can_be_scoped_to_acceptance_upload(resilient_app):
+    from app.extensions import db
+    from app.models import ImportAuditLog, IMSUpload
+    from app.services.import_result_report import REPORT_MARKER, encode_report, latest_import_report
+
+    with resilient_app.app_context():
+        baseline = IMSUpload(file_name="baseline.xlsx", year=2026, month=1, status="COMPLETED")
+        acceptance = IMSUpload(file_name="acceptance.xlsx", year=2026, month=1, status="COMPLETED")
+        db.session.add_all((baseline, acceptance))
+        db.session.flush()
+        report = {"marker": REPORT_MARKER, "upload_id": acceptance.id, "final_result": "PASS"}
+        db.session.add_all((
+            ImportAuditLog(
+                upload_id=acceptance.id, year=2026, month=1, status="COMPLETED",
+                notes=encode_report(report),
+            ),
+            ImportAuditLog(
+                upload_id=baseline.id, year=2026, month=1, status="COMPLETED",
+                notes="legacy audit text",
+            ),
+        ))
+        db.session.commit()
+
+        assert latest_import_report(upload_id=acceptance.id) == report
+
+
 def test_online_backup_is_consistent_in_wal_mode(resilient_app):
     from sqlite_online_backup import backup
 

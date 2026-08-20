@@ -169,8 +169,11 @@ def decode_report(notes):
     return parsed if parsed.get("marker") == REPORT_MARKER else None
 
 
-def latest_import_report():
-    audit = ImportAuditLog.query.order_by(ImportAuditLog.uploaded_at.desc(), ImportAuditLog.id.desc()).first()
+def latest_import_report(upload_id=None):
+    query = ImportAuditLog.query
+    if upload_id is not None:
+        query = query.filter_by(upload_id=upload_id)
+    audit = query.order_by(ImportAuditLog.uploaded_at.desc(), ImportAuditLog.id.desc()).first()
     return decode_report(audit.notes) if audit else None
 
 
@@ -233,10 +236,18 @@ def install_import_result_reporting():
     def write_audit_with_report(self, year, month, week_number, success):
         original_write(self, year, month, week_number, success)
         summary = build_import_result_summary(self, success=success)
-        for obj in reversed(list(db.session.new)):
-            if isinstance(obj, ImportAuditLog) and obj.upload_id == self.upload.id:
-                obj.notes = encode_report(summary)
-                break
+        # Flush the audit created by the original service, then target it by
+        # upload ID. Relying on Session.new is fragile when another installed
+        # import extension flushes the transaction before this wrapper resumes.
+        db.session.flush()
+        audit = (
+            ImportAuditLog.query.filter_by(upload_id=self.upload.id)
+            .order_by(ImportAuditLog.id.desc())
+            .first()
+        )
+        if audit is None:
+            raise RuntimeError(f"IMS yönetici import raporu audit kaydı bulunamadı: upload={self.upload.id}")
+        audit.notes = encode_report(summary)
         self.import_result_summary = summary
 
     def persist_failure_with_report(self, year, month, week_number=None):

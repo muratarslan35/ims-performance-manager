@@ -98,7 +98,7 @@ def main():
         if current is None:
             raise RuntimeError("Acceptance COMPLETED upload bulunamadı.")
 
-        report = latest_import_report()
+        report = latest_import_report(upload_id=current.id)
         if not report or report.get("upload_id") != current.id:
             raise AssertionError(
                 f"Yönetici import raporu son acceptance uploadına ait değil: upload={current.id}, report={report and report.get('upload_id')}"
