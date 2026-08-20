@@ -589,9 +589,6 @@ class IMSImportService:
 
     def _ensure_product(self, product_group_name):
         """Resolve or create a product from an explicit IMS product-group value."""
-        match = self.resolve_product_match(product_group_name)
-        if match["matched"]:
-            return match["object"], True
         name = self.clean_text(product_group_name)
         normalized = AliasService.normalize(name)
         if not normalized:
@@ -599,6 +596,9 @@ class IMSImportService:
         tokens = set(normalized.split())
         if tokens & {AliasService.normalize(token) for token in self.PRODUCT_HEADER_NOISE_TOKENS}:
             return None, False
+        match = self.resolve_product_match(product_group_name)
+        if match["matched"]:
+            return match["object"], True
         product = Product(
             product_code=self._unique_product_code(name), product_name=name, ims_name=name,
             category="IMS AUTO", competitor_group=name, is_active=True,
