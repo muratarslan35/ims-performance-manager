@@ -850,6 +850,25 @@ def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
     assert "15.08.2026 13:05" in html
 
 
+def test_navbar_active_period_uses_compact_week_format(app):
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        db.session.add(IMSUpload(
+            file_name="navbar-period.xlsx", year=2026, month=1, week_number=5,
+            quarter="Q1", status="COMPLETED",
+        ))
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    html = client.get("/dashboard/").get_data(as_text=True)
+
+    assert "2026/01 - 5. Hafta" in html
+    assert "5 . Hafta" not in html
+
+
 def test_product_management_uses_simplified_safe_fields(app):
     from app.models import Product
 
