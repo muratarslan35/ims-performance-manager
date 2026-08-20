@@ -664,6 +664,46 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "annual-realization-chart.js" in response.get_data(as_text=True)
 
 
+def test_unassigned_vacancies_stay_in_database_but_are_hidden_from_representative_ui(app):
+    from app.extensions import db
+    from app.models import Representative, RepresentativeBrickAssignment
+
+    with app.app_context():
+        vacancy = Representative(
+            rep_code="UNASSIGNED201-KADIKOY-BOS",
+            rep_name="ATANMAMIŞ · 201 KADIKÖY · KADIKÖY BOŞ",
+            region="201 KADIKÖY",
+            city="KADIKÖY",
+            active=True,
+        )
+        db.session.add(vacancy)
+        db.session.flush()
+        db.session.add(RepresentativeBrickAssignment(
+            representative_id=vacancy.id,
+            year=2026,
+            month=1,
+            quarter="Q1",
+            brick="KADIKÖY MERKEZ",
+            source="AUTO",
+            active=True,
+        ))
+        db.session.commit()
+        vacancy_id = vacancy.id
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+
+    representative_page = client.get("/representatives/").get_data(as_text=True)
+    representative_search = client.get("/representatives/search?q=atanmamis").get_json()
+    brick_search = client.get("/representatives/search?q=KADIKÖY MERKEZ").get_json()
+
+    assert "ATANMAMIŞ" not in representative_page
+    assert not any(item["kind"] == "representative" for item in representative_search["results"])
+    assert not any(item["kind"] == "brick" and "ATANMAMIŞ" in item["meta"] for item in brick_search["results"])
+    with app.app_context():
+        assert db.session.get(Representative, vacancy_id) is not None
+
+
 def test_representative_remaining_tl_sums_open_product_targets(app):
     from app.extensions import db
     from app.models import IMSSummary, IMSUpload, Product, Representative, Target
