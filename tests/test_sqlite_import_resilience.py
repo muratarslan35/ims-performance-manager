@@ -67,6 +67,19 @@ def test_sqlite_runtime_enables_wal_and_busy_timeout(resilient_app):
             assert int(connection.exec_driver_sql("PRAGMA busy_timeout").scalar()) >= 30000
 
 
+def test_import_coordinator_reports_live_owner_and_clears_idle_metadata(resilient_app):
+    with resilient_app.app_context():
+        from app.services.import_coordinator import ImportCoordinator
+
+        assert ImportCoordinator.status() == {"active": False, "metadata": {}}
+        with ImportCoordinator.acquire(uploaded_by="Murat Arslan", file_name="5-hafta.xlsx", wait_seconds=0):
+            status = ImportCoordinator.status()
+            assert status["active"] is True
+            assert status["metadata"]["uploaded_by"] == "Murat Arslan"
+            assert status["metadata"]["file_name"] == "5-hafta.xlsx"
+        assert ImportCoordinator.status() == {"active": False, "metadata": {}}
+
+
 def test_authenticated_read_survives_concurrent_ims_writer(resilient_app):
     from app.extensions import db
     from app.models import User
