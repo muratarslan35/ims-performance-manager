@@ -1,367 +1,501 @@
-# IMS Performance Manager — Çalışma Checkpointi
+# IMS Performance Manager — Çalışma Checkpointi / Kanonik Devir Kaydı
 
-## Q period premium dashboard (2026-08-10)
-
-- [x] `app/services/prime_engine.py` — Monthly payments are mutually exclusive: 20,000 TL ciro premium for total TL >=100% without product eligibility, or main premium for eligible product performance. Main premium is 50,000 TL at 100%, +2,500 TL per 5 points, capped at 70,000 TL at 140%.
-- [x] `app/services/quarter_entitlement_service.py` — Read-only Q report combines monthly gross premiums with four-main-product 75/90/100 TL and unit carry balances.
-- [x] `app/routes/__init__.py`, `app/templates/quarter.html`, `app/templates/partials/sidebar.html` — `/quarter` is now a dedicated Q Dönem Analizi screen in the sidebar.
-- [-] Targeted production checks PASS: %110=55,000 TL; %140=70,000 TL; ciro at %100=20,000 TL; Q service and template render passed. `/quarter` login redirect returns 302 and the server is listening on port 8000.
-- [x] Commit/deploy: `e8f2ae8` pushed and deployed.
-
-## Mobile continuation and deploy automation (2026-08-11)
-
-- [x] `.github/workflows/deploy.yml` — Main branch pushes can deploy through GitHub Actions after the SSH secret is configured.
-- [x] `docs/MOBILE_CONTINUATION.md` — Mobile session handoff, non-secret server variables, deployment contract and current Q premium commits are documented.
-- [!] GitHub secret `IMS_DEPLOY_SSH_KEY` still requires one manual repository-settings action. The private `bist.key` is intentionally not tracked in Git.
-
-## Representative code follow-up (2026-08-09)
-
-- `app/services/ims_import_service.py` no longer creates `AUTO-` representative codes. New master codes are derived from the normalized Excel name, for example `ENGIN YAPAK` -> `ENGINYAPAK`.
-- Targeted syntax validation passed and the active source contains no `AUTO-` code-generation path.
-- Real representative/region/city/brick coverage and dashboard-map/AI verification remain blocked until the Flask/SQLAlchemy/pandas/openpyxl runtime can be installed and `instance/ipm.db` can be created.
-
-## Runtime validation checkpoint (2026-08-09)
-
-- The user explicitly authorized creating a new, deployment-compatible `instance/ipm.db` and running real import/smoke tests.
-- The application dependencies were requested from `requirements.txt`, but installation stopped with `OSError: [Errno 28] No space left on device`.
-- The temporary, incomplete `.venv` uses approximately 49 MB and contains no usable Flask runtime. Its removal was explicitly approved, but the environment's deletion policy rejected the deletion command.
-- No new database was created. This avoids handing off an incomplete schema that would not be server-compatible.
-- No workbook, application data, source tables, or existing DB was modified during this failed runtime setup.
-
-### CURRENT BLOCKER
-
-Free local disk space (and allow removal of the temporary `.venv`, if still present), then install `requirements.txt` and resume from the runtime validation stage. The next steps are: run Alembic migration into `instance/ipm.db`, import the 24th-week workbook, compare workbook/DB counts and IDs, then smoke-test all authenticated menus and dashboard/AI payloads.
-
-## Latest checkpoint (2026-08-09)
-
-### FILE: `app/models.py`
-
-- STATUS: COMPLETE
-- CHANGE: Added read/write compatibility aliases from `Target.target_unit` and `Target.target_tl` to the persisted `unit_target` and `tl_target` columns. Added the ManualMatchQueue status/entity constants referenced by matching and alias logic.
-- TEST: Targeted `py_compile` plus full `compileall` scan of `app`, `tests`, and `migrations`.
-- RESULT: PASS.
-- NEXT: DB-backed targets and matching smoke tests.
-
-### FILE: `app/routes/settings.py`
-
-- STATUS: COMPLETE
-- CHANGE: `ensure_prime_settings()` now supplies the required `category="Prim"` value when inserting defaults.
-- TEST: Targeted `py_compile` plus full source syntax scan.
-- RESULT: PASS.
-- NEXT: Run against the existing SQLite schema.
-
-### FILE: `app/services/ims_import_service.py`
-
-- STATUS: COMPLETE
-- CHANGE: Competition import runs only when all of its required sheets exist, so ordinary IMS uploads remain safe. The supplied 24th-week workbook contains all supported competition sheets.
-- TEST: Targeted `py_compile` plus full source syntax scan.
-- RESULT: PASS.
-- NEXT: Validate inserted, duplicate, and invalid counts with the existing DB.
-
-## Pending blockers
-
-1. `instance/ipm.db` is not present anywhere in this local project folder. The protocol forbids creating another DB, so migrations, real import, SQL integrity checks, and HTTP smoke tests cannot be run safely.
-2. The local Python environment lacks the application runtime packages (Flask, SQLAlchemy, pandas, openpyxl), and package download is unavailable. Runtime tests cannot be run in this environment.
-
-## Last completed stage
-
-Known targets/matching/settings errors and the competition-import missing-sheet safeguard are complete. Dashboard V3 was checked statically; its runtime payload remains blocked by the missing DB/runtime.
-
-## Last completed file
-
-`app/services/ims_import_service.py`
-
-## Next file/stage
-
-When the existing `instance/ipm.db` and a usable local dependency environment are available in this same project folder: inspect migration state read-only, then run the real 24th-week import, SQL coverage/FK checks, and authenticated route smoke tests.
-
-## Proje durumu
-
-- Çalışma alanı: Bu yerel klasör. Uzak Git/GitHub işlemleri bu aşamada devre dışıdır.
-- Gerçek IMS kaynağı: `Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx`.
-- Excel ilk envanteri: 16 sheet; ana satış/özet sayfaları ile aylık-haftalık TL/KUTU ve pazar/rekabet verileri içerir.
-- Veritabanı: `instance/ipm.db` varlığı henüz doğrulanacak. Yeni DB oluşturulmayacak, mevcut DB silinmeyecek veya resetlenmeyecek.
-
-## İncelenen dosyalar
-
-- [x] `app/models.py`
-- [x] `app/services/ims_import_service.py`
-- [x] `app/services/competition_import_service.py`
-- [x] `app/ims_importer.py`
-- [x] `app/ims.py`
-- [x] `app/__init__.py`
-- [x] `app/routes/settings.py`
-- [x] `app/routes/targets.py`
-- [x] `app/routes/matching.py`
-- [x] `app/services/dashboard_service.py`
-- [x] `app/templates/dashboard.html`
-- [x] `app/static/js/dashboard.js`
-- [x] `migrations/versions/`
-- [x] `tests/test_ims_import_service.py`
-- [x] `tests/test_database_migrations.py`
-
-## Tamamlanan dosyalar
-
-### DOSYA: `app/ims_importer.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Hatalı `brick` alanı ataması düzeltildi; modülün import edilmesini engelleyen eşleşmeyen parantez kaldırıldı.
-- TEST: Python sözdizimi taraması.
-- SONUÇ: PASS.
-- KALAN: Bu eski/alternatif orchestrator'ın ana upload akışında kullanılmadığı import bütünleştirmesi sırasında doğrulanacak.
-
-### DOSYA: `app/query/base_query.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Modül başındaki eksik docstring açılışı düzeltildi.
-- TEST: Python sözdizimi taraması.
-- SONUÇ: PASS.
-
-### DOSYA: `app/query/dashboard_query.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Modül başındaki eksik docstring açılışı düzeltildi.
-- TEST: Python sözdizimi taraması.
-- SONUÇ: PASS.
-
-### DOSYA: `app/query/filters.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Modül başındaki eksik docstring açılışı düzeltildi.
-- TEST: Python sözdizimi taraması.
-- SONUÇ: PASS.
-
-## Tamamlanan dosyalar (devam)
-
-### DOSYA: `app/services/ims_import_service.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: `CompetitionImportService` ana import transaction'ına bağlandı; competition inserted/duplicate/invalid sayaçları import istatistiklerine eklendi.
-- TEST: Hedefli derleme + `app`, `tests` ve `migrations` sözdizimi taraması.
-- SONUÇ: PASS.
-- KALAN: Mevcut SQLite DB bulununca gerçek Excel importu ile kayıt kapsamı doğrulanacak.
-
-### DOSYA: `app/ims.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Upload rotasının yıkıcı `clear_before_import=True` davranışı güvenli varsayılan olan `False` olarak düzeltildi.
-- TEST: Hedefli derleme + çağrı denetimi.
-- SONUÇ: PASS.
-
-### DOSYA: `app/__init__.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Competition API blueprint'i uygulama kayıt zincirine eklendi.
-- TEST: Hedefli derleme + blueprint kaydı denetimi.
-- SONUÇ: PASS.
-
-### DOSYA: `migrations/versions/d2f4c8a9b6e1_add_competition_data.py`
-
-- DURUM: TAMAMLANDI
-- YAPILAN: Mevcut veriyi silmeden `ims_competition_data` tablosunu, FK/unique constraint ve sorgu indekslerini oluşturan idempotent migration eklendi.
-- TEST: Hedefli derleme + migration kaynak sözdizimi taraması.
-- SONUÇ: PASS.
-
-## Tespit edilen hatalar
-
-1. Yerel SQLite DB henüz bulunup doğrulanmadı.
-
-## Çözülen hatalar
-
-- Dört Python sözdizimi hatası düzeltildi (`ims_importer.py` ve üç query modülü).
-- Rekabet import zinciri, API blueprint'i, migration-first şema ve güvenli upload varsayılanı tamamlandı.
-
-## Excel import durumu
-
-- Sheet sayısı: 16.
-- Önemli rekabet sheet'leri: `AYLIK REKABET TL`, `AYLIK REKABET KUTU`, `HAZİRAN TL`, `HAZİRAN KUTU`, `TL`, `KUTU`, `PAZAR`.
-- Sonraki adım: mevcut SQLite DB üzerinde gerçek import öncesi kapsam sayımı ve migration durumunu salt-okunur doğrulamak.
-
-## Test durumu
-
-- Python kaynak sözdizimi: PASS (dört hata düzeltildikten sonra).
-- Uygulama/test bağımlılıkları: yerel runtime içinde henüz kurulu değil; paket indirme erişimi başarısız oldu. Alternatif yerel ortam/önbellek aranacak, yeni DB oluşturulmayacak.
-
-## Son tamamlanan aşama
-
-Rekabet importunun kaynak, route ve migration bağlantıları tamamlandı.
-
-## Sonraki yapılacak aşama
-
-`instance/ipm.db` konumunu ve migration durumunu doğrula; ardından yalnızca gerekli import/migration/route bağlarını nokta atışı düzelt.
+> Son güncelleme: **20 Ağustos 2026, 07:37 (Europe/Istanbul)**  
+> Repo: `muratarslan35/ims-performance-manager`  
+> Bu dosya çalışma ortamında devam ederken **tek referans checkpoint** olarak kullanılmalıdır.
 
 ---
 
-## 2026-08-09 — Import performance checkpoint
+# 1. ŞU ANKİ DURUM — ÇALIŞMA ORTAMINDA BURADAN DEVAM ET
 
-### DOSYA: `app/services/competition_import_service.py`
+## Ana sonuç
 
-- DURUM: TAMAMLANDI
-- YAPILAN: Gerçek Excel'deki `AYLIK REKABET TL`, `AYLIK REKABET KUTU`, `TTS Rekabet` ve `TTS Rekabet PP` şeması desteklendi. Rastgele `ReadOnlyWorksheet.cell()` erişimi kaldırılıp sayfa başına tek-geçişli değer önbelleği eklendi; import dönemi yıl/ay için otorite kabul edildi.
-- TEST: Dört rekabet sayfası gerçek Excel üzerinde ayrıştırıldı; 91.070 kayıt tek importta yazıldı.
-- SONUÇ: PASS. Tam import süresi 24,3 saniye.
+IMS import/parser/matching/reconciliation altyapısının profesyonel hardening çalışması tamamlanmaya çok yaklaşmıştır. PR #65, #66 ve #67 `main` branch'e merge edilmiştir. Tam test paketi yeşildir. Ancak production acceptance gerçek 4. hafta workbookunu yeniden import ederken **Official Brick Spread içindeki BOS kadrolarının merkezi vacancy resolver üzerinden çözülmediğini** yakalamıştır.
 
-### DOSYA: `app/services/target_import_service.py`
+**Canlı servis bu hata nedeniyle yeniden başlatılmadı.** Deploy workflow acceptance PASS olmadan process restart aşamasına geçmeyecek şekilde korunmaktadır.
 
-- DURUM: TAMAMLANDI
-- YAPILAN: `TTS ÇIKIŞLARI` içindeki başlıksız kompakt `HAZİRAN HEDEF` düzeni için hedefli ayrıştırıcı eklendi.
-- TEST: Gerçek çalışma kitabında 42 temsilci-ürün hedefi üretildi ve summary hedeflerle yeniden kuruldu.
-- SONUÇ: PASS.
+### En son `main` commit
 
-### DOSYA: `app/services/ims_import_service.py`
+- `45327c332e0dc82aac407f545575e4c1353cac21`
+- Mesaj: `Merge PR #67: Fix isolated IMS acceptance FACT fingerprint scope`
 
-- DURUM: TAMAMLANDI
-- YAPILAN: Rekabet importuna upload yılı, ayı ve hafta numarası iletiliyor; bulk RAW yazımı korunuyor.
-- TEST: 24. hafta gerçek Excel importu.
-- SONUÇ: PASS.
+### En son gerçek production acceptance sonucu
 
-## Excel import durumu
+- GitHub Issue: **#69 — IMS production deployment FAILED**
+- Commit: `45327c332e0dc82aac407f545575e4c1353cac21`
+- Workflow: `32306554405`
+- SQLite runtime kontrolü: **PASS**
+  - `journal_mode=wal`
+  - `busy_timeout=30000`
+  - `integrity=ok`
+- Acceptance: **FAIL**
+- Kök hata:
+  - `Satış Brick Yayılımı master satırlarında eşleşmeyen temsilci var (11)`
+  - Issue çıktısında görünür satırlar:
+    - satır 18: `ISTANBUL BOS`
+    - satır 35: `KADIKOY BOS`
+    - satır 46: `BURSA BOS`
+    - satır 50: `IZM BOS BRICK`
+    - satır 66: `ANKARA BOS`
+    - satır 79: `SAMSUN BOS`
+    - satır 88: `TRABZON BOS`
+    - satır 100: `ADANA BOS`
+    - satır 108: `KONYA BOS`
+    - satır 116: `ANTALYA BOS`
+  - Hata mesajı toplam 11 eşleşmeyen satır olduğunu söylüyor; GitHub issue özetinde 10 isim görünür durumda, 11. satır özet içinde kesilmiş olabilir. **Tahmin edilmemeli; workflow/job logundan okunmalı.**
 
-- Kaynak: `Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx` (16 sheet).
-- Upload: 1; süre: 24,3 saniye.
-- RAW: 8.118; Fact: 1.087; Summary: 594; Competition: 91.070; Representatives: 99; Products: 6; Targets: 42.
-- Rekabet dağılımı: Aylık KUTU 45.090, Aylık TL 45.090, TTS Rekabet 450, TTS Rekabet PP 440.
-- FK kontrolleri: RAW/Fact/Summary için temsilci ve ürün yetim kaydı 0; `AUTO-` rep_code 0.
+## Çalışma ortamındaki bir sonraki kesin iş
 
-## Son tamamlanan aşama
+**OfficialBrickSpreadService / official brick spread import yolunu merkezi `RepresentativeResolver` ile aynı vacancy çözümleyiciye bağla.**
 
-Faz 1: gerçek Excel importu, hedef importu, rekabet importu ve temel veri bütünlüğü doğrulaması tamamlandı.
+Kurallar:
 
-## Sonraki yapılacak aşama
+1. `BOS` ile `BOŞ` kesinlikle aynı kadro değildir.
+2. Vacancy eşleşmesi accent-sensitive stable identity kullanmalıdır.
+3. `BOSTANCI` gibi normal isimler vacancy sayılmamalıdır.
+4. Vacancy resolver başarısızsa normal accent-insensitive alias/fuzzy zincirine geri düşülmemelidir.
+5. Official Brick Spread parserı kendi ayrı/legacy representative eşleştirmesini kullanmamalıdır.
+6. Belirsiz eşleşme tahmin edilmemeli, import blocking conflict olarak durmalıdır.
+7. Bu düzeltme FACT/SUMMARY/prim/P2>P1>IMS iş mantığını değiştirmemelidir.
 
-Faz 2: ID/eşleştirme ayrıntıları ve hedefli dashboard/route/AI gerçek payload smoke testleri. Önce dashboard veri sözleşmesi incelenecek; tamamlanmış import tekrar çalıştırılmayacak.
+Düzeltmeden sonra sırasıyla:
 
-### 2026-08-09 — Dashboard veri akışı denetimi ve düzeltmesi
+1. BOS/BOŞ/BOSTANCI + official brick spread regression testleri.
+2. Tam `pytest tests/ -v`.
+3. PR/merge.
+4. Production workflow.
+5. İzole gerçek workbook re-import/fingerprint acceptance.
+6. Manager PASS raporu + manifest + NATIONAL/region + BOS/BOŞ stable-ID acceptance.
+7. Ancak bunların tamamı PASS ise servis restart ve `/login` health smoke.
 
-### DOSYA: `app/services/ims_import_service.py`
+---
 
-- DURUM: TAMAMLANDI
-- SORUN: Birleştirilmiş Excel üst başlıklarındaki TL/KUTU bilgisi ürün kolonlarına aktarılmadığı için satış TL alanı sıfırdı. Aynı temsilci/ürün için birden çok brick satırı Fact'e yazılırken son satır öncekileri eziyordu.
-- YAPILAN: Başlık grupları dinamik olarak yatay taşındı; TL/KUTU semantiği Excel ay/hafta ifadesinden otomatik çözülüyor. RAW satırları Fact grain'inde toplanarak UPSERT ediliyor.
-- TEST: Gerçek 24. hafta dosyasıyla izole import PASS: 8.849 RAW, 1.186 Fact, 594 Summary, 91.070 Competition; Fact TL toplamı 66.778.367,82.
+# 2. DEĞİŞTİRİLMEMESİ GEREKEN CANLI İŞ KURALLARI
 
-### DOSYA: `app/query/dashboard_query.py`, `app/services/dashboard_service.py`, `app/builders/dashboard_payload_builder.py`
+Bu hardening çalışmasının temel şartı mevcut doğru business davranışını bozmamaktır.
 
-- DURUM: TAMAMLANDI
-- YAPILAN: Global dashboard artık temsilci id=0 ile boş PrimeEngine çağrısı yapmıyor; aggregate query ile KPI ve ürün kartlarını üretiyor. Pazar payı trendi `ims_summary` yerine PP rekabet kaynağından okunuyor. AI domain alanları V3 `ai_*` payload contract'ına null-safe eşleniyor. Top temsilci hedef join'i dönem+ürün grain'ine daraltıldı.
-- TEST: Gerçek DB payload: satış 66.778.367,82 TL; altı ürün dolu; PP trendi %33,88; AI alanları tip doğru; brick özeti 789 AUTO. `dashboard.html` render PASS (58.236 byte).
+- Production satış kaynağı önceliği: **P2 > P1 > IMS**.
+- P1 geldiğinde IMS beklenmez; P2 geldiğinde P1'in yerini alır.
+- P2 tek başına da final kaynak olabilir.
+- Production realizasyonu `%100` üzerinde **kırpılmaz**.
+- Nationwide snapshot farklı satış kaynaklarını birbirine karıştırmaz.
+- Prime engine kuralları ve mevcut payout davranışı korunur.
+- Dashboard/region/representative ekranlarında mevcut doğru hesaplar yeniden tasarlanmaz.
+- Hedef business source/schema keyfi değiştirilmez.
+- Official NATIONAL/region toplamı kişi toplamıyla ikame edilmez.
+- Official Brick Spread FACT domainine karıştırılmaz; ayrı master/side-channel veri olarak kalır.
+- Kullanıcı kasası (`instance/persistent/users.db`) bağımsız korunur.
+- Ana SQLite DB WAL modunda kalır; import single-writer koordinasyonu korunur.
+- Import validation failure durumunda mevcut canlı IMS yayında kalır; yarım import publish edilmez.
 
-## Excel import durumu (son)
+---
 
-- Kaynak: `Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx`; 16 sheet.
-- Mevcut DB'ye veri silmeden ikinci import uygulandı: upload=2, 8.849 yeni RAW denetim kaydı, 1.087 Fact update + 99 insert, 594 Summary, 91.070 rekabet kaydı.
-- Yedek: `backups/ipm_before_dashboard_data_fix_20260809_*.db`.
-- Hedef verisi uyarısı: Bu Excel'de ayrı hedef sheet'i yoktur. DB'deki 42 eski hedef satırı toplam 1.926,45 TL olduğundan 66,8M satışla aynı ölçekte değildir; hedef/gerçekleşme yüzdeleri karar desteği için kullanılmamalıdır. Kaynak hedef dosyası sağlanmadan hedef değeri tahmin edilmemelidir.
+# 3. 9–18 AĞUSTOS DÖNEMİNDE TAMAMLANAN TEMEL ÇALIŞMALAR — ÖZET
 
-## Son tamamlanan aşama
+Bu bölüm önceki uzun checkpoint dosyasındaki önemli tamamlanmış işleri kaybetmemek için konsolide edilmiştir.
 
-Faz 2 dashboard veri kaynağı, import aggregation ve AI payload contract düzeltmesi tamamlandı.
+## Import / competition / hedef
 
-## Sonraki yapılacak aşama
+- `app/services/competition_import_service.py`
+  - Gerçek Excel'deki `AYLIK REKABET TL`, `AYLIK REKABET KUTU`, `TTS Rekabet`, `TTS Rekabet PP` yapıları desteklenmiştir.
+  - Tek-geçişli veri okuma optimizasyonu yapılmıştır.
+  - Gerçek 24. hafta importunda 91.070 rekabet kaydı işlenmiştir.
+- `app/services/target_import_service.py`
+  - `TTS ÇIKIŞLARI` içindeki kompakt hedef blokları desteklenmiştir.
+- `app/services/ims_import_service.py`
+  - RAW → FACT grain aggregation düzeltildi; aynı representative/product için brick satırlarının birbirini ezmesi engellendi.
+  - Birleştirilmiş header'lardan TL/KUTU semantiği taşınmıştır.
+- Upload route yıkıcı `clear_before_import=True` davranışından güvenli idempotent akışa geçirilmiştir.
+- Competition migration/API zinciri kurulmuştur.
 
-Değişiklikleri Git commit/push ve sunucu deploy'una aktar; uygulama başlatıldıktan sonra oturumlu tarayıcıyla dashboard menü/Chart.js görsel smoke testini tamamla. Ayrı hedef kaynak dosyası geldiğinde 42 eski hedef satırını ilgili dönem için upsert et.
+## Dashboard ve veri akışı
 
-### 2026-08-09 - Target box value correction
+- Global dashboard aggregate payload'a geçirilmiştir.
+- PrimeEngine için sahte `representative_id=0` kullanımı kaldırılmıştır.
+- PP trendi gerçek competition kaynağına bağlanmıştır.
+- AI payload alanları null-safe sözleşmeye alınmıştır.
+- Temsilci/brick arama, region performance ve representative detail ekranları gerçek dönem verilerine bağlanmıştır.
+- Mobile navbar aktif dönem + son IMS + search içerecek şekilde tamamlanmıştır.
 
-- [x] `app/services/ims_import_service.py` - Removed the derived `TL target / unit price` box-target calculation. The current workbook provides TL targets only; it does not contain a box-target field.
-- [x] `app/routes/targets.py` and `app/templates/targets.html` - Targets now render as one collapsed row per representative. Opening a representative shows that person's product-level TL targets; opening another closes the previous row.
-- [x] `app/static/css/style.css` - Added the scoped accordion presentation; the old flat target table is hidden.
-- [x] Server DB correction - In one SQLite transaction, reset only 2026/06 derived `targets.unit_target` and `ims_summary.target_unit` values to zero; no rows were deleted and TL target total remains 131,153,092.33.
-- [x] Server validation - Python compilation passed; authenticated target-route render returned HTTP 200 and includes the accordion/source label without the former fabricated box figure.
-- Commit/deploy: `71dd358 fix(targets): preserve source box targets and group rep goals` pushed and pulled on the server.
+## Hedef / kutu hedef
 
-## Son tamamlanan aşama
+- Yanlış kutu hedef türetme denemesi kaldırıldıktan sonra iş kuralı netleştirilmiş ve ortak servis üzerinden `unit_target = tl_target / approved product.unit_price` yaklaşımı uygulanmıştır.
+- `target_box_calculation_service.py` eklenmiştir.
+- Target ekranı representative accordion yapısına geçirilmiştir.
 
-Target box value correction and representative accordion deployment completed.
+## Brick assignment
 
-## Sonraki yapılacak aşama
+- `representative_brick_assignments` dönemsel altyapısı eklenmiştir.
+- Manual assignment AUTO import ile ezilmez.
+- Aynı brickte birden fazla geçerli üye desteklenmiştir; satış FACT'ı çift sayılmaz.
+- Eski 24. hafta için 789 brick / 798 representative-brick membership backfill edilmiştir.
 
-If a workbook containing an explicit box target is supplied, map that source column to `Target.unit_target`; until then leave it as unavailable rather than deriving it from the product price.
+## Prime / Q
 
-### 2026-08-09 - Approved box-target calculation rule
+- Aylık entitlement: dört ana ürünün tümü >=%75, en az üçü >=%90 ve toplam TL >=%100 şartları uygulanmıştır.
+- `%100+` business davranışı korunmuştur.
+- Q dönem analizi ayrı ekran olarak eklenmiştir.
+- Eski checkpoint commitleri arasında `48c1add`, `cb3ae71`, `f08433b`, `e310c5f`, `e8f2ae8` bulunmaktadır.
 
-- [x] Decision updated: box targets are intentionally derived from the approved product price master: `unit_target = tl_target / product.unit_price`, rounded to two decimals.
-- [x] `app/services/target_box_calculation_service.py` - Added one shared, transaction-safe calculation service for `targets.unit_target` and the linked `ims_summary.target_unit`.
-- [x] `app/services/ims_import_service.py` - BAKIYE imports now apply the shared formula after each TL target is read.
-- [x] `app/routes/targets.py` / `targets.html` - Added the protected "Kutu Hedeflerini Hesapla" action and shows the persisted calculated box value in each collapsed representative row.
-- [x] Server data - 594 targets recalculated; missing product price=0, target formula mismatch=0, summary formula mismatch=0, total unit target=1,185,398.56.
-- [x] Server route render - HTTP 200; accordion, calculation action and formula note present.
-- Commit/deploy: `5c06c5e feat(targets): calculate persisted box targets from prices` pushed and deployed; application restarted.
+## UI / dark mode
 
-### 2026-08-09 — Dinamik dosya şeması düzeltmesi
+- Login dahil uygulama genelinde koyu mod okunabilirlik düzeltmeleri yapılmıştır.
+- Global realizasyon gösterimi normalize edilmiştir.
+- İlgili merge commitlerinden biri: `ce82fd2ba816df36d2f72cf61d07cfd2746902d9`.
 
-- `CompetitionImportService` artık belirli aylara veya sabit sayfa listesine bağlı değildir; `REKABET` etiketi ve TL/KUTU/PP semantiğiyle sayfaları dinamik seçer.
-- `IMSImportService` upload oluşturmadan önce Excel üst bilgisinden ayı algılar; formdaki ay farklıysa Excel dönemi kullanılır.
-- Hedef tablosu, sayfa adı yerine `HEDEF/TARGET` başlığı ve gerçek ürün eşleşmelerinden algılanır; `BRICK REA.` gibi yanlış pozitifler dışarıda kalır.
-- Test: gerçek Excel'de ay=6 algılandı, hedef sayfası=1 ve hedefli Python derlemesi PASS.
+## SQLite / kullanıcı kasası / deploy dayanıklılığı
 
-### 2026-08-09 — Dönemsel temsilci/brick altyapısı
+- WAL runtime, busy timeout ve single writer import lock uygulanmıştır.
+- Auth okumaları transient SQLite lock sırasında korunmuştur.
+- Kullanıcı kasası ana DB'den bağımsız fallback olarak korunmuştur.
+- WAL-safe online backup utility eklenmiştir.
+- Production deploy öncesi ana DB + user vault yedekleri alınır.
+- Bu hardening merge commitlerinden biri: `c184a956278645e66497a0558611eb9118bcebbd`.
 
-- `representative_brick_assignments` tablosu migration-first olarak eklendi. Aynı brick için yıl/ay başına tek sorumlu temsilci kuralı uygulanır; `MANUAL` atamalar importun `AUTO` güncellemesiyle ezilmez.
-- Yeni RAW importları brick/territory/province boyutlarını saklar ve import sonunda otomatik brick ataması üretir.
-- Temsilci detay route'u ve ayar ekranı eklendi: `/representatives/view/<id>` içinde dönemsel brick listesi ve manuel `Brick Ata / Devral` işlemi var.
-- Migration head: `g2b3c4d5e6f7`; hedefli Python derleme PASS.
-- Not: Mevcut 24. hafta RAW kayıtları eski şema ile brick bilgisi saklanmadan yazılmıştır. Yeni atamaların otomatik oluşması bir sonraki Excel importunda başlayacak; geçmiş kaydı veri silmeden yeniden eşlemek ayrı bir backfill adımıdır.
+## Official Brick Spread ilk entegrasyonu
 
-### 2026-08-09 — Brick backfill ve Faz 2 başlangıcı
+- Official Brick Spread master değerleri FACT'e karıştırılmadan saklanmıştır.
+- PR #64 merge commit: `d17c6c70d22e047e2893bed7b469aa206c4f06c7`.
+- Daha sonra 19–20 Ağustos reconciliation hardening'i bu yapıyı content-driven/atomic hale getirmiştir.
 
-- Gerçek 24. hafta Excel'i yeniden satış/fact yazmadan okunarak 789 brick–temsilci ataması backfill edildi.
-- Dashboard gerçek payload testi iki hatayı ortaya çıkardı ve düzeltti: eşleştirme sayaçları olmayan `status` alanını sorgulamayacak; `RecoveryEngine.get_product_data()` uygulandı.
-- Doğrulama: aktif dönem 2026/6, temsilci=99, upload=1, top_representatives=10; DashboardService payload üretimi PASS.
+---
 
-### 2026-08-09 — Brick atamalarının dashboard bağlantısı
+# 4. 19–20 AĞUSTOS — WHOLE-WORKBOOK RECONCILIATION HARDENING
 
-- DashboardRepository → DashboardService → DashboardPayloadBuilder → dashboard.html zincirine aktif dönem brick atamaları eklendi.
-- Gerçek payload sonucu: toplam=789, manuel=0, otomatik=789. Kart temsilci ayarlarına yönlendirir.
-- Gerçek payload ile template render testi PASS; hedefli Python derleme PASS.
+## Amaç
 
-### 2026-08-09 — Faz 2 SQL veri bütünlüğü
+Excel sayfa adı/sırası/kolon koordinatına bağlı kırılgan import yerine, gerçek workbook içeriğinin tamamını kapsayan; semantik, deterministik, atomik ve audit edilebilir bir import/reconciliation mimarisi kurmak.
 
-- FK denetimi: RAW/Fact/Summary/brick assignment temsilci ve ürün yetimleri 0.
-- Rep kodu: `AUTO-`=0, boş kod/ad=0. Üç kod uzunluk nedeniyle adın tam normalize edilmiş biçiminden kısadır; çakışma değildir.
-- Rekabet: 91.070 kayıt; TL=45.090, KUTU=45.090, TTS=450, PP=440; boş bölge/brick ve dönem uyumsuzluğu 0.
-- 789 assignment brickinin tamamı CompetitionData brickiyle birebir eşleşti. Atamalar kodlu bölge/il ile backfill edildi; 789/789 kodlu bölge, 789/789 il, 99/99 temsilci ili dolu.
-- Bölge kodları Excel kaynaklıdır: 101, 201, 301, 401, 501, 601, 602, 701, 801, 802, 901. Dönem–brick duplicate=0.
+## PR #65 — IMS workbook reconciliation ve vacancy identity hardening
 
-### 2026-08-09 — Aylık prim hakedişi kapısı
+- PR: `#65`
+- Merge commit: `fdb07136062ad1bb2c59eb5fb4e4a614e82985f3`
+- Değişiklik kapsamı: 22 dosya, yaklaşık 2.5K ek satır.
 
-- [x] `app/services/prime_engine.py` — Aylık prim kuralı ürün adına sabitlenmeden tanımlandı: dört ana ürünün tamamı en az %75, en az üçü %90 ve üzeri; ayrıca toplam TL realizasyonu en az %100 olmalıdır.
-- [x] Prim/ciro/bonus/recovery/ürün bileşenleri bu aylık hakediş kapısı sağlanmadığında ödeme üretmez. Ayar değişiklikleri eski cache sonucu kullanılmadan her hesap motoru oluşturulduğunda yeniden okunur.
-- [x] `app/routes/settings.py` — Eksik prim ayarları `category="Prim"` ile oluşturulur; zorunlu kategori hatası giderildi.
-- [x] Uyumluluk — Eski `app.prime_engine` sarmalayıcısının kullandığı `_cache_clear` geri eklendi.
-- [x] Test — Sunucu venv üzerinde `tests.test_prime_engine_service`: 65/65 PASS.
-- [x] Gerçek Haziran verisi — Aktif dört ana ürün Travazol, Monurol, Mixovul, Acnemix olarak doğrulandı. Örnek temsilcilerde toplam TL %42,38–%70,39 aralığında ve en az bir ürün %75 altında olduğu için aylık hakediş doğru biçimde oluşmadı.
-- [x] Commit/deploy — `48c1add`, `cb3ae71`, `f08433b`, `e310c5f` GitHub'a gönderildi ve sunucuya çekildi; uygulama `/login` HTTP 200 ile çalışıyor.
+### Eklenen / değiştirilen ana katmanlar
 
-## Son tamamlanan aşama
+- `app/services/workbook_preflight.py`
+  - Whole-workbook manifest.
+  - Her anlamlı sheet/cell terminal sınıfa gider.
+  - Unknown/unclassified sheet blocking olur.
+  - Gerçek `0` değerleri blank sayılmaz.
 
-Aylık dört ürün + toplam TL prim hakedişi kuralı üretime alındı.
+- `app/services/semantic_import_discovery.py`
+  - Sheet adı ve sırası business identity olmaktan çıkarıldı.
+  - Target/competition/official brick spread content signature ile keşfedilir.
+  - Rename/header shift/order change tolere edilir.
+  - Belirsizlik varsa tahmin edilmez.
 
-## Sonraki yapılacak aşama
+- `app/services/representative_resolver.py`
+  - Representative matching tek merkezde toplandı.
+  - Normal temsilciler: persistent/exact/alias/normalized/controlled fuzzy.
+  - Vacancy: accent-sensitive stable identity.
+  - `BOS != BOŞ`.
+  - `BOSTANCI` vacancy değildir.
+  - Ambiguous match tahmin edilmez.
 
-Üç aylık Q dönemi için aynı esnek ürün kuralının üç aylık kümülatif hedef/gerçekleşen verisine nasıl uygulanacağı ve Q ödemesinin aylık ödemeden bağımsız katsayı/tutar sözleşmesi netleştirildikten sonra uygulanacak. Mevcut Haziran verisinde Q2'nin Nisan ve Mayıs verileri bulunmadığından dönem tamamlanmadan Q hakedişi üretilmemelidir.
+- `app/services/vacancy_matching.py`
+  - Vacancy canonicalization ve slot token ayrımı merkezileştirildi.
 
-### 2026-08-10 — Dashboard kabuğu ve temsilci arama akışı
+- `app/services/derived_master_verification.py`
+  - Derived/master karşılaştırması hücre koordinatından semantik key'e taşındı.
+  - Anahtar mantığı: region/brick/representative + product/market + metric + phase + period.
+  - Tek bir conflicting master value veya eksik beklenen metric blocking olur.
+  - Bağımsız master pivot FACT'e duplicate yazılmaz.
 
-- [x] `app/__init__.py` — Navbar için aktif IMS dönemi ve son tamamlanan yükleme context'i eklendi; üst kartlar artık boş değildir.
-- [x] `sidebar.html`, `navbar.html`, `shell-enhancements.css` — Orijinal Bilim İlaç görseli açılmış sol menüde ve menü kapalıyken üst navbar'da konumlandı.
-- [x] `global-search.js`, `representatives.py` — Üst arama gerçek temsilci ve brick sonuçlarını getirir, seçimi dönemsel temsilci performans ekranına yönlendirir.
-- [x] `representative_detail.html` — Temsilci bazında TL/kutu hedefi, IMS gerçekleşeni, realizasyon ve brick kapsamı birlikte gösterilir.
-- [x] `layout.js` — Sağ üst kullanıcı menüsü Bootstrap CDN durumundan bağımsız açılır; profil, şifre, bölge ve çıkış bağlantıları kullanılabilir.
-- [x] Test: sunucu venv üzerinde auth/search regresyonu 12/12 PASS. Canlı doğrulama: `SERKAN OZGU` araması `/representatives/view/30?year=2026&month=6` ekranına yönlendi; kullanıcı menüsü açıldı; aktif dönem `2026/06 · 24 . Hafta`, son IMS `09.08.2026` göründü.
-- [x] Commit/deploy: `900c21b`, `be05f0d`, `fe3b7a6` GitHub'a gönderildi ve güncel Flask süreci ile yayına alındı.
+- `app/services/workbook_semantic_reconciliation.py`
+  - Semantic relationship graph/reconciliation.
 
-### 2026-08-09 — Ortak brick üyeliği ve uzun temsilci adları
+- `app/services/official_aggregate_service.py`
+  - NATIONAL ↔ region reconciliation.
+  - TL ve KUTU ayrı doğrulanır.
+  - Kişi toplamı NATIONAL yerine kullanılmaz.
 
-- `representative_brick_assignments` tek sorumlu kuralı migration-first olarak çoklu üyelik kuralına çevrildi: benzersizlik artık `yıl + ay + brick + representative_id` düzeyinde.
-- Gerçek Excel’de iki geçerli TTS adı taşıyan 9 brick bulundu. Satış/fact yalnızca birincil satış sahibi üzerinden hesaplanmaya devam eder; ikinci kişi ayrıca aynı brickin üyesi olarak saklanır ve çift sayım yapılmaz.
-- Backfill sonucu: 789 benzersiz brick, 798 temsilci–brick üyeliği. Örnek `ADANA AKINCILAR+KISLA`: MERT HIKMET DAG ve GOKHAN ONAL; `IZM BAYRAKLI`: YIGIT PLAV ve SUDE OZBAYKAL.
-- Uzun ad doğrulaması: Excel’deki 99 geçerli temsilcinin tamamı master ID ile eşleşti; eşleşmeyen yok. En uzun ad `MUHAMMET ALPARSLAN SAFAK` (24 karakter); rep_code çakışması veya `AUTO-` prefix yok.
-- Migration head: `h3c4d5e6f7a8`; Python derleme ve gerçek DB backfill PASS.
+- `app/services/official_brick_spread_atomic.py`
+  - Official Brick Spread content-driven keşif.
+  - Aynı outer import transaction içinde atomik side-channel persistence.
 
-## 2026-08-12 — Bölge Performans Merkezi
+- `app/services/ims_delta_service.py`
+- `app/services/ims_delta_audit.py`
+  - Previous IMS delta:
+    - satış TL/KUTU
+    - hedef
+    - representative/product eklenen/çıkan
+    - region/cadre
+    - official brick spread
+    - competition value/grain
+  - Değişiklik tek başına hata sayılmaz; audit edilir.
 
-- Global aramadan bölge bazlı performans ekranına geçiş eklendi.
-- Aylık, 3 aylık, 6 aylık ve yıllık hedef, gerçekleşen ve realizasyon KPI'ları gerçek IMS verilerine bağlandı.
-- Ürün, ay ve temsilci kırılımları ortak bir servis üzerinden sunuldu.
-- Doğrulama: 154 test geçti, 1 test atlandı.
+- `app/services/import_result_report.py`
+  - Manager-facing PASS/FAIL JSON özeti `ImportAuditLog.notes` içinde saklanır.
+  - IMS Merkezi'nde tek seferlik görünür özet sunulur.
+  - PASS/FAIL kararı canonical publication blockers ile hizalanmıştır.
+
+- `.github/workflows/deploy.yml`
+  - Production deploy acceptance gate.
+  - Main DB ve user vault WAL-safe backup.
+  - Migration/runtime/target/master snapshot/integrity kontrolleri.
+  - Canlı DB üzerinde dry-run yapılmaz.
+  - `/tmp/ims-acceptance-*` izole DB kopyası oluşturulur.
+  - Aktif COMPLETED IMS workbooku izole DB'de yeniden import edilir.
+  - FACT/SUMMARY/TARGET/competition/official brick spread/official aggregates fingerprint ve toplamları karşılaştırılır.
+  - Acceptance PASS olmadan process restart yoktur.
+
+- `verify_ims_acceptance.py`
+- `verify_ims_acceptance_extras.py`
+  - Gerçek workbook re-import/fingerprint.
+  - Manager report PASS.
+  - Full manifest.
+  - Blocking counters = 0.
+  - NATIONAL/region reconciliation.
+  - Persisted BOS/BOŞ stable ID ayrımı.
+
+### PR #65 test sonucu
+
+GitHub Actions run #236:
+
+- **236 test collected**
+- **235 passed**
+- **1 skipped**
+- **0 failed**
+
+Geçen kritik test alanları:
+
+- P2 > P1 > IMS.
+- `%100+` uncapped.
+- Nationwide single-source.
+- Prime engine / simulation.
+- Auth/dashboard routes.
+- Dark mode/presentation.
+- SQLite WAL/read concurrency/user vault.
+- Zero metric gerçek veri.
+- Renamed sheet semantic discovery.
+- Derived conflict blocking.
+- Missing expected derived metric blocking.
+- Independent master pivot FACT'e yazılmama.
+- `BOS != BOŞ`.
+- `BOSTANCI != vacancy`.
+- Ambiguous BOS/BOŞ guess edilmemesi.
+
+---
+
+# 5. PR #66 — PRODUCTION DEPLOYMENT EVIDENCE
+
+- PR: `#66`
+- Merge commit: `65a428fcbdb3a8e521dfe56c00685782beb09012`
+- Amaç: production deploy/acceptance sonucunu yalnız ephemeral Actions logunda bırakmamak.
+
+Yapılan:
+
+- Deploy stdout/stderr yakalanır.
+- Sonuç merge SHA ile ilişkilendirilir.
+- GitHub issue olarak kalıcı production evidence bırakılır.
+- Remote deploy hata verirse workflow yine failure olur; evidence kaydı failure'ı mask etmez.
+- Business logic, DB model, dashboard, hedef ve prim davranışı değişmez.
+
+## İlk gözlenebilir production sonucu — Issue #68
+
+- Commit: `65a428fcbdb3a8e521dfe56c00685782beb09012`
+- Sonuç: **FAILED**
+- Fakat SQLite runtime: **PASS**
+  - WAL aktif.
+  - busy_timeout 30s.
+  - integrity OK.
+- Bu koşu sırasında servis restart edilmedi.
+
+Bu aşamada acceptance verifier içinde bir scope problemi tespit edildi.
+
+---
+
+# 6. PR #67 — ACCEPTANCE FACT FINGERPRINT SCOPE FIX
+
+- PR: `#67`
+- Merge commit: `45327c332e0dc82aac407f545575e4c1353cac21`
+
+Kök problem:
+
+- FACT upload-versioned olmasına rağmen acceptance snapshot FACT'ı `year/month` ile sorguluyordu.
+- İzole re-import yeni upload oluşturduğu için baseline + acceptance FACT satırları aynı period sorgusuna karışarak yanlış fingerprint mismatch üretebilirdi.
+
+Düzeltme:
+
+- FACT snapshot yalnız karşılaştırılan `upload_id` üzerinden alınır.
+- Summary/Target mevcut tasarıma uygun olarak period-scoped kalır.
+- Business data/runtime logic değişmez; yalnız acceptance verifier doğruluğu düzeltilir.
+
+PR #67 tam CI: **PASS**.
+
+---
+
+# 7. GERÇEK 4. HAFTA WORKBOOKU ÜZERİNDE BAĞIMSIZ KAYNAK KONTROLLERİ
+
+Hardening sırasında gerçek workbook yalnız test fixture değil, acceptance kaynağı olarak tekrar incelendi.
+
+Doğrulananlar:
+
+- Sheet sayısı: **16**.
+- Workbookta gerçek sayısal sıfır hücre: **84.007**.
+  - Bu nedenle `0 != blank` kuralı kritik ve gerçek veri gereksinimidir.
+- Representative/kadro grain: **113 kişi/kadro**.
+- Kişi/kadro satış toplamı: **125.767.119,32 TL**.
+- Kişi/kadro kutu toplamı: **1.497.003 kutu**.
+- Kişi hedef TL toplamı: **137.664.417,843582 TL**.
+- Official Brick Spread: **113 x 8 = 904** master değer.
+- Bölgesel aggregate: **11 bölge**.
+- 11 bölge TARGET TL toplamı NATIONAL ile eşleşti.
+- 11 bölge cumulative actual TL toplamı NATIONAL ile eşleşti.
+- 11 bölge cumulative actual KUTU toplamı NATIONAL ile eşleşti.
+- Ürün bazında resmi hedef kutu aggregate'larında NATIONAL ↔ 11 bölge toplamı uyumludur.
+
+Sonuç:
+
+- NATIONAL/region reconciliation kapısının temel Excel matematiği doğru.
+- Kişi toplamının NATIONAL yerine kullanılması gerekmiyor ve kullanılmamalı.
+- Güncel production blocker workbook toplamı değil, Official Brick Spread vacancy representative resolution yoludur.
+
+---
+
+# 8. PRODUCTION DEPLOY AKIŞININ ŞU ANKİ GÜVENLİK DAVRANIŞI
+
+Workflow sırası özetle:
+
+1. Full test suite.
+2. SSH production bağlantısı.
+3. `git fetch/pull main`.
+4. Requirements.
+5. Main DB WAL-safe predeploy backup.
+6. User vault WAL-safe predeploy backup.
+7. Master snapshot before migration.
+8. Alembic upgrade.
+9. Competition backfill öncesi ayrıca DB backup.
+10. Competition backfill.
+11. Runtime verification.
+12. Target audit.
+13. Master snapshot after migration.
+14. SQLite WAL/busy_timeout/integrity.
+15. İzole acceptance DB copy.
+16. `verify_ims_acceptance.py`.
+17. `verify_ims_acceptance_extras.py`.
+18. **Yalnız hepsi PASS ise** eski process kill + yeni process start.
+19. `/login` health smoke.
+20. Persistent GitHub deployment evidence.
+
+Issue #69 acceptance aşamasında fail olduğu için 18. adıma geçilmedi.
+
+Not: Deploy script `git pull`, migration ve runtime kontrollerini acceptance'tan önce yaptığı için production checkout'un main'e ilerlemiş olması ve additive/idempotent migration/backfill adımlarının çalışmış olması beklenir. Ancak **çalışan Flask process restart edilmediği için yeni hardening kodu canlı process olarak yayınlanmış kabul edilmemelidir.**
+
+---
+
+# 9. ŞU ANDA AÇIK TEKNİK HATA — ROOT CAUSE
+
+## Problem
+
+`Satış Brick Yayılımı` official master parserı, normal representative resolver hardening'inin dışında kalan bir representative matching yolu kullanıyor.
+
+Sonuç:
+
+- Normal kişi adları geçebilirken explicit regional vacancy adları:
+  - `ISTANBUL BOS`
+  - `KADIKOY BOS`
+  - `BURSA BOS`
+  - `IZM BOS BRICK`
+  - vb.
+  central vacancy identity ile çözülmüyor.
+
+Bu durum `RepresentativeResolver` merkezileştirme hedefinin eksik kalan son parser entegrasyonudur.
+
+## Beklenen çözüm tasarımı
+
+Official Brick Spread resolver çağrısı:
+
+1. Source label explicit vacancy ise önce `vacancy_slot_token` / canonical vacancy context üretmeli.
+2. Region/city/brick context ile stable vacancy ID çözmeli.
+3. `BOS`, `BOŞ`, `BOS KADRO`, `BOŞ KADRO` ayrımı korunmalı.
+4. Legacy `UNASSIGNED<region>` placeholder varsa güvenli migration/stable identity kuralı uygulanmalı.
+5. Match yoksa normal alias/fuzzy'ye düşmemeli.
+6. Non-vacancy adlarda normal `RepresentativeResolver` zinciri kullanılmalı.
+7. Aynı resolver TargetImportService, IMS FACT path ve OfficialBrickSpreadService için tek kaynak olmalı.
+
+## Eklenmesi gereken testler
+
+En az:
+
+- `OfficialBrickSpreadService` → `ISTANBUL BOS` persisted vacancy ID'ye eşleşir.
+- `IZM BOS BRICK` içindeki `BRICK` context-only kabul edilir.
+- `DİYARBAKIR BOS` ve `DİYARBAKIR BOŞ` aynı ID'ye düşmez.
+- `BOSTANCI` normal temsilci/yer adı olarak kalır.
+- Aynı contextte iki vacancy slot varsa resolver tahmin etmez.
+- Production acceptance workbooktaki tüm 11 regional BOS satırı resolved olur.
+- Official spread count/fingerprint baseline ile eşleşir.
+
+---
+
+# 10. TAMAMLANMIŞ TEST GÜVENCESİ
+
+Son hardening test paketinde özellikle şu davranışlar korunmuştur:
+
+- IMS before production.
+- P1 immediately replaces IMS.
+- P2 replaces P1.
+- P2 can be final without P1.
+- No source = error, not fake zero.
+- Nationwide source mixing prohibited.
+- Production percent >100 uncapped.
+- Decimal precision preserved.
+- Region totals include inactive vacant positions.
+- Official workbook subtotal preferred for region total while person allocation remains available.
+- Box target authoritative values preserved.
+- Dashboard competition uses latest real Excel rows.
+- IMS time rendered Europe/Istanbul.
+- Dynamic representative market analysis.
+- Semantic renamed target/competition/brick-spread discovery.
+- Unknown meaningful sheet blocks.
+- Empty sheet = explicit nondata.
+- Zero metric = real data.
+- SQLite WAL online backup consistency.
+- Concurrent authenticated read survives writer.
+- Import coordinator blocks second writer.
+- User vault independent identity load.
+- Prime entitlement/simulation/export/history suite.
+
+---
+
+# 11. GITHUB KAYITLARI / İLGİLİ PR VE ISSUE'LAR
+
+## Merge edilmiş PR'lar
+
+- PR #64 — Official Brick Spread master source
+  - merge: `d17c6c70d22e047e2893bed7b469aa206c4f06c7`
+- PR #65 — Whole-workbook reconciliation + vacancy identity hardening
+  - merge: `fdb07136062ad1bb2c59eb5fb4e4a614e82985f3`
+- PR #66 — Persistent production deployment evidence
+  - merge: `65a428fcbdb3a8e521dfe56c00685782beb09012`
+- PR #67 — FACT acceptance fingerprint scope fix
+  - merge: `45327c332e0dc82aac407f545575e4c1353cac21`
+
+## Production evidence issues
+
+- Issue #68 — production FAILED; SQLite runtime PASS; acceptance öncesi/erken failure evidence.
+- Issue #69 — production FAILED; SQLite runtime PASS; gerçek blocker = Official Brick Spread 11 BOS vacancy satırı unresolved.
+
+---
+
+# 12. ÇALIŞMA ORTAMINA DEVİR TALİMATI
+
+Yeni çalışma oturumunda ilk mesaj/iş şu olmalı:
+
+**“`PROJECT_WORK_PROGRESS.md` dosyasındaki 20 Ağustos 2026 checkpointinden devam et. Issue #69’daki Official Brick Spread 11 BOS vacancy eşleşme hatasını merkezi RepresentativeResolver kullanarak düzelt. BOS/BOŞ ayrımını koru, BOSTANCI’yı vacancy yapma, FACT/SUMMARY/prim/P2>P1>IMS davranışına dokunma. Tam testten sonra production acceptance PASS olmadan restart etme.”**
+
+Kodlamaya başlamadan önce kontrol edilecek dosyalar:
+
+- `app/services/official_brick_spread_atomic.py`
+- Official Brick Spread'ın gerçek import servis/modülü
+- `app/services/representative_resolver.py`
+- `app/services/vacancy_matching.py`
+- `app/services/ims_import_service.py`
+- `app/services/target_import_service.py`
+- `verify_ims_acceptance.py`
+- `verify_ims_acceptance_extras.py`
+- ilgili vacancy/brick spread testleri
+
+**Kritik:** Issue #69 çözülmeden “canlı tamamlandı” denmemeli ve IMS yeni dönem yüklemelerine başlanmamalıdır. Bir sonraki gerçek production acceptance PASS olduktan sonra sistem yeni IMS yüklemelerine açılabilir.
