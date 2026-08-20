@@ -766,6 +766,22 @@ def test_ims_completed_status_is_rendered_in_turkish(app):
     assert ">COMPLETED<" not in html
 
 
+def test_ims_form_defaults_to_latest_completed_period(app):
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        db.session.add(IMSUpload(file_name="2026-ocak.xlsx", year=2026, month=1, status="COMPLETED"))
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    html = client.get("/ims/").get_data(as_text=True)
+
+    assert '<option value="2026" selected>2026</option>' in html
+    assert '<option value="1" selected>Ocak</option>' in html
+
+
 def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
     from datetime import datetime
     from app.extensions import db
