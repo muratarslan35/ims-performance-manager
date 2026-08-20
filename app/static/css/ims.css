@@ -114,6 +114,7 @@
 }
 .ims-stat-label { font-size:11px; color:#7a8fa6; font-weight:600; text-transform:uppercase; letter-spacing:.07em; }
 .ims-stat-value { font-size:22px; font-weight:800; color:#0c223e; margin-top:4px; line-height:1; }
+.ims-stat-value.ims-stat-value-compact { font-size:18px; }
 .ims-stat-value.green { color:#18b368; }
 .ims-stat-value.red { color:#e34b4b; }
 
@@ -128,7 +129,7 @@
 
 .ims-detail-overlay { display:none; position:fixed; inset:0; background:rgba(10,20,40,.5); z-index:9999; align-items:center; justify-content:center; }
 .ims-detail-overlay.visible { display:flex; }
-.ims-detail-modal { background:#fff; border-radius:var(--ims-radius); padding:24px; max-width:480px; width:calc(100% - 32px); box-shadow:0 20px 50px rgba(10,20,40,.25); animation:detailModalIn .25s ease; }
+.ims-detail-modal { background:#fff; border-radius:var(--ims-radius); padding:24px; max-width:780px; width:calc(100% - 32px); max-height:calc(100vh - 32px); overflow-y:auto; box-shadow:0 20px 50px rgba(10,20,40,.25); animation:detailModalIn .25s ease; }
 @keyframes detailModalIn { from{opacity:0;transform:scale(.95)} to{opacity:1;transform:scale(1)} }
 .ims-detail-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
 .ims-detail-modal-title { font-size:16px; font-weight:700; color:#0c223e; }
@@ -137,6 +138,31 @@
 .ims-detail-row:last-child { border-bottom:none; }
 .ims-detail-label { color:#6a7a90; }
 .ims-detail-value { font-weight:600; color:#1c3558; text-align:right; }
+.ims-report-summary { display:flex; justify-content:space-between; gap:18px; padding:18px; border-radius:14px; background:#f4f8ff; border:1px solid rgba(11,78,162,.12); margin-bottom:16px; }
+.ims-report-summary.is-success { background:#f1fbf6; border-color:rgba(25,151,91,.2); }
+.ims-report-summary h3 { font-size:16px; color:#152b47; margin:4px 0; overflow-wrap:anywhere; }
+.ims-report-summary p,.ims-report-eyebrow { color:#6a7a90; font-size:12px; margin:0; }
+.ims-report-eyebrow { font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.ims-report-status { flex:0 0 auto; align-self:flex-start; display:inline-flex; align-items:center; gap:6px; border-radius:999px; padding:7px 10px; background:#fff; color:#198f59; font-size:12px; font-weight:800; }
+.ims-report-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
+.ims-report-kpis>div { padding:14px; border-radius:12px; background:#f8fbff; border:1px solid rgba(11,78,162,.09); }
+.ims-report-kpis span,.ims-report-kpis small { display:block; color:#75879e; font-size:11px; }
+.ims-report-kpis strong { display:block; color:#0b4ea2; font-size:20px; margin:4px 0; }
+.ims-report-section { border:1px solid rgba(11,78,162,.1); border-radius:12px; padding:15px; margin-bottom:14px; }
+.ims-report-section h4 { font-size:13px; color:#1c3558; margin:0 0 10px; }
+.ims-report-section-head>div { display:flex; justify-content:space-between; gap:12px; color:#1c3558; font-size:13px; }
+.ims-report-section-head small { color:#75879e; }
+.ims-report-progress { height:8px; border-radius:99px; background:#e5edf7; margin-top:10px; overflow:hidden; }
+.ims-report-progress span { display:block; height:100%; background:linear-gradient(90deg,#0b4ea2,#20ad70); border-radius:inherit; }
+.ims-report-columns { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.ims-report-list>div { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid rgba(11,78,162,.07); font-size:12px; color:#687c94; }
+.ims-report-list>div:last-child { border-bottom:0; }
+.ims-report-list strong { color:#1c3558; }
+.ims-report-messages .alert { white-space:pre-line; font-size:12px; margin-bottom:8px; }
+.ims-report-footnote { display:flex; gap:8px; align-items:flex-start; color:#71849b; font-size:11px; padding:2px 4px; }
+.ims-report-footnote i { color:#0b4ea2; }
 
 @media(max-width:900px){ .ims-info-grid{grid-template-columns:1fr;} .ims-stats-row{grid-template-columns:repeat(2,1fr);} }
 @media(max-width:600px){ .ims-stats-row{grid-template-columns:1fr;} .ims-hero{padding:20px;} .ims-hero-title{font-size:20px;} }
+@media(max-width:700px){ .ims-report-kpis,.ims-report-columns{grid-template-columns:1fr 1fr;} .ims-report-summary{flex-direction:column;} }
+@media(max-width:480px){ .ims-report-kpis,.ims-report-columns{grid-template-columns:1fr;} .ims-detail-modal{padding:16px;} }

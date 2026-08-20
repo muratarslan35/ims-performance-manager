@@ -780,6 +780,16 @@ def test_ims_form_defaults_to_latest_completed_period(app):
 
     assert '<option value="2026" selected>2026</option>' in html
     assert '<option value="1" selected>Ocak</option>' in html
+    assert "Aktif Temsilci" not in html
+    assert "Aktif Ürün" not in html
+    assert "Son IMS Haftası" in html
+    assert "Kaynak / Kaydedilen" in html
+    assert "IMS Yükleme Durum Raporu" in html
+    assert "Kaynak-kayıt mutabakatı" in html
+    assert "İşlenen veri katmanları" in html
+    assert "Veri kalitesi kontrolleri" in html
+    assert html.count('<option value="2026" selected>2026</option>') == 2
+    assert html.count('<option value="1" selected>Ocak</option>') == 2
 
 
 def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
