@@ -158,6 +158,9 @@ class RepresentativeBrickAssignment(db.Model):
     territory = db.Column(db.String(150), nullable=True)
     city = db.Column(db.String(100), nullable=True)
     source = db.Column(db.String(20), nullable=False, default="AUTO")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    inactive_reason = db.Column(db.String(255), nullable=True)
+    deactivated_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

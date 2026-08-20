@@ -7,8 +7,10 @@ from flask import request
 from flask import url_for
 
 from flask_login import login_required
+from flask_login import current_user
 from sqlalchemy import or_
 import unicodedata
+from datetime import datetime
 
 from app.extensions import db
 from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
@@ -47,7 +49,7 @@ def index():
     ).first()
     assignments_by_rep = {}
     if latest:
-        rows = RepresentativeBrickAssignment.query.filter_by(year=latest.year, month=latest.month).order_by(
+        rows = RepresentativeBrickAssignment.query.filter_by(year=latest.year, month=latest.month, active=True).order_by(
             RepresentativeBrickAssignment.brick.asc()
         ).all()
         for assignment in rows:
@@ -422,7 +424,9 @@ def view(
     active_period = PeriodService.get_active_period()
     year = request.args.get("year", type=int) or active_period["year"]
     month = request.args.get("month", type=int) or active_period["month"]
-    assignments = RepresentativeBrickAssignment.query.filter_by(representative_id=id, year=year, month=month).order_by(RepresentativeBrickAssignment.brick).all() if year and month else []
+    assignments = RepresentativeBrickAssignment.query.filter_by(
+        representative_id=id, year=year, month=month, active=True
+    ).order_by(RepresentativeBrickAssignment.brick).all() if year and month else []
     targets = Target.query.filter_by(representative_id=id, year=year, month=month).join(Product).order_by(Product.display_order, Product.product_name).all()
     summaries = {
         item.product_id: item
@@ -520,6 +524,7 @@ def search():
     brick_rows = RepresentativeBrickAssignment.query.join(Representative).filter(
         RepresentativeBrickAssignment.year == active_period["year"],
         RepresentativeBrickAssignment.month == active_period["month"],
+        RepresentativeBrickAssignment.active.is_(True),
         RepresentativeBrickAssignment.brick.ilike(f"%{query}%"),
     ).order_by(RepresentativeBrickAssignment.brick.asc()).limit(7).all()
     known_reps = {item["url"] for item in results}
@@ -560,7 +565,8 @@ def save_assignment(id):
         if assignment is None:
             assignment = RepresentativeBrickAssignment(year=year, month=month, brick=brick)
             db.session.add(assignment)
-        assignment.representative_id, assignment.source = representative.id, "MANUAL"
+        assignment.representative_id, assignment.source, assignment.active = representative.id, "MANUAL", True
+        assignment.inactive_reason, assignment.deactivated_at = None, None
         assignment.quarter = f"Q{((month - 1) // 3) + 1}"
         db.session.commit()
         flash("Dönemsel brick ataması kaydedildi.", "success")
@@ -568,6 +574,84 @@ def save_assignment(id):
         db.session.rollback()
         flash(str(exc), "danger")
     return redirect(url_for("representatives.view", id=id, year=request.form.get("year"), month=request.form.get("month")))
+
+
+def _can_manage_assignments():
+    return str(getattr(current_user, "role", "") or "").casefold() in {
+        "admin", "administrator", "manager", "yönetici", "yonetici"
+    }
+
+
+@representatives_bp.route("/territory-management")
+@login_required
+def territory_management():
+    active_period = PeriodService.get_active_period()
+    year = request.args.get("year", type=int) or active_period["year"]
+    month = request.args.get("month", type=int) or active_period["month"]
+    representatives = Representative.query.order_by(
+        Representative.active.desc(), Representative.region.asc().nullslast(), Representative.rep_name.asc()
+    ).all()
+    assignments = RepresentativeBrickAssignment.query.filter_by(year=year, month=month).order_by(
+        RepresentativeBrickAssignment.active.desc(), RepresentativeBrickAssignment.brick.asc()
+    ).all()
+    counts = {}
+    for item in assignments:
+        bucket = counts.setdefault(item.representative_id, {"active": 0, "passive": 0, "total": 0})
+        bucket["active" if item.active else "passive"] += 1
+        bucket["total"] += 1
+    return render_template(
+        "territory_management.html", representatives=representatives, assignments=assignments,
+        counts=counts, year=year, month=month, can_manage=_can_manage_assignments(),
+    )
+
+
+@representatives_bp.route("/territory-management/<int:assignment_id>/status", methods=["POST"])
+@login_required
+def territory_status(assignment_id):
+    if not _can_manage_assignments():
+        flash("Bu işlem için yönetici yetkisi gereklidir.", "danger")
+        return redirect(url_for("representatives.territory_management"))
+    assignment = RepresentativeBrickAssignment.query.get_or_404(assignment_id)
+    make_active = request.form.get("active") == "1"
+    assignment.active = make_active
+    assignment.source = "MANUAL"
+    assignment.inactive_reason = None if make_active else (request.form.get("reason") or "Yönetici tarafından pasife alındı").strip()
+    assignment.deactivated_at = None if make_active else datetime.utcnow()
+    db.session.commit()
+    flash(f"{assignment.brick} çalışma alanı {'aktifleştirildi' if make_active else 'pasife alındı'}.", "success")
+    return redirect(url_for("representatives.territory_management", year=assignment.year, month=assignment.month, representative_id=assignment.representative_id))
+
+
+@representatives_bp.route("/territory-management/<int:assignment_id>/transfer", methods=["POST"])
+@login_required
+def territory_transfer(assignment_id):
+    if not _can_manage_assignments():
+        flash("Bu işlem için yönetici yetkisi gereklidir.", "danger")
+        return redirect(url_for("representatives.territory_management"))
+    assignment = RepresentativeBrickAssignment.query.get_or_404(assignment_id)
+    target = Representative.query.get_or_404(request.form.get("target_representative_id", type=int))
+    if not target.active or target.id == assignment.representative_id:
+        flash("Aktif ve farklı bir hedef temsilci seçilmelidir.", "danger")
+        return redirect(url_for("representatives.territory_management", year=assignment.year, month=assignment.month))
+    existing = RepresentativeBrickAssignment.query.filter_by(
+        year=assignment.year, month=assignment.month, brick=assignment.brick, representative_id=target.id
+    ).first()
+    if existing is None:
+        existing = RepresentativeBrickAssignment(
+            representative_id=target.id, year=assignment.year, month=assignment.month,
+            quarter=assignment.quarter, brick=assignment.brick, territory=assignment.territory,
+            city=assignment.city, source="MANUAL", active=True,
+        )
+        db.session.add(existing)
+    else:
+        existing.active, existing.source = True, "MANUAL"
+        existing.inactive_reason, existing.deactivated_at = None, None
+    assignment.active, assignment.source = False, "MANUAL"
+    assignment.inactive_reason = f"{target.rep_name} temsilcisine devredildi"
+    assignment.deactivated_at = datetime.utcnow()
+    db.session.commit()
+    flash(f"{assignment.brick}, {target.rep_name} temsilcisine devredildi.", "success")
+    return redirect(url_for("representatives.territory_management", year=assignment.year, month=assignment.month, representative_id=target.id))
 
 
 @representatives_bp.route(

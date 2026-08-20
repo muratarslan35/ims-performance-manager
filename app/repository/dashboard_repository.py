@@ -79,7 +79,9 @@ class DashboardRepository:
         return self.session.query(IMSUpload).order_by(desc(IMSUpload.uploaded_at)).limit(limit).all()
 
     def load_brick_assignments(self, year: int, month: int) -> List[Any]:
-        return self.session.query(RepresentativeBrickAssignment).filter_by(year=year, month=month).all()
+        return self.session.query(RepresentativeBrickAssignment).filter_by(
+            year=year, month=month, active=True
+        ).all()
 
     def load_upload(self, upload_id: int) -> Optional[IMSUpload]:
         """Belirtilen ID'ye sahip upload kaydını getirir."""
