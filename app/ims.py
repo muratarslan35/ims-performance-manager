@@ -16,7 +16,11 @@ from werkzeug.utils import secure_filename
 
 from app.extensions import db
 from app.models import IMSUpload
+from app.models import IMSSummary
+from app.models import Product
 from app.models import ProductionResultUpload
+from app.models import Representative
+from app.models import Target
 
 from app.services.dashboard_service import (
     DashboardService
@@ -43,6 +47,69 @@ ims_bp = Blueprint(
 )
 
 
+def _manager_report(upload):
+    """Translate technical import evidence into manager-level completeness checks."""
+    target_rows = db.session.query(Target.representative_id, Target.product_id).filter_by(
+        year=upload.year, month=upload.month
+    ).all()
+    summary_rows = db.session.query(IMSSummary.representative_id, IMSSummary.product_id).filter_by(
+        year=upload.year, month=upload.month
+    ).all()
+    target_keys, summary_keys = set(target_rows), set(summary_rows)
+    target_rep_ids = {representative_id for representative_id, _ in target_keys if representative_id}
+    target_product_ids = {product_id for _, product_id in target_keys if product_id}
+
+    real_representatives = Representative.query.filter(
+        Representative.id.in_(target_rep_ids or {-1}),
+        Representative.active.is_(True),
+        ~db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
+    ).all()
+    represented_real_ids = {item.id for item in real_representatives}
+    active_real_ids = {
+        item.id for item in Representative.query.filter(
+            Representative.active.is_(True),
+            ~db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
+        ).all()
+    }
+    represented_regions = {str(item.region).strip() for item in real_representatives if item.region}
+    active_regions = {
+        str(item.region).strip() for item in Representative.query.filter(
+            Representative.active.is_(True), Representative.region.isnot(None)
+        ).all() if str(item.region).strip()
+    }
+    active_product_ids = {item.id for item in Product.query.filter_by(is_active=True).all()}
+    represented_active_products = target_product_ids & active_product_ids
+
+    reconciled = upload.status == "COMPLETED" and upload.reconciliation_status == "PASSED"
+    source_complete = (
+        int(upload.source_record_count or 0) > 0
+        and int(upload.source_record_count or 0) == int(upload.stored_source_record_count or 0)
+        and int(upload.invalid_metric_count or 0) == 0
+    )
+    representative_complete = bool(active_real_ids) and represented_real_ids == active_real_ids
+    region_complete = bool(active_regions) and represented_regions == active_regions
+    product_complete = bool(active_product_ids) and represented_active_products == active_product_ids
+    calculation_complete = bool(target_keys) and target_keys.issubset(summary_keys)
+    total_tl_complete = reconciled and source_complete and calculation_complete
+    realization_complete = total_tl_complete and len(target_keys) == len(summary_keys)
+
+    checks = [representative_complete, region_complete, product_complete, total_tl_complete, realization_complete]
+    return {
+        "overall": all(checks),
+        "representative_count": len(represented_real_ids),
+        "representatives_ok": representative_complete,
+        "region_count": len(represented_regions),
+        "regions_ok": region_complete,
+        "product_count": len(represented_active_products),
+        "products_ok": product_complete,
+        "total_tl_ok": total_tl_complete,
+        "realization_ok": realization_complete,
+        "sheet_count": int(upload.sheet_count or 0),
+        "source_count": int(upload.source_record_count or 0),
+        "stored_count": int(upload.stored_source_record_count or 0),
+    }
+
+
 @ims_bp.route(
 
     "/"
@@ -63,6 +130,7 @@ def index():
 
     active_period = PeriodService.get_active_period()
     import_status = ImportCoordinator.status()
+    manager_reports = {upload.id: _manager_report(upload) for upload in uploads}
 
     # TEMP DEBUG
     dashboard = {}
@@ -81,6 +149,8 @@ def index():
         active_period=active_period,
 
         import_status=import_status,
+
+        manager_reports=manager_reports,
 
     )
 
