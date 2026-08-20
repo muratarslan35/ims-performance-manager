@@ -594,7 +594,11 @@ class IMSImportService:
         if not normalized:
             return None, False
         tokens = set(normalized.split())
-        if tokens & {AliasService.normalize(token) for token in self.PRODUCT_HEADER_NOISE_TOKENS}:
+        noise_tokens = {AliasService.normalize(token) for token in self.PRODUCT_HEADER_NOISE_TOKENS}
+        if any(
+            token == noise or (len(noise) >= 4 and token.startswith(noise))
+            for token in tokens for noise in noise_tokens
+        ):
             return None, False
         match = self.resolve_product_match(product_group_name)
         if match["matched"]:
