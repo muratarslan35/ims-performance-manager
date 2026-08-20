@@ -6,6 +6,16 @@
 {% endblock %}
 
 {% block content %}
+{% if import_status.active %}
+<div class="alert alert-info d-flex align-items-start gap-2" role="status">
+  <i class="bi bi-hourglass-split mt-1"></i>
+  <div>
+    <strong>IMS dosyası işleniyor.</strong>
+    {{ import_status.metadata.file_name or 'Aktif dosya' }}{% if import_status.metadata.uploaded_by %} · {{ import_status.metadata.uploaded_by }}{% endif %}
+    <div class="small mt-1">İşlem atomik olarak tamamlanana kadar yeni dosya göndermeyin. Sonucu görmek için birkaç dakika sonra sayfayı yenileyin.</div>
+  </div>
+</div>
+{% endif %}
 <div class="ims-hero">
   <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3">
     <div>
@@ -75,19 +85,16 @@
               <label class="form-label fw-semibold" style="font-size:13px;">Yıl</label>
               <select class="form-select" name="year" required>
                 {% for year in range(2025,2036) %}
-                <option value="{{ year }}">{{ year }}</option>
+                <option value="{{ year }}" {% if year == active_period.year %}selected{% endif %}>{{ year }}</option>
                 {% endfor %}
               </select>
             </div>
             <div class="col-md-6">
               <label class="form-label fw-semibold" style="font-size:13px;">Ay</label>
               <select class="form-select" name="month" required>
-                <option value="1">Ocak</option><option value="2">Şubat</option>
-                <option value="3">Mart</option><option value="4">Nisan</option>
-                <option value="5">Mayıs</option><option value="6">Haziran</option>
-                <option value="7">Temmuz</option><option value="8">Ağustos</option>
-                <option value="9">Eylül</option><option value="10">Ekim</option>
-                <option value="11">Kasım</option><option value="12">Aralık</option>
+                {% for number, label in [(1,'Ocak'),(2,'Şubat'),(3,'Mart'),(4,'Nisan'),(5,'Mayıs'),(6,'Haziran'),(7,'Temmuz'),(8,'Ağustos'),(9,'Eylül'),(10,'Ekim'),(11,'Kasım'),(12,'Aralık')] %}
+                <option value="{{ number }}" {% if number == active_period.month %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
               </select>
             </div>
           </div>
@@ -118,7 +125,7 @@
           </div>
 
           <div class="d-flex gap-2">
-            <button class="btn btn-primary" type="submit" id="imsSubmitBtn">
+            <button class="btn btn-primary" type="submit" id="imsSubmitBtn" {% if import_status.active %}disabled{% endif %}>
               <i class="bi bi-upload me-2"></i>IMS Dosyasını İçe Aktar
             </button>
             <button class="btn btn-outline-secondary" type="reset" id="imsResetBtn">Temizle</button>
