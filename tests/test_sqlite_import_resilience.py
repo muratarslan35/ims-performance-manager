@@ -247,6 +247,9 @@ def test_bootstrap_reuses_legacy_vacancy_primary_key_instead_of_creating_duplica
         assert resolved.id == legacy_id
         assert Representative.query.filter(Representative.rep_name.like("%ISTANBUL BOS%")).count() == 1
         assert resolved.rep_code == "UNASSIGNED101ISTANBULBOS"
+        assert resolved.active is True
+        assert resolved.team == "TAYFUN-1"
+        assert resolved.territory == "ISTANBUL"
 
 
 def test_latest_manager_report_can_be_scoped_to_acceptance_upload(resilient_app):

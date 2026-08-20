@@ -664,6 +664,38 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
     assert "annual-realization-chart.js" in response.get_data(as_text=True)
 
 
+def test_representative_remaining_tl_sums_open_product_targets(app):
+    from app.extensions import db
+    from app.models import IMSSummary, IMSUpload, Product, Representative, Target
+
+    with app.app_context():
+        representative = Representative(rep_code="DETAIL-GAP", rep_name="Açık Hedef Temsilcisi", active=True)
+        over = Product(product_code="DETAIL-OVER", product_name="Hedef Üstü", display_order=1, is_active=True)
+        under = Product(product_code="DETAIL-UNDER", product_name="Hedef Altı", display_order=2, is_active=True)
+        upload = IMSUpload(file_name="detail-gap.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED")
+        db.session.add_all((representative, over, under, upload))
+        db.session.flush()
+        db.session.add_all((
+            Target(year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=over.id, tl_target=100, unit_target=1),
+            Target(year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=under.id, tl_target=100, unit_target=1),
+            IMSSummary(upload_id=upload.id, year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=over.id, tl=250, unit=1),
+            IMSSummary(upload_id=upload.id, year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=under.id, tl=40, unit=1),
+        ))
+        db.session.commit()
+        representative_id = representative.id
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    response = client.get(f"/representatives/view/{representative_id}?year=2026&month=1")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "290 ₺" in html
+    assert "%145.0" in html
+    assert "60 ₺" in html
+    assert "Açık ürün hedefleri toplamı" in html
+
+
 def test_ims_completed_status_is_rendered_in_turkish(app):
     from app.extensions import db
     from app.models import IMSUpload

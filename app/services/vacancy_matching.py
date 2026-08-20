@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import threading
 import unicodedata
+from app.extensions import db
 from app.models import Representative
 from app.services.alias_service import AliasService
 
@@ -17,6 +18,7 @@ _INSTALL_LOCK = threading.Lock()
 _INSTALLED = False
 _ORIGINAL_FIND_REPRESENTATIVE = None
 _VACANCY_CACHE = {}
+VACANCY_TEAM = "TAYFUN-1"
 
 
 def canonical_vacancy_text(value) -> str:
@@ -149,6 +151,20 @@ def _legacy_placeholder_candidates(vacancy_name):
     return list({representative.id: representative for representative in matches}.values())
 
 
+def _apply_active_cadre_profile(representative, *, region=None, city=None):
+    """Backfill organisational metadata without changing stable slot identity."""
+    if region and not representative.region:
+        representative.region = region
+    if city and not representative.city:
+        representative.city = city
+    if not representative.territory:
+        representative.territory = city or representative.city
+    if not representative.team:
+        representative.team = VACANCY_TEAM
+    representative.active = True
+    return representative
+
+
 def resolve_vacancy_match(value):
     """Resolve only explicit vacancy labels, never normal people or place names."""
     if vacancy_identity(value) is None:
@@ -195,6 +211,7 @@ def install_vacancy_matcher() -> None:
             code = self._vacancy_code(region, vacancy_name)
             by_code = Representative.query.filter_by(rep_code=code).first()
             if by_code is not None:
+                _apply_active_cadre_profile(by_code, region=region, city=location_city)
                 return by_code.id
 
             legacy = _legacy_placeholder_candidates(vacancy_name)
@@ -207,11 +224,7 @@ def install_vacancy_matcher() -> None:
                 representative = legacy[0]
                 # Preserve the primary key/history. Only backfill missing
                 # organisational metadata; do not rewrite prior IMS ownership.
-                if region and not representative.region:
-                    representative.region = region
-                if location_city and not representative.city:
-                    representative.city = location_city
-                representative.active = False
+                _apply_active_cadre_profile(representative, region=region, city=location_city)
                 _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
                 return representative.id
 
@@ -220,6 +233,11 @@ def install_vacancy_matcher() -> None:
                 region_value=region_value,
                 city=city,
                 vacancy_name=vacancy_name,
+            )
+            _apply_active_cadre_profile(
+                db.session.get(Representative, representative),
+                region=region,
+                city=location_city,
             )
             _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
             return representative
