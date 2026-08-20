@@ -172,6 +172,47 @@ def test_official_spread_is_persisted_without_entering_sales_fact_domain(spread_
         ).count() == 8
 
 
+def test_active_vacancy_does_not_capture_region_subtotal(spread_app):
+    from app.extensions import db
+    from app.models import Representative
+    from app.services.alias_service import AliasService
+    from app.services.official_brick_spread_service import OfficialBrickSpreadService
+
+    with spread_app.app_context():
+        _representative, products, upload = _seed_master_data()
+        vacancy = Representative(
+            rep_code="UNASSIGNED901DIYARBAKIRBOS",
+            rep_name="ATANMAMIŞ · 901 DIYARBAKIR · DIYARBAKIR BOS",
+            region="901",
+            city="DIYARBAKIR",
+            territory="DIYARBAKIR",
+            team="TAYFUN-1",
+            active=True,
+        )
+        db.session.add(vacancy)
+        db.session.commit()
+        AliasService.clear_cache()
+
+        workbook_path = spread_app.config["TEST_ROOT"] / "active-vacancy-spread.xlsx"
+        _make_workbook(workbook_path, products, representative_name="DIYARBAKIR BOS")
+
+        result = OfficialBrickSpreadService.persist(
+            file_path=workbook_path,
+            upload_id=upload.id,
+            year=2026,
+            month=1,
+            week_number=4,
+        )
+        db.session.commit()
+
+        assert result["representatives"] == 1
+        assert result["aggregate_rows_ignored"] == 2
+        assert OfficialBrickSpreadService.for_representative(
+            upload_id=upload.id,
+            representative_id=vacancy.id,
+        )["total"] == 6
+
+
 def test_unmatched_master_representative_fails_instead_of_silently_dropping(spread_app):
     from app.extensions import db
     from app.services.official_brick_spread_service import (
