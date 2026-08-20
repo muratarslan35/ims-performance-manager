@@ -173,13 +173,17 @@ class OfficialBrickSpreadService:
                 if not normalized_rep:
                     continue
 
+                # Region/NATIONAL subtotal labels are aggregate rows even if
+                # fuzzy representative matching can now see an active vacancy
+                # slot from the same city. Classify them before matching so a
+                # subtotal and its explicit BOS/BOŞ row cannot resolve to the
+                # same stable representative ID.
+                if normalized_rep == "NATIONAL" or re.match(r"^\d{3}\s+", normalized_rep):
+                    aggregate_rows += 1
+                    continue
+
                 match = AliasService.find_representative(representative_name)
                 if not match.get("matched"):
-                    # NATIONAL and region subtotal rows are useful workbook
-                    # checks but are not representative-level master records.
-                    if normalized_rep == "NATIONAL" or re.match(r"^\d{3}\s+", normalized_rep):
-                        aggregate_rows += 1
-                        continue
                     metric_cells = [values[2] if len(values) > 2 else None]
                     metric_cells.extend(values[index - 1] if len(values) >= index else None for index in product_columns)
                     if any(cell not in (None, "", "-") for cell in metric_cells):
