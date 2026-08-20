@@ -938,7 +938,7 @@ class IMSImportService:
             return "growth"
         return "unit"
 
-    def detect_product_columns(self, dataframe, representative_column):
+    def detect_product_columns(self, dataframe, representative_column, *, allow_auto_create=False):
         products = {}
         seen_metric_pairs = set()
         new_label_counts = Counter(
@@ -962,7 +962,7 @@ class IMSImportService:
                 # Wide layouts do not have an explicit product-group cell.
                 # Require two corroborating metric columns (normally box + TL)
                 # so a lone competitor column cannot become a managed product.
-                if not product_label or new_label_counts[product_label] < 2:
+                if not allow_auto_create or not product_label or new_label_counts[product_label] < 2:
                     continue
                 product, _ = self._ensure_product(product_label)
                 if product is None:
@@ -1103,7 +1103,11 @@ class IMSImportService:
                 "metric_column": metric_column,
             }
 
-        products = self.detect_product_columns(dataframe, representative_column)
+        products = self.detect_product_columns(
+            dataframe,
+            representative_column,
+            allow_auto_create=sheet.get("sheet_type") == "brick_sales",
+        )
         if not products:
             self.warnings.append(f"{sheet['sheet_name']}: eşleşen ürün kolonu bulunamadı; sayfa atlandı.")
             return None
