@@ -432,7 +432,7 @@ Temsilci Yönetimi
                     <td>
 
                         <button class="btn btn-link p-0 fw-bold text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#bricks-{{ representative.id }}" aria-expanded="false">
-                            {{ representative.rep_name }} <i class="bi bi-chevron-down small"></i>
+                            {{ representative.rep_name|representative_display_name }} <i class="bi bi-chevron-down small"></i>
                         </button>
                         <div class="collapse mt-2" id="bricks-{{ representative.id }}">
                             <div class="small text-secondary mb-1">{{ assignment_period[0] if assignment_period else '' }}/{{ assignment_period[1] if assignment_period else '' }} dönemi brickleri</div>
