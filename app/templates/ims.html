@@ -61,8 +61,8 @@
     <div class="ims-stat-value">{% if latest_upload and latest_upload.week_number %}{{ latest_upload.week_number }}. Hafta{% else %}—{% endif %}</div>
   </div>
   <div class="ims-stat-card">
-    <div class="ims-stat-label">Kaynak / Kaydedilen</div>
-    <div class="ims-stat-value ims-stat-value-compact">{% if latest_upload %}{{ latest_upload.source_record_count }} / {{ latest_upload.stored_source_record_count }}{% else %}—{% endif %}</div>
+    <div class="ims-stat-label">Doğrulanan Excel Sayfası</div>
+    <div class="ims-stat-value">{% if latest_upload %}{{ latest_upload.sheet_count }} / {{ latest_upload.sheet_count }}{% else %}—{% endif %}</div>
   </div>
   <div class="ims-stat-card">
     <div class="ims-stat-label">Son Durum</div>
@@ -340,12 +340,8 @@
             data-month="{{ item.month or '-' }}" data-quarter="{{ item.quarter or '-' }}"
             data-week="{{ item.week_number or '-' }}" data-sheets="{{ item.sheet_count }}" data-by="{{ item.uploaded_by|e }}"
             data-source-records="{{ item.source_record_count }}" data-stored-records="{{ item.stored_source_record_count }}"
-            data-raw-records="{{ item.raw_record_count }}" data-fact-records="{{ item.fact_record_count }}"
-            data-summary-records="{{ item.summary_record_count }}" data-processing-time="{{ item.processing_time or 0 }}"
-            data-zero-records="{{ item.zero_metric_count }}" data-blank-records="{{ item.blank_metric_count }}"
-            data-invalid-records="{{ item.invalid_metric_count }}" data-aggregate-records="{{ item.excluded_aggregate_count }}"
             data-reconciliation="{{ item.reconciliation_status }}"
-            data-warning="{{ (item.warning_message or '')|e }}" data-error="{{ (item.error_message or '')|e }}"
+            data-manager-report='{{ manager_reports[item.id]|tojson|forceescape }}'
             data-date="{{ item.uploaded_at | istanbul_datetime }}"
             style="cursor:pointer;transition:background .2s;">
           <td style="padding:12px 16px;font-size:13px;color:#8496ae;">{{ item.id }}</td>
@@ -517,7 +513,6 @@
   const detailClose = document.getElementById("imsDetailClose");
   const detailContent = document.getElementById("imsDetailContent");
   const escapeHtml = (value) => String(value == null ? "" : value).replace(/[&<>'"]/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"})[char]);
-  const numberText = (value) => Number(value || 0).toLocaleString("tr-TR");
   const reportStatus = (row) => row.dataset.reconciliation === "PASSED" && ["COMPLETED", "Hazır"].includes(row.dataset.status);
 
   document.querySelectorAll(".ims-detail-btn").forEach((btn) => {
@@ -526,29 +521,28 @@
       const row = btn.closest("tr");
       if (!row || !overlay || !detailContent) return;
       const passed = reportStatus(row);
-      const source = Number(row.dataset.sourceRecords || 0);
-      const stored = Number(row.dataset.storedRecords || 0);
-      const coverage = source ? Math.min(100, stored * 100 / source) : 0;
-      const warning = row.dataset.warning || "";
-      const error = row.dataset.error || "";
+      let report = {};
+      try { report = JSON.parse(row.dataset.managerReport || "{}"); } catch (_) { report = {}; }
+      const checkRow = (label, value, ok, successText = "Eksik yok") => `
+        <div class="ims-manager-check ${ok ? "is-ok" : "is-error"}">
+          <span class="ims-manager-check-icon"><i class="bi ${ok ? "bi-check-lg" : "bi-exclamation-lg"}"></i></span>
+          <div><strong>${escapeHtml(label)}</strong><small>${ok ? escapeHtml(successText) : "Kontrol gerekli"}</small></div>
+          <b>${escapeHtml(value)}</b>
+        </div>`;
       detailContent.innerHTML = `
-        <div class="ims-report-summary ${passed ? "is-success" : "is-warning"}">
+        <div class="ims-report-summary ${report.overall && passed ? "is-success" : "is-warning"}">
           <div><span class="ims-report-eyebrow">#${escapeHtml(row.dataset.id)} · ${escapeHtml(row.dataset.year)}/${escapeHtml(row.dataset.month)} · ${escapeHtml(row.dataset.week)}. Hafta</span><h3>${escapeHtml(row.dataset.file)}</h3><p>${escapeHtml(row.dataset.by)} tarafından ${escapeHtml(row.dataset.date)} tarihinde yüklendi.</p></div>
-          <span class="ims-report-status"><i class="bi ${passed ? "bi-check-circle-fill" : "bi-exclamation-circle-fill"}"></i>${passed ? "Doğrulandı" : "Kontrol gerekli"}</span>
+          <span class="ims-report-status"><i class="bi ${report.overall && passed ? "bi-check-circle-fill" : "bi-exclamation-circle-fill"}"></i>${report.overall && passed ? "Excel tamamen okundu" : "Kontrol gerekli"}</span>
         </div>
-        <div class="ims-report-kpis">
-          <div><span>Kaynak kayıt</span><strong>${numberText(source)}</strong><small>Dosyada bulunan anlamlı kayıt</small></div>
-          <div><span>Kaydedilen</span><strong>${numberText(stored)}</strong><small>Atomik olarak saklanan kayıt</small></div>
-          <div><span>Doğrulanan sayfa</span><strong>${numberText(row.dataset.sheets)}</strong><small>İşlenen Excel sheet sayısı</small></div>
-          <div><span>İşlem süresi</span><strong>${Number(row.dataset.processingTime || 0).toFixed(1)} sn</strong><small>Sunucu içe aktarma süresi</small></div>
+        <div class="ims-manager-intro"><strong>${escapeHtml(report.sheet_count || row.dataset.sheets)} Excel sayfasının tamamı kontrol edildi.</strong><span>Yönetim hesaplamalarını etkileyen eksik veya bozuk kayıt bulunup bulunmadığı aşağıda özetlenmiştir.</span></div>
+        <div class="ims-manager-checklist">
+          ${checkRow("Temsilci sayısı", report.representative_count || 0, report.representatives_ok)}
+          ${checkRow("Bölge sayısı", report.region_count || 0, report.regions_ok)}
+          ${checkRow("Aktif ürün", report.product_count || 0, report.products_ok)}
+          ${checkRow("Toplam ₺ hesaplama", report.total_tl_ok ? "Doğru" : "—", report.total_tl_ok, "Hesaplama doğrulandı")}
+          ${checkRow("Realizasyon hesaplamaları", report.realization_ok ? "Doğru" : "—", report.realization_ok, "Hesaplamalar doğrulandı")}
         </div>
-        <section class="ims-report-section"><div class="ims-report-section-head"><div><span>Kaynak-kayıt mutabakatı</span><strong>%${coverage.toFixed(1)}</strong></div><small>${numberText(stored)} / ${numberText(source)} kayıt korundu</small></div><div class="ims-report-progress"><span style="width:${coverage}%"></span></div></section>
-        <div class="ims-report-columns">
-          <section class="ims-report-section"><h4>İşlenen veri katmanları</h4><div class="ims-report-list"><div><span>Ham IMS kayıtları</span><strong>${numberText(row.dataset.rawRecords)}</strong></div><div><span>Haftalık satış fact</span><strong>${numberText(row.dataset.factRecords)}</strong></div><div><span>Temsilci/ürün özeti</span><strong>${numberText(row.dataset.summaryRecords)}</strong></div><div><span>Korunan sıfır satış</span><strong>${numberText(row.dataset.zeroRecords)}</strong></div></div></section>
-          <section class="ims-report-section"><h4>Veri kalitesi kontrolleri</h4><div class="ims-report-list"><div><span>Boş metrik</span><strong class="${Number(row.dataset.blankRecords) ? "text-warning" : "text-success"}">${numberText(row.dataset.blankRecords)}</strong></div><div><span>Geçersiz metrik</span><strong class="${Number(row.dataset.invalidRecords) ? "text-danger" : "text-success"}">${numberText(row.dataset.invalidRecords)}</strong></div><div><span>Hariç tutulan toplam satırı</span><strong>${numberText(row.dataset.aggregateRecords)}</strong></div><div><span>Mutabakat</span><strong class="${row.dataset.reconciliation === "PASSED" ? "text-success" : "text-warning"}">${escapeHtml(row.dataset.reconciliation === "PASSED" ? "BAŞARILI" : row.dataset.reconciliation)}</strong></div></div></section>
-        </div>
-        ${(warning || error) ? `<section class="ims-report-section ims-report-messages"><h4>Import açıklamaları</h4>${error ? `<div class="alert alert-danger">${escapeHtml(error)}</div>` : ""}${warning ? `<div class="alert alert-warning">${escapeHtml(warning)}</div>` : ""}</section>` : ""}
-        <div class="ims-report-footnote"><i class="bi bi-shield-lock-fill"></i> Bu rapor, yükleme kaydının denetim alanlarından üretilir; hedef, prim veya dashboard hesaplama kurallarını değiştirmez.</div>`;
+        <div class="ims-manager-conclusion ${report.overall ? "is-ok" : "is-error"}"><i class="bi ${report.overall ? "bi-shield-check" : "bi-shield-exclamation"}"></i><div><strong>${report.overall ? "IMS dosyası eksiksiz işlendi" : "IMS dosyası yönetici kontrolü gerektiriyor"}</strong><span>${report.overall ? "Dashboard, hedef ve realizasyon ekranları bu doğrulanmış yüklemeyi kullanıyor." : "Teknik ekip raporu incelemelidir; eksik hesaplama sonuçları güvenilir kabul edilmemelidir."}</span></div></div>`;
       overlay.classList.add("visible");
     });
   });

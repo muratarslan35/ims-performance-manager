@@ -783,13 +783,47 @@ def test_ims_form_defaults_to_latest_completed_period(app):
     assert "Aktif Temsilci" not in html
     assert "Aktif Ürün" not in html
     assert "Son IMS Haftası" in html
-    assert "Kaynak / Kaydedilen" in html
+    assert "Doğrulanan Excel Sayfası" in html
     assert "IMS Yükleme Durum Raporu" in html
-    assert "Kaynak-kayıt mutabakatı" in html
-    assert "İşlenen veri katmanları" in html
-    assert "Veri kalitesi kontrolleri" in html
+    assert "Temsilci sayısı" in html
+    assert "Bölge sayısı" in html
+    assert "Aktif ürün" in html
+    assert "Toplam ₺ hesaplama" in html
+    assert "Realizasyon hesaplamaları" in html
+    assert "Import açıklamaları" not in html
     assert html.count('<option value="2026" selected>2026</option>') == 2
     assert html.count('<option value="1" selected>Ocak</option>') == 2
+
+
+def test_ims_manager_report_confirms_business_completeness(app):
+    from app.extensions import db
+    from app.ims import _manager_report
+    from app.models import IMSUpload, IMSSummary, Product, Representative, Target
+
+    with app.app_context():
+        Representative.query.update({Representative.active: False}, synchronize_session=False)
+        Product.query.update({Product.is_active: False}, synchronize_session=False)
+        representative = Representative(rep_code="MGR-REP", rep_name="Yönetici Rapor Temsilcisi", region="901 DIYARBAKIR", active=True)
+        product = Product(product_code="MGR-PROD", product_name="Yönetici Rapor Ürünü", is_active=True)
+        upload = IMSUpload(
+            file_name="yonetici-raporu.xlsx", year=2034, month=2, week_number=5,
+            status="COMPLETED", reconciliation_status="PASSED", sheet_count=16,
+            source_record_count=10, stored_source_record_count=10, invalid_metric_count=0,
+        )
+        db.session.add_all([representative, product, upload])
+        db.session.flush()
+        db.session.add(Target(year=2034, month=2, quarter="Q1", representative_id=representative.id, product_id=product.id, tl_target=100, unit_target=10))
+        db.session.add(IMSSummary(upload_id=upload.id, year=2034, month=2, quarter="Q1", representative_id=representative.id, product_id=product.id, tl=90, unit=9))
+        db.session.commit()
+
+        report = _manager_report(upload)
+
+    assert report["overall"] is True
+    assert report["representative_count"] == 1
+    assert report["region_count"] == 1
+    assert report["product_count"] == 1
+    assert report["total_tl_ok"] is True
+    assert report["realization_ok"] is True
 
 
 def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
