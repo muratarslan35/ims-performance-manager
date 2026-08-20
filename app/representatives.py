@@ -36,6 +36,22 @@ def _search_key(value):
     return "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
 
 
+def _is_unassigned_representative(representative):
+    """Keep vacancy identities in data while hiding them from end-user rep pickers."""
+    rep_code = str(getattr(representative, "rep_code", "") or "").upper()
+    rep_name = _search_key(getattr(representative, "rep_name", ""))
+    return rep_code.startswith("UNASSIGNED") or rep_name.startswith("atanmamis")
+
+
+def _visible_representative_filter():
+    """SQL counterpart used only by representative-facing UI queries."""
+    return ~or_(
+        db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
+        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIŞ%"),
+        db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIS%"),
+    )
+
+
 @representatives_bp.route(
 
     "/"
@@ -55,14 +71,9 @@ def index():
         for assignment in rows:
             assignments_by_rep.setdefault(assignment.representative_id, []).append(assignment)
 
-    # The general unassigned placeholder duplicates brick portfolios which are
-    # already shown under their regional unassigned representative records.
-    representatives = Representative.query.filter(
-        ~(
-            (Representative.active.is_(False))
-            & (Representative.rep_name.ilike("ATANMAMIŞ · GENEL%"))
-        )
-    ).order_by(
+    # Vacancy identities remain available to IMS and target calculations, but
+    # are not people and therefore do not belong in the representative UI.
+    representatives = Representative.query.filter(_visible_representative_filter()).order_by(
         Representative.region.asc().nullslast(), Representative.city.asc(), Representative.rep_name.asc()
     ).all()
 
@@ -509,7 +520,7 @@ def search():
         })
         if len(region_results) >= 4:
             break
-    reps = [rep for rep in all_representatives if any(
+    reps = [rep for rep in all_representatives if not _is_unassigned_representative(rep) and any(
         normalized_query in _search_key(value) for value in (rep.rep_name, rep.rep_code, rep.city)
     )]
     reps.sort(key=lambda rep: (not rep.active, _search_key(rep.rep_name)))
@@ -525,6 +536,7 @@ def search():
         RepresentativeBrickAssignment.year == active_period["year"],
         RepresentativeBrickAssignment.month == active_period["month"],
         RepresentativeBrickAssignment.active.is_(True),
+        _visible_representative_filter(),
         RepresentativeBrickAssignment.brick.ilike(f"%{query}%"),
     ).order_by(RepresentativeBrickAssignment.brick.asc()).limit(7).all()
     known_reps = {item["url"] for item in results}
