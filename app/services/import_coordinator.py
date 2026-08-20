@@ -47,6 +47,32 @@ class ImportCoordinator:
             return {}
 
     @classmethod
+    def status(cls) -> dict:
+        """Return live lock state without trusting stale metadata on disk."""
+        if fcntl is None:
+            return {"active": False, "metadata": {}}
+
+        lock_path = cls._lock_path()
+        handle = lock_path.open("a+", encoding="utf-8")
+        try:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"active": True, "metadata": cls._read_metadata(handle)}
+
+            # A process crash automatically releases flock but can leave its
+            # descriptive JSON behind. Clear that stale text only after this
+            # process proves that no live importer owns the lock.
+            handle.seek(0)
+            handle.truncate()
+            handle.flush()
+            os.fsync(handle.fileno())
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return {"active": False, "metadata": {}}
+        finally:
+            handle.close()
+
+    @classmethod
     @contextmanager
     def acquire(cls, *, uploaded_by: str, file_name: str, wait_seconds: float = 2.0):
         if fcntl is None:
