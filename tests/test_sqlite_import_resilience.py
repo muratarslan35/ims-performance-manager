@@ -91,7 +91,6 @@ def test_authenticated_read_survives_concurrent_ims_writer(resilient_app):
         writer.execute("BEGIN IMMEDIATE")
         writer.execute("UPDATE users SET full_name = ? WHERE id = ?", ("Uncommitted Writer", user_id))
 
-        # This is the exact class of read that failed in Flask-Login before WAL.
         with resilient_app.app_context():
             from app.extensions import db
             from app.models import User
@@ -181,10 +180,72 @@ def test_vacancy_matching_resolves_diyarbakir_rows_without_guessing(resilient_ap
         assert cadre["object"].id == vacancy_cadre.id
         assert cadre["method"] == "VACANCY_SUFFIX"
 
-        # BOS must be a token, not a substring: BOSTANCI must never enter the
-        # vacancy fallback just because its spelling begins with BOS.
         ordinary = AliasService.find_representative("BOSTANCI TEMSILCI")
         assert ordinary["matched"] is False
+
+
+def test_unresolved_vacancy_is_rechecked_after_bootstrap_creates_stable_slot(resilient_app):
+    """A pre-bootstrap miss must not poison later master parsers in the same import."""
+    from app.extensions import db
+    from app.models import Representative
+    from app.services.alias_service import AliasService
+    from app.services.vacancy_matching import clear_vacancy_match_cache
+
+    with resilient_app.app_context():
+        clear_vacancy_match_cache()
+        AliasService.clear_cache()
+
+        before = AliasService.find_representative("ISTANBUL BOS")
+        assert before["matched"] is False
+        assert before["method"] == "VACANCY_UNRESOLVED"
+
+        vacancy = Representative(
+            rep_code="UNASSIGNED101BOSISTANBULBOS",
+            rep_name="ATANMAMIŞ · 101 ISTANBUL · ISTANBUL BOS",
+            region="101 ISTANBUL",
+            city="ISTANBUL",
+            active=False,
+        )
+        db.session.add(vacancy)
+        db.session.flush()
+
+        after = AliasService.find_representative("ISTANBUL BOS")
+        assert after["matched"] is True
+        assert after["object"].id == vacancy.id
+        assert after["method"] == "VACANCY_SUFFIX"
+
+
+def test_bootstrap_reuses_legacy_vacancy_primary_key_instead_of_creating_duplicate(resilient_app):
+    """Canonical code changes must never fork a historic vacancy/cadre identity."""
+    from app.extensions import db
+    from app.models import Representative
+    from app.services.ims_import_service import IMSImportService
+    from app.services.vacancy_matching import clear_vacancy_match_cache
+
+    with resilient_app.app_context():
+        legacy = Representative(
+            rep_code="UNASSIGNED101ISTANBULBOS",
+            rep_name="ATANMAMIŞ · 101 ISTANBUL · ISTANBUL BOS",
+            region="101 ISTANBUL",
+            city="ISTANBUL",
+            active=False,
+        )
+        db.session.add(legacy)
+        db.session.flush()
+        legacy_id = legacy.id
+        clear_vacancy_match_cache()
+
+        service = IMSImportService("unused.xlsx")
+        resolved = service._ensure_vacancy_representative(
+            "ISTANBUL BOS",
+            region_value="101 ISTANBUL",
+            city="ISTANBUL",
+        )
+        db.session.flush()
+
+        assert resolved.id == legacy_id
+        assert Representative.query.filter(Representative.rep_name.like("%ISTANBUL BOS%")).count() == 1
+        assert resolved.rep_code == "UNASSIGNED101ISTANBULBOS"
 
 
 def test_online_backup_is_consistent_in_wal_mode(resilient_app):
