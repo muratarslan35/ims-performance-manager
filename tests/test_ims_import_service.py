@@ -399,6 +399,13 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0].unit, rows[0].tl), (8.0, 240.0))
 
+    def test_report_period_heading_cannot_create_product_master(self):
+        service = IMSImportService("unused.xlsx", uploaded_by="Test User")
+        product, created = service._ensure_product("14.1.25 Ocak Çıkışı")
+        self.assertIsNone(product)
+        self.assertFalse(created)
+        self.assertEqual(Product.query.count(), 1)
+
     def test_shifted_header_and_noise_rows_are_tolerated(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "shifted_noise.xlsx"
