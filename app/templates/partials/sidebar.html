@@ -40,10 +40,18 @@
             <li class="sidebar-section-label">Tanımlar</li>
 
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.') %}active{% endif %}"
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.') and not request.endpoint.startswith('representatives.territory_') %}active{% endif %}"
                    href="{{ url_for('representatives.index') }}">
                     <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-people-fill"></i></span>
                     <span class="sidebar-nav-label">Temsilciler</span>
+                </a>
+            </li>
+
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.territory_') %}active{% endif %}"
+                   href="{{ url_for('representatives.territory_management') }}">
+                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-geo-alt-fill"></i></span>
+                    <span class="sidebar-nav-label">Bölge Atamaları</span>
                 </a>
             </li>
 
