@@ -676,8 +676,8 @@ def test_representative_remaining_tl_sums_open_product_targets(app):
         db.session.add_all((representative, over, under, upload))
         db.session.flush()
         db.session.add_all((
-            Target(year=2026, month=1, representative_id=representative.id, product_id=over.id, tl_target=100, unit_target=1),
-            Target(year=2026, month=1, representative_id=representative.id, product_id=under.id, tl_target=100, unit_target=1),
+            Target(year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=over.id, tl_target=100, unit_target=1),
+            Target(year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=under.id, tl_target=100, unit_target=1),
             IMSSummary(upload_id=upload.id, year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=over.id, tl=250, unit=1),
             IMSSummary(upload_id=upload.id, year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=under.id, tl=40, unit=1),
         ))
