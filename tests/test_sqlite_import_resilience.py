@@ -236,12 +236,13 @@ def test_bootstrap_reuses_legacy_vacancy_primary_key_instead_of_creating_duplica
         clear_vacancy_match_cache()
 
         service = IMSImportService("unused.xlsx")
-        resolved = service._ensure_vacancy_representative(
-            "ISTANBUL BOS",
-            region_value="101 ISTANBUL",
+        resolved_id = service._ensure_vacancy_representative(
+            "101 ISTANBUL",
             city="ISTANBUL",
+            vacancy_name="ISTANBUL BOS",
         )
         db.session.flush()
+        resolved = db.session.get(Representative, resolved_id)
 
         assert resolved.id == legacy_id
         assert Representative.query.filter(Representative.rep_name.like("%ISTANBUL BOS%")).count() == 1

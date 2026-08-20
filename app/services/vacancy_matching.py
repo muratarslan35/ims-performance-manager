@@ -189,13 +189,13 @@ def install_vacancy_matcher() -> None:
             matches = _legacy_placeholder_candidates(vacancy_name)
             return matches[0] if len(matches) == 1 else None
 
-        def ensure_vacancy_representative(self, vacancy_name, region_value=None, city=None):
+        def ensure_vacancy_representative(self, region_value=None, city=None, vacancy_name=None):
             """Preserve an existing stable slot ID before creating a new canonical code."""
             region, location_city = self._region_context(region_value, city)
             code = self._vacancy_code(region, vacancy_name)
             by_code = Representative.query.filter_by(rep_code=code).first()
             if by_code is not None:
-                return by_code
+                return by_code.id
 
             legacy = _legacy_placeholder_candidates(vacancy_name)
             if len(legacy) > 1:
@@ -213,13 +213,13 @@ def install_vacancy_matcher() -> None:
                     representative.city = location_city
                 representative.active = False
                 _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
-                return representative
+                return representative.id
 
             representative = original_ensure_vacancy(
                 self,
-                vacancy_name,
                 region_value=region_value,
                 city=city,
+                vacancy_name=vacancy_name,
             )
             _VACANCY_CACHE.pop(vacancy_identity(vacancy_name), None)
             return representative
