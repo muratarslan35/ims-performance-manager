@@ -191,7 +191,7 @@ def install_vacancy_matcher() -> None:
 
         def ensure_vacancy_representative(self, vacancy_name, region_value=None, city=None):
             """Preserve an existing stable slot ID before creating a new canonical code."""
-            region, location_city = self._region_context(region_value=region_value, city=city)
+            region, location_city = self._region_context(region_value, city)
             code = self._vacancy_code(region, vacancy_name)
             by_code = Representative.query.filter_by(rep_code=code).first()
             if by_code is not None:
