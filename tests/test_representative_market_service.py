@@ -7,7 +7,15 @@ from openpyxl import Workbook
 from app import create_app
 from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment, Target
-from app.services.representative_market_service import RepresentativeMarketService
+from app.services.representative_market_service import RepresentativeMarketService, brick_product_sort_key
+
+
+def test_brick_products_follow_managerial_display_order():
+    unordered = ["Fentivag", "Mixovul", "Travazol", "Brimoder", "Acnemix", "Stiderm", "Monurol"]
+
+    assert sorted(unordered, key=brick_product_sort_key) == [
+        "Travazol", "Monurol", "Acnemix", "Mixovul", "Stiderm", "Brimoder", "Fentivag"
+    ]
 
 
 def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products():
