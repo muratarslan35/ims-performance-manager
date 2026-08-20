@@ -791,3 +791,68 @@ def test_verified_product_active_ingredients_are_migrated():
     for code, ingredient in expected.items():
         assert code in migration
         assert ingredient in migration
+
+
+def test_manager_can_deactivate_and_transfer_period_work_area(app):
+    from app.extensions import db
+    from app.models import Representative, RepresentativeBrickAssignment, User
+
+    with app.app_context():
+        user = User.query.filter_by(email="test@example.com").one()
+        user.role = "Admin"
+        first = Representative(rep_code="AREA-1", rep_name="Alan Temsilcisi", active=True)
+        second = Representative(rep_code="AREA-2", rep_name="Yeni Alan Temsilcisi", active=True)
+        db.session.add_all([first, second])
+        db.session.flush()
+        assignment = RepresentativeBrickAssignment(
+            representative_id=first.id, year=2026, month=8, quarter="Q3",
+            brick="KADIKÖY MERKEZ", city="İstanbul", source="AUTO", active=True,
+        )
+        db.session.add(assignment)
+        db.session.commit()
+        first_id, second_id, assignment_id = first.id, second.id, assignment.id
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    page = client.get("/representatives/territory-management?year=2026&month=8")
+    assert page.status_code == 200
+    assert "KADIKÖY MERKEZ" in page.get_data(as_text=True)
+
+    response = client.post(
+        f"/representatives/territory-management/{assignment_id}/transfer",
+        data={"target_representative_id": second_id}, follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        old = db.session.get(RepresentativeBrickAssignment, assignment_id)
+        new = RepresentativeBrickAssignment.query.filter_by(
+            representative_id=second_id, year=2026, month=8, brick="KADIKÖY MERKEZ"
+        ).one()
+        assert old.representative_id == first_id and old.active is False
+        assert old.source == "MANUAL" and old.deactivated_at is not None
+        assert new.active is True and new.source == "MANUAL"
+
+    client.post(
+        f"/representatives/territory-management/{new.id}/status",
+        data={"active": "0", "reason": "İlçe çalışma kapsamından çıkarıldı"},
+    )
+    with app.app_context():
+        assert db.session.get(RepresentativeBrickAssignment, new.id).active is False
+
+
+def test_dashboard_repository_excludes_passive_work_areas(app):
+    from app.extensions import db
+    from app.models import Representative, RepresentativeBrickAssignment
+    from app.repository.dashboard_repository import DashboardRepository
+
+    with app.app_context():
+        rep = Representative(rep_code="AREA-FILTER", rep_name="Filtre Temsilcisi", active=True)
+        db.session.add(rep)
+        db.session.flush()
+        db.session.add_all([
+            RepresentativeBrickAssignment(representative_id=rep.id, year=2026, month=8, brick="AKTİF BRICK", active=True),
+            RepresentativeBrickAssignment(representative_id=rep.id, year=2026, month=8, brick="PASİF BRICK", active=False, source="MANUAL"),
+        ])
+        db.session.commit()
+        rows = DashboardRepository(db.session).load_brick_assignments(2026, 8)
+        assert [row.brick for row in rows] == ["AKTİF BRICK"]
