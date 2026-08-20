@@ -61,7 +61,7 @@ def register_template_context(app):
             from app.services.period_service import PeriodService
             period = PeriodService.get_active_period()
             upload = IMSUpload.query.filter_by(status="COMPLETED").order_by(IMSUpload.uploaded_at.desc()).first()
-            period_label = f"{period['year']}/{int(period['month']):02d} · {period.get('week_number') or '-'} . Hafta"
+            period_label = f"{period['year']}/{int(period['month']):02d} - {period.get('week_number') or '-'}. Hafta"
             upload_label = upload.uploaded_at.strftime("%d.%m.%Y") if upload and upload.uploaded_at else "—"
             return {
                 "active_period": period_label,
