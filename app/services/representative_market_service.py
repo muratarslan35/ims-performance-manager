@@ -15,6 +15,22 @@ from app.services.competition_import_service import CompetitionImportService
 from app.services.production_result_service import ProductionResultService
 
 
+BRICK_PRODUCT_DISPLAY_ORDER = {
+    "TRAVAZOL": 1,
+    "MONUROL": 2,
+    "ACNEMIX": 3,
+    "MIXOVUL": 4,
+    "STIDERM": 5,
+    "BRIMODER": 6,
+    "FENTIVAG": 7,
+}
+
+
+def brick_product_sort_key(product_name):
+    normalized = AliasService.normalize(product_name)
+    return BRICK_PRODUCT_DISPLAY_ORDER.get(normalized, len(BRICK_PRODUCT_DISPLAY_ORDER) + 1), normalized
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -584,7 +600,9 @@ class RepresentativeMarketService:
                     "share_percent": round(company_unit * 100.0 / market_unit, 1) if market_unit else 0.0,
                     "market_products": market_products,
                 })
-        brick_product_rows.sort(key=lambda item: (item["brick"], item["product_name"]))
+        brick_product_rows.sort(
+            key=lambda item: (item["brick"], *brick_product_sort_key(item["product_name"]))
+        )
         return {
             "rows": rows,
             "chart_rows": [
