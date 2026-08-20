@@ -69,6 +69,7 @@ class RepresentativeMarketService:
             representative_id=self.representative.id,
             year=self.year,
             month=self.month,
+            active=True,
         ).all()
         brick_keys = {self._key(item.brick) for item in assignments if self._key(item.brick)}
         fallback_keys = {
@@ -130,7 +131,7 @@ class RepresentativeMarketService:
         month = self.month if month is None else int(month)
         upload_id = self._latest_upload_id(year, month)
         assignments = RepresentativeBrickAssignment.query.filter_by(
-            representative_id=self.representative.id, year=year, month=month
+            representative_id=self.representative.id, year=year, month=month, active=True
         ).all()
         brick_keys = {self._key(item.brick) for item in assignments if self._key(item.brick)}
         if upload_id is None or not brick_keys:
@@ -163,11 +164,12 @@ class RepresentativeMarketService:
         co_members = db.session.query(RepresentativeBrickAssignment.representative_id).filter(
             RepresentativeBrickAssignment.year == self.year,
             RepresentativeBrickAssignment.month == self.month,
+            RepresentativeBrickAssignment.active.is_(True),
             RepresentativeBrickAssignment.representative_id != self.representative.id,
         ).distinct().all()
         for (representative_id,) in co_members:
             member_assignments = RepresentativeBrickAssignment.query.filter_by(
-                representative_id=representative_id, year=self.year, month=self.month
+                representative_id=representative_id, year=self.year, month=self.month, active=True
             ).all()
             member_keys = {self._key(item.brick) for item in member_assignments if self._key(item.brick)}
             if member_keys != own_keys:
