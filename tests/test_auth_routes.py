@@ -666,19 +666,20 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
 
 def test_representative_remaining_tl_sums_open_product_targets(app):
     from app.extensions import db
-    from app.models import IMSSummary, Product, Representative, Target
+    from app.models import IMSSummary, IMSUpload, Product, Representative, Target
 
     with app.app_context():
         representative = Representative(rep_code="DETAIL-GAP", rep_name="Açık Hedef Temsilcisi", active=True)
         over = Product(product_code="DETAIL-OVER", product_name="Hedef Üstü", display_order=1, is_active=True)
         under = Product(product_code="DETAIL-UNDER", product_name="Hedef Altı", display_order=2, is_active=True)
-        db.session.add_all((representative, over, under))
+        upload = IMSUpload(file_name="detail-gap.xlsx", year=2026, month=1, status="COMPLETED")
+        db.session.add_all((representative, over, under, upload))
         db.session.flush()
         db.session.add_all((
             Target(year=2026, month=1, representative_id=representative.id, product_id=over.id, tl_target=100, unit_target=1),
             Target(year=2026, month=1, representative_id=representative.id, product_id=under.id, tl_target=100, unit_target=1),
-            IMSSummary(year=2026, month=1, representative_id=representative.id, product_id=over.id, tl=250, unit=1),
-            IMSSummary(year=2026, month=1, representative_id=representative.id, product_id=under.id, tl=40, unit=1),
+            IMSSummary(upload_id=upload.id, year=2026, month=1, representative_id=representative.id, product_id=over.id, tl=250, unit=1),
+            IMSSummary(upload_id=upload.id, year=2026, month=1, representative_id=representative.id, product_id=under.id, tl=40, unit=1),
         ))
         db.session.commit()
         representative_id = representative.id
