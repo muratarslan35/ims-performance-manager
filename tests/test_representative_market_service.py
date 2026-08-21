@@ -8,6 +8,7 @@ from app import create_app
 from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.representative_market_service import RepresentativeMarketService, brick_product_sort_key
+from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
 
 
 def test_brick_products_follow_managerial_display_order():
@@ -16,6 +17,17 @@ def test_brick_products_follow_managerial_display_order():
     assert sorted(unordered, key=brick_product_sort_key) == [
         "Travazol", "Monurol", "Acnemix", "Mixovul", "Stiderm", "Brimoder", "Fentivag"
     ]
+
+
+def test_competitor_alerts_classify_managed_products_by_master_identity():
+    service = object.__new__(CompetitiveIntelligenceService)
+    product = Product(product_code="TRAVAZOL", product_name="Travazol", ims_name="TRAVAZOL KREM")
+    own = type("Row", (), {"product_group": "TRAVAZOL GRUP", "product_name": "TRAVAZOL KREM"})()
+    rival = type("Row", (), {"product_group": "TRAVAZOL GRUP", "product_name": "ZALAIN"})()
+    assert service._managed_product_for_row(own, [product]) is product
+    assert service._is_managed_product_name(own.product_name, product)
+    assert service._managed_product_for_row(rival, [product]) is product
+    assert not service._is_managed_product_name(rival.product_name, product)
 
 
 def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products():
