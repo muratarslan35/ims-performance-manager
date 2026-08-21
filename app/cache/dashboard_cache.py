@@ -4,8 +4,14 @@ V3 Architecture: Dashboard Cache Provider
 DashboardService için tasarlanmış bağımsız önbellek (Cache) katmanı.
 Event metric hook'ları ve invalidation arayüzü ile güçlendirilmiştir.
 """
+import copy
 import logging
+import time
+from collections import OrderedDict
+from threading import RLock
 from typing import Optional, Dict, Any, Final
+
+from flask import current_app, has_app_context
 
 from app.constants.dashboard_constants import DashboardConstants
 
@@ -27,6 +33,12 @@ class DashboardCache:
 
     __slots__ = ()
 
+    _MAX_ENTRIES: Final[int] = 128
+    _MAX_TTL_SECONDS: Final[int] = DashboardConstants.CACHE_TTL_SHORT
+    _GLOBAL_KEY_SUFFIX: Final[str] = ":rep_None"
+    _store: "OrderedDict[str, tuple[float, Dict[str, Any]]]" = OrderedDict()
+    _lock: Final[RLock] = RLock()
+
     _EVENT_TEMPLATE: Final[str] = "[CacheEvent] {event_type} for key: {key}"
     _PREFIX_WILDCARD: Final[str] = "*"
 
@@ -37,12 +49,12 @@ class DashboardCache:
     @property
     def backend(self) -> str:
         """Returns the current active cache backend (e.g., NONE, REDIS, MEMCACHED)."""
-        return "NONE"
+        return "MEMORY"
 
     @property
     def enabled(self) -> bool:
         """Indicates if the cache layer is globally enabled."""
-        return True
+        return not (has_app_context() and current_app.testing)
 
     @property
     def supports_ttl(self) -> bool:
@@ -117,33 +129,62 @@ class DashboardCache:
         Retrieves payload from cache. Hook for Redis/Memcached.
         """
         self._before_get()
+        if not self.enabled:
+            self._after_get()
+            return None
         
         normalized_key = self._normalize_key(key)
         if not self._validate_key(normalized_key):
             self._after_get()
             return None
+        if not normalized_key.endswith(self._GLOBAL_KEY_SUFFIX):
+            self._after_get()
+            return None
             
-        # Implementation hook placeholder for future Redis integration
-        
+        now = time.monotonic()
+        with self._lock:
+            entry = self._store.get(normalized_key)
+            if entry is None:
+                self._after_get()
+                return None
+            expires_at, payload = entry
+            if expires_at <= now:
+                self._store.pop(normalized_key, None)
+                self.emit_event(DashboardConstants.CACHE_EVENT_EXPIRED, normalized_key)
+                self._after_get()
+                return None
+            self._store.move_to_end(normalized_key)
+            result = copy.deepcopy(payload)
+
         self._after_get()
-        return None
+        return result
         
     def set(self, key: str, payload: Dict[str, Any], ttl_seconds: int = DashboardConstants.CACHE_TTL_DEFAULT) -> None:
         """
         Persists payload to cache. Hook for Redis/Memcached.
         """
         self._before_set()
+        if not self.enabled:
+            self._after_set()
+            return
         
         normalized_key = self._normalize_key(key)
         if not self._validate_key(normalized_key):
+            self._after_set()
+            return
+        if not normalized_key.endswith(self._GLOBAL_KEY_SUFFIX):
             self._after_set()
             return
             
         if ttl_seconds <= 0:
             ttl_seconds = DashboardConstants.CACHE_TTL_DEFAULT
             
-        # Implementation hook placeholder for future Redis integration
-        
+        expires_at = time.monotonic() + min(ttl_seconds, self._MAX_TTL_SECONDS)
+        with self._lock:
+            self._store[normalized_key] = (expires_at, copy.deepcopy(payload))
+            self._store.move_to_end(normalized_key)
+            while len(self._store) > self._MAX_ENTRIES:
+                self._store.popitem(last=False)
         self._after_set()
 
     def invalidate(self, key: str) -> None:
@@ -158,6 +199,8 @@ class DashboardCache:
             return
             
         valid_key: str = str(normalized_key)
+        with self._lock:
+            self._store.pop(valid_key, None)
         self.emit_event(DashboardConstants.CACHE_EVENT_INVALIDATE, valid_key)
         
         self._after_invalidate()
@@ -174,6 +217,10 @@ class DashboardCache:
             return
             
         valid_prefix: str = str(normalized_prefix)
+        with self._lock:
+            matching_keys = [key for key in self._store if key.startswith(valid_prefix)]
+            for key in matching_keys:
+                self._store.pop(key, None)
         target_key = f"{valid_prefix}{self._PREFIX_WILDCARD}"
         self.emit_event(DashboardConstants.CACHE_EVENT_INVALIDATE, target_key)
         
