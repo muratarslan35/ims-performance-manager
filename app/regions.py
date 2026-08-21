@@ -3,6 +3,7 @@ from flask_login import login_required
 
 from app.services.period_service import PeriodService
 from app.services.region_performance_service import RegionPerformanceService
+from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
 
@@ -18,4 +19,7 @@ def detail(region_key):
     except ValueError as exc:
         flash(str(exc), "warning")
         return redirect(url_for("dashboard.index"))
-    return render_template("region_performance.html", report=report)
+    ai_report = ScopedAIInsightService.build(
+        scope_type="region", scope_name=report["region_name"], periods=report["periods"]
+    )
+    return render_template("region_performance.html", report=report, ai_report=ai_report)

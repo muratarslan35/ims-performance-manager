@@ -4,6 +4,7 @@ from flask import jsonify
 from flask import redirect
 from flask import render_template
 from flask import request
+from flask import session
 from flask import url_for
 
 from flask_login import login_required
@@ -18,6 +19,7 @@ from app.models import IMSSummary, Product, Representative, RepresentativeBrickA
 from app.services.period_service import PeriodService
 from app.services.representative_market_service import RepresentativeMarketService
 from app.services.annual_realization_service import AnnualRealizationService
+from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 
 representatives_bp = Blueprint(
@@ -59,6 +61,23 @@ def _visible_representative_filter():
         db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIŞ%GENEL%"),
         db.func.coalesce(Representative.rep_name, "").ilike("ATANMAMIS%GENEL%"),
     )
+
+
+def _current_user_representative():
+    """Resolve the signed-in field identity without fuzzy cross-user matching."""
+    email = str(getattr(current_user, "email", "") or "").strip()
+    if email:
+        representative = Representative.query.filter(
+            db.func.lower(Representative.email) == email.casefold()
+        ).first()
+        if representative is not None:
+            return representative
+    normalized_name = _search_key(getattr(current_user, "full_name", ""))
+    matches = [
+        representative for representative in Representative.query.all()
+        if _search_key(representative.rep_name) == normalized_name
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 representatives_bp.add_app_template_filter(_representative_display_name, "representative_display_name")
@@ -444,6 +463,11 @@ def view(
 
     )
 
+    if session.get("portal") == "representative":
+        own_representative = _current_user_representative()
+        if own_representative is not None and own_representative.id != representative.id:
+            return redirect(url_for("representatives.view", id=own_representative.id, **request.args))
+
     active_period = PeriodService.get_active_period()
     year = request.args.get("year", type=int) or active_period["year"]
     month = request.args.get("month", type=int) or active_period["month"]
@@ -486,8 +510,14 @@ def view(
     totals = {key: round(value, 2) for key, value in totals.items()}
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     market_analysis = RepresentativeMarketService(representative, year, month).build()
+    ai_report = ScopedAIInsightService.build(
+        scope_type="representative",
+        scope_name=_representative_display_name(representative.rep_name),
+        periods=ScopedAIInsightService.representative_periods(representative.id, year, month),
+        market_analysis=market_analysis,
+    )
     annual_realization = AnnualRealizationService.build(year, [representative.id])
-    representatives = Representative.query.filter(
+    representatives = [representative] if session.get("portal") == "representative" else Representative.query.filter(
         Representative.active.is_(True), _visible_representative_filter()
     ).order_by(Representative.rep_name.asc()).all()
     return render_template(
@@ -499,6 +529,7 @@ def view(
         totals=totals,
         market_analysis=market_analysis,
         annual_realization=annual_realization,
+        ai_report=ai_report,
         year=year,
         month=month,
     )
