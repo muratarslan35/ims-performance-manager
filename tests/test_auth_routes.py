@@ -189,18 +189,25 @@ def test_manager_portal_keeps_full_management_access(app):
 
 
 def test_authorized_manager_can_use_both_portals(app):
+    import hashlib
+
+    import app.access_control as access_control
     from app.extensions import db
     from app.models import User
 
+    dual_portal_email = "dual-admin@example.com"
+    access_control.DUAL_PORTAL_EMAIL_HASHES = {
+        hashlib.sha256(dual_portal_email.encode("utf-8")).hexdigest(),
+    }
     with app.app_context():
         user = User.query.filter_by(email="test@example.com").one()
-        user.email = "murat.arslan@bilimilac.com"
+        user.email = dual_portal_email
         user.role = "Admin"
         db.session.commit()
 
     manager_client = app.test_client()
     manager_login = manager_client.post("/login", data={
-        "email": "murat.arslan@bilimilac.com",
+        "email": dual_portal_email,
         "password": "password123",
         "portal": "manager",
     })
@@ -210,7 +217,7 @@ def test_authorized_manager_can_use_both_portals(app):
 
     representative_client = app.test_client()
     representative_login = representative_client.post("/login", data={
-        "email": "murat.arslan@bilimilac.com",
+        "email": dual_portal_email,
         "password": "password123",
         "portal": "representative",
     })
