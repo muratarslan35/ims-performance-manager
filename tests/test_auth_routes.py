@@ -756,8 +756,9 @@ def test_representative_detail_renders_dynamic_market_analysis(app):
         db.session.commit()
         representative_id = representative.id
 
+    promote_test_user_to_manager(app)
     client = app.test_client()
-    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "manager"})
     response = client.get(f"/representatives/view/{representative_id}?year=2026&month=8")
 
     assert response.status_code == 200
@@ -1196,3 +1197,50 @@ def test_dashboard_repository_excludes_passive_work_areas(app):
         db.session.commit()
         rows = DashboardRepository(db.session).load_brick_assignments(2026, 8)
         assert [row.brick for row in rows] == ["AKTİF BRICK"]
+
+
+def test_scoped_ai_panels_use_only_region_and_representative_data(app):
+    from app.extensions import db
+    from app.models import IMSSummary, IMSUpload, Product, Representative, Target, User
+
+    with app.app_context():
+        product = Product(product_code="AI-SCOPE", product_name="Kapsam Ürünü", is_active=True)
+        own = Representative(
+            rep_code="AI-OWN", rep_name="Test User", email="test@example.com",
+            region="AI BÖLGE", city="AI ŞEHİR", active=True,
+        )
+        outside = Representative(
+            rep_code="AI-OUT", rep_name="Başka Temsilci", region="BAŞKA BÖLGE", active=True,
+        )
+        db.session.add_all([product, own, outside])
+        db.session.flush()
+        for month in range(1, 7):
+            upload = IMSUpload(file_name=f"ai-{month}.xlsx", year=2040, month=month, status="COMPLETED")
+            db.session.add(upload)
+            db.session.flush()
+            db.session.add_all([
+                Target(year=2040, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl_target=100, unit_target=10),
+                IMSSummary(upload_id=upload.id, year=2040, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl=60, unit=6),
+                Target(year=2040, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl_target=10000, unit_target=1000),
+                IMSSummary(upload_id=upload.id, year=2040, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl=10000, unit=1000),
+            ])
+        user = User.query.filter_by(email="test@example.com").one()
+        user.role = "Representative"
+        db.session.commit()
+        own_id, outside_id = own.id, outside.id
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "representative"})
+    own_html = client.get(f"/representatives/view/{own_id}?year=2040&month=6").get_data(as_text=True)
+    assert "AI Performans Rehberi" in own_html
+    assert "Aylık" in own_html and "3 Aylık" in own_html and "6 Aylık" in own_html
+    assert "%60.0" in own_html
+    assert "Başka Temsilci" not in own_html
+    redirected = client.get(f"/representatives/view/{outside_id}?year=2040&month=6", follow_redirects=False)
+    assert redirected.status_code in (301, 302)
+    assert f"/representatives/view/{own_id}" in redirected.headers["Location"]
+
+    region_html = client.get("/regions/AI%20B%C3%96LGE?year=2040&month=6").get_data(as_text=True)
+    assert "AI Performans Rehberi" in region_html
+    assert "AI ŞEHİR" in region_html
+    assert "Başka Temsilci" not in region_html
