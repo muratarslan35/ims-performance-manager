@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ report.region_name }} Bölge Performansı{% endblock %}
 {% block page_title %}Bölge Performansı{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/scoped-ai.css') }}" rel="stylesheet">{% endblock %}
 {% block content %}
 <style>
 .region-hero h1{color:#fff!important;text-shadow:0 2px 12px rgba(0,0,0,.2)}
@@ -32,9 +33,11 @@
   </section>
   {% endfor %}
 </div>
+{% include "partials/scoped_ai_panel.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/annual-realization-chart.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scoped-ai.js') }}"></script>
 <script>document.querySelectorAll('[data-period-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-period-tab]').forEach(item=>item.classList.toggle('active',item===button));document.querySelectorAll('[data-period-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.periodPanel===button.dataset.periodTab));}));</script>
 {% endblock %}
