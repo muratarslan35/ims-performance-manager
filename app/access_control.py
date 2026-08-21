@@ -1,12 +1,16 @@
 """Role-aware access rules shared by routes and templates."""
 
+import hashlib
+
 from flask import flash, redirect, request, session, url_for
 from flask_login import current_user
 
 
 MANAGER_ROLES = {"admin", "administrator", "manager", "yönetici", "yonetici"}
 MANAGER_ONLY_ENDPOINT_PREFIXES = ("ims.", "settings.")
-DUAL_PORTAL_EMAILS = {"murat.arslan@bilimilac.com"}
+DUAL_PORTAL_EMAIL_HASHES = {
+    "192ef0622a370d063bbada9e29ff3137d7580691186bed0ab0a44c3d631278c0",
+}
 
 
 def is_manager(user):
@@ -18,10 +22,11 @@ def is_manager(user):
 
 def has_dual_portal_access(user):
     """Allow explicitly authorised managers to open the limited field portal."""
+    email = str(getattr(user, "email", "") or "").strip().casefold()
     return bool(
         is_manager(user)
-        and str(getattr(user, "email", "") or "").strip().casefold()
-        in DUAL_PORTAL_EMAILS
+        and hashlib.sha256(email.encode("utf-8")).hexdigest()
+        in DUAL_PORTAL_EMAIL_HASHES
     )
 
 
