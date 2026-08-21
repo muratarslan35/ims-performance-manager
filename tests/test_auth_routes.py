@@ -188,6 +188,62 @@ def test_manager_portal_keeps_full_management_access(app):
     assert b"AI Y\xc3\xb6netici \xc3\x96zeti" in dashboard
 
 
+def test_authorized_manager_can_use_both_portals(app):
+    import hashlib
+
+    import app.access_control as access_control
+    from app.extensions import db
+    from app.models import User
+
+    dual_portal_email = "dual-admin@example.com"
+    access_control.DUAL_PORTAL_EMAIL_HASHES = {
+        hashlib.sha256(dual_portal_email.encode("utf-8")).hexdigest(),
+    }
+    with app.app_context():
+        user = User.query.filter_by(email="test@example.com").one()
+        user.email = dual_portal_email
+        user.role = "Admin"
+        db.session.commit()
+
+    manager_client = app.test_client()
+    manager_login = manager_client.post("/login", data={
+        "email": dual_portal_email,
+        "password": "password123",
+        "portal": "manager",
+    })
+    assert manager_login.status_code in (301, 302)
+    assert manager_client.get("/ims/").status_code == 200
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" in manager_client.get("/dashboard/").data
+
+    representative_client = app.test_client()
+    representative_login = representative_client.post("/login", data={
+        "email": dual_portal_email,
+        "password": "password123",
+        "portal": "representative",
+    })
+    assert representative_login.status_code in (301, 302)
+    assert representative_client.get("/representatives/").status_code == 200
+    assert representative_client.get("/ims/", follow_redirects=False).status_code in (301, 302)
+    representative_dashboard = representative_client.get("/dashboard/").data
+    assert b"IMS Merkezi" not in representative_dashboard
+    assert b"Ayarlar" not in representative_dashboard
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" not in representative_dashboard
+
+
+def test_other_manager_cannot_use_representative_portal(app):
+    promote_test_user_to_manager(app)
+    client = app.test_client()
+
+    response = client.post("/login", data={
+        "email": "test@example.com",
+        "password": "password123",
+        "portal": "representative",
+    })
+
+    assert response.status_code == 200
+    assert b"Y\xc3\xb6netici Giri\xc5\x9fi" in response.data
+
+
 # ---------------------------------------------------------------------------
 # Scenario 3: Unauthenticated access to protected page redirects to /login?next=
 # ---------------------------------------------------------------------------

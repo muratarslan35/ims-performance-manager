@@ -4,6 +4,7 @@ from flask import redirect
 from flask import render_template
 from flask import current_app
 from flask import request
+from flask import session
 from flask import url_for
 from urllib.parse import urlparse
 
@@ -21,7 +22,7 @@ from werkzeug.security import generate_password_hash
 from app.extensions import db
 
 from app.models import Representative, User
-from app.access_control import is_manager
+from app.access_control import has_dual_portal_access, is_manager
 
 auth_bp = Blueprint(
     "auth",
@@ -114,9 +115,11 @@ def login():
             flash("Bu hesap Temsilci Girişi üzerinden kullanılmalıdır.", "warning")
             return render_template("login.html")
 
-        if portal == "representative" and is_manager(user):
+        if portal == "representative" and is_manager(user) and not has_dual_portal_access(user):
             flash("Bu hesap Yönetici Girişi üzerinden kullanılmalıdır.", "warning")
             return render_template("login.html")
+
+        session["portal"] = portal or ("manager" if is_manager(user) else "representative")
 
         login_user(
             user,
@@ -300,6 +303,7 @@ def profile():
 @login_required
 def logout():
 
+    session.pop("portal", None)
     logout_user()
 
     flash(
