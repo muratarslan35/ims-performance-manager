@@ -195,7 +195,7 @@ def index():
         ProductionResultUpload.uploaded_at.desc()
     ).all()
 
-    active_period = PeriodService.get_active_period()
+    ims_period = PeriodService.get_active_period()
     import_status = ImportCoordinator.status()
     manager_reports = _manager_reports(uploads)
 
@@ -218,7 +218,7 @@ def index():
 
         dashboard=dashboard,
 
-        active_period=active_period,
+        ims_period=ims_period,
 
         import_status=import_status,
 

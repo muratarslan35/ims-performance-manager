@@ -25,7 +25,7 @@
     </div>
     <div class="ims-hero-meta">
       <div class="ims-hero-badge"><i class="bi bi-database-check"></i> Toplam Yükleme: <strong>{{ total_uploads }}</strong></div>
-      <div class="ims-hero-badge"><i class="bi bi-calendar-check"></i> Aktif Dönem: <strong>{{ active_period.year }}/{{ "%02d"|format(active_period.month) }}</strong></div>
+      <div class="ims-hero-badge"><i class="bi bi-calendar-check"></i> Aktif Dönem: <strong>{{ ims_period.year }}/{{ "%02d"|format(ims_period.month) }}</strong></div>
       <div class="ims-hero-badge"><i class="bi bi-shield-check"></i> Veri Bütünlüğü: <strong>{{ 'Doğrulandı' if latest_upload and latest_upload.reconciliation_status == 'PASSED' else 'Kontrol bekliyor' }}</strong></div>
     </div>
   </div>
@@ -85,7 +85,7 @@
               <label class="form-label fw-semibold" style="font-size:13px;">Yıl</label>
               <select class="form-select" name="year" required>
                 {% for year in range(2025,2036) %}
-                <option value="{{ year }}" {% if year == active_period.year %}selected{% endif %}>{{ year }}</option>
+                <option value="{{ year }}" {% if year == ims_period.year %}selected{% endif %}>{{ year }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -93,7 +93,7 @@
               <label class="form-label fw-semibold" style="font-size:13px;">Ay</label>
               <select class="form-select" name="month" required>
                 {% for number, label in [(1,'Ocak'),(2,'Şubat'),(3,'Mart'),(4,'Nisan'),(5,'Mayıs'),(6,'Haziran'),(7,'Temmuz'),(8,'Ağustos'),(9,'Eylül'),(10,'Ekim'),(11,'Kasım'),(12,'Aralık')] %}
-                <option value="{{ number }}" {% if number == active_period.month %}selected{% endif %}>{{ label }}</option>
+                <option value="{{ number }}" {% if number == ims_period.month %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -201,14 +201,14 @@
         <div class="col-md-2">
           <label class="form-label fw-semibold" style="font-size:13px;">IMS yılı</label>
           <select class="form-select" name="year" required>
-            {% for year in range(2025,2036) %}<option value="{{ year }}" {% if year == active_period.year %}selected{% endif %}>{{ year }}</option>{% endfor %}
+            {% for year in range(2025,2036) %}<option value="{{ year }}" {% if year == ims_period.year %}selected{% endif %}>{{ year }}</option>{% endfor %}
           </select>
         </div>
         <div class="col-md-2">
           <label class="form-label fw-semibold" style="font-size:13px;">IMS ayı</label>
           <select class="form-select" name="month" required>
             {% for number, label in [(1,'Ocak'),(2,'Şubat'),(3,'Mart'),(4,'Nisan'),(5,'Mayıs'),(6,'Haziran'),(7,'Temmuz'),(8,'Ağustos'),(9,'Eylül'),(10,'Ekim'),(11,'Kasım'),(12,'Aralık')] %}
-            <option value="{{ number }}" {% if number == active_period.month %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ number }}" {% if number == ims_period.month %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
