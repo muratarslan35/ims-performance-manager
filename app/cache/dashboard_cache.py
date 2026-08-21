@@ -8,7 +8,7 @@ import copy
 import logging
 import time
 from collections import OrderedDict
-from threading import RLock
+from threading import Event, RLock
 from typing import Optional, Dict, Any, Final
 
 from flask import current_app, has_app_context
@@ -36,7 +36,9 @@ class DashboardCache:
     _MAX_ENTRIES: Final[int] = 128
     _MAX_TTL_SECONDS: Final[int] = DashboardConstants.CACHE_TTL_SHORT
     _GLOBAL_KEY_SUFFIX: Final[str] = ":rep_None"
+    _REFRESH_WAIT_SECONDS: Final[float] = 30.0
     _store: "OrderedDict[str, tuple[float, Dict[str, Any]]]" = OrderedDict()
+    _inflight: "dict[str, Event]" = {}
     _lock: Final[RLock] = RLock()
 
     _EVENT_TEMPLATE: Final[str] = "[CacheEvent] {event_type} for key: {key}"
@@ -142,22 +144,40 @@ class DashboardCache:
             return None
             
         now = time.monotonic()
+        wait_event = None
         with self._lock:
             entry = self._store.get(normalized_key)
-            if entry is None:
-                self._after_get()
-                return None
-            expires_at, payload = entry
-            if expires_at <= now:
+            if entry is not None:
+                expires_at, payload = entry
+                if expires_at > now:
+                    self._store.move_to_end(normalized_key)
+                    result = copy.deepcopy(payload)
+                    self._after_get()
+                    return result
                 self._store.pop(normalized_key, None)
                 self.emit_event(DashboardConstants.CACHE_EVENT_EXPIRED, normalized_key)
+
+            wait_event = self._inflight.get(normalized_key)
+            if wait_event is None:
+                self._inflight[normalized_key] = Event()
                 self._after_get()
                 return None
-            self._store.move_to_end(normalized_key)
-            result = copy.deepcopy(payload)
+
+        wait_event.wait(self._REFRESH_WAIT_SECONDS)
+        now = time.monotonic()
+        with self._lock:
+            entry = self._store.get(normalized_key)
+            if entry is not None and entry[0] > now:
+                self._store.move_to_end(normalized_key)
+                result = copy.deepcopy(entry[1])
+                self._after_get()
+                return result
+            if self._inflight.get(normalized_key) is wait_event:
+                self._inflight.pop(normalized_key, None)
+                wait_event.set()
 
         self._after_get()
-        return result
+        return None
         
     def set(self, key: str, payload: Dict[str, Any], ttl_seconds: int = DashboardConstants.CACHE_TTL_DEFAULT) -> None:
         """
@@ -185,6 +205,9 @@ class DashboardCache:
             self._store.move_to_end(normalized_key)
             while len(self._store) > self._MAX_ENTRIES:
                 self._store.popitem(last=False)
+            refresh_event = self._inflight.pop(normalized_key, None)
+            if refresh_event is not None:
+                refresh_event.set()
         self._after_set()
 
     def invalidate(self, key: str) -> None:
@@ -201,6 +224,9 @@ class DashboardCache:
         valid_key: str = str(normalized_key)
         with self._lock:
             self._store.pop(valid_key, None)
+            refresh_event = self._inflight.pop(valid_key, None)
+            if refresh_event is not None:
+                refresh_event.set()
         self.emit_event(DashboardConstants.CACHE_EVENT_INVALIDATE, valid_key)
         
         self._after_invalidate()
@@ -221,6 +247,9 @@ class DashboardCache:
             matching_keys = [key for key in self._store if key.startswith(valid_prefix)]
             for key in matching_keys:
                 self._store.pop(key, None)
+            inflight_keys = [key for key in self._inflight if key.startswith(valid_prefix)]
+            for key in inflight_keys:
+                self._inflight.pop(key).set()
         target_key = f"{valid_prefix}{self._PREFIX_WILDCARD}"
         self.emit_event(DashboardConstants.CACHE_EVENT_INVALIDATE, target_key)
         

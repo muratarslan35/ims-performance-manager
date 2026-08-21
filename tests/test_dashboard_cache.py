@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+import time
 from unittest.mock import patch
 
 from app.cache.dashboard_cache import DashboardCache
@@ -40,3 +42,18 @@ def test_dashboard_cache_does_not_store_representative_specific_payloads():
     cache = DashboardCache()
     cache.set("dashboard:v3:2026:1:rep_42", {"value": "private"}, ttl_seconds=60)
     assert cache.get("dashboard:v3:2026:1:rep_42") is None
+
+
+def test_dashboard_cache_coalesces_concurrent_cold_reads():
+    _empty_cache()
+    cache = DashboardCache()
+    key = "dashboard:v3:2026:1:rep_None"
+
+    assert cache.get(key) is None
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [executor.submit(cache.get, key) for _ in range(6)]
+        time.sleep(0.05)
+        cache.set(key, {"value": "ready"}, ttl_seconds=60)
+        results = [future.result(timeout=2) for future in futures]
+
+    assert results == [{"value": "ready"}] * 6
