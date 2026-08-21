@@ -326,6 +326,7 @@ class IMSRawData(db.Model):
     __table_args__ = (
         db.Index("ix_ims_raw_period", "year", "month"),
         db.Index("ix_ims_raw_upload", "upload_id"),
+        db.Index("ix_ims_raw_upload_sheet_type", "upload_id", "sheet_type"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -588,6 +589,13 @@ class CompetitionData(db.Model):
         db.Index("ix_competition_period", "year", "month", "week_number"),
         db.Index("ix_competition_sheet", "sheet_name"),
         db.Index("ix_competition_territory", "territory", "subterritory"),
+        db.Index(
+            "ix_competition_upload_metric_flags",
+            "upload_id",
+            "metric_type",
+            "is_subtotal",
+            "is_grand_total",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
