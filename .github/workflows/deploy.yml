@@ -63,7 +63,9 @@ jobs:
         shell: bash
         run: |
           set +e
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$IMS_USER@$IMS_HOST" \
             "IMS_PATH='$IMS_PATH' bash -se" 2>&1 <<'REMOTE' | tee "$RUNNER_TEMP/ims-deploy.log"
           set -Eeuo pipefail
           cd "$IMS_PATH"

@@ -38,6 +38,8 @@ def test_deploy_restarts_only_after_acceptance_checks():
     service_start = workflow.index("deploy/install_systemd_service.sh")
     assert acceptance < service_start
     assert "nohup venv/bin/python run.py" not in workflow
+    assert "ServerAliveInterval=30" in workflow
+    assert "ServerAliveCountMax=20" in workflow
 
 
 def test_managed_service_requires_persistent_secret_environment():
