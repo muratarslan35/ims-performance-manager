@@ -1,0 +1,24 @@
+<section class="scope-ai" data-scope-ai aria-labelledby="scopeAiTitle">
+  <header class="scope-ai-head">
+    <div><span class="scope-ai-kicker">DİNAMİK KARAR DESTEK</span><h2 id="scopeAiTitle"><i class="bi bi-stars"></i> AI Performans Rehberi</h2><p>{{ ai_report.scope_name }} kapsamındaki doğrulanmış hedef, satış ve saha verilerinden oluşturulur.</p></div>
+    <span class="scope-ai-badge">{% if ai_report.scope_type == 'region' %}Bölge analizi{% else %}Kişisel analiz{% endif %}</span>
+  </header>
+  <div class="scope-ai-tabs" role="tablist">{% for key, period in ai_report.periods.items() %}<button type="button" class="scope-ai-tab {% if loop.first %}active{% endif %}" data-scope-ai-tab="{{ key }}">{{ period.label }}</button>{% endfor %}</div>
+  {% for key, period in ai_report.periods.items() %}<article class="scope-ai-panel {% if loop.first %}active{% endif %}" data-scope-ai-panel="{{ key }}">
+    <div class="scope-ai-kpis">
+      <div><span>₺ Hedef</span><strong>{{ '{:,.0f}'.format(period.target_tl or 0) }} ₺</strong></div>
+      <div><span>Gerçekleşen</span><strong>{% if period.complete %}{{ '{:,.0f}'.format(period.actual_tl or 0) }} ₺{% else %}Bekleniyor{% endif %}</strong></div>
+      <div><span>Realizasyon</span><strong class="{% if (period.realization_percent or 0) >= 100 %}good{% elif (period.realization_percent or 0) >= 75 %}watch{% else %}risk{% endif %}">{% if period.complete %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong></div>
+      <div><span>Hedef Açığı</span><strong>{% if period.complete %}{{ '{:,.0f}'.format(period.gap_tl or 0) }} ₺{% else %}—{% endif %}</strong></div>
+    </div>
+    <div class="scope-ai-grid">
+      <div class="scope-ai-card"><h3><i class="bi bi-activity"></i> Kritik değerlendirme</h3>{% for text in period.insights %}<p><i class="bi bi-check2-circle"></i>{{ text }}</p>{% else %}<p>Değerlendirilecek veri bulunmuyor.</p>{% endfor %}</div>
+      <div class="scope-ai-card"><h3><i class="bi bi-compass"></i> Önerilen saha aksiyonları</h3>{% for text in period.actions %}<p><i class="bi bi-arrow-right-circle"></i>{{ text }}</p>{% endfor %}</div>
+    </div>
+    <div class="scope-ai-grid scope-ai-detail-grid">
+      <div class="scope-ai-card"><h3><i class="bi bi-exclamation-triangle"></i> Dikkat gerektiren ürünler</h3>{% for item in period.critical_products %}<div class="scope-ai-row"><span>{{ item.product_name }}</span><b>%{{ item.realization_percent }}</b><small>{{ '{:,.0f}'.format(item.gap_tl or 0) }} ₺ açık</small></div>{% else %}<div class="scope-ai-empty">Kritik eşik altında ürün yok.</div>{% endfor %}</div>
+      {% if ai_report.scope_type == 'region' %}<div class="scope-ai-card"><h3><i class="bi bi-people"></i> Destek önceliği</h3>{% for item in period.critical_representatives %}<div class="scope-ai-row"><span>{{ item.representative_name|representative_display_name }}</span><b>%{{ item.realization_percent }}</b><small>{{ item.city }}</small></div>{% else %}<div class="scope-ai-empty">Kritik eşik altında temsilci yok.</div>{% endfor %}</div>{% else %}<div class="scope-ai-card"><h3><i class="bi bi-grid-3x3-gap"></i> Brick ve rakip sinyalleri</h3>{% for item in ai_report.brick_signals %}<div class="scope-ai-row"><span>{{ item.brick }} · {{ item.product_name }}</span><b>%{{ item.share_percent }}</b><small>{{ '{:,.0f}'.format(item.competitor_unit) }} rakip kutu</small></div>{% else %}<div class="scope-ai-empty">Brick bazlı rakip sinyali bulunmuyor.</div>{% endfor %}</div>{% endif %}
+    </div>
+  </article>{% endfor %}
+  <footer class="scope-ai-note"><i class="bi bi-shield-check"></i>{{ ai_report.method_note }}</footer>
+</section>
