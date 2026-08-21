@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from sqlalchemy import desc
 
-from app.models import CompetitionData, IMSUpload, RepresentativeBrickAssignment
+from app.models import CompetitionData, IMSUpload, Product, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
 
 
@@ -39,14 +39,29 @@ class CompetitiveIntelligenceService:
             CompetitionData.is_subtotal.is_(False),
             CompetitionData.is_grand_total.is_(False),
         ).all()
+        products = Product.query.filter_by(is_active=True).all()
         values = defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
         for row in rows:
             if self._key(row.subterritory) not in brick_keys:
                 continue
             key = (str(row.subterritory).strip(), str(row.product_group).strip(), str(row.product_name).strip())
-            side = "company" if row.is_company_product and not row.is_competitor else "competitor"
+            managed_product = self._managed_product_for_row(row, products)
+            side = "company" if managed_product is not None and self._is_managed_product_name(row.product_name, managed_product) else "competitor"
             values[key][side] += float(row.metric_value or 0)
         return values
+
+    def _managed_product_for_row(self, row, products):
+        group_key, product_key = self._key(row.product_group), self._key(row.product_name)
+        for product in products:
+            candidates = {self._key(product.product_name), self._key(product.product_code), self._key(product.ims_name), self._key(product.competitor_group)} - {""}
+            if any(key in group_key or key in product_key for key in candidates):
+                return product
+        return None
+
+    def _is_managed_product_name(self, product_name, product):
+        product_key = self._key(product_name)
+        own_keys = {self._key(product.product_name), self._key(product.product_code), self._key(product.ims_name)} - {""}
+        return any(key in product_key or product_key in key for key in own_keys)
 
     def build(self):
         bricks = self._brick_keys()
