@@ -126,10 +126,16 @@ def register_error_handlers(app):
 
 
 def create_database(app):
-    with app.app_context():
-        initialize_database()
-        from app.services.user_vault_service import UserVaultService
-        UserVaultService.reconcile()
+    from app.services.startup_coordinator import StartupCoordinator
+
+    # Gunicorn boots workers concurrently.  Keep the existing initialization
+    # contract, but serialize its small idempotent writes so two workers cannot
+    # create the same seed user/setting at the same instant.
+    with StartupCoordinator.acquire(app):
+        with app.app_context():
+            initialize_database()
+            from app.services.user_vault_service import UserVaultService
+            UserVaultService.reconcile()
 
 
 def create_app(config_object=Config):

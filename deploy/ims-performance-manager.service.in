@@ -1,0 +1,30 @@
+[Unit]
+Description=IMS Performance Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=@IMS_USER@
+Group=@IMS_GROUP@
+WorkingDirectory=@IMS_PATH@
+Environment=APP_ENV=production
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-@IMS_PATH@/.env
+ExecStart=@IMS_PATH@/venv/bin/gunicorn --config @IMS_PATH@/gunicorn.conf.py run:app
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=75
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@IMS_PATH@/instance @IMS_PATH@/uploads @IMS_PATH@/logs @IMS_PATH@/reports @IMS_PATH@/backups @IMS_PATH@/temp
+
+[Install]
+WantedBy=multi-user.target
