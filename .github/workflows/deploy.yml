@@ -121,9 +121,14 @@ jobs:
           cleanup_acceptance
           trap - EXIT
 
-          pids=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
-          if [ -n "$pids" ]; then kill "$pids"; fi
-          nohup venv/bin/python run.py >/tmp/ims-performance-manager.log 2>&1 </dev/null &
+          echo '--- PRODUCTION CAPACITY SNAPSHOT ---'
+          echo "CPU_COUNT=$(nproc)"
+          free -m
+          df -h instance
+
+          # Acceptance has passed at this point.  Only now may the managed
+          # production service be installed/reloaded.
+          bash deploy/install_systemd_service.sh "$IMS_PATH"
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null; then
               echo "Production health check passed."
@@ -132,7 +137,7 @@ jobs:
             sleep 2
           done
           echo "Production health check failed."
-          tail -n 100 /tmp/ims-performance-manager.log || true
+          sudo journalctl -u ims-performance-manager.service -n 100 --no-pager || true
           exit 1
           REMOTE
           rc=${PIPESTATUS[0]}
@@ -151,7 +156,7 @@ jobs:
           if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-deploy.log"
           if [ -f "$evidence_file" ]; then
-            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||Production health check|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 120 || true)
+            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||Production health check|PRODUCTION CAPACITY|CPU_COUNT|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 120 || true)
           else
             evidence="Production SSH/deploy log was not created."
           fi
