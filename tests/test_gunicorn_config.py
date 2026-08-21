@@ -38,3 +38,18 @@ def test_deploy_restarts_only_after_acceptance_checks():
     service_start = workflow.index("deploy/install_systemd_service.sh")
     assert acceptance < service_start
     assert "nohup venv/bin/python run.py" not in workflow
+
+
+def test_managed_service_requires_persistent_secret_environment():
+    root = Path(__file__).resolve().parents[1]
+    service = (root / "deploy" / "ims-performance-manager.service.in").read_text(
+        encoding="utf-8"
+    )
+    installer = (root / "deploy" / "install_systemd_service.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Environment=APP_ENV=production" in service
+    assert "EnvironmentFile=-/etc/ims-performance-manager.env" in service
+    assert "instance/.secret_key" in installer
+    assert "install -o root -g root -m 0600" in installer
