@@ -20,7 +20,29 @@ ims_user=$(id -un)
 ims_group=$(id -gn)
 escaped_path=${ims_path//|/\\|}
 unit_tmp=$(mktemp)
-trap 'rm -f "$unit_tmp"' EXIT
+runtime_env_tmp=$(mktemp)
+trap 'rm -f "$unit_tmp" "$runtime_env_tmp"' EXIT
+
+# The legacy Flask process used the persistent instance secret when no
+# SECRET_KEY existed in .env.  Preserve that same key for Gunicorn so existing
+# sessions remain valid and production never falls back to an ephemeral key.
+if ! grep -Eq '^[[:space:]]*SECRET_KEY[[:space:]]*=' "$ims_path/.env" 2>/dev/null; then
+  secret_path="$ims_path/instance/.secret_key"
+  if [ ! -s "$secret_path" ]; then
+    umask 077
+    "$ims_path/venv/bin/python" - <<'PY' > "$secret_path"
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+  fi
+  secret_key=$(tr -d '\r\n' < "$secret_path")
+  test -n "$secret_key"
+  printf 'SECRET_KEY=%s\n' "$secret_key" > "$runtime_env_tmp"
+  sudo install -o root -g root -m 0600 "$runtime_env_tmp" /etc/ims-performance-manager.env
+else
+  : > "$runtime_env_tmp"
+  sudo install -o root -g root -m 0600 "$runtime_env_tmp" /etc/ims-performance-manager.env
+fi
 
 sed \
   -e "s|@IMS_PATH@|$escaped_path|g" \

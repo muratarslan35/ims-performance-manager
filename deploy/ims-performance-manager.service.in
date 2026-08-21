@@ -12,6 +12,7 @@ WorkingDirectory=@IMS_PATH@
 Environment=APP_ENV=production
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-@IMS_PATH@/.env
+EnvironmentFile=-/etc/ims-performance-manager.env
 ExecStart=@IMS_PATH@/venv/bin/gunicorn --config @IMS_PATH@/gunicorn.conf.py run:app
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGQUIT
