@@ -169,7 +169,7 @@ def test_representative_cannot_access_manager_areas_or_ai_panel(app):
     assert b"IMS Merkezi" not in dashboard.data
     assert b"Ayarlar" not in dashboard.data
     assert b"AI Y\xc3\xb6netici \xc3\x96zeti" not in dashboard.data
-    assert b"IMS Y\xc3\xbckle" not in dashboard.data
+    assert b'href="/ims/"' not in dashboard.data
 
 
 def test_manager_portal_keeps_full_management_access(app):
