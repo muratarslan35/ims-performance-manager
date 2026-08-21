@@ -999,6 +999,29 @@ def test_navbar_active_period_uses_compact_week_format(app):
     assert "5 . Hafta" not in html
 
 
+def test_ims_page_does_not_override_navbar_period_label(app):
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        db.session.add(IMSUpload(
+            file_name="ims-navbar-period.xlsx", year=2026, month=1, week_number=5,
+            quarter="Q1", status="COMPLETED",
+        ))
+        db.session.commit()
+
+    promote_test_user_to_manager(app)
+    client = app.test_client()
+    client.post(
+        "/login",
+        data={"email": "test@example.com", "password": "password123", "portal": "manager"},
+    )
+    html = client.get("/ims/").get_data(as_text=True)
+
+    assert html.count("2026/01 - 5. Hafta") >= 1
+    assert "{'year':" not in html
+
+
 def test_product_management_uses_simplified_safe_fields(app):
     from app.models import Product
 
