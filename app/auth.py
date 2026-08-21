@@ -21,6 +21,7 @@ from werkzeug.security import generate_password_hash
 from app.extensions import db
 
 from app.models import Representative, User
+from app.access_control import is_manager
 
 auth_bp = Blueprint(
     "auth",
@@ -55,6 +56,8 @@ def login():
             "password",
             ""
         )
+
+        portal = request.form.get("portal", "").strip().casefold()
 
         if not email or not password:
 
@@ -106,6 +109,14 @@ def login():
             return render_template(
                 "login.html"
             )
+
+        if portal == "manager" and not is_manager(user):
+            flash("Bu hesap Temsilci Girişi üzerinden kullanılmalıdır.", "warning")
+            return render_template("login.html")
+
+        if portal == "representative" and is_manager(user):
+            flash("Bu hesap Yönetici Girişi üzerinden kullanılmalıdır.", "warning")
+            return render_template("login.html")
 
         login_user(
             user,

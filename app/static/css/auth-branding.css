@@ -45,6 +45,30 @@
 }
 .auth-system-title::after{content:"";display:block;width:72px;height:3px;margin:10px auto 0;border-radius:99px;background:linear-gradient(90deg,#0b4ea2,#45a4ee)}
 
+.auth-layout-register .auth-card-register { padding-top: 34px; padding-bottom: 34px; }
+.auth-layout-register .auth-subtitle { margin-bottom: 20px; }
+.auth-layout-register .mb-3 { margin-bottom: 12px !important; }
+
+.portal-selector { margin: 0; padding: 0; border: 0; }
+.portal-selector legend { float: none; width: auto; margin-bottom: 8px; font-size: 13px; }
+.portal-selector-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.portal-option { position: relative; cursor: pointer; }
+.portal-option input { position: absolute; opacity: 0; pointer-events: none; }
+.portal-option span {
+  min-height: 86px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+  padding: 12px; border: 1px solid #dce7f4; border-radius: 12px; background: #f8fafc;
+  color: #52657b; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.portal-option i { color: #0b4ea2; font-size: 18px; margin-bottom: 5px; }
+.portal-option strong { color: #142b39; font-size: 13px; }
+.portal-option small { margin-top: 3px; font-size: 10px; line-height: 1.3; }
+.portal-option input:checked + span { border-color: #0b4ea2; background: #edf5ff; box-shadow: 0 0 0 3px rgba(11,78,162,.10); }
+.portal-option input:focus-visible + span { outline: 3px solid rgba(45,127,249,.24); outline-offset: 2px; }
+
+[data-theme="dark"] .portal-option span { background: #101d31; border-color: #33445f; color: #a9bdd5; }
+[data-theme="dark"] .portal-option strong { color: #eef5fd; }
+[data-theme="dark"] .portal-option input:checked + span { background: #17345a; border-color: #75b8ff; }
+
 /* Başlık ve form masaüstünde tek bir ortalanmış grup olarak hareket eder. */
 .auth-shell {
   display: flex;
@@ -58,4 +82,5 @@
   .auth-identity-panel { min-height: 190px; }
   .auth-identity-logo { object-position: center 48%; }
   .auth-system-title { padding: 10px; font-size: 15px; margin-bottom: 10px; }
+  .portal-selector-grid { grid-template-columns: 1fr; }
 }

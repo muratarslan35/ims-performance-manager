@@ -29,13 +29,13 @@
                 </a>
             </li>
 
-            <li class="sidebar-nav-item">
+            {% if manager_access %}<li class="sidebar-nav-item">
                 <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('ims.') %}active{% endif %}"
                    href="{{ url_for('ims.index') }}">
                     <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-cloud-upload-fill"></i></span>
                     <span class="sidebar-nav-label">IMS Merkezi</span>
                 </a>
-            </li>
+            </li>{% endif %}
 
             <li class="sidebar-section-label">Tanımlar</li>
 
@@ -121,7 +121,7 @@
                 </a>
             </li>
 
-            <li class="sidebar-section-label">Sistem</li>
+            {% if manager_access %}<li class="sidebar-section-label">Sistem</li>
 
             <li class="sidebar-nav-item">
                 <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}"
@@ -129,7 +129,7 @@
                     <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-gear-fill"></i></span>
                     <span class="sidebar-nav-label">Ayarlar</span>
                 </a>
-            </li>
+            </li>{% endif %}
 
         </ul>
     </nav>

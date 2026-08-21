@@ -16,9 +16,23 @@
     <section class="auth-card auth-card-narrow">
 
         <h2 class="auth-welcome">Tekrar hoş geldiniz</h2>
-        <p class="auth-subtitle">Performans yönetim alanınıza giriş yapın.</p>
+        <p class="auth-subtitle">Hesap türünüzü seçerek güvenli giriş yapın.</p>
 
         <form method="POST" action="{{ url_for('auth.login') }}" class="auth-form">
+
+            <fieldset class="portal-selector mb-4">
+                <legend class="form-label">Giriş Türü</legend>
+                <div class="portal-selector-grid">
+                    <label class="portal-option">
+                        <input type="radio" name="portal" value="manager" {% if request.form.get('portal', 'manager') == 'manager' %}checked{% endif %}>
+                        <span><i class="bi bi-shield-lock-fill"></i><strong>Yönetici Girişi</strong><small>Tam yönetim ve IMS erişimi</small></span>
+                    </label>
+                    <label class="portal-option">
+                        <input type="radio" name="portal" value="representative" {% if request.form.get('portal') == 'representative' %}checked{% endif %}>
+                        <span><i class="bi bi-person-badge-fill"></i><strong>Temsilci Girişi</strong><small>Performans ve saha görünümü</small></span>
+                    </label>
+                </div>
+            </fieldset>
 
             <div class="mb-3">
                 <label class="form-label" for="login_email">E-Posta</label>

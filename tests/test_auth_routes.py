@@ -77,6 +77,16 @@ def client(app):
     return app.test_client()
 
 
+def promote_test_user_to_manager(app):
+    from app.extensions import db
+    from app.models import User
+
+    with app.app_context():
+        user = User.query.filter_by(email="test@example.com").one()
+        user.role = "Admin"
+        db.session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Route map evidence
 # ---------------------------------------------------------------------------
@@ -106,6 +116,8 @@ def test_login_manager_login_view(app):
 def test_get_login_returns_200(client):
     response = client.get("/login")
     assert response.status_code == 200
+    assert b"Y\xc3\xb6netici Giri\xc5\x9fi" in response.data
+    assert b"Temsilci Giri\xc5\x9fi" in response.data
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +143,49 @@ def test_post_login_wrong_password_stays_on_login(client):
         follow_redirects=False,
     )
     assert response.status_code == 200
+
+
+def test_login_portal_rejects_role_mismatch(client):
+    response = client.post("/login", data={
+        "email": "test@example.com", "password": "password123", "portal": "manager",
+    })
+
+    assert response.status_code == 200
+    assert b"Temsilci Giri\xc5\x9fi" in response.data
+
+
+def test_representative_cannot_access_manager_areas_or_ai_panel(app):
+    client = app.test_client()
+    client.post("/login", data={
+        "email": "test@example.com", "password": "password123", "portal": "representative",
+    })
+
+    ims = client.get("/ims/", follow_redirects=False)
+    settings = client.get("/settings/", follow_redirects=False)
+    dashboard = client.get("/dashboard/")
+
+    assert ims.status_code in (301, 302)
+    assert settings.status_code in (301, 302)
+    assert b"IMS Merkezi" not in dashboard.data
+    assert b"Ayarlar" not in dashboard.data
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" not in dashboard.data
+    assert b'href="/ims/"' not in dashboard.data
+
+
+def test_manager_portal_keeps_full_management_access(app):
+    promote_test_user_to_manager(app)
+    client = app.test_client()
+    login = client.post("/login", data={
+        "email": "test@example.com", "password": "password123", "portal": "manager",
+    }, follow_redirects=False)
+
+    assert login.status_code in (301, 302)
+    assert client.get("/ims/").status_code == 200
+    assert client.get("/settings/").status_code == 200
+    dashboard = client.get("/dashboard/").data
+    assert b"IMS Merkezi" in dashboard
+    assert b"Ayarlar" in dashboard
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" in dashboard
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +554,7 @@ def test_login_and_register_show_corporate_system_name(app):
     client = app.test_client()
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/login").get_data(as_text=True)
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/register").get_data(as_text=True)
+    assert "auth-layout auth-layout-narrow auth-layout-register" in client.get("/register").get_data(as_text=True)
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert "position: static" in css
     assert "background: transparent" in css
@@ -506,8 +562,9 @@ def test_login_and_register_show_corporate_system_name(app):
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
+    promote_test_user_to_manager(app)
     client = app.test_client()
-    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "manager"})
 
     response = client.get("/dashboard/", follow_redirects=True)
     html = response.get_data(as_text=True)
@@ -756,8 +813,9 @@ def test_ims_completed_status_is_rendered_in_turkish(app):
         db.session.add(IMSUpload(file_name="tamamlanan.xlsx", year=2026, month=8, status="COMPLETED"))
         db.session.commit()
 
+    promote_test_user_to_manager(app)
     client = app.test_client()
-    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "manager"})
     response = client.get("/ims/")
     html = response.get_data(as_text=True)
 
@@ -774,8 +832,9 @@ def test_ims_form_defaults_to_latest_completed_period(app):
         db.session.add(IMSUpload(file_name="2026-ocak.xlsx", year=2026, month=1, status="COMPLETED"))
         db.session.commit()
 
+    promote_test_user_to_manager(app)
     client = app.test_client()
-    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "manager"})
     html = client.get("/ims/").get_data(as_text=True)
 
     assert '<option value="2026" selected>2026</option>' in html
@@ -843,8 +902,9 @@ def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
         )
         db.session.commit()
 
+    promote_test_user_to_manager(app)
     client = app.test_client()
-    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "manager"})
     html = client.get("/ims/").get_data(as_text=True)
 
     assert "15.08.2026 13:05" in html
