@@ -6,7 +6,6 @@
 {% endblock %}
 
 {% block content %}
-{% set latest_upload = uploads[0] if uploads else none %}
 {% if import_status.active %}
 <div class="alert alert-info d-flex align-items-start gap-2" role="status">
   <i class="bi bi-hourglass-split mt-1"></i>
@@ -25,7 +24,7 @@
       <p class="ims-hero-sub">Gerçek IMS raporunu sisteme yükleyerek tüm prim ve performans hesaplamalarını güncelleyin</p>
     </div>
     <div class="ims-hero-meta">
-      <div class="ims-hero-badge"><i class="bi bi-database-check"></i> Toplam Yükleme: <strong>{{ uploads|length }}</strong></div>
+      <div class="ims-hero-badge"><i class="bi bi-database-check"></i> Toplam Yükleme: <strong>{{ total_uploads }}</strong></div>
       <div class="ims-hero-badge"><i class="bi bi-calendar-check"></i> Aktif Dönem: <strong>{{ active_period.year }}/{{ "%02d"|format(active_period.month) }}</strong></div>
       <div class="ims-hero-badge"><i class="bi bi-shield-check"></i> Veri Bütünlüğü: <strong>{{ 'Doğrulandı' if latest_upload and latest_upload.reconciliation_status == 'PASSED' else 'Kontrol bekliyor' }}</strong></div>
     </div>
@@ -54,7 +53,7 @@
 <div class="ims-stats-row">
   <div class="ims-stat-card">
     <div class="ims-stat-label">Toplam Yükleme</div>
-    <div class="ims-stat-value">{{ uploads|length }}</div>
+    <div class="ims-stat-value">{{ total_uploads }}</div>
   </div>
   <div class="ims-stat-card">
     <div class="ims-stat-label">Son IMS Haftası</div>
@@ -66,8 +65,8 @@
   </div>
   <div class="ims-stat-card">
     <div class="ims-stat-label">Son Durum</div>
-    <div class="ims-stat-value {% if uploads and uploads[0].status in ('Hazır', 'COMPLETED') %}green{% endif %}">
-      {% if uploads %}{% if uploads[0].status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif uploads[0].status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ uploads[0].status }}{% endif %}{% else %}—{% endif %}
+    <div class="ims-stat-value {% if latest_upload and latest_upload.status in ('Hazır', 'COMPLETED') %}green{% endif %}">
+      {% if latest_upload %}{% if latest_upload.status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif latest_upload.status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif latest_upload.status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ latest_upload.status }}{% endif %}{% else %}—{% endif %}
     </div>
   </div>
 </div>
@@ -142,22 +141,22 @@
         <div class="ims-upload-card-title"><i class="bi bi-clock-history" style="color:#0b4ea2;"></i> Son Yükleme</div>
       </div>
       <div class="ims-upload-card-body">
-        {% if uploads %}
+        {% if latest_upload %}
         <div class="d-flex flex-column gap-2">
           <div class="d-flex justify-content-between align-items-center">
             <span style="font-size:12px;color:#6a7a90;">Dosya</span>
-            <span style="font-size:13px;font-weight:700;color:#1c3558;max-width:160px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;" title="{{ uploads[0].file_name }}">{{ uploads[0].file_name }}</span>
+            <span style="font-size:13px;font-weight:700;color:#1c3558;max-width:160px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;" title="{{ latest_upload.file_name }}">{{ latest_upload.file_name }}</span>
           </div>
-          <button class="btn btn-outline-primary btn-sm mt-2" type="button" data-open-latest-report>
+          <button class="btn btn-outline-primary btn-sm mt-2" type="button" data-open-latest-report data-latest-id="{{ latest_upload.id }}" data-latest-url="{{ url_for('ims.index') }}#ims-history">
             <i class="bi bi-clipboard-data me-1"></i> IMS durum raporunu aç
           </button>
           <div class="d-flex justify-content-between align-items-center">
             <span style="font-size:12px;color:#6a7a90;">Durum</span>
-            <span class="badge {% if uploads[0].status in ('Hazır', 'COMPLETED') %}bg-success{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}bg-warning{% else %}bg-danger{% endif %}">{% if uploads[0].status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif uploads[0].status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif uploads[0].status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ uploads[0].status }}{% endif %}</span>
+            <span class="badge {% if latest_upload.status in ('Hazır', 'COMPLETED') %}bg-success{% elif latest_upload.status in ('İşleniyor', 'PROCESSING') %}bg-warning{% else %}bg-danger{% endif %}">{% if latest_upload.status in ('Hazır', 'COMPLETED') %}Tamamlandı{% elif latest_upload.status in ('İşleniyor', 'PROCESSING') %}İşleniyor{% elif latest_upload.status in ('Hata', 'FAILED') %}Başarısız{% else %}{{ latest_upload.status }}{% endif %}</span>
           </div>
           <div class="d-flex justify-content-between align-items-center">
             <span style="font-size:12px;color:#6a7a90;">Tarih</span>
-            <span style="font-size:12px;color:#1c3558;">{{ uploads[0].uploaded_at | istanbul_datetime }}</span>
+            <span style="font-size:12px;color:#1c3558;">{{ latest_upload.uploaded_at | istanbul_datetime }}</span>
           </div>
         </div>
         {% else %}
@@ -296,28 +295,29 @@
   </div>
 </div>
 
-<div class="ims-upload-card">
+<div class="ims-upload-card" id="ims-history">
   <div class="ims-upload-card-header">
     <div class="ims-upload-card-title"><i class="bi bi-clock-history" style="color:#0b4ea2;"></i> IMS Yükleme Geçmişi</div>
-    <span style="font-size:12px;color:#8496ae;">{{ uploads|length }} kayıt</span>
+    <span style="font-size:12px;color:#8496ae;">{{ upload_pagination.total }} / {{ total_uploads }} kayıt</span>
   </div>
-  <div class="ims-history-controls">
+  <form class="ims-history-controls" method="get" action="{{ url_for('ims.index') }}#ims-history">
     <div class="ims-history-search">
       <i class="bi bi-search"></i>
-      <input type="text" id="imsHistorySearch" placeholder="Dosya ara...">
+      <input type="text" id="imsHistorySearch" name="history_q" value="{{ history_query }}" placeholder="Tüm yüklemelerde dosya ara...">
     </div>
     <div class="ims-history-filter">
-      <select id="imsStatusFilter">
+      <select id="imsStatusFilter" name="history_status">
         <option value="">Tüm Durumlar</option>
-        <option value="Hazır">Hazır</option>
-        <option value="İşleniyor">İşleniyor</option>
-        <option value="Hata">Hata</option>
+        <option value="completed" {% if history_status == 'completed' %}selected{% endif %}>Tamamlandı</option>
+        <option value="processing" {% if history_status == 'processing' %}selected{% endif %}>İşleniyor</option>
+        <option value="failed" {% if history_status == 'failed' %}selected{% endif %}>Başarısız</option>
       </select>
     </div>
+    <button class="ims-export-btn" type="submit"><i class="bi bi-search"></i> Ara</button>
     <button class="ims-export-btn" title="Dışa Aktar" onclick="return false;">
       <i class="bi bi-download"></i> Dışa Aktar
     </button>
-  </div>
+  </form>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0" id="imsHistoryTable">
       <thead style="position:sticky;top:0;z-index:2;background:#f4f8ff;">
@@ -377,6 +377,19 @@
       </tbody>
     </table>
   </div>
+  {% if upload_pagination.pages > 1 %}
+  <nav class="p-3 d-flex justify-content-center" aria-label="IMS yükleme geçmişi sayfaları">
+    <ul class="pagination pagination-sm mb-0">
+      {% for page_number in upload_pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+        {% if page_number %}
+        <li class="page-item {% if page_number == upload_pagination.page %}active{% endif %}">
+          <a class="page-link" href="{{ url_for('ims.index', history_page=page_number, history_q=history_query, history_status=history_status) }}#ims-history">{{ page_number }}</a>
+        </li>
+        {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
 </div>
 
 <div class="ims-detail-overlay" id="imsDetailOverlay">
@@ -493,21 +506,8 @@
     });
   }
 
-  const searchInput = document.getElementById("imsHistorySearch");
   const statusFilter = document.getElementById("imsStatusFilter");
-
-  function filterHistory() {
-    const q = (searchInput ? searchInput.value.toLowerCase() : "");
-    const st = (statusFilter ? statusFilter.value : "");
-    document.querySelectorAll(".ims-history-row").forEach((row) => {
-      const matchName = !q || (row.dataset.filename || "").includes(q);
-      const matchStatus = !st || (row.dataset.status || "") === st;
-      row.style.display = (matchName && matchStatus) ? "" : "none";
-    });
-  }
-
-  if (searchInput) searchInput.addEventListener("input", filterHistory);
-  if (statusFilter) statusFilter.addEventListener("change", filterHistory);
+  if (statusFilter) statusFilter.addEventListener("change", () => statusFilter.form.submit());
 
   const overlay = document.getElementById("imsDetailOverlay");
   const detailClose = document.getElementById("imsDetailClose");
@@ -549,8 +549,10 @@
 
   const latestReportButton = document.querySelector("[data-open-latest-report]");
   if (latestReportButton) latestReportButton.addEventListener("click", () => {
-    const firstDetailButton = document.querySelector(".ims-history-row .ims-detail-btn");
-    if (firstDetailButton) firstDetailButton.click();
+    const latestRow = document.querySelector(`.ims-history-row[data-id="${latestReportButton.dataset.latestId}"]`);
+    const detailButton = latestRow && latestRow.querySelector(".ims-detail-btn");
+    if (detailButton) detailButton.click();
+    else window.location.href = latestReportButton.dataset.latestUrl;
   });
 
   if (detailClose) detailClose.addEventListener("click", () => overlay && overlay.classList.remove("visible"));
