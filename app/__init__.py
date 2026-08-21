@@ -29,6 +29,7 @@ from app.services.import_result_report import (
     latest_import_report,
     register_import_result_flash,
 )
+from app.access_control import register_access_control
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -152,6 +153,7 @@ def create_app(config_object=Config):
 
     register_template_context(app)
     register_blueprints(app)
+    register_access_control(app)
     register_error_handlers(app)
 
     if not app.config.get("TESTING", False):
