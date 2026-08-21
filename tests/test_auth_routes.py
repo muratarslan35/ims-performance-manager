@@ -885,6 +885,76 @@ def test_ims_manager_report_confirms_business_completeness(app):
     assert report["realization_ok"] is True
 
 
+def test_ims_manager_reports_use_bounded_queries_for_history(app):
+    from sqlalchemy import event
+
+    from app.extensions import db
+    from app.ims import _manager_reports
+    from app.models import IMSUpload
+
+    with app.app_context():
+        uploads = [
+            IMSUpload(file_name=f"history-{index:03d}.xlsx", year=2035, month=1, status="COMPLETED")
+            for index in range(100)
+        ]
+        db.session.add_all(uploads)
+        db.session.commit()
+        uploads = IMSUpload.query.order_by(IMSUpload.id).all()
+
+        selects = []
+
+        def capture_select(_connection, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", capture_select)
+        try:
+            reports = _manager_reports(uploads)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_select)
+
+    assert len(reports) == 100
+    assert len(selects) <= 4
+
+
+def test_ims_history_is_paginated_and_server_filtered(app):
+    from app.extensions import db
+    from app.models import IMSUpload
+
+    with app.app_context():
+        IMSUpload.query.delete()
+        db.session.add_all([
+            IMSUpload(
+                file_name=f"history-{index:03d}.xlsx",
+                year=2036,
+                month=1,
+                status="FAILED" if index == 60 else "COMPLETED",
+            )
+            for index in range(61)
+        ])
+        db.session.commit()
+
+    promote_test_user_to_manager(app)
+    client = app.test_client()
+    client.post(
+        "/login",
+        data={"email": "test@example.com", "password": "password123", "portal": "manager"},
+    )
+
+    first_page = client.get("/ims/").get_data(as_text=True)
+    assert first_page.count('class="ims-history-row"') == 25
+    assert "61 / 61 kayıt" in first_page
+
+    third_page = client.get("/ims/?history_page=3").get_data(as_text=True)
+    assert third_page.count('class="ims-history-row"') == 11
+
+    filtered = client.get(
+        "/ims/?history_q=history-060&history_status=failed"
+    ).get_data(as_text=True)
+    assert filtered.count('class="ims-history-row"') == 1
+    assert "history-060.xlsx" in filtered
+
+
 def test_ims_upload_time_is_rendered_in_istanbul_timezone(app):
     from datetime import datetime
     from app.extensions import db

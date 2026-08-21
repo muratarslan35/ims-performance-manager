@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from flask_login import current_user
 from flask_login import login_required
+from sqlalchemy import tuple_
 
 from werkzeug.utils import secure_filename
 
@@ -47,67 +48,116 @@ ims_bp = Blueprint(
 )
 
 
-def _manager_report(upload):
-    """Translate technical import evidence into manager-level completeness checks."""
-    target_rows = db.session.query(Target.representative_id, Target.product_id).filter_by(
-        year=upload.year, month=upload.month
-    ).all()
-    summary_rows = db.session.query(IMSSummary.representative_id, IMSSummary.product_id).filter_by(
-        year=upload.year, month=upload.month
-    ).all()
-    target_keys, summary_keys = set(target_rows), set(summary_rows)
-    target_rep_ids = {representative_id for representative_id, _ in target_keys if representative_id}
-    target_product_ids = {product_id for _, product_id in target_keys if product_id}
+def _manager_reports(uploads):
+    """Build manager completeness reports with a fixed number of queries.
 
-    real_representatives = Representative.query.filter(
-        Representative.id.in_(target_rep_ids or {-1}),
-        Representative.active.is_(True),
-        ~db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
+    Target and summary data are period-scoped, so recalculating the same six
+    queries for every historical upload is both redundant and increasingly
+    expensive.  Fetch every visible period once and retain the existing report
+    semantics for each upload.
+    """
+    if not uploads:
+        return {}
+
+    periods = {(item.year, item.month) for item in uploads}
+    target_rows = db.session.query(
+        Target.year,
+        Target.month,
+        Target.representative_id,
+        Target.product_id,
+    ).filter(tuple_(Target.year, Target.month).in_(periods)).all()
+    summary_rows = db.session.query(
+        IMSSummary.year,
+        IMSSummary.month,
+        IMSSummary.representative_id,
+        IMSSummary.product_id,
+    ).filter(tuple_(IMSSummary.year, IMSSummary.month).in_(periods)).all()
+
+    target_keys_by_period = {period: set() for period in periods}
+    summary_keys_by_period = {period: set() for period in periods}
+    for year, month, representative_id, product_id in target_rows:
+        target_keys_by_period[(year, month)].add((representative_id, product_id))
+    for year, month, representative_id, product_id in summary_rows:
+        summary_keys_by_period[(year, month)].add((representative_id, product_id))
+
+    active_representatives = Representative.query.filter(
+        Representative.active.is_(True)
     ).all()
-    represented_real_ids = {item.id for item in real_representatives}
-    active_real_ids = {
-        item.id for item in Representative.query.filter(
-            Representative.active.is_(True),
-            ~db.func.coalesce(Representative.rep_code, "").ilike("UNASSIGNED%"),
-        ).all()
+    active_real_representatives = {
+        item.id: item
+        for item in active_representatives
+        if not str(item.rep_code or "").upper().startswith("UNASSIGNED")
     }
-    represented_regions = {str(item.region).strip() for item in real_representatives if item.region}
+    active_real_ids = set(active_real_representatives)
     active_regions = {
-        str(item.region).strip() for item in Representative.query.filter(
-            Representative.active.is_(True), Representative.region.isnot(None)
-        ).all() if str(item.region).strip()
+        str(item.region).strip()
+        for item in active_representatives
+        if item.region and str(item.region).strip()
     }
-    active_product_ids = {item.id for item in Product.query.filter_by(is_active=True).all()}
-    represented_active_products = target_product_ids & active_product_ids
-
-    reconciled = upload.status == "COMPLETED" and upload.reconciliation_status == "PASSED"
-    source_complete = (
-        int(upload.source_record_count or 0) > 0
-        and int(upload.source_record_count or 0) == int(upload.stored_source_record_count or 0)
-        and int(upload.invalid_metric_count or 0) == 0
-    )
-    representative_complete = bool(active_real_ids) and represented_real_ids == active_real_ids
-    region_complete = bool(active_regions) and represented_regions == active_regions
-    product_complete = bool(active_product_ids) and represented_active_products == active_product_ids
-    calculation_complete = bool(target_keys) and target_keys.issubset(summary_keys)
-    total_tl_complete = reconciled and source_complete and calculation_complete
-    realization_complete = total_tl_complete and len(target_keys) == len(summary_keys)
-
-    checks = [representative_complete, region_complete, product_complete, total_tl_complete, realization_complete]
-    return {
-        "overall": all(checks),
-        "representative_count": len(represented_real_ids),
-        "representatives_ok": representative_complete,
-        "region_count": len(represented_regions),
-        "regions_ok": region_complete,
-        "product_count": len(represented_active_products),
-        "products_ok": product_complete,
-        "total_tl_ok": total_tl_complete,
-        "realization_ok": realization_complete,
-        "sheet_count": int(upload.sheet_count or 0),
-        "source_count": int(upload.source_record_count or 0),
-        "stored_count": int(upload.stored_source_record_count or 0),
+    active_product_ids = {
+        item.id for item in Product.query.filter_by(is_active=True).all()
     }
+
+    reports = {}
+    for upload in uploads:
+        period = (upload.year, upload.month)
+        target_keys = target_keys_by_period.get(period, set())
+        summary_keys = summary_keys_by_period.get(period, set())
+        target_rep_ids = {
+            representative_id
+            for representative_id, _ in target_keys
+            if representative_id
+        }
+        target_product_ids = {product_id for _, product_id in target_keys if product_id}
+        represented_real_ids = target_rep_ids & active_real_ids
+        represented_regions = {
+            str(active_real_representatives[item_id].region).strip()
+            for item_id in represented_real_ids
+            if active_real_representatives[item_id].region
+        }
+        represented_active_products = target_product_ids & active_product_ids
+
+        reconciled = upload.status == "COMPLETED" and upload.reconciliation_status == "PASSED"
+        source_complete = (
+            int(upload.source_record_count or 0) > 0
+            and int(upload.source_record_count or 0)
+            == int(upload.stored_source_record_count or 0)
+            and int(upload.invalid_metric_count or 0) == 0
+        )
+        representative_complete = bool(active_real_ids) and represented_real_ids == active_real_ids
+        region_complete = bool(active_regions) and represented_regions == active_regions
+        product_complete = bool(active_product_ids) and represented_active_products == active_product_ids
+        calculation_complete = bool(target_keys) and target_keys.issubset(summary_keys)
+        total_tl_complete = reconciled and source_complete and calculation_complete
+        realization_complete = total_tl_complete and len(target_keys) == len(summary_keys)
+
+        checks = [
+            representative_complete,
+            region_complete,
+            product_complete,
+            total_tl_complete,
+            realization_complete,
+        ]
+        reports[upload.id] = {
+            "overall": all(checks),
+            "representative_count": len(represented_real_ids),
+            "representatives_ok": representative_complete,
+            "region_count": len(represented_regions),
+            "regions_ok": region_complete,
+            "product_count": len(represented_active_products),
+            "products_ok": product_complete,
+            "total_tl_ok": total_tl_complete,
+            "realization_ok": realization_complete,
+            "sheet_count": int(upload.sheet_count or 0),
+            "source_count": int(upload.source_record_count or 0),
+            "stored_count": int(upload.stored_source_record_count or 0),
+        }
+    return reports
+
+
+def _manager_report(upload):
+    """Backward-compatible single-upload report entry point."""
+    return _manager_reports([upload])[upload.id]
 
 
 @ims_bp.route(
@@ -117,12 +167,29 @@ def _manager_report(upload):
 )
 @login_required
 def index():
+    history_page = max(request.args.get("history_page", 1, type=int) or 1, 1)
+    history_query = (request.args.get("history_q") or "").strip()[:100]
+    history_status = (request.args.get("history_status") or "").strip()
 
-    uploads = IMSUpload.query.order_by(
+    upload_query = IMSUpload.query
+    if history_query:
+        upload_query = upload_query.filter(IMSUpload.file_name.ilike(f"%{history_query}%"))
+    status_groups = {
+        "completed": ("COMPLETED", "Hazır"),
+        "processing": ("PROCESSING", "İşleniyor"),
+        "failed": ("FAILED", "Hata"),
+    }
+    if history_status in status_groups:
+        upload_query = upload_query.filter(IMSUpload.status.in_(status_groups[history_status]))
 
-        IMSUpload.uploaded_at.desc()
-
-    ).all()
+    upload_pagination = upload_query.order_by(
+        IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()
+    ).paginate(page=history_page, per_page=25, error_out=False)
+    uploads = upload_pagination.items
+    latest_upload = IMSUpload.query.order_by(
+        IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()
+    ).first()
+    total_uploads = IMSUpload.query.count()
 
     production_uploads = ProductionResultUpload.query.order_by(
         ProductionResultUpload.uploaded_at.desc()
@@ -130,7 +197,7 @@ def index():
 
     active_period = PeriodService.get_active_period()
     import_status = ImportCoordinator.status()
-    manager_reports = {upload.id: _manager_report(upload) for upload in uploads}
+    manager_reports = _manager_reports(uploads)
 
     # TEMP DEBUG
     dashboard = {}
@@ -141,6 +208,11 @@ def index():
         "ims.html",
 
         uploads=uploads,
+        latest_upload=latest_upload,
+        total_uploads=total_uploads,
+        upload_pagination=upload_pagination,
+        history_query=history_query,
+        history_status=history_status,
 
         production_uploads=production_uploads,
 
