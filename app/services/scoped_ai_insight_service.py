@@ -82,7 +82,7 @@ class ScopedAIInsightService:
         return periods
 
     @classmethod
-    def build(cls, *, scope_type, scope_name, periods, market_analysis=None):
+    def build(cls, *, scope_type, scope_name, periods, market_analysis=None, competitive_intelligence=None):
         result_periods = {}
         for key, label, _length in cls.PERIODS:
             source = periods.get(key, {})
@@ -148,5 +148,6 @@ class ScopedAIInsightService:
             "scope_name": scope_name,
             "periods": result_periods,
             "brick_signals": brick_signals[:6],
+            "competitive_intelligence": competitive_intelligence or {},
             "method_note": "Hedefler ve kesinleşmiş satışlar P2 > P1 > IMS kaynak önceliğiyle değerlendirilir.",
         }

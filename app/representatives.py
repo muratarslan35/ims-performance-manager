@@ -20,6 +20,7 @@ from app.services.period_service import PeriodService
 from app.services.representative_market_service import RepresentativeMarketService
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.scoped_ai_insight_service import ScopedAIInsightService
+from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
 
 
 representatives_bp = Blueprint(
@@ -510,11 +511,13 @@ def view(
     totals = {key: round(value, 2) for key, value in totals.items()}
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
     market_analysis = RepresentativeMarketService(representative, year, month).build()
+    competitive_intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
     ai_report = ScopedAIInsightService.build(
         scope_type="representative",
         scope_name=_representative_display_name(representative.rep_name),
         periods=ScopedAIInsightService.representative_periods(representative.id, year, month),
         market_analysis=market_analysis,
+        competitive_intelligence=competitive_intelligence,
     )
     annual_realization = AnnualRealizationService.build(year, [representative.id])
     representatives = [representative] if session.get("portal") == "representative" else Representative.query.filter(
