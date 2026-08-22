@@ -31,7 +31,8 @@ def _sheet(workbook, title, metric, values, percentages, total_actual, total_per
         header += ["HAFTALIK", "1 URETIM", "2 URETIM"]
     sheet.append(header)
     # KOTA SATIŞ uses column A for sicil, B for region and C for the name.
-    row = ["", "901 DIYARBAKIR", "MURAT ARSLAN"] + [100] * 7 + [700, "", ""]
+    target_value = 10 if metric == "KUTU" else 100
+    row = ["", "901 DIYARBAKIR", "MURAT ARSLAN"] + [target_value] * 7 + [target_value * 7, "", ""]
     row += values + [total_actual, "", ""] + percentages + [total_percent]
     if with_stage:
         row += [100, 110, total_percent]
