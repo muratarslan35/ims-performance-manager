@@ -111,6 +111,9 @@ jobs:
               raise SystemExit('SQLite production runtime verification failed')
           PY
 
+          echo '--- REPRESENTATIVE READ PERFORMANCE GATE ---'
+          venv/bin/python verify_representative_performance.py
+
           echo '--- ISOLATED IMS ACCEPTANCE / FINGERPRINT ---'
           acceptance_db="/tmp/ims-acceptance-${stamp}.db"
           cleanup_acceptance() { rm -f "$acceptance_db" "$acceptance_db-wal" "$acceptance_db-shm"; }
@@ -158,7 +161,7 @@ jobs:
           if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-deploy.log"
           if [ -f "$evidence_file" ]; then
-            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||Production health check|PRODUCTION CAPACITY|CPU_COUNT|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 120 || true)
+            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||REPRESENTATIVE_PERFORMANCE\||Production health check|PRODUCTION CAPACITY|CPU_COUNT|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 140 || true)
           else
             evidence="Production SSH/deploy log was not created."
           fi
