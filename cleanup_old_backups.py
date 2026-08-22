@@ -6,9 +6,10 @@ The deployment creates three managed SQLite backups with a shared timestamp:
 - users-predeploy-<stamp>.db
 - ipm-pre-competition-backfill-<stamp>.db
 
-This utility validates the retained primary/user backups first, then deletes only
-older files that match those managed naming schemes. Unknown/manual files are
-never deleted automatically.
+The retained primary/user backups are integrity-checked before anything is
+removed. By default only older managed files are deleted. Production may opt
+into ``--purge-unmanaged-db`` to enforce a strict one-rollback-set policy inside
+the managed backup directory; non-database files are still preserved.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ MANAGED_RE = re.compile(
     r"^(?P<kind>ipm-predeploy|users-predeploy|ipm-pre-competition-backfill)-"
     r"(?P<stamp>\d{8}-\d{6})\.db(?P<sidecar>-(?:wal|shm))?$"
 )
+DATABASE_BACKUP_RE = re.compile(r".+\.db(?:-(?:wal|shm))?$")
 REQUIRED_KINDS = {"ipm-predeploy", "users-predeploy"}
 
 
@@ -34,7 +36,13 @@ def integrity_ok(path: Path) -> bool:
         connection.close()
 
 
-def cleanup(backup_dir: Path, keep_stamp: str, *, dry_run: bool = False) -> dict:
+def cleanup(
+    backup_dir: Path,
+    keep_stamp: str,
+    *,
+    dry_run: bool = False,
+    purge_unmanaged_db: bool = False,
+) -> dict:
     backup_dir = backup_dir.resolve()
     if not backup_dir.is_dir():
         raise RuntimeError(f"Backup directory not found: {backup_dir}")
@@ -42,7 +50,7 @@ def cleanup(backup_dir: Path, keep_stamp: str, *, dry_run: bool = False) -> dict
         raise RuntimeError(f"Invalid keep timestamp: {keep_stamp}")
 
     managed: list[tuple[Path, str, str]] = []
-    unmanaged: list[str] = []
+    unmanaged_paths: list[Path] = []
     for path in sorted(backup_dir.iterdir()):
         if not path.is_file():
             continue
@@ -50,7 +58,7 @@ def cleanup(backup_dir: Path, keep_stamp: str, *, dry_run: bool = False) -> dict
         if match:
             managed.append((path, match.group("kind"), match.group("stamp")))
         else:
-            unmanaged.append(path.name)
+            unmanaged_paths.append(path)
 
     retained = [(path, kind) for path, kind, stamp in managed if stamp == keep_stamp]
     retained_kinds = {kind for path, kind in retained if path.name.endswith(".db")}
@@ -71,33 +79,50 @@ def cleanup(backup_dir: Path, keep_stamp: str, *, dry_run: bool = False) -> dict
             "Refusing cleanup: retained backup integrity failed for " + ", ".join(failed_integrity)
         )
 
-    deletions = [path for path, _kind, stamp in managed if stamp != keep_stamp]
+    managed_deletions = [path for path, _kind, stamp in managed if stamp != keep_stamp]
+    unmanaged_db_deletions = (
+        [path for path in unmanaged_paths if DATABASE_BACKUP_RE.fullmatch(path.name)]
+        if purge_unmanaged_db
+        else []
+    )
+    deletions = managed_deletions + unmanaged_db_deletions
+
     bytes_to_delete = sum(path.stat().st_size for path in deletions)
-    before_bytes = sum(path.stat().st_size for path, _kind, _stamp in managed)
+    before_bytes = sum(path.stat().st_size for path in backup_dir.iterdir() if path.is_file())
 
     if not dry_run:
         for path in deletions:
             path.unlink()
 
-    remaining_managed = [
+    remaining_files = sorted(
         path.name
-        for path, _kind, stamp in managed
-        if stamp == keep_stamp or (dry_run and stamp != keep_stamp)
-    ]
+        for path in backup_dir.iterdir()
+        if path.is_file()
+    ) if not dry_run else sorted(path.name for path in backup_dir.iterdir() if path.is_file())
     after_bytes = before_bytes if dry_run else before_bytes - bytes_to_delete
+    unmanaged_preserved = sorted(
+        path.name
+        for path in unmanaged_paths
+        if path not in unmanaged_db_deletions or dry_run
+    )
+
     payload = {
         "result": "PASS",
         "backup_dir": str(backup_dir),
         "keep_stamp": keep_stamp,
         "dry_run": dry_run,
+        "purge_unmanaged_db": purge_unmanaged_db,
         "deleted_files": 0 if dry_run else len(deletions),
         "would_delete_files": len(deletions),
         "deleted_bytes": 0 if dry_run else bytes_to_delete,
         "would_delete_bytes": bytes_to_delete,
-        "managed_bytes_before": before_bytes,
-        "managed_bytes_after": after_bytes,
-        "retained_managed": sorted(remaining_managed),
-        "unmanaged_preserved": sorted(unmanaged),
+        "bytes_before": before_bytes,
+        "bytes_after": after_bytes,
+        "managed_deleted": 0 if dry_run else len(managed_deletions),
+        "unmanaged_db_deleted": 0 if dry_run else len(unmanaged_db_deletions),
+        "retained_managed": sorted(path.name for path, _kind in retained),
+        "unmanaged_preserved": unmanaged_preserved,
+        "remaining_files": remaining_files,
         "retained_integrity": {kind: "ok" for kind in sorted(primary_paths)},
     }
     return payload
@@ -108,9 +133,15 @@ def main() -> int:
     parser.add_argument("--backup-dir", default="instance/backups")
     parser.add_argument("--keep-stamp", required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--purge-unmanaged-db", action="store_true")
     args = parser.parse_args()
 
-    payload = cleanup(Path(args.backup_dir), args.keep_stamp, dry_run=args.dry_run)
+    payload = cleanup(
+        Path(args.backup_dir),
+        args.keep_stamp,
+        dry_run=args.dry_run,
+        purge_unmanaged_db=args.purge_unmanaged_db,
+    )
     print("BACKUP_RETENTION|" + json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
 
