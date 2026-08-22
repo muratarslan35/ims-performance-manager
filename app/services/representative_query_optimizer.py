@@ -15,6 +15,7 @@ from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.extensions import db
 from app.models import CompetitionData, IMSRawData, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
+from app.services.production_result_service import ProductionResultService
 
 
 def _key(value):
@@ -52,6 +53,7 @@ def install_representative_market_query_optimizer():
         return
 
     original_workbook_fallback = RepresentativeMarketService._brick_competition_rows_from_workbook
+    original_build = RepresentativeMarketService.build
 
     def scope_values(self, year=None, month=None):
         year = self.year if year is None else int(year)
@@ -78,7 +80,7 @@ def install_representative_market_query_optimizer():
         if upload_id is None:
             return None, []
 
-        brick_values, fallback_values = scope_values(self)
+        brick_values, fallback_values = scope_values(self, year, month)
         representative_labels = _label_candidates(self.representative.rep_name)
         brick_labels = _candidate_set(brick_values)
         geography_labels = _candidate_set(fallback_values)
@@ -159,7 +161,7 @@ def install_representative_market_query_optimizer():
 
     def brick_competition_rows(self, brick_keys):
         upload_id = self._latest_upload_id(self.year, self.month)
-        brick_values, _ = scope_values(self)
+        brick_values, _ = scope_values(self, self.year, self.month)
         brick_labels = _candidate_set(brick_values)
         if upload_id is None or not brick_keys:
             return None, []
@@ -193,14 +195,25 @@ def install_representative_market_query_optimizer():
             ]
             if exact:
                 return exact
-            # Old uploads may not have persisted exact product-level monthly
-            # brick rows. Their retained workbook is the bounded compatibility
-            # source and is already cached per upload by the legacy service.
             return original_workbook_fallback(self, upload_id, brick_keys)
 
         return upload_id, RepresentativeAnalysisCache.get_or_compute(cache_key, load, ttl_seconds=60)
 
+    def build_with_batched_production(self):
+        # RepresentativeMarketService renders seven products and historically
+        # called effective_product() once per row. Resolve the whole period once
+        # and expose it only inside this execution context, so concurrent
+        # requests cannot leak or reuse another representative's values.
+        effective_rows = ProductionResultService.effective_products(
+            self.year, self.month, self.representative.id
+        )
+        with ProductionResultService.use_effective_batch(
+            self.year, self.month, self.representative.id, effective_rows
+        ):
+            return original_build(self)
+
     RepresentativeMarketService._competition_rows = competition_rows
     RepresentativeMarketService._brick_raw_rows = brick_raw_rows
     RepresentativeMarketService._brick_competition_rows = brick_competition_rows
+    RepresentativeMarketService.build = build_with_batched_production
     RepresentativeMarketService._sql_scope_optimizer_installed = True
