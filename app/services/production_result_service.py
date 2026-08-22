@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 
 from app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target
@@ -10,6 +12,8 @@ class ProductionResultService:
     production 2 > production 1 > IMS. Production percentages are final, may
     exceed 100, and exact stored TL/unit targets are never rounded or rebuilt.
     """
+
+    _effective_batch_override = ContextVar("production_effective_batch_override", default=None)
 
     @staticmethod
     def _d(value):
@@ -45,7 +49,111 @@ class ProductionResultService:
         return None
 
     @classmethod
+    def effective_products(cls, year, month, representative_id, product_ids=None):
+        """Resolve a whole representative period in a bounded query set.
+
+        This is the batch equivalent of ``effective_product``.  It preserves
+        product-specific P2 > P1 > IMS fallback, including the case where a P2
+        upload exists but does not contain every product.  Production
+        percentages are never capped at 100.
+        """
+        year, month, representative_id = int(year), int(month), int(representative_id)
+        product_filter = {int(item) for item in product_ids or ()}
+
+        target_query = Target.query.filter_by(
+            year=year, month=month, representative_id=representative_id,
+        )
+        if product_filter:
+            target_query = target_query.filter(Target.product_id.in_(product_filter))
+        targets = target_query.all()
+        targets_by_product = {int(target.product_id): target for target in targets}
+        resolved_ids = product_filter or set(targets_by_product)
+        if not resolved_ids:
+            return {}
+
+        summary_query = IMSSummary.query.filter_by(
+            year=year, month=month, representative_id=representative_id,
+        ).filter(IMSSummary.product_id.in_(resolved_ids))
+        summaries = summary_query.all()
+        summaries_by_product = {int(summary.product_id): summary for summary in summaries}
+
+        uploads = cls.applied_uploads(year, month)
+        upload_ids = [int(upload.id) for upload in uploads]
+        production_by_key = {}
+        if upload_ids:
+            rows = ProductionResult.query.filter(
+                ProductionResult.upload_id.in_(upload_ids),
+                ProductionResult.representative_id == representative_id,
+                ProductionResult.product_id.in_(resolved_ids),
+            ).all()
+            production_by_key = {
+                (int(row.upload_id), int(row.product_id)): row for row in rows
+            }
+
+        resolved = {}
+        for product_id in resolved_ids:
+            target = targets_by_product.get(product_id)
+            target_tl = cls._d(target.tl_target if target else 0)
+            target_unit = cls._d(target.unit_target if target else 0)
+            selected_upload = None
+            selected_result = None
+            for upload in uploads:
+                selected_result = production_by_key.get((int(upload.id), product_id))
+                if selected_result is not None:
+                    selected_upload = upload
+                    break
+
+            if selected_result is not None:
+                percent = cls._d(selected_result.realization_percent)
+                resolved[product_id] = {
+                    "source": f"PRODUCTION_{selected_upload.production_stage}",
+                    "complete": True,
+                    "target_tl": target_tl,
+                    "target_unit": target_unit,
+                    "realization_percent": percent,
+                    "actual_tl": target_tl * percent / Decimal("100"),
+                    "actual_unit": target_unit * percent / Decimal("100"),
+                }
+                continue
+
+            summary = summaries_by_product.get(product_id)
+            actual_tl = cls._d(summary.tl if summary else 0)
+            actual_unit = cls._d(summary.unit if summary else 0)
+            percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")
+            resolved[product_id] = {
+                "source": "IMS",
+                "complete": summary is not None,
+                "target_tl": target_tl,
+                "target_unit": target_unit,
+                "realization_percent": percent,
+                "actual_tl": actual_tl,
+                "actual_unit": actual_unit,
+            }
+        return resolved
+
+    @classmethod
+    @contextmanager
+    def use_effective_batch(cls, year, month, representative_id, rows):
+        """Expose one pre-resolved batch only inside the current execution context."""
+        payload = {
+            "key": (int(year), int(month), int(representative_id)),
+            "rows": rows,
+        }
+        token = cls._effective_batch_override.set(payload)
+        try:
+            yield rows
+        finally:
+            cls._effective_batch_override.reset(token)
+
+    @classmethod
     def effective_product(cls, year, month, representative_id, product_id):
+        override = cls._effective_batch_override.get()
+        key = (int(year), int(month), int(representative_id))
+        if override and override.get("key") == key:
+            row = (override.get("rows") or {}).get(int(product_id))
+            if row is not None:
+                return row
+
         target = Target.query.filter_by(
             year=year, month=month, representative_id=representative_id, product_id=product_id,
         ).first()
