@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
 
 from sqlalchemy import and_, desc, func, or_
 
@@ -31,6 +32,19 @@ class CompetitiveIntelligenceService:
     def _shift(year, month, delta):
         ordinal = year * 12 + month - 1 + delta
         return ordinal // 12, ordinal % 12 + 1
+
+    @staticmethod
+    def _label_candidates(values):
+        candidates = set()
+        for value in values or ():
+            raw = str(value or "").strip()
+            if not raw:
+                continue
+            normalized = str(AliasService.normalize(raw) or "").strip()
+            candidates.add(raw)
+            if normalized:
+                candidates.add(normalized)
+        return candidates
 
     def _brick_scope(self):
         rows = db.session.query(RepresentativeBrickAssignment.brick).filter(
@@ -76,8 +90,11 @@ class CompetitiveIntelligenceService:
     def _scoped_aggregate_rows(self, upload_ids, brick_values, brick_keys):
         if not upload_ids or not brick_keys:
             return []
+        brick_labels = self._label_candidates(brick_values)
+        if not brick_labels:
+            return []
 
-        base = db.session.query(
+        return db.session.query(
             CompetitionData.upload_id.label("upload_id"),
             CompetitionData.subterritory.label("subterritory"),
             CompetitionData.product_group.label("product_group"),
@@ -88,28 +105,13 @@ class CompetitiveIntelligenceService:
             CompetitionData.metric_type == "UNIT",
             CompetitionData.is_subtotal.is_(False),
             CompetitionData.is_grand_total.is_(False),
-        )
-
-        rows = base.filter(
-            CompetitionData.subterritory.in_(sorted(brick_values))
+            CompetitionData.subterritory.in_(sorted(brick_labels)),
         ).group_by(
             CompetitionData.upload_id,
             CompetitionData.subterritory,
             CompetitionData.product_group,
             CompetitionData.product_name,
         ).all()
-        if rows:
-            return rows
-
-        # Compatibility fallback only for historic cosmetic brick-label drift.
-        # Normal production rows use the indexed exact subterritory path above.
-        broad = base.group_by(
-            CompetitionData.upload_id,
-            CompetitionData.subterritory,
-            CompetitionData.product_group,
-            CompetitionData.product_name,
-        ).all()
-        return [row for row in broad if self._key(row.subterritory) in brick_keys]
 
     def _managed_product_for_row(self, row, products):
         group_key, product_key = self._key(row.product_group), self._key(row.product_name)
@@ -139,6 +141,8 @@ class CompetitiveIntelligenceService:
         snapshots = defaultdict(lambda: defaultdict(lambda: {"company": 0.0, "competitor": 0.0}))
 
         for row in aggregate_rows:
+            if self._key(row.subterritory) not in brick_keys:
+                continue
             key = (
                 str(row.subterritory).strip(),
                 str(row.product_group).strip(),
@@ -238,9 +242,10 @@ class CompetitiveIntelligenceService:
         periods, latest_by_period, current_uploads, selected = self._upload_plan()
         upload_signature = "-".join(str(upload_id) for upload_id in sorted(selected)) or "none"
         brick_signature = "-".join(sorted(brick_keys))
+        scope_digest = hashlib.sha1(brick_signature.encode("utf-8")).hexdigest()[:16]
         cache_key = (
             f"rep-intelligence:{self.representative_id}:{self.year}:{self.month}:"
-            f"{upload_signature}:{hash(brick_signature)}"
+            f"{upload_signature}:{scope_digest}"
         )
         return RepresentativeAnalysisCache.get_or_compute(
             cache_key,
