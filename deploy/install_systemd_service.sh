@@ -24,7 +24,7 @@ runtime_env_tmp=$(mktemp)
 trap 'rm -f "$unit_tmp" "$runtime_env_tmp"' EXIT
 
 # The legacy Flask process used the persistent instance secret when no
-# SECRET_KEY existed in .env.  Preserve that same key for Gunicorn so existing
+# SECRET_KEY existed in .env. Preserve that same key for Gunicorn so existing
 # sessions remain valid and production never falls back to an ephemeral key.
 if ! grep -Eq '^[[:space:]]*SECRET_KEY[[:space:]]*=' "$ims_path/.env" 2>/dev/null; then
   secret_path="$ims_path/instance/.secret_key"
@@ -55,7 +55,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
 
 # The first managed deployment may replace the legacy `python run.py`
-# process.  Stop only the verified process owned by this application path.
+# process. Stop only the verified process owned by this application path.
 if ! sudo systemctl is-active --quiet "$service_name"; then
   legacy_pid=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
   if [ -n "$legacy_pid" ]; then
@@ -70,8 +70,11 @@ if ! sudo systemctl is-active --quiet "$service_name"; then
   fi
 fi
 
+# Production acceptance and representative performance gates run before this
+# script. Once they pass, restart every managed worker so no process continues
+# serving code or in-memory caches from the previous release.
 if sudo systemctl is-active --quiet "$service_name"; then
-  sudo systemctl reload "$service_name"
+  sudo systemctl restart "$service_name"
 else
   sudo systemctl start "$service_name"
 fi

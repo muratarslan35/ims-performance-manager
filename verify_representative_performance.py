@@ -2,9 +2,9 @@
 """Read-only production gate for representative detail performance.
 
 Runs after migrations/indexes are installed and before the managed service is
-restarted. It never mutates IMS data. The gate verifies that representative
-competition reads stay SQL-scoped and that cold/warm read-model latency is
-bounded on the real production data shape.
+restarted. It never mutates IMS data. The gate measures the expensive read-model
+chain used by the representative detail route: market analysis, competitor
+intelligence, 1/3/6-month AI periods and annual realization.
 """
 from __future__ import annotations
 
@@ -20,8 +20,10 @@ from app import create_app
 from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.extensions import db
 from app.models import IMSUpload, Representative, RepresentativeBrickAssignment
+from app.services.annual_realization_service import AnnualRealizationService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
 from app.services.representative_market_service import RepresentativeMarketService
+from app.services.scoped_ai_insight_service import ScopedAIInsightService
 from config import Config
 
 
@@ -32,6 +34,7 @@ MAX_COLD_P95 = float(os.getenv("REP_PERF_MAX_COLD_P95", "5.0"))
 MAX_COLD = float(os.getenv("REP_PERF_MAX_COLD", "8.0"))
 MAX_WARM_P95 = float(os.getenv("REP_PERF_MAX_WARM_P95", "2.0"))
 MAX_COMPETITION_SELECTS = int(os.getenv("REP_PERF_MAX_COMPETITION_SELECTS", "4"))
+MAX_TOTAL_SELECTS = int(os.getenv("REP_PERF_MAX_TOTAL_SELECTS", "30"))
 
 
 class PerformanceConfig(Config):
@@ -85,40 +88,66 @@ def is_scoped_competition_select(statement):
     if not normalized.startswith("SELECT") or "IMS_COMPETITION_DATA" not in normalized:
         return True
     where = normalized.split(" WHERE ", 1)[1] if " WHERE " in normalized else ""
-    # Upload + metric are mandatory, and representative/brick/geography scope
-    # must be applied in SQL rather than after .all().
     has_upload = "UPLOAD_ID" in where
     has_metric = "METRIC_TYPE" in where
     has_scope = "SUBTERRITORY IN" in where or "TERRITORY IN" in where
     return has_upload and has_metric and has_scope
 
 
+def _build_read_model(representative, year, month):
+    market = RepresentativeMarketService(representative, year, month).build()
+    intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
+    periods = ScopedAIInsightService.representative_periods(representative.id, year, month)
+    ScopedAIInsightService.build(
+        scope_type="representative",
+        scope_name=representative.rep_name,
+        periods=periods,
+        market_analysis=market,
+        competitive_intelligence=intelligence,
+    )
+    annual = AnnualRealizationService.build(year, [representative.id])
+    return market, intelligence, periods, annual
+
+
 def measure_representative(representative, year, month):
     RepresentativeAnalysisCache.clear()
+    select_statements = []
     competition_statements = []
 
     def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
         normalized = statement.lstrip().upper()
-        if normalized.startswith("SELECT") and "IMS_COMPETITION_DATA" in normalized:
+        if not normalized.startswith("SELECT"):
+            return
+        select_statements.append(statement)
+        if "IMS_COMPETITION_DATA" in normalized:
             competition_statements.append(statement)
 
     event.listen(db.engine, "before_cursor_execute", capture)
     try:
         started = time.perf_counter()
-        market = RepresentativeMarketService(representative, year, month).build()
-        intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
+        market, intelligence, periods, annual = _build_read_model(representative, year, month)
         cold_seconds = time.perf_counter() - started
+        cold_select_count = len(select_statements)
+        cold_competition_statements = list(competition_statements)
+        cold_competition_count = len(cold_competition_statements)
 
+        # Warm path keeps the same full service chain. Competition/read-model
+        # caches may hit, while the batch period service performs only a small,
+        # bounded set of source reads for correctness.
+        select_statements.clear()
+        competition_statements.clear()
         started = time.perf_counter()
-        RepresentativeMarketService(representative, year, month).build()
-        CompetitiveIntelligenceService(representative.id, year, month).build()
+        _build_read_model(representative, year, month)
         warm_seconds = time.perf_counter() - started
+        warm_select_count = len(select_statements)
+        warm_competition_statements = list(competition_statements)
+        warm_competition_count = len(warm_competition_statements)
     finally:
         event.remove(db.engine, "before_cursor_execute", capture)
 
     unscoped = [
         " ".join(statement.split())[:500]
-        for statement in competition_statements
+        for statement in cold_competition_statements + warm_competition_statements
         if not is_scoped_competition_select(statement)
     ]
     return {
@@ -126,12 +155,17 @@ def measure_representative(representative, year, month):
         "representative": representative.rep_name,
         "cold_seconds": round(cold_seconds, 4),
         "warm_seconds": round(warm_seconds, 4),
-        "competition_selects": len(competition_statements),
+        "cold_selects": cold_select_count,
+        "warm_selects": warm_select_count,
+        "cold_competition_selects": cold_competition_count,
+        "warm_competition_selects": warm_competition_count,
         "unscoped_competition_selects": unscoped,
         "market_upload_id": market.get("upload_id"),
         "market_rows": len(market.get("rows") or []),
         "brick_rows": len(market.get("brick_rows") or []),
         "ai_alerts": len(intelligence.get("weekly_alerts") or []),
+        "ai_periods": len(periods),
+        "annual_points": len(annual),
     }
 
 
@@ -159,14 +193,22 @@ def main():
         cold = [item["cold_seconds"] for item in measurements]
         warm = [item["warm_seconds"] for item in measurements]
         unscoped = sum(len(item["unscoped_competition_selects"]) for item in measurements)
-        max_selects = max(item["competition_selects"] for item in measurements)
+        max_competition_selects = max(
+            max(item["cold_competition_selects"], item["warm_competition_selects"])
+            for item in measurements
+        )
+        max_total_selects = max(
+            max(item["cold_selects"], item["warm_selects"])
+            for item in measurements
+        )
         cold_p95 = percentile(cold, 0.95)
         warm_p95 = percentile(warm, 0.95)
         cold_max = max(cold)
 
         passed = (
             unscoped == 0
-            and max_selects <= MAX_COMPETITION_SELECTS
+            and max_competition_selects <= MAX_COMPETITION_SELECTS
+            and max_total_selects <= MAX_TOTAL_SELECTS
             and cold_p95 <= MAX_COLD_P95
             and cold_max <= MAX_COLD
             and warm_p95 <= MAX_WARM_P95
@@ -186,13 +228,15 @@ def main():
                 "p95": round(warm_p95, 4),
                 "max": round(max(warm), 4),
             },
-            "max_competition_selects": max_selects,
+            "max_competition_selects": max_competition_selects,
+            "max_total_selects": max_total_selects,
             "unscoped_competition_selects": unscoped,
             "thresholds": {
                 "cold_p95": MAX_COLD_P95,
                 "cold_max": MAX_COLD,
                 "warm_p95": MAX_WARM_P95,
                 "competition_selects": MAX_COMPETITION_SELECTS,
+                "total_selects": MAX_TOTAL_SELECTS,
             },
             "measurements": measurements,
         }
