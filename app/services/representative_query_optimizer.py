@@ -32,6 +32,15 @@ def _namespace_rows(rows):
     return [SimpleNamespace(**dict(row._mapping)) for row in rows]
 
 
+def _label_candidates(value):
+    """Return DB-safe source-label variants without broadening business scope."""
+    raw = str(value or "").strip()
+    if not raw:
+        return set()
+    normalized = str(AliasService.normalize(raw) or "").strip()
+    return {candidate for candidate in (raw, normalized) if candidate}
+
+
 def install_representative_market_query_optimizer():
     from app.services.representative_market_service import RepresentativeMarketService
 
@@ -66,9 +75,9 @@ def install_representative_market_query_optimizer():
             return None, []
 
         brick_values, fallback_values = scope_values(self)
-        representative_name = str(self.representative.rep_name or "").strip()
+        representative_labels = _label_candidates(self.representative.rep_name)
         scope_hash = _scope_signature(
-            set(brick_keys or ()) | set(fallback_keys or ()) | {representative_name, str(upload_id)}
+            set(brick_keys or ()) | set(fallback_keys or ()) | representative_labels | {str(upload_id)}
         )
         cache_key = f"rep-market:competition:{self.representative.id}:{year}:{month}:{upload_id}:{scope_hash}"
 
@@ -89,8 +98,8 @@ def install_representative_market_query_optimizer():
             )
 
             sql_scopes = []
-            if representative_name:
-                sql_scopes.append(CompetitionData.subterritory == representative_name)
+            if representative_labels:
+                sql_scopes.append(CompetitionData.subterritory.in_(sorted(representative_labels)))
             if brick_values:
                 sql_scopes.append(CompetitionData.subterritory.in_(sorted(brick_values)))
             if fallback_values:
@@ -110,9 +119,15 @@ def install_representative_market_query_optimizer():
             if scoped or not scope_keys:
                 return scoped
 
-            # Compatibility only: historic rows may differ in punctuation/case.
-            # The normal production path never reaches this whole-upload scan.
+            # Compatibility only: historic rows may differ in punctuation/case
+            # beyond the normal raw/normalized variants. The normal production
+            # path never reaches this whole-upload scan.
             broad = _namespace_rows(query.all())
+            representative_rows = [
+                row for row in broad if self._key(row.subterritory) == representative_key
+            ]
+            if representative_rows:
+                return representative_rows
             return [
                 row for row in broad
                 if self._key(row.subterritory) in scope_keys or self._key(row.territory) in scope_keys
