@@ -51,8 +51,15 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
     with app.app_context():
         db.create_all()
         representative = Representative(rep_code="MURAT", rep_name="MURAT ARSLAN", region="901 DIYARBAKIR", active=True)
-        products = [Product(product_code=name, product_name=name.title(), is_active=True) for name in PRODUCTS]
-        db.session.add_all([representative, *products])
+        db.session.add(representative)
+        db.session.flush()
+        products = []
+        for name in PRODUCTS:
+            product = Product.query.filter_by(product_code=name).first()
+            if product is None:
+                product = Product(product_code=name, product_name=name.title(), is_active=True)
+                db.session.add(product)
+            products.append(product)
         db.session.flush()
         db.session.add_all([
             Target(year=2026, month=1, representative_id=representative.id, product_id=product.id, tl_target=100, unit_target=10)
