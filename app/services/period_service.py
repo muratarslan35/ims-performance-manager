@@ -40,14 +40,24 @@ class PeriodService:
                     # Try to fetch additional context (week, upload_id) for this explicit period
                     upload = IMSUpload.query.filter_by(
                         status='COMPLETED', year=int(year), month=int(month)
-                    ).order_by(IMSUpload.uploaded_at.desc()).first()
+                    ).order_by(
+                        IMSUpload.week_number.desc(),
+                        IMSUpload.completed_at.desc(),
+                        IMSUpload.id.desc(),
+                    ).first()
                     
                     if upload:
                         period["week_number"] = upload.week_number or 1
                         period["upload_id"] = upload.id
                 else:
                     # Priority 2: Latest COMPLETED upload
-                    upload = IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.uploaded_at.desc()).first()
+                    upload = IMSUpload.query.filter_by(status='COMPLETED').order_by(
+                        IMSUpload.year.desc(),
+                        IMSUpload.month.desc(),
+                        IMSUpload.week_number.desc(),
+                        IMSUpload.completed_at.desc(),
+                        IMSUpload.id.desc(),
+                    ).first()
                     if upload and upload.year and upload.month:
                         period["year"] = upload.year
                         period["month"] = upload.month

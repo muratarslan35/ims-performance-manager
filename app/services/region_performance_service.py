@@ -63,7 +63,7 @@ class RegionPerformanceService:
             IMSUpload.year == year,
             IMSUpload.month == month,
             IMSUpload.status == "COMPLETED",
-        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        ).order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
         if not upload_id:
             return {}
         prefix = f"{self.region_key}%"

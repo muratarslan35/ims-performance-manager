@@ -100,7 +100,10 @@ class DashboardRepository:
         return (
             self.session.query(IMSUpload)
             .filter_by(status="COMPLETED")
-            .order_by(desc(IMSUpload.completed_at))
+            .order_by(
+                desc(IMSUpload.year), desc(IMSUpload.month), desc(IMSUpload.week_number),
+                desc(IMSUpload.completed_at), desc(IMSUpload.id),
+            )
             .first()
         )
 
@@ -110,7 +113,10 @@ class DashboardRepository:
             self.session.query(IMSUpload)
             .filter(IMSUpload.status == "COMPLETED")
             .filter(IMSUpload.summary_record_count > 0)
-            .order_by(desc(IMSUpload.completed_at))
+            .order_by(
+                desc(IMSUpload.year), desc(IMSUpload.month), desc(IMSUpload.week_number),
+                desc(IMSUpload.completed_at), desc(IMSUpload.id),
+            )
             .first()
         )
 

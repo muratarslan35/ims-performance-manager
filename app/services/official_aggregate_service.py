@@ -101,7 +101,14 @@ class OfficialAggregateService:
     def latest_upload_id(year,month,sheet_type=None):
         query=db.session.query(IMSUpload.id).filter(IMSUpload.year==year,IMSUpload.month==month,IMSUpload.status=="COMPLETED")
         if sheet_type: query=query.join(IMSRawData,IMSRawData.upload_id==IMSUpload.id).filter(IMSRawData.sheet_type==sheet_type)
-        return query.order_by(desc(IMSUpload.completed_at),desc(IMSUpload.id)).limit(1).scalar()
+        # Weekly IMS files are cumulative snapshots.  A replay of an earlier
+        # week must never replace the newest business snapshot just because it
+        # was imported later.
+        return query.order_by(
+            desc(IMSUpload.week_number),
+            desc(IMSUpload.completed_at),
+            desc(IMSUpload.id),
+        ).limit(1).scalar()
     @staticmethod
     def rows(year,month,territory,sheet_type):
         upload_id=OfficialAggregateService.latest_upload_id(year,month,sheet_type)

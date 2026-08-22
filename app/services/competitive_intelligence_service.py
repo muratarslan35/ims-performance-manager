@@ -70,6 +70,7 @@ class CompetitiveIntelligenceService:
         ).order_by(
             IMSUpload.year.desc(),
             IMSUpload.month.desc(),
+            desc(IMSUpload.week_number),
             desc(IMSUpload.completed_at),
             desc(IMSUpload.id),
         ).all()

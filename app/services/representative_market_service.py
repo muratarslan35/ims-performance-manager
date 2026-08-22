@@ -105,7 +105,7 @@ class RepresentativeMarketService:
             IMSUpload.year == year,
             IMSUpload.month == month,
             IMSUpload.status == "COMPLETED",
-        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        ).order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
 
     def _competition_rows(self, brick_keys, fallback_keys, year=None, month=None):
         year = self.year if year is None else int(year)

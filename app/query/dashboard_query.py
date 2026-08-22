@@ -60,8 +60,8 @@ class DashboardQuery:
                 CompetitionData.metric_type == "TL",
                 CompetitionData.metric_value != 0,
             )
-            .group_by(IMSUpload.id, IMSUpload.completed_at)
-            .order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id))
+            .group_by(IMSUpload.id, IMSUpload.week_number, IMSUpload.completed_at)
+            .order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id))
             .limit(1)
             .scalar()
         )
@@ -207,7 +207,7 @@ class DashboardQuery:
         upload_id = self.session.query(IMSUpload.id).filter(
             IMSUpload.year == filters.year, IMSUpload.month == filters.month,
             IMSUpload.status == "COMPLETED"
-        ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+        ).order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
         if not upload_id:
             return {}
         balance_rows = self.session.query(Product.id, Product.product_name, IMSRawData.unit, IMSRawData.tl).join(
@@ -413,7 +413,7 @@ class DashboardQuery:
         if ProductionResultService.final_upload(filters.year, filters.month) is None:
             upload_id = self.session.query(IMSUpload.id).filter(
                 IMSUpload.year == filters.year, IMSUpload.month == filters.month, IMSUpload.status == "COMPLETED"
-            ).order_by(desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
+            ).order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)).limit(1).scalar()
             if upload_id:
                 balance_rows = self.session.query(IMSRawData.territory, Product.id, IMSRawData.unit).join(
                     Product, Product.id == IMSRawData.product_id
