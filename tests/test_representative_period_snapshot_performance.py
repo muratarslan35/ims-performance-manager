@@ -9,6 +9,7 @@ from app import create_app
 from app.extensions import db
 from app.models import (
     IMSSummary,
+    IMSUpload,
     Product,
     ProductionResult,
     ProductionResultUpload,
@@ -54,6 +55,19 @@ def _production_upload(year, month, stage, applied_at, suffix):
     )
 
 
+def _ims_upload(year, month):
+    upload = IMSUpload(
+        file_name=f"ims-{year}-{month:02d}.xlsx",
+        year=year,
+        month=month,
+        status="COMPLETED",
+        completed_at=datetime(year, month, 20, 8, 0),
+    )
+    db.session.add(upload)
+    db.session.flush()
+    return upload
+
+
 def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
     application = _app(tmp_path)
     with application.app_context():
@@ -65,6 +79,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
 
         # Six months of authoritative targets and IMS fallback summaries.
         for month in range(3, 9):
+            ims_upload = _ims_upload(2026, month)
             for product, ims_tl in ((product_a, 70.0 + month), (product_b, 60.0 + month)):
                 db.session.add(Target(
                     year=2026,
@@ -75,6 +90,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
                     unit_target=10.0,
                 ))
                 db.session.add(IMSSummary(
+                    upload_id=ims_upload.id,
                     year=2026,
                     month=month,
                     representative_id=representative.id,
@@ -146,6 +162,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
         db.session.flush()
 
         for month in range(3, 9):
+            ims_upload = _ims_upload(2026, month)
             for product in products:
                 db.session.add(Target(
                     year=2026,
@@ -156,6 +173,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
                     unit_target=10.0,
                 ))
                 db.session.add(IMSSummary(
+                    upload_id=ims_upload.id,
                     year=2026,
                     month=month,
                     representative_id=representative.id,
@@ -197,11 +215,13 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
         db.session.add_all([representative, product])
         db.session.flush()
         for month in range(3, 9):
+            ims_upload = _ims_upload(2026, month)
             db.session.add(Target(
                 year=2026, month=month, representative_id=representative.id,
                 product_id=product.id, tl_target=100.0, unit_target=10.0,
             ))
             db.session.add(IMSSummary(
+                upload_id=ims_upload.id,
                 year=2026, month=month, representative_id=representative.id,
                 product_id=product.id, tl=75.0, unit=7.5,
                 target_tl=100.0, target_unit=10.0,
