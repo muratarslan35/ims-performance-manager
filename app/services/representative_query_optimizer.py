@@ -80,7 +80,11 @@ def install_representative_market_query_optimizer():
         if upload_id is None:
             return None, []
 
-        brick_values, fallback_values = scope_values(self, year, month)
+        # Historical comparison intentionally applies the representative's
+        # current brick scope to the requested historical upload. This keeps
+        # month-over-month deltas comparable even when no assignment snapshot
+        # exists for the previous month.
+        brick_values, fallback_values = scope_values(self)
         representative_labels = _label_candidates(self.representative.rep_name)
         brick_labels = _candidate_set(brick_values)
         geography_labels = _candidate_set(fallback_values)
