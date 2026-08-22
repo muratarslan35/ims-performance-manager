@@ -17,6 +17,7 @@ from app.services.sqlite_runtime import (
     configure_sqlite_runtime,
     install_sqlite_connection_pragmas,
 )
+from app.services.sqlite_import_maintenance import install_sqlite_import_maintenance
 from app.services.vacancy_matching import install_vacancy_matcher
 from app.services.representative_resolver import install_representative_resolver
 from app.services.semantic_import_discovery import install_semantic_import_discovery
@@ -155,6 +156,7 @@ def create_app(config_object=Config):
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
     install_import_result_reporting()
+    install_sqlite_import_maintenance()
     register_import_result_flash(app)
 
     register_template_context(app)
