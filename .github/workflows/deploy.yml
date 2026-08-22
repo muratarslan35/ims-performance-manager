@@ -149,13 +149,14 @@ jobs:
             exit 1
           fi
 
-          # The new release is healthy. Validate the immediately-predeploy
-          # rollback set, then remove only older automatically-managed backups.
-          # Unknown/manual files are deliberately preserved.
+          # The release is healthy and the fresh rollback set has been
+          # integrity-checked. Enforce one rollback set in this managed backup
+          # directory, including removal of historical manual/repair DB copies.
           echo '--- BACKUP RETENTION ---'
           venv/bin/python cleanup_old_backups.py \
             --backup-dir instance/backups \
-            --keep-stamp "$stamp"
+            --keep-stamp "$stamp" \
+            --purge-unmanaged-db
           echo '--- PRODUCTION CAPACITY AFTER RETENTION ---'
           df -h instance
           exit 0
