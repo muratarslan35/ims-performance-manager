@@ -105,14 +105,16 @@ class ProductionResultService:
 
             if selected_result is not None:
                 percent = cls._d(selected_result.realization_percent)
+                actual_tl = cls._d(selected_result.actual_tl) if selected_result.actual_tl is not None else target_tl * percent / Decimal("100")
+                actual_unit = cls._d(selected_result.actual_unit) if selected_result.actual_unit is not None else target_unit * percent / Decimal("100")
                 resolved[product_id] = {
                     "source": f"PRODUCTION_{selected_upload.production_stage}",
                     "complete": True,
                     "target_tl": target_tl,
                     "target_unit": target_unit,
                     "realization_percent": percent,
-                    "actual_tl": target_tl * percent / Decimal("100"),
-                    "actual_unit": target_unit * percent / Decimal("100"),
+                    "actual_tl": actual_tl,
+                    "actual_unit": actual_unit,
                 }
                 continue
 
@@ -167,14 +169,16 @@ class ProductionResultService:
             if result is None:
                 continue
             percent = cls._d(result.realization_percent)
+            actual_tl = cls._d(result.actual_tl) if result.actual_tl is not None else target_tl * percent / Decimal("100")
+            actual_unit = cls._d(result.actual_unit) if result.actual_unit is not None else target_unit * percent / Decimal("100")
             return {
                 "source": f"PRODUCTION_{upload.production_stage}",
                 "complete": True,
                 "target_tl": target_tl,
                 "target_unit": target_unit,
                 "realization_percent": percent,
-                "actual_tl": target_tl * percent / Decimal("100"),
-                "actual_unit": target_unit * percent / Decimal("100"),
+                "actual_tl": actual_tl,
+                "actual_unit": actual_unit,
             }
 
         summary = IMSSummary.query.filter_by(
