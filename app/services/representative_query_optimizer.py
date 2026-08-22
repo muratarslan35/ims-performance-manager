@@ -1,10 +1,8 @@
 """SQL-scoped read-path optimizations for representative market analysis.
 
-The legacy service intentionally kept broad Python-side normalization fallbacks,
-but that made a representative page scan an entire competition upload repeatedly.
-These replacements push the normal brick/representative scope into SQL, select
-only the columns used by the read model, and retain a compatibility fallback only
-when the exact source labels do not match.
+Every high-volume path is constrained by upload + representative/brick scope in
+SQL. Source-label normalization is represented as a bounded set of SQL candidate
+labels; it never falls back to loading an entire competition upload into Python.
 """
 from __future__ import annotations
 
@@ -33,12 +31,18 @@ def _namespace_rows(rows):
 
 
 def _label_candidates(value):
-    """Return DB-safe source-label variants without broadening business scope."""
     raw = str(value or "").strip()
     if not raw:
         return set()
     normalized = str(AliasService.normalize(raw) or "").strip()
     return {candidate for candidate in (raw, normalized) if candidate}
+
+
+def _candidate_set(values):
+    candidates = set()
+    for value in values or ():
+        candidates.update(_label_candidates(value))
+    return candidates
 
 
 def install_representative_market_query_optimizer():
@@ -76,6 +80,8 @@ def install_representative_market_query_optimizer():
 
         brick_values, fallback_values = scope_values(self)
         representative_labels = _label_candidates(self.representative.rep_name)
+        brick_labels = _candidate_set(brick_values)
+        geography_labels = _candidate_set(fallback_values)
         scope_hash = _scope_signature(
             set(brick_keys or ()) | set(fallback_keys or ()) | representative_labels | {str(upload_id)}
         )
@@ -100,10 +106,10 @@ def install_representative_market_query_optimizer():
             sql_scopes = []
             if representative_labels:
                 sql_scopes.append(CompetitionData.subterritory.in_(sorted(representative_labels)))
-            if brick_values:
-                sql_scopes.append(CompetitionData.subterritory.in_(sorted(brick_values)))
-            if fallback_values:
-                sql_scopes.append(CompetitionData.territory.in_(sorted(fallback_values)))
+            if brick_labels:
+                sql_scopes.append(CompetitionData.subterritory.in_(sorted(brick_labels)))
+            if geography_labels:
+                sql_scopes.append(CompetitionData.territory.in_(sorted(geography_labels)))
             rows = _namespace_rows(query.filter(or_(*sql_scopes)).all()) if sql_scopes else []
 
             representative_key = self._key(self.representative.rep_name)
@@ -112,24 +118,8 @@ def install_representative_market_query_optimizer():
                 return representative_rows
 
             scope_keys = set(brick_keys or ()) or set(fallback_keys or ())
-            scoped = [
-                row for row in rows
-                if self._key(row.subterritory) in scope_keys or self._key(row.territory) in scope_keys
-            ]
-            if scoped or not scope_keys:
-                return scoped
-
-            # Compatibility only: historic rows may differ in punctuation/case
-            # beyond the normal raw/normalized variants. The normal production
-            # path never reaches this whole-upload scan.
-            broad = _namespace_rows(query.all())
-            representative_rows = [
-                row for row in broad if self._key(row.subterritory) == representative_key
-            ]
-            if representative_rows:
-                return representative_rows
             return [
-                row for row in broad
+                row for row in rows
                 if self._key(row.subterritory) in scope_keys or self._key(row.territory) in scope_keys
             ]
 
@@ -141,6 +131,7 @@ def install_representative_market_query_optimizer():
         upload_id = self._latest_upload_id(year, month)
         brick_values, _ = scope_values(self, year, month)
         brick_keys = {_key(value) for value in brick_values if _key(value)}
+        brick_labels = _candidate_set(brick_values)
         if upload_id is None or not brick_keys:
             return None, []
         cache_key = (
@@ -149,7 +140,7 @@ def install_representative_market_query_optimizer():
         )
 
         def load():
-            query = db.session.query(
+            rows = db.session.query(
                 IMSRawData.product_id.label("product_id"),
                 IMSRawData.brick.label("brick"),
                 IMSRawData.sheet_type.label("sheet_type"),
@@ -159,21 +150,17 @@ def install_representative_market_query_optimizer():
                 IMSRawData.year == year,
                 IMSRawData.month == month,
                 IMSRawData.product_id.isnot(None),
-                IMSRawData.brick.isnot(None),
+                IMSRawData.brick.in_(sorted(brick_labels)),
                 IMSRawData.sheet_type.in_(("brick_sales", "competition_box")),
-            )
-            rows = _namespace_rows(query.filter(IMSRawData.brick.in_(sorted(brick_values))).all())
-            scoped = [row for row in rows if self._key(row.brick) in brick_keys]
-            if scoped:
-                return scoped
-            # Legacy compatibility for cosmetic source-label differences.
-            return [row for row in _namespace_rows(query.all()) if self._key(row.brick) in brick_keys]
+            ).all()
+            return [row for row in _namespace_rows(rows) if self._key(row.brick) in brick_keys]
 
         return upload_id, RepresentativeAnalysisCache.get_or_compute(cache_key, load, ttl_seconds=45)
 
     def brick_competition_rows(self, brick_keys):
         upload_id = self._latest_upload_id(self.year, self.month)
         brick_values, _ = scope_values(self)
+        brick_labels = _candidate_set(brick_values)
         if upload_id is None or not brick_keys:
             return None, []
         cache_key = (
@@ -182,7 +169,7 @@ def install_representative_market_query_optimizer():
         )
 
         def load():
-            query = db.session.query(
+            rows = db.session.query(
                 CompetitionData.subterritory.label("subterritory"),
                 CompetitionData.territory.label("territory"),
                 CompetitionData.product_group.label("product_group"),
@@ -195,11 +182,10 @@ def install_representative_market_query_optimizer():
                 CompetitionData.metric_type == "UNIT",
                 CompetitionData.is_subtotal.is_(False),
                 CompetitionData.is_grand_total.is_(False),
-                CompetitionData.subterritory.in_(sorted(brick_values)),
-            )
-            rows = _namespace_rows(query.all())
+                CompetitionData.subterritory.in_(sorted(brick_labels)),
+            ).all()
             exact = [
-                row for row in rows
+                row for row in _namespace_rows(rows)
                 if self._key(row.subterritory) in brick_keys
                 and "AYLIK" in AliasService.normalize(row.sheet_name)
                 and "REKABET" in AliasService.normalize(row.sheet_name)
@@ -207,6 +193,9 @@ def install_representative_market_query_optimizer():
             ]
             if exact:
                 return exact
+            # Old uploads may not have persisted exact product-level monthly
+            # brick rows. Their retained workbook is the bounded compatibility
+            # source and is already cached per upload by the legacy service.
             return original_workbook_fallback(self, upload_id, brick_keys)
 
         return upload_id, RepresentativeAnalysisCache.get_or_compute(cache_key, load, ttl_seconds=60)
