@@ -1688,8 +1688,45 @@ class IMSImportService:
             self.statistics["fact_records"] += 1
         db.session.flush()
 
+    def _is_current_week_snapshot(self, year, month, week_number=None):
+        """Return whether this import may publish period-scoped KPI values.
+
+        Weekly IMS workbooks are cumulative month-to-date snapshots.  Replaying
+        an earlier week must preserve its RAW/FACT evidence, but must never
+        replace targets, realizations or dashboard KPIs from a later week.
+        """
+        if week_number is None:
+            return True
+        latest_completed_week = (
+            db.session.query(func.max(IMSUpload.week_number))
+            .filter(
+                IMSUpload.year == year,
+                IMSUpload.month == month,
+                IMSUpload.status == "COMPLETED",
+                IMSUpload.id != self.upload.id,
+                IMSUpload.week_number.isnot(None),
+            )
+            .scalar()
+        )
+        return latest_completed_week is None or int(week_number) >= int(latest_completed_week)
+
     def rebuild_summary(self, year, month):
         IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+
+        # A weekly IMS is a cumulative snapshot, not an additive weekly sale.
+        # Summary is therefore sourced only from the most recent available
+        # week; summing week 3 + week 4 + week 5 duplicates the month.
+        latest_week = (
+            db.session.query(func.max(IMSFact.week_number))
+            .filter(IMSFact.year == year, IMSFact.month == month, IMSFact.week_number.isnot(None))
+            .scalar()
+        )
+        fact_filters = [IMSFact.year == year, IMSFact.month == month]
+        fact_filters.append(
+            IMSFact.week_number == latest_week
+            if latest_week is not None
+            else IMSFact.week_number.is_(None)
+        )
 
         rows = (
             db.session.query(
@@ -1701,7 +1738,7 @@ class IMSImportService:
                 func.avg(IMSFact.value_share).label("value_share"),
                 func.avg(IMSFact.growth).label("growth"),
             )
-            .filter(IMSFact.year == year, IMSFact.month == month)
+            .filter(*fact_filters)
             .group_by(IMSFact.representative_id, IMSFact.product_id)
             .all()
         )
@@ -2185,20 +2222,27 @@ class IMSImportService:
         self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
         self._flush_raw_batch()
         self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
-        TargetImportService(
-            file_path=self.file_path,
-            upload_id=self.upload.id,
-            workbook=self.workbook,
-        ).run(
-            year=year,
-            month=month,
-        )
+        publish_period_snapshot = self._is_current_week_snapshot(year, month, week_number)
+        if publish_period_snapshot:
+            TargetImportService(
+                file_path=self.file_path,
+                upload_id=self.upload.id,
+                workbook=self.workbook,
+            ).run(
+                year=year,
+                month=month,
+            )
+        else:
+            self.warnings.append(
+                f"{week_number}. hafta yeniden işlendi; daha yeni haftanın dönem hedef/realizasyon özeti korundu."
+            )
         self._remove_legacy_general_vacancy_facts(year, month)
         self.transform_raw_to_facts(year, month, week_number=week_number)
         self.rebuild_summary(year, month)
-        self.apply_balance_summary(year, month)
-        self.apply_weekly_sales_summary(year, month)
-        self.persist_national_dashboard_metrics(year, month)
+        if publish_period_snapshot:
+            self.apply_balance_summary(year, month)
+            self.apply_weekly_sales_summary(year, month)
+            self.persist_national_dashboard_metrics(year, month)
 
         available_sheets = (self.workbook or {}).keys()
         if CompetitionImportService.has_competition_sheets(available_sheets):

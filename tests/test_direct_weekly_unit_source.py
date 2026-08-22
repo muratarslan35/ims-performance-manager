@@ -5,7 +5,7 @@ import pandas as pd
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSSummary, Product, Representative, Target
+from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Product, Representative, Target
 from app.services.alias_service import AliasService
 from app.services.ims_import_service import IMSImportService
 
@@ -82,3 +82,45 @@ def test_weekly_summary_uses_explicit_cumulative_box_value_not_tl_derivation():
         assert target.tl_realization == 500.0
         assert target.unit_realization == 37.0
         assert target.unit_realization != 5.0
+
+
+def test_late_week_is_the_only_fact_snapshot_used_for_monthly_summary():
+    app = create_app(DirectUnitTestConfig)
+    with app.app_context():
+        db.create_all()
+        product = Product(product_code="TRAVAZOL", product_name="Travazol", is_active=True)
+        representative = Representative(rep_code="WEEKLY-REP", rep_name="WEEKLY REP", active=True)
+        db.session.add_all([product, representative])
+        db.session.flush()
+        week3 = IMSUpload(file_name="3.Hafta.xlsx", year=2032, month=1, week_number=3, status="COMPLETED")
+        week5 = IMSUpload(file_name="5.Hafta.xlsx", year=2032, month=1, week_number=5, status="COMPLETED")
+        db.session.add_all([week3, week5])
+        db.session.flush()
+        raw3 = IMSRawData(upload_id=week3.id, year=2032, month=1, quarter="Q1", week_number=3,
+                          sheet_name="TTS", sheet_type="brick_sales", source_row=1,
+                          representative_id=representative.id, product_id=product.id,
+                          representative=representative.rep_name, product=product.product_name, raw_json="{}")
+        raw5 = IMSRawData(upload_id=week5.id, year=2032, month=1, quarter="Q1", week_number=5,
+                          sheet_name="TTS", sheet_type="brick_sales", source_row=1,
+                          representative_id=representative.id, product_id=product.id,
+                          representative=representative.rep_name, product=product.product_name, raw_json="{}")
+        db.session.add_all([raw3, raw5])
+        db.session.flush()
+        db.session.add_all([
+            IMSFact(upload_id=week3.id, raw_data_id=raw3.id, representative_id=representative.id,
+                    product_id=product.id, year=2032, month=1, quarter="Q1", week_number=3,
+                    report_type="brick_sales", unit=10, tl=100, metrics_json="{}"),
+            IMSFact(upload_id=week5.id, raw_data_id=raw5.id, representative_id=representative.id,
+                    product_id=product.id, year=2032, month=1, quarter="Q1", week_number=5,
+                    report_type="brick_sales", unit=20, tl=200, metrics_json="{}"),
+        ])
+        db.session.commit()
+
+        service = IMSImportService("unused.xlsx")
+        service.upload = week3
+        assert service._is_current_week_snapshot(2032, 1, 3) is False
+        service.rebuild_summary(2032, 1)
+
+        summary = IMSSummary.query.one()
+        assert summary.tl == 200
+        assert summary.unit == 20
