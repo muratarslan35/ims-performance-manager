@@ -50,6 +50,9 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
     app = create_app(ProductionImportConfig)
     with app.app_context():
         db.create_all()
+        # The factory may seed reference targets; this fixture deliberately
+        # defines the complete period scope that the strict importer validates.
+        db.session.query(Target).delete()
         representative = Representative(rep_code="MURAT", rep_name="MURAT ARSLAN", region="901 DIYARBAKIR", active=True)
         db.session.add(representative)
         db.session.flush()
