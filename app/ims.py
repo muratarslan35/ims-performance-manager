@@ -35,6 +35,10 @@ from app.services.import_coordinator import (
 )
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
 from app.services.period_service import PeriodService
+from app.services.production_result_import_service import (
+    ProductionResultImportService,
+    ProductionWorkbookValidationError,
+)
 
 
 ims_bp = Blueprint(
@@ -230,7 +234,7 @@ def index():
 @ims_bp.route("/production-upload", methods=["POST"])
 @login_required
 def production_upload():
-    """Stage a production workbook; never mutate IMS or prime data here."""
+    """Validate and apply a production workbook without changing IMS source data."""
     file = request.files.get("file")
     if file is None or not file.filename:
         flash("Lütfen bir üretim sonucu Excel dosyası seçiniz.", "warning")
@@ -284,7 +288,23 @@ def production_upload():
             ),
         )
         db.session.add(upload)
+        db.session.flush()
+        report = ProductionResultImportService(stored_path).parse()
+        ProductionResultImportService.apply(upload, report)
         db.session.commit()
+    except ProductionWorkbookValidationError as exc:
+        db.session.rollback()
+        # Preserve rejected source evidence and its reason without applying any result.
+        upload = ProductionResultUpload(
+            file_name=original_name, stored_file_name=stored_file_name, source_hash=source_hash,
+            year=year, month=month, production_stage=production_stage,
+            status=ProductionResultUpload.STATUS_FAILED, uploaded_by=current_user.full_name,
+            error_message=str(exc),
+        )
+        db.session.add(upload)
+        db.session.commit()
+        flash(f"Üretim dosyası uygulanmadı: {exc}", "danger")
+        return redirect(url_for("ims.index") + "#production-results")
     except Exception:
         db.session.rollback()
         stored_path.unlink(missing_ok=True)
@@ -293,7 +313,7 @@ def production_upload():
         return redirect(url_for("ims.index") + "#production-results")
 
     flash(
-        f"{production_stage}. üretim dosyası güvenli biçimde alındı. Doğrulama bekliyor; mevcut hesaplar değişmedi.",
+        f"{production_stage}. üretim dosyası doğrulandı ve uygulandı. IMS hedefleri ve kaynak satış verileri korunmuştur.",
         "success",
     )
     return redirect(url_for("ims.index") + "#production-results")
