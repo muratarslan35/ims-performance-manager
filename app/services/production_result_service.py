@@ -105,6 +105,8 @@ class ProductionResultService:
 
             if selected_result is not None:
                 percent = cls._d(selected_result.realization_percent)
+                target_tl = cls._d(selected_result.target_tl) if selected_result.target_tl is not None else target_tl
+                target_unit = cls._d(selected_result.target_unit) if selected_result.target_unit is not None else target_unit
                 actual_tl = cls._d(selected_result.actual_tl) if selected_result.actual_tl is not None else target_tl * percent / Decimal("100")
                 actual_unit = cls._d(selected_result.actual_unit) if selected_result.actual_unit is not None else target_unit * percent / Decimal("100")
                 resolved[product_id] = {
@@ -169,6 +171,8 @@ class ProductionResultService:
             if result is None:
                 continue
             percent = cls._d(result.realization_percent)
+            target_tl = cls._d(result.target_tl) if result.target_tl is not None else target_tl
+            target_unit = cls._d(result.target_unit) if result.target_unit is not None else target_unit
             actual_tl = cls._d(result.actual_tl) if result.actual_tl is not None else target_tl * percent / Decimal("100")
             actual_unit = cls._d(result.actual_unit) if result.actual_unit is not None else target_unit * percent / Decimal("100")
             return {

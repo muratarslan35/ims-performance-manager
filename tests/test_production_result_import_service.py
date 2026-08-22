@@ -85,4 +85,6 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
         result = ProductionResultService.effective_product(2026, 1, representative.id, products[0].id)
         assert result["actual_tl"] == 120
         assert result["actual_unit"] == 11
+        assert result["target_tl"] == 100
+        assert result["target_unit"] == 10
         assert result["realization_percent"] == 120

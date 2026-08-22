@@ -29,6 +29,7 @@ class ProductionImportReport:
     matched_rows: int = 0
     product_results: list = field(default_factory=list)
     representative_totals: list = field(default_factory=list)
+    target_mismatch_count: int = 0
 
     @property
     def matched_result_count(self):
@@ -130,6 +131,7 @@ class ProductionResultImportService:
                     "name_column": starts[0] - 1,
                     "region_column": starts[0] - 2,
                     "actual_columns": list(range(starts[1], actual_total)),
+                    "target_columns": list(range(starts[0], target_total)),
                     "percent_columns": list(range(starts[2], percent_total)),
                     "product_ids": product_ids,
                     "total_actual_column": actual_total,
@@ -168,21 +170,24 @@ class ProductionResultImportService:
             if representative.id in rows:
                 duplicates.append(representative.rep_name)
                 continue
-            values, percentages = [], []
-            for actual_column, percent_column in zip(layout["actual_columns"], layout["percent_columns"]):
+            targets, values, percentages = [], [], []
+            for target_column, actual_column, percent_column in zip(layout["target_columns"], layout["actual_columns"], layout["percent_columns"]):
+                target = self._number(sheet.cell(row_number, target_column).value)
                 value = self._number(sheet.cell(row_number, actual_column).value)
                 percent = self._number(sheet.cell(row_number, percent_column).value)
-                if value is None or percent is None or value < 0 or percent < 0:
+                if target is None or value is None or percent is None or target < 0 or value < 0 or percent < 0:
                     raise ProductionWorkbookValidationError(f"{sheet.title}!{row_number} satırında geçersiz sonuç değeri var.")
+                targets.append(target)
                 values.append(value)
                 percentages.append(percent)
+            total_target = self._number(sheet.cell(row_number, layout["target_columns"][-1] + 1).value)
             total_actual = self._number(sheet.cell(row_number, layout["total_actual_column"]).value)
             total_percent = self._number(sheet.cell(row_number, layout["total_percent_column"]).value)
-            if total_actual is None or total_percent is None:
+            if total_target is None or total_actual is None or total_percent is None:
                 raise ProductionWorkbookValidationError(f"{sheet.title}!{row_number} satırında nihai toplam eksik.")
             rows[representative.id] = {
-                "row_number": row_number, "values": values, "percentages": percentages,
-                "total_actual": total_actual, "total_percent": total_percent,
+                "row_number": row_number, "targets": targets, "values": values, "percentages": percentages,
+                "total_target": total_target, "total_actual": total_actual, "total_percent": total_percent,
                 "product_ids": layout["product_ids"],
             }
         if unresolved:
@@ -211,16 +216,22 @@ class ProductionResultImportService:
         for representative_id, tl_row in tl_rows.items():
             unit_row = unit_rows[representative_id]
             for index, product_id in enumerate(tl_row["product_ids"]):
-                target = targets[(representative_id, product_id)]
+                database_target = targets[(representative_id, product_id)]
                 actual_tl, actual_unit, percent = tl_row["values"][index], unit_row["values"][index], tl_row["percentages"][index]
-                expected = actual_tl * 100 / float(target.tl_target or 0) if target.tl_target else 0.0
+                source_target_tl, source_target_unit = tl_row["targets"][index], unit_row["targets"][index]
+                expected = actual_tl * 100 / source_target_tl if source_target_tl else 0.0
                 if abs(percent - expected) > self.PERCENT_TOLERANCE:
                     raise ProductionWorkbookValidationError(f"{tl_sheet.title}!{tl_row['row_number']} TL realizasyonu doğrulanamadı.")
+                if abs(source_target_tl - float(database_target.tl_target or 0)) > self.PERCENT_TOLERANCE or abs(source_target_unit - float(database_target.unit_target or 0)) > self.PERCENT_TOLERANCE:
+                    report.target_mismatch_count += 1
                 unit_percent = unit_row["percentages"][index]
                 if unit_percent is None:
                     raise ProductionWorkbookValidationError(f"{unit_sheet.title}!{unit_row['row_number']} kutu realizasyonu eksik.")
-                report.product_results.append({"representative_id": representative_id, "product_id": product_id, "realization_percent": percent, "unit_realization_percent": unit_percent, "actual_tl": actual_tl, "actual_unit": actual_unit, "source_sheet": tl_sheet.title, "source_row": tl_row["row_number"]})
-            report.representative_totals.append({"representative_id": representative_id, "realization_percent": tl_row["total_percent"], "unit_realization_percent": unit_row["total_percent"], "actual_tl": tl_row["total_actual"], "actual_unit": unit_row["total_actual"], "source_sheet": tl_sheet.title, "source_row": tl_row["row_number"]})
+                expected_unit_percent = actual_unit * 100 / source_target_unit if source_target_unit else 0.0
+                if abs(unit_percent - expected_unit_percent) > self.PERCENT_TOLERANCE:
+                    raise ProductionWorkbookValidationError(f"{unit_sheet.title}!{unit_row['row_number']} kutu realizasyonu doğrulanamadı.")
+                report.product_results.append({"representative_id": representative_id, "product_id": product_id, "realization_percent": percent, "unit_realization_percent": unit_percent, "target_tl": source_target_tl, "target_unit": source_target_unit, "actual_tl": actual_tl, "actual_unit": actual_unit, "source_sheet": tl_sheet.title, "source_row": tl_row["row_number"]})
+            report.representative_totals.append({"representative_id": representative_id, "realization_percent": tl_row["total_percent"], "unit_realization_percent": unit_row["total_percent"], "target_tl": tl_row["total_target"], "target_unit": unit_row["total_target"], "actual_tl": tl_row["total_actual"], "actual_unit": unit_row["total_actual"], "source_sheet": tl_sheet.title, "source_row": tl_row["row_number"]})
         return report
 
     @staticmethod
@@ -233,4 +244,4 @@ class ProductionResultImportService:
         upload.status = upload.STATUS_APPLIED
         upload.validated_at = datetime.utcnow()
         upload.applied_at = datetime.utcnow()
-        upload.warning_message = f"{report.matched_rows} temsilci ve {report.matched_result_count} ürün satırı doğrulandı. TL/kutu final sonuçları ayrı korunur; öncelik 2. üretim → 1. üretim → IMS'tir."
+        upload.warning_message = f"{report.matched_rows} temsilci ve {report.matched_result_count} ürün satırı doğrulandı. TL/kutu hedef ve sonuçları üretim dosyasındaki nihai değerleriyle ayrı korunur; öncelik 2. üretim → 1. üretim → IMS'tir." + (f" {report.target_mismatch_count} IMS hedef farkı, kaynak veriyi değiştirmeden üretim sonucu kapsamında kaydedildi." if report.target_mismatch_count else "")
