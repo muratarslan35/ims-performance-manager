@@ -1,10 +1,6 @@
 """Deterministic managerial insights for region and representative scopes."""
 
-from collections import defaultdict
-from decimal import Decimal
-
-from app.models import Product, Representative, Target
-from app.services.production_result_service import ProductionResultService
+from app.services.representative_period_snapshot_service import RepresentativePeriodSnapshotService
 
 
 class ScopedAIInsightService:
@@ -27,59 +23,10 @@ class ScopedAIInsightService:
 
     @classmethod
     def representative_periods(cls, representative_id, year, month):
-        periods = {}
-        for key, label, length in cls.PERIODS:
-            months = cls._months(year, month, length)
-            product_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
-            month_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
-            targets = Target.query.filter(
-                Target.representative_id == representative_id,
-                Target.year.in_({item[0] for item in months}),
-            ).all()
-            allowed = set(months)
-            for target in targets:
-                period = (target.year, target.month)
-                if period not in allowed:
-                    continue
-                effective = ProductionResultService.effective_product(
-                    target.year, target.month, representative_id, target.product_id
-                )
-                target_tl = Decimal(str(target.tl_target or 0))
-                actual_tl = Decimal(str(effective["actual_tl"] or 0))
-                complete = bool(effective["complete"] and effective["actual_tl"] is not None)
-                for bucket in (product_totals[target.product_id], month_totals[period]):
-                    bucket["target"] += target_tl
-                    bucket["actual"] += actual_tl
-                    bucket["complete"] = bucket["complete"] and complete
-
-            product_ids = list(product_totals)
-            products = {p.id: p for p in Product.query.filter(Product.id.in_(product_ids)).all()} if product_ids else {}
-            product_rows = []
-            for product_id, values in product_totals.items():
-                complete = values["complete"]
-                product_rows.append({
-                    "product_id": product_id,
-                    "product_name": products[product_id].product_name if product_id in products else f"Ürün {product_id}",
-                    "target_tl": values["target"],
-                    "actual_tl": values["actual"] if complete else None,
-                    "realization_percent": cls._percent(values["actual"], values["target"]) if complete else None,
-                    "gap_tl": max(values["target"] - values["actual"], Decimal("0")) if complete else None,
-                    "complete": complete,
-                })
-            total_target = sum((v["target"] for v in month_totals.values()), Decimal("0"))
-            total_actual = sum((v["actual"] for v in month_totals.values()), Decimal("0"))
-            complete = bool(month_totals) and all(v["complete"] for v in month_totals.values())
-            periods[key] = {
-                "key": key, "label": label, "month_count": len(months),
-                "target_tl": total_target,
-                "actual_tl": total_actual if complete else None,
-                "realization_percent": cls._percent(total_actual, total_target) if complete else None,
-                "gap_tl": max(total_target - total_actual, Decimal("0")) if complete else None,
-                "complete": complete,
-                "products": product_rows,
-                "representatives": [],
-            }
-        return periods
+        # The batch service resolves the six-month source set once and reuses it
+        # for the overlapping 1/3/6-month windows.  It preserves the canonical
+        # P2 > P1 > IMS product-level precedence without the former N+1 fan-out.
+        return RepresentativePeriodSnapshotService.build(representative_id, year, month)
 
     @classmethod
     def build(cls, *, scope_type, scope_name, periods, market_analysis=None, competitive_intelligence=None):
