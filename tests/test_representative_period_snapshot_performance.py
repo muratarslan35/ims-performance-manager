@@ -80,6 +80,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
         product_b = Product(product_code="PB", product_name="Product B", is_active=True)
         db.session.add_all([representative, product_a, product_b])
         db.session.flush()
+        representative_id = representative.id
 
         # Six months of authoritative targets and IMS fallback summaries.
         for month in range(3, 9):
@@ -89,7 +90,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
                     year=2026,
                     month=month,
                     quarter=_quarter(month),
-                    representative_id=representative.id,
+                    representative_id=representative_id,
                     product_id=product.id,
                     tl_target=100.0,
                     unit_target=10.0,
@@ -99,7 +100,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
                     year=2026,
                     month=month,
                     quarter=_quarter(month),
-                    representative_id=representative.id,
+                    representative_id=representative_id,
                     product_id=product.id,
                     tl=ims_tl,
                     unit=ims_tl / 10,
@@ -117,26 +118,26 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
         db.session.add_all([
             ProductionResult(
                 upload_id=p2.id,
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product_a.id,
                 realization_percent=125.5,
             ),
             ProductionResult(
                 upload_id=p1.id,
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product_a.id,
                 realization_percent=90.0,
             ),
             ProductionResult(
                 upload_id=p1.id,
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product_b.id,
                 realization_percent=110.0,
             ),
         ])
         db.session.commit()
 
-        periods = ScopedAIInsightService.representative_periods(representative.id, 2026, 8)
+        periods = ScopedAIInsightService.representative_periods(representative_id, 2026, 8)
         monthly = periods["monthly"]
         product_rows = {row["product_name"]: row for row in monthly["products"]}
 
@@ -166,6 +167,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
         db.session.add(representative)
         db.session.add_all(products)
         db.session.flush()
+        representative_id = representative.id
 
         for month in range(3, 9):
             ims_upload = _ims_upload(2026, month)
@@ -174,7 +176,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
                     year=2026,
                     month=month,
                     quarter=_quarter(month),
-                    representative_id=representative.id,
+                    representative_id=representative_id,
                     product_id=product.id,
                     tl_target=100.0,
                     unit_target=10.0,
@@ -184,7 +186,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
                     year=2026,
                     month=month,
                     quarter=_quarter(month),
-                    representative_id=representative.id,
+                    representative_id=representative_id,
                     product_id=product.id,
                     tl=80.0,
                     unit=8.0,
@@ -201,7 +203,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
 
         event.listen(db.engine, "before_cursor_execute", capture)
         try:
-            periods = RepresentativePeriodSnapshotService.build(representative.id, 2026, 8)
+            periods = RepresentativePeriodSnapshotService.build(representative_id, 2026, 8)
         finally:
             event.remove(db.engine, "before_cursor_execute", capture)
 
@@ -222,13 +224,14 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
         product = Product(product_code="PC", product_name="Product C", is_active=True)
         db.session.add_all([representative, product])
         db.session.flush()
+        representative_id = representative.id
         for month in range(3, 9):
             ims_upload = _ims_upload(2026, month)
             db.session.add(Target(
                 year=2026,
                 month=month,
                 quarter=_quarter(month),
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product.id,
                 tl_target=100.0,
                 unit_target=10.0,
@@ -238,7 +241,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
                 year=2026,
                 month=month,
                 quarter=_quarter(month),
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product.id,
                 tl=75.0,
                 unit=7.5,
@@ -254,7 +257,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
             db.session.flush()
             db.session.add(ProductionResult(
                 upload_id=upload.id,
-                representative_id=representative.id,
+                representative_id=representative_id,
                 product_id=product.id,
                 realization_percent=100.0 + month,
             ))
@@ -268,7 +271,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
 
         event.listen(db.engine, "before_cursor_execute", capture)
         try:
-            periods = RepresentativePeriodSnapshotService.build(representative.id, 2026, 8)
+            periods = RepresentativePeriodSnapshotService.build(representative_id, 2026, 8)
         finally:
             event.remove(db.engine, "before_cursor_execute", capture)
 
