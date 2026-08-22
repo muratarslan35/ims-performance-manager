@@ -88,6 +88,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
                 db.session.add(Target(
                     year=2026,
                     month=month,
+                    quarter=_quarter(month),
                     representative_id=representative.id,
                     product_id=product.id,
                     tl_target=100.0,
@@ -172,6 +173,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
                 db.session.add(Target(
                     year=2026,
                     month=month,
+                    quarter=_quarter(month),
                     representative_id=representative.id,
                     product_id=product.id,
                     tl_target=100.0,
@@ -223,14 +225,25 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
         for month in range(3, 9):
             ims_upload = _ims_upload(2026, month)
             db.session.add(Target(
-                year=2026, month=month, representative_id=representative.id,
-                product_id=product.id, tl_target=100.0, unit_target=10.0,
+                year=2026,
+                month=month,
+                quarter=_quarter(month),
+                representative_id=representative.id,
+                product_id=product.id,
+                tl_target=100.0,
+                unit_target=10.0,
             ))
             db.session.add(IMSSummary(
                 upload_id=ims_upload.id,
-                year=2026, month=month, quarter=_quarter(month), representative_id=representative.id,
-                product_id=product.id, tl=75.0, unit=7.5,
-                target_tl=100.0, target_unit=10.0,
+                year=2026,
+                month=month,
+                quarter=_quarter(month),
+                representative_id=representative.id,
+                product_id=product.id,
+                tl=75.0,
+                unit=7.5,
+                target_tl=100.0,
+                target_unit=10.0,
             ))
             upload = _production_upload(
                 2026, month, 1,
