@@ -347,3 +347,38 @@ Issue #69'da acceptance FAIL olduğu için process restart yapılmadı.
 # 13. ÇALIŞMA ORTAMINA VERİLECEK HAZIR DEVAM MESAJI
 
 **“`PROJECT_WORK_PROGRESS.md` dosyasındaki 20 Ağustos 2026 checkpointinden devam et. Öncelik PR #70 (`agent/vacancy-cache-official-spread-fix`). Son CI run #244'te 238 testten 236 passed, 1 skipped, 1 failed. Failure: `test_bootstrap_reuses_legacy_vacancy_primary_key_instead_of_creating_duplicate`; `vacancy_matching.py` içindeki `_region_context(region_value=...)` çağrısı mevcut IMSImportService imzasıyla uyumsuz. Bunu mevcut mimari dışına çıkmadan düzelt. BOS/BOŞ ayrı ID, BOSTANCI normal değer, ambiguity no-guess, historic vacancy PK reuse korunacak. P2>P1>IMS, prime, dashboard, hedef ve %100+ business kurallarına dokunma. Full CI yeşil olmadan merge etme; production acceptance PASS olmadan restart etme.”**
+
+---
+
+# 14. 2026-08-23 — Üretim sonucu Excel’i güvenli otomatik entegrasyon
+
+## Durum: TAMAMLANDI / kullanıcı yüklemesi bekleniyor
+
+- [x] `app/services/production_result_import_service.py`
+  - Gerçek KOTA SATIŞ 1./2. üretim şeması için TL ve KUTU sayfaları ayrıştırıldı.
+  - Ürün, temsilci ve bölge/boş-kadro eşleşmesi dönem hedef kapsamıyla birebir doğrulanır.
+  - Dosya doğrulanmadan hiçbir production sonucu, IMS kaynağı veya hedef satırı yazılmaz.
+  - Sonuçların TL hedefi, kutu hedefi, TL çıkışı, kutu çıkışı ve iki realizasyonu kaynak dosyadan ayrı saklanır.
+- [x] `ProductionResultService`
+  - Görünüm önceliği 2. üretim → 1. üretim → IMS olarak korundu.
+  - Üretim kaynağı mevcutsa hesaplar, IMS hedefini ezmeden üretim dosyasındaki nihai hedef/sonuç değerlerini kullanır.
+- [x] Migrations
+  - `t4i5j6k7l8m9`: exact actual TL/KUTU alanları.
+  - `u5j6k7l8m9n0`: production source target TL/KUTU alanları.
+  - Sunucuda iki migration da uygulandı; yeni DB oluşturulmadı, mevcut veri silinmedi.
+- [x] Gerçek dosya salt-okunur doğrulaması
+  - Kaynak: `Tayfun-1 Ocak Realizasyonları 2. Üretim 2026 - KOTA SATIŞ_Fentivag_ (1).xlsx`
+  - 113 temsilci/boş-kadro, 791 ürün satırı: kapsam tam eşleşti.
+  - Murat Arslan Travazol: 1.005.902 ₺ hedef, 1.323.834 ₺ çıkış, 9.009,10 kutu hedef, 11.856,57 kutu çıkış, %131,61.
+  - Dosya **DB’ye uygulanmadı**; kullanıcı IMS Merkezi’nden yükleyecek.
+- [x] Test: `8 passed` (production importer, batch priority, business rules).
+
+## Not
+
+- Salt-okunur ön kontrolde 725 ürün-hedef satırı mevcut IMS hedefinden farklı bulundu. Bu dosya içi hata değildir: üretim dosyasının nihai hedefi/sonucu birlikte saklanarak sonuç ekranlarında doğru dönem bazını korur; `targets` ve IMS kaynak verileri değiştirilmez.
+- Sunucu servis durumu: `active`.
+- GitHub / production commit: `47ecdc7` (son checkpoint öncesi uygulama commitleri: `99b57fb`, `534bbc6`, `c6960fc`, `edad9c9`).
+
+## Sonraki adım
+
+Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükler. Form tüm kapsam/doğruluk kontrolleri başarılıysa otomatik uygular; aksi halde veri yazmadan eksik satır/eşleşme nedenini gösterir.

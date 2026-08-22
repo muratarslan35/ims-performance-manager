@@ -68,6 +68,15 @@ Therefore these required checks have not been claimed as complete and were not s
 
 Place or make available the existing local `instance/ipm.db` and a local Python environment with the project dependencies in this same project folder. Then resume from `PROJECT_WORK_PROGRESS.md`: inspect migration state without mutation, run the provided 24th-week Excel import in a transaction-safe path, compare all DB counts/foreign keys with workbook scope, and run authenticated route smoke tests.
 
+## 2026-08-23 Production result integration audit
+
+- Production-result imports now preserve the final workbook’s TL target, box target, TL output, box output, TL realization and box realization independently.
+- The application continues to preserve IMS source and `targets` values; final-result screens resolve in the order production stage 2, stage 1, IMS.
+- Both KOTA SATIŞ layouts were validated: TL supports the selected production column; KUTU uses its final `REA%` total when no production-stage total column is present.
+- Read-only validation of the provided January second-production file succeeded: 113 representative/vacancy rows and 791 product rows fully matched the current January scope. No result rows were applied during this audit.
+- Target drift was detected in 725 product rows between existing IMS targets and final production targets. The source values are kept with their provenance instead of overwriting IMS data.
+- Server migrations `t4i5j6k7l8m9` and `u5j6k7l8m9n0` applied successfully. Focused suite: 8 passed.
+
 ## 2026-08-09 Target box value correction
 
 The 24th-week workbook was rechecked for target columns. It contains TL target data but no explicit box/unit target data. The values previously displayed in the target list were calculated from TL target divided by current product price, which is not a valid target source.
