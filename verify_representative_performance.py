@@ -98,8 +98,6 @@ def _build_read_model(representative, year, month):
     market = RepresentativeMarketService(representative, year, month).build()
     intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
     periods = ScopedAIInsightService.representative_periods(representative.id, year, month)
-    # Build the same deterministic AI payload used by the route so sorting and
-    # action generation are included in the measured chain.
     ScopedAIInsightService.build(
         scope_type="representative",
         scope_name=representative.rep_name,
@@ -130,27 +128,26 @@ def measure_representative(representative, year, month):
         market, intelligence, periods, annual = _build_read_model(representative, year, month)
         cold_seconds = time.perf_counter() - started
         cold_select_count = len(select_statements)
-        cold_competition_count = len(competition_statements)
+        cold_competition_statements = list(competition_statements)
+        cold_competition_count = len(cold_competition_statements)
 
-        # Warm path keeps the same service chain. Competition/read-model caches
-        # may hit, while the batch AI period service still performs a small,
-        # bounded set of source queries for correctness.
+        # Warm path keeps the same full service chain. Competition/read-model
+        # caches may hit, while the batch period service performs only a small,
+        # bounded set of source reads for correctness.
         select_statements.clear()
         competition_statements.clear()
         started = time.perf_counter()
         _build_read_model(representative, year, month)
         warm_seconds = time.perf_counter() - started
         warm_select_count = len(select_statements)
-        warm_competition_count = len(competition_statements)
+        warm_competition_statements = list(competition_statements)
+        warm_competition_count = len(warm_competition_statements)
     finally:
         event.remove(db.engine, "before_cursor_execute", capture)
 
-    # Scope validation is evaluated across the last captured warm statements;
-    # cold competition queries use the identical SQL shapes and are guarded by
-    # the query-shape regression tests in CI.
     unscoped = [
         " ".join(statement.split())[:500]
-        for statement in competition_statements
+        for statement in cold_competition_statements + warm_competition_statements
         if not is_scoped_competition_select(statement)
     ]
     return {
