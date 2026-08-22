@@ -68,6 +68,10 @@ def _ims_upload(year, month):
     return upload
 
 
+def _quarter(month):
+    return f"Q{((int(month) - 1) // 3) + 1}"
+
+
 def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
     application = _app(tmp_path)
     with application.app_context():
@@ -93,6 +97,7 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
                     upload_id=ims_upload.id,
                     year=2026,
                     month=month,
+                    quarter=_quarter(month),
                     representative_id=representative.id,
                     product_id=product.id,
                     tl=ims_tl,
@@ -176,6 +181,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
                     upload_id=ims_upload.id,
                     year=2026,
                     month=month,
+                    quarter=_quarter(month),
                     representative_id=representative.id,
                     product_id=product.id,
                     tl=80.0,
@@ -222,7 +228,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
             ))
             db.session.add(IMSSummary(
                 upload_id=ims_upload.id,
-                year=2026, month=month, representative_id=representative.id,
+                year=2026, month=month, quarter=_quarter(month), representative_id=representative.id,
                 product_id=product.id, tl=75.0, unit=7.5,
                 target_tl=100.0, target_unit=10.0,
             ))
@@ -242,6 +248,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
         db.session.commit()
 
         selects = []
+
         def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
             if statement.lstrip().upper().startswith("SELECT"):
                 selects.append(statement)
