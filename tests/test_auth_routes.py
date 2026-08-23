@@ -748,6 +748,11 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "Güncel DB" not in html
     assert "PRİM FIRSATI" not in html
     assert "target.balance_label" in html
+    assert 'id="mainPrime"' not in html
+    assert html.count('id="totalPrime"') == 1
+    assert "scheduleLiveCalculation" in html
+    assert "form.requestSubmit()" in html
+    assert 'addEventListener("input"' in html
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):
