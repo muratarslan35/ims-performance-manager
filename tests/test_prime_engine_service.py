@@ -226,11 +226,11 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         })
         products = [
             {"product_name": name, "include_in_prime": True, "percent": percent}
-            for name, percent in [("Travazol", 92), ("Monurol", 90), ("Mixovul", 91), ("Acnemix", 76)]
+            for name, percent in [("Travazol", 76), ("Monurol", 90), ("Mixovul", 91), ("Acnemix", 92)]
         ]
         entitlement = engine.evaluate_monthly_entitlement(products)
         self.assertTrue(entitlement["product_success"])
-        self.assertEqual([item["product_name"] for item in entitlement["below_standard_products"]], ["Acnemix"])
+        self.assertEqual([item["product_name"] for item in entitlement["below_standard_products"]], ["Travazol"])
 
     def test_monthly_entitlement_rejects_two_products_below_90_percent(self):
         engine = self.create_engine()

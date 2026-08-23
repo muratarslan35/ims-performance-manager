@@ -546,10 +546,10 @@ document.addEventListener(
 <!-- Premium Products Management Panel -->
 <div class="card shadow-sm mt-4">
     <div class="card-header d-flex align-items-center justify-content-between">
-        <h3 class="card-title mb-0">
-            <i class="bi bi-capsule-pill me-2 text-primary"></i>
-            Prim Ürünleri Yönetimi
-        </h3>
+        <div>
+            <h3 class="card-title mb-1"><i class="bi bi-capsule-pill me-2 text-primary"></i>Prim Ürünleri Yönetimi</h3>
+            <div class="text-secondary small">Seçili dört ana üründen en az üçü %90+, kalan en fazla biri %75+ olmalıdır. %75 uygulanacak ürün sabit değildir.</div>
+        </div>
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createProductModal">
             <i class="bi bi-plus-circle me-1"></i> Yeni Ürün Ekle
         </button>
@@ -562,7 +562,7 @@ document.addEventListener(
                         <th>Kod</th>
                         <th>Ürün Adı</th>
                         <th class="text-center">Prim Dahil</th>
-                        <th class="text-center">Eşik %</th>
+                        <th class="text-center">Aylık Prim Kuralı</th>
                         <th class="text-center">TL Dahil</th>
                         <th class="text-center">Aktif</th>
                         <th>İşlemler</th>
@@ -586,7 +586,9 @@ document.addEventListener(
                                 </button>
                             </form>
                         </td>
-                        <td class="text-center">{{ product.required_percent | int }}%</td>
+                        <td class="text-center">
+                            {% if product.is_prime_product %}<span class="badge bg-primary-lt">Dinamik · %90 / %75</span>{% else %}<span class="text-secondary">—</span>{% endif %}
+                        </td>
                         <td class="text-center">
                             {% if product.include_total_tl %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}
                         </td>
@@ -598,7 +600,6 @@ document.addEventListener(
                                 data-bs-target="#editProductModal"
                                 data-product-id="{{ product.id }}"
                                 data-product-name="{{ product.product_name }}"
-                                data-required-percent="{{ product.required_percent }}"
                                 data-include-total-tl="{{ '1' if product.include_total_tl else '0' }}"
                                 data-is-active="{{ '1' if product.is_active else '0' }}">
                                 <i class="bi bi-pencil"></i>
@@ -630,10 +631,6 @@ document.addEventListener(
                     <div class="mb-3">
                         <label class="form-label">Ürün Adı <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" name="product_name" required placeholder="Stiderm">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Eşik % (Prim için gereken min. gerçekleşme)</label>
-                        <input type="number" class="form-control" name="required_percent" value="90" min="0" max="200" step="5">
                     </div>
                     <div class="row">
                         <div class="col-6">
@@ -673,9 +670,8 @@ document.addEventListener(
                         <label class="form-label">Ürün</label>
                         <input type="text" class="form-control" id="editProductName" readonly>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Eşik %</label>
-                        <input type="number" class="form-control" name="required_percent" id="editRequiredPercent" min="0" max="200" step="5">
+                    <div class="alert alert-info py-2 small" role="note">
+                        <i class="bi bi-info-circle me-1"></i>Prim ürünü seçildiğinde eşik ürün adına sabitlenmez: seçili dört ana ürünün üçü %90+, herhangi biri %75+ olabilir.
                     </div>
                     <div class="row">
                         <div class="col-6">
@@ -705,7 +701,6 @@ document.addEventListener(
 document.getElementById('editProductModal').addEventListener('show.bs.modal', function(event) {
     const btn = event.relatedTarget;
     document.getElementById('editProductName').value = btn.dataset.productName;
-    document.getElementById('editRequiredPercent').value = btn.dataset.requiredPercent;
     document.getElementById('editIncludeTl').checked = btn.dataset.includeTotalTl === '1';
     document.getElementById('editIsActive').checked = btn.dataset.isActive === '1';
     document.getElementById('editProductForm').action = `/settings/products/update/${btn.dataset.productId}`;

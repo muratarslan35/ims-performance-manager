@@ -61,8 +61,8 @@ PRIME_SETTING_CATALOG = {
     "WHAT_IF_EXPECTED_FACTOR": ("Beklenen senaryo katsayısı", "Simülasyonda beklenen sonuç çarpanı.", "Katsayı"),
     "WHAT_IF_BEST_FACTOR": ("İyimser senaryo katsayısı", "Simülasyonda yüksek beklenti senaryosu çarpanı.", "Katsayı"),
     "SLIDER_MAX_PERCENT": ("Simülasyon üst sınırı", "Prim simülasyonunda seçilebilecek en yüksek gerçekleşme.", "%"),
-    "TARGET_75": ("Esnek ürün eşiği", "Dört ana üründen en fazla birinin inebileceği alt eşik.", "%"),
-    "TARGET_90": ("Standart ürün eşiği", "Diğer ana ürünler için gereken gerçekleşme eşiği.", "%"),
+    "TARGET_75": ("Esnek ürün eşiği", "Ürüne sabit atanmaz; seçili dört ana ürün arasında ilgili ayda en fazla bir ürün için uygulanır.", "%"),
+    "TARGET_90": ("Standart ürün eşiği", "Ürüne sabit atanmaz; seçili dört ana ürünün en az üçünde gereken gerçekleşme eşiğidir.", "%"),
     "TARGET_100": ("Tam hedef eşiği", "Tam hedef kabul edilen gerçekleşme oranı.", "%"),
     "PRIME_PRODUCT_COUNT": ("Primde değerlendirilen ürün sayısı", "Aylık prim kuralında izlenen ana ürün adedi.", "Adet"),
     "REQUIRED_90_COUNT": ("Standart eşiği sağlaması gereken ürün", "En az %90 gerçekleşmesi gereken ana ürün adedi.", "Adet"),
@@ -375,20 +375,15 @@ def toggle_prime(product_id):
 @settings_bp.route("/products/update/<int:product_id>", methods=["POST"])
 @login_required
 def update_product(product_id):
-    """Update premium product settings (threshold, TL inclusion)."""
+    """Update premium product settings; monthly eligibility thresholds stay dynamic."""
     product = Product.query.get_or_404(product_id)
     try:
-        required_percent = request.form.get("required_percent", type=float)
         include_total_tl = request.form.get("include_total_tl") == "1"
         is_active = request.form.get("is_active") == "1"
-        if required_percent is not None:
-            product.required_percent = required_percent
         product.include_total_tl = include_total_tl
         product.is_active = is_active
         rule = PrimeRule.query.filter_by(product_id=product.id, active=True).first()
         if rule:
-            if required_percent is not None:
-                rule.required_percent = int(required_percent)
             rule.include_in_total_tl = include_total_tl
         db.session.commit()
         flash(f"'{product.product_name}' ayarları güncellendi.", "success")
@@ -406,7 +401,6 @@ def create_product():
     try:
         product_code = request.form.get("product_code", "").strip().upper()
         product_name = request.form.get("product_name", "").strip()
-        required_percent = request.form.get("required_percent", type=float, default=0.0)
         is_prime_product = request.form.get("is_prime_product") == "1"
         include_total_tl = request.form.get("include_total_tl") == "1"
         if not product_code or not product_name:
@@ -420,7 +414,9 @@ def create_product():
         product = Product(
             product_code=product_code,
             product_name=product_name,
-            required_percent=required_percent,
+            # Individual threshold values are legacy metadata. Monthly eligibility
+            # is evaluated dynamically across the selected prime products.
+            required_percent=0.0,
             is_prime_product=is_prime_product,
             include_total_tl=include_total_tl,
             display_order=max_order + 1,
@@ -430,7 +426,7 @@ def create_product():
         db.session.flush()
         rule = PrimeRule(
             product_id=product.id,
-            required_percent=int(required_percent),
+            required_percent=0,
             include_in_prime=is_prime_product,
             include_in_total_tl=include_total_tl,
             active=True,
