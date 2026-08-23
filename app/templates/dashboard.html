@@ -36,8 +36,12 @@
 <div class="executive-kpi-layout mb-4" id="executiveKpiLayout">
   <div class="executive-kpi-grid">
     <div class="executive-kpi-card blue"><span>Aylık ₺ Hedefi</span><strong>{{ "{:,.0f}".format(national_target) }} ₺</strong><i class="bi bi-bullseye"></i></div>
-    <div class="executive-kpi-card primary"><span>Gerçekleşen Çıkış</span><strong>{{ "{:,.0f}".format(national_actual) }} ₺</strong><i class="bi bi-cash-coin"></i></div>
+    <div class="executive-kpi-card primary"><span>Gerçekleşen Çıkış</span><strong>{{ "{:,.0f}".format(national_actual) }} ₺</strong><i class="bi bi-box-arrow-up-right"></i></div>
     <div class="executive-kpi-card {% if national_percent >= 70 %}green{% else %}orange{% endif %}"><span>TL Realizasyonu</span><strong>%{{ national_percent }}</strong>{% if national_actual >= national_target %}<small class="text-success">{{ "{:,.0f}".format(national_actual - national_target) }} ₺ hedef üzeri gerçekleşme</small>{% else %}<small>{{ "{:,.0f}".format(national_target - national_actual) }} ₺ hedef açığı</small>{% endif %}<i class="bi bi-graph-up-arrow"></i></div>
+    <section class="executive-sales-brief" aria-label="Ulusal TL satış özeti">
+      <div class="executive-sales-head"><div><span>ULUSAL · TL SATIŞ GÖRÜNÜMÜ</span><strong>Ürün Bazlı Çıkış ve Realizasyon</strong></div><i class="bi bi-clipboard2-pulse"></i></div>
+      <div class="executive-sales-list">{% for product in national.products | default([], true) %}<div class="executive-sales-row"><span>{{ product.product_name }}</span><b>{{ "{:,.0f}".format(product.actual_tl | default(0, true)) }} ₺</b><em class="{% if product.realization_percent >= 100 %}good{% elif product.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ product.realization_percent | default(0, true) }}</em></div>{% else %}<div class="executive-sales-empty">Ürün bazlı TL satış verisi sonraki importta burada listelenir.</div>{% endfor %}</div>
+    </section>
   </div>
   <section class="ims-unit-exit-panel" aria-label="IMS kutu çıkışı">
     <div class="ims-unit-exit-head"><div><span>NATIONAL · KUTU PERFORMANSI</span><strong>Kutu Hedef ve Gerçekleşme</strong><small>Hedef yönetimi + TTS haftalık çıkışları</small></div><i class="bi bi-box-seam"></i></div>
