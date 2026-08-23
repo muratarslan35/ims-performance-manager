@@ -32,6 +32,11 @@ def _sheet(workbook, title, metric, values, percentages, total_actual, total_per
     sheet.append(header)
     # KOTA SATIŞ uses column A for sicil, B for region and C for the name.
     target_value = 10 if metric == "KUTU" else 100
+    national = ["", "", "NATIONAL"] + [target_value] * 7 + [target_value * 7, "", ""]
+    national += values + [total_actual, "", ""] + percentages + [total_percent]
+    if with_stage:
+        national += [100, 110, total_percent]
+    sheet.append(national)
     row = ["", "901 DIYARBAKIR", "MURAT ARSLAN"] + [target_value] * 7 + [target_value * 7, "", ""]
     row += values + [total_actual, "", ""] + percentages + [total_percent]
     if with_stage:
@@ -83,6 +88,8 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
 
         assert upload.status == ProductionResultUpload.STATUS_APPLIED
         assert upload.matched_row_count == 7
+        assert upload.national_total.actual_tl == 840
+        assert upload.national_product_results.count() == 7
         result = ProductionResultService.effective_product(2026, 1, representative.id, products[0].id)
         assert result["actual_tl"] == 120
         assert result["actual_unit"] == 11

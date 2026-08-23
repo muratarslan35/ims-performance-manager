@@ -11,6 +11,8 @@ from app.models import (
     Product,
     ProductAlias,
     ProductionRepresentativeTotal,
+    ProductionNationalProductResult,
+    ProductionNationalTotal,
     ProductionResult,
     Representative,
     RepresentativeAlias,
@@ -29,6 +31,8 @@ class ProductionImportReport:
     matched_rows: int = 0
     product_results: list = field(default_factory=list)
     representative_totals: list = field(default_factory=list)
+    national_product_results: list = field(default_factory=list)
+    national_total: dict | None = None
     target_mismatch_count: int = 0
 
     @property
@@ -196,6 +200,28 @@ class ProductionResultImportService:
             raise ProductionWorkbookValidationError("Bir temsilci birden fazla kez bulundu: " + ", ".join(sorted(set(duplicates))[:10]))
         return rows
 
+    def _read_national(self, sheet, metric):
+        """Read the workbook's NATIONAL row; never infer it from rep rows."""
+        layout = self._layout(sheet, metric)
+        for row_number in range(layout["header_row"] + 1, sheet.max_row + 1):
+            if AliasService.normalize(sheet.cell(row_number, layout["name_column"]).value) != "NATIONAL":
+                continue
+            targets, values, percentages = [], [], []
+            for target_column, actual_column, percent_column in zip(layout["target_columns"], layout["actual_columns"], layout["percent_columns"]):
+                target = self._number(sheet.cell(row_number, target_column).value)
+                actual = self._number(sheet.cell(row_number, actual_column).value)
+                percent = self._number(sheet.cell(row_number, percent_column).value)
+                if target is None or actual is None or percent is None:
+                    raise ProductionWorkbookValidationError(f"{sheet.title}!{row_number} NATIONAL değeri eksik.")
+                targets.append(target); values.append(actual); percentages.append(percent)
+            total_target = self._number(sheet.cell(row_number, layout["target_columns"][-1] + 1).value)
+            total_actual = self._number(sheet.cell(row_number, layout["total_actual_column"]).value)
+            total_percent = self._number(sheet.cell(row_number, layout["total_percent_column"]).value)
+            if total_target is None or total_actual is None or total_percent is None:
+                raise ProductionWorkbookValidationError(f"{sheet.title}!{row_number} NATIONAL toplamı eksik.")
+            return {"row_number": row_number, "targets": targets, "values": values, "percentages": percentages, "total_target": total_target, "total_actual": total_actual, "total_percent": total_percent, "product_ids": layout["product_ids"]}
+        raise ProductionWorkbookValidationError(f"{sheet.title} NATIONAL satırı bulunamadı.")
+
     def parse(self):
         if not self.file_path.exists():
             raise ProductionWorkbookValidationError("Üretim Excel dosyası bulunamadı.")
@@ -206,6 +232,7 @@ class ProductionResultImportService:
         self._load_master_maps()
         tl_sheet, unit_sheet = self._find_sheet(workbook, "TL"), self._find_sheet(workbook, "KUTU")
         tl_rows, unit_rows = self._read_sheet(tl_sheet, "TL"), self._read_sheet(unit_sheet, "KUTU")
+        national_tl, national_unit = self._read_national(tl_sheet, "TL"), self._read_national(unit_sheet, "KUTU")
         if set(tl_rows) != set(unit_rows):
             raise ProductionWorkbookValidationError("TL ve kutu sonuçlarında temsilci kapsamı eşit değil.")
         targets = {(row.representative_id, row.product_id): row for row in Target.query.filter_by(year=self.year, month=self.month).all()}
@@ -213,6 +240,9 @@ class ProductionResultImportService:
         if source_keys != set(targets):
             raise ProductionWorkbookValidationError(f"Üretim dosyası kapsamı dönem hedefleriyle eşit değil (eksik={len(set(targets)-source_keys)}, fazlalık={len(source_keys-set(targets))}).")
         report = ProductionImportReport(rows_seen=len(tl_rows), matched_rows=len(tl_rows))
+        for index, product_id in enumerate(national_tl["product_ids"]):
+            report.national_product_results.append({"product_id": product_id, "actual_tl": national_tl["values"][index], "actual_unit": national_unit["values"][index], "realization_percent": national_tl["percentages"][index], "unit_realization_percent": national_unit["percentages"][index], "source_sheet": tl_sheet.title, "source_row": national_tl["row_number"]})
+        report.national_total = {"target_tl": national_tl["total_target"], "target_unit": national_unit["total_target"], "actual_tl": national_tl["total_actual"], "actual_unit": national_unit["total_actual"], "realization_percent": national_tl["total_percent"], "unit_realization_percent": national_unit["total_percent"], "source_sheet": tl_sheet.title, "source_row": national_tl["row_number"]}
         for representative_id, tl_row in tl_rows.items():
             unit_row = unit_rows[representative_id]
             for index, product_id in enumerate(tl_row["product_ids"]):
@@ -240,6 +270,9 @@ class ProductionResultImportService:
             db.session.add(ProductionResult(upload_id=upload.id, **row))
         for row in report.representative_totals:
             db.session.add(ProductionRepresentativeTotal(upload_id=upload.id, **row))
+        for row in report.national_product_results:
+            db.session.add(ProductionNationalProductResult(upload_id=upload.id, **row))
+        db.session.add(ProductionNationalTotal(upload_id=upload.id, **report.national_total))
         upload.row_count, upload.matched_row_count = report.rows_seen, report.matched_result_count
         upload.status = upload.STATUS_APPLIED
         upload.validated_at = datetime.utcnow()

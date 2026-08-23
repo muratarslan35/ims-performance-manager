@@ -21,7 +21,7 @@ from app.models import (
     Product,
     Representative, 
     Target, 
-    IMSSummary
+    IMSSummary, ProductionNationalProductResult, ProductionNationalTotal
     , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
@@ -171,15 +171,17 @@ class DashboardQuery:
         official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
         actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
         if official and actual_rows:
-            if ProductionResultService.final_upload(filters.year, filters.month):
+            production_upload = ProductionResultService.final_upload(filters.year, filters.month)
+            production = {}
+            if production_upload:
+                production = {
+                    row.product_id: [Decimal(str(row.actual_tl)), Decimal(str(row.actual_unit))]
+                    for row in self.session.query(ProductionNationalProductResult).filter_by(upload_id=production_upload.id).all()
+                }
+            if production_upload and len(production) != len(official):
                 production = {}
-                for target in self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month).all():
-                    effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
-                    bucket = production.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
-                    bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
-                    bucket[1] += Decimal(str(effective.get("actual_unit") or 0))
                 for item in official:
-                    values = production.get(item["product_id"], [Decimal("0"), Decimal("0")])
+                    values = production.get(item["product_id"], [Decimal(str(item["actual_tl"] or 0)), Decimal(str(item["actual_unit"] or 0))])
                     item["actual_tl"] = float(values[0]); item["actual_unit"] = float(values[1])
             products = []
             for item in official:
@@ -254,15 +256,11 @@ class DashboardQuery:
             actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
             if official and actual_rows:
                 production = None
-                if ProductionResultService.final_upload(filters.year, filters.month):
-                    production = {}
-                    for target in self.session.query(Target).filter(
-                        Target.year == filters.year, Target.month == filters.month
-                    ).all():
-                        effective = ProductionResultService.effective_product(
-                            filters.year, filters.month, target.representative_id, target.product_id
-                        )
-                        production[target.product_id] = production.get(target.product_id, Decimal("0")) + Decimal(str(effective.get("actual_tl") or 0))
+                production_upload = ProductionResultService.final_upload(filters.year, filters.month)
+                if production_upload:
+                    rows = self.session.query(ProductionNationalProductResult).filter_by(upload_id=production_upload.id).all()
+                    if len(rows) == len(official):
+                        production = {row.product_id: Decimal(str(row.actual_tl)) for row in rows}
                 rows = []
                 for item in official:
                     actual = production.get(item["product_id"], Decimal("0")) if production is not None else Decimal(str(item["actual_tl"] or 0))

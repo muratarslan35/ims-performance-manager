@@ -331,6 +331,41 @@ class ProductionRepresentativeTotal(db.Model):
     representative = db.relationship("Representative", backref="production_result_totals")
 
 
+class ProductionNationalTotal(db.Model):
+    """Authoritative NATIONAL total printed by a production workbook."""
+
+    __tablename__ = "production_national_totals"
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False, unique=True)
+    target_tl = db.Column(db.Float, nullable=False)
+    target_unit = db.Column(db.Float, nullable=False)
+    actual_tl = db.Column(db.Float, nullable=False)
+    actual_unit = db.Column(db.Float, nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    unit_realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    id = db.Column(db.Integer, primary_key=True)
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("national_total", uselist=False))
+
+
+class ProductionNationalProductResult(db.Model):
+    """Authoritative NATIONAL product result printed by a production workbook."""
+
+    __tablename__ = "production_national_product_results"
+    __table_args__ = (db.UniqueConstraint("upload_id", "product_id", name="uq_production_national_product"),)
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    actual_tl = db.Column(db.Float, nullable=False)
+    actual_unit = db.Column(db.Float, nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    unit_realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("national_product_results", lazy="dynamic"))
+    product = db.relationship("Product")
+
+
 class IMSRawData(db.Model):
     __tablename__ = "ims_raw_data"
     __table_args__ = (
