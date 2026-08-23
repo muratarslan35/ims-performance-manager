@@ -258,8 +258,8 @@ def test_representative_grained_competition_and_raw_brick_market_are_combined():
             assert travazol["market_unit"] == 500
             assert travazol["competitor_unit"] == 400
             assert travazol["rivals"] == [
-                {"name": "RAKIP A", "unit": 300.0},
-                {"name": "RAKIP B", "unit": 100.0},
+                {"name": "RAKIP A", "unit": 80.0},
+                {"name": "RAKIP B", "unit": 40.0},
             ]
             assert result["brick_rows"][0]["brick"] == "MARDIN MERKEZ"
             assert result["brick_rows"][0]["company_unit"] == 40

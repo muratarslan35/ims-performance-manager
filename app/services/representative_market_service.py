@@ -388,7 +388,7 @@ class RepresentativeMarketService:
             if not is_company:
                 bucket["rivals"][row.product_name] += value
 
-            if use_raw_bricks:
+            if use_raw_bricks or use_exact_brick_competition:
                 continue
             brick = str(row.subterritory or row.territory or "Brick bilgisi yok").strip()
             brick_bucket = brick_groups[brick]
@@ -437,10 +437,11 @@ class RepresentativeMarketService:
                 else:
                     exact_grouped[product.id]["rivals"][str(row.product_name).strip()] += value
 
-            # The same complete named product rows that feed the brick view
-            # must feed the product view. This prevents representative-level
-            # summary rows from hiding named rivals present in assigned bricks.
-            grouped = exact_grouped
+            # Keep the authoritative representative aggregate totals, while
+            # replacing its often-shortened rival-name list with every named
+            # rival found in the assigned brick detail.
+            for product_id, exact_market in exact_grouped.items():
+                grouped[product_id]["rivals"] = exact_market["rivals"]
 
             for brick_data in brick_groups.values():
                 for product_data in brick_data["products"].values():
