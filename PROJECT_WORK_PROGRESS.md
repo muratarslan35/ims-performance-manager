@@ -520,3 +520,25 @@ Bu doğrulanmış bölge-il-rakip sözleşmesini Türkiye Pazar Analizi ekranın
 ## Sonraki adım
 
 Kullanıcı iki seviyeli grup/rakip seçimini masaüstü ve mobil görünümde görsel olarak doğrulayabilir.
+
+---
+
+# 20. 2026-08-24 — Ana ekran sadeleştirme ve kutu hedef kontrastı
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] Ana ekrandaki `Bölge Pazar Payları Sıralaması` kaldırıldı.
+- [x] Ana ekrandaki `Bölgesel Ürün Bazlı Rekabet Analizi` kaldırıldı.
+- [x] Kaldırılan iki alanın filtre ve sıralama JavaScript kodları temizlendi.
+- [x] Dashboard servisinde artık kullanılmayan bölgesel rekabet DB sorgusu ve payload hesaplaması çalıştırılmıyor.
+- [x] AI Yönetici Özeti içindeki `Gelecek Ay Ciro Tahmini` KPI'sı ve en alttaki `Önümüzdeki Ay Tahmini` bölümü kaldırıldı.
+- [x] Mevcut dönem gerçek ciro, hedef, aksiyon bölgesi/ürünü ve gerçek IMS analizleri korundu.
+- [x] Kutu performans panelindeki hedef kutu etiket/rakam kontrastı, çerçevesi ve yazı ağırlığı artırıldı.
+- [x] Hedefli testler: dashboard route/contract `1 passed`; bölgesel hesap yardımcı testleri `2 passed`.
+- [x] Production oturumlu dashboard HTTP 200; kaldırılan içerikler yok, kutu paneli ve AI özeti mevcut; servis `active`.
+- [x] DB, migration ve import verileri değiştirilmedi.
+- [x] GitHub / production uygulama commit: `305a6b2`.
+
+## Sonraki adım
+
+AI Yönetici Özeti ileride yalnızca gerçek dönem verisine dayalı profesyonel karar destek ekranı olarak yeniden tasarlanabilir.
