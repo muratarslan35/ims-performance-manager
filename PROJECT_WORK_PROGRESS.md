@@ -462,3 +462,38 @@ Bölgesel analizlerin aynı doğrulanmış veri sözleşmesiyle Türkiye Pazar A
 ## Sonraki adım
 
 Kullanıcı temsilci ürün sekmelerinde 7 ürünün rakip adlarını görsel olarak doğrulayabilir; sonraki geliştirme Türkiye Pazar Analizi toplamlaştırmasıdır.
+
+---
+
+# 18. 2026-08-24 — Bölgesel rakip ürünlerin il ve dönem analizi
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] `app/services/region_market_service.py`
+  - Mevcut tek bölgesel rekabet sorgusuna il kırılımı eklendi; temsilci veya brick başına yeni sorgu üretilmedi.
+  - Rakip ürünler, bağlı ürün grubu ve il bazında gerçek `ims_competition_data` kutu kayıtlarından toplulaştırılır.
+  - Her rakip için bölgesel kutu çıkışı, ürün grubu içindeki bölgesel payı, il toplamı ve il ürün-grubu pazar payı hesaplanır.
+  - Tamamlanan IMS yüklemelerinde rekabet verisi bulunan gerçek dönemler otomatik listelenir; tahmini/üretilmiş dönem eklenmez.
+  - Sonuçlar mevcut upload/production kapsamlı 60 saniyelik önbelleğin içinde tutulur.
+- [x] `app/templates/region_performance.html`
+  - Bölge ürün/rakip analiz başlığı okunaklı hale getirildi.
+  - KPI adları bölgesel şirket çıkışı, bölgesel rakip çıkışı, bölgesel toplam pazar ve bölgesel şirket payını açıkça belirtir.
+  - Üstteki şirket ürünü seçimi korundu.
+  - Alt brick listesi yerine rakip ürün seçimi ve seçilen rakibin il bazlı kutu/pazar payı tablosu eklendi; masaüstünde dikey, mobilde yatay kaydırmalı seçim kullanılır.
+  - Dönem seçimiyle geçmiş aylara salt okunur dönüş sağlandı.
+- [x] Gerçek DB doğrulaması
+  - 901 bölgesinde `ZALAIN` Travazol grubunda 16.252 kutu ve %14,4 bölgesel grup payı verdi; Diyarbakır, Şanlıurfa, Malatya, Elazığ, Mardin, Batman ve Şırnak il toplamları kaynak bricklerden oluştu.
+  - `ZALAIN SUPP VAG. 300MG` Fentivag grubunda ayrı ürün olarak korundu; farklı ürün grupları birbirine karıştırılmadı.
+  - 11 bölgenin tamamında 29 rakip ürün ve il kırılımları üretildi; eksik bölge kalmadı.
+  - Production DB'de rekabet verili dönem şu an yalnızca `01/2026`; sonraki IMS ayları yüklendiğinde seçim listesine otomatik eklenecek.
+- [x] Test ve performans
+  - Hedefli servis/template testleri: `9 passed`.
+  - 101, 201, 301, 401, 501, 601, 602, 701, 801, 802, 901 oturumlu render: HTTP 200 ve yeni rakip-il sözleşmesi PASS.
+  - 11 bölge soğuk toplu hesap: 7,66 sn; önbellekli toplu tekrar: 0,04 sn.
+  - Login HTTP 200; production servisi `active`; yeni hata/traceback yok.
+- [x] DB/migration/import değişikliği yok; mevcut veri korunmuştur.
+- [x] GitHub / production uygulama commit: `4457fa5`.
+
+## Sonraki adım
+
+Bu doğrulanmış bölge-il-rakip sözleşmesini Türkiye Pazar Analizi ekranında toplamlaştırmak.
