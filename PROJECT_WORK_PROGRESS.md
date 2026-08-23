@@ -405,6 +405,7 @@ Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükl
   - Kalıcı history sonucu: 0; sonraki baz hesap tekrar gerçek DB değerinden başladı.
 - [x] Test: `15 passed`; login 200, oturumsuz simülasyon 302, servis `active`, journal warning/error yok.
 - [x] GitHub / production uygulama commit: `c37a5a7`.
+- [x] Temsilci görünümü sadeleştirmesi (`a9fdb7a`): Yönetici Önerileri ve teknik DB ibareleri kaldırıldı; hedef özeti dört KPI oldu; kalan açık/hedef fazlası dinamik ayrıldı. Hedefli test: `16 passed`, production servis `active`.
 
 ## Sonraki adım
 
