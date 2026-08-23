@@ -521,8 +521,22 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         self.assertEqual(snapshot["target_tl"], 310000)
         self.assertEqual(snapshot["realization_tl"], 295000)
         self.assertEqual(snapshot["remaining_tl"], 15000)
-        self.assertIn("prime_opportunity", snapshot)
+        self.assertEqual(snapshot["balance_label"], "Kalan Açık")
+        self.assertEqual(snapshot["surplus_tl"], 0)
         self.assertIn("remaining_workdays", snapshot)
+
+    def test_target_snapshot_labels_positive_balance_as_surplus(self):
+        result = SimulationService(
+            self.rep.id,
+            2025,
+            6,
+            {self.prod1.id: {"tl_delta": 20000, "mode": "delta"}},
+        ).report()
+        snapshot = result["target_snapshot"]
+
+        self.assertEqual(snapshot["remaining_tl"], 0)
+        self.assertEqual(snapshot["surplus_tl"], 5000)
+        self.assertEqual(snapshot["balance_label"], "Hedef Fazlası")
 
     def test_service_prioritizes_prime_risk_in_action_plan(self):
         result = SimulationService(self.rep.id, 2025, 6, {}).report()

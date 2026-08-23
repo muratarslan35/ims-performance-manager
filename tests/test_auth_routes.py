@@ -744,6 +744,10 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "item.projected_total_percent" in html
     assert "Hedefe Ulaşma ve Prim Fırsatı" not in html
     assert "Eşik:" not in html
+    assert "Yönetici Önerileri" not in html
+    assert "Güncel DB" not in html
+    assert "PRİM FIRSATI" not in html
+    assert "target.balance_label" in html
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):

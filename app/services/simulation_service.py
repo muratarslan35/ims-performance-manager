@@ -137,18 +137,14 @@ class SimulationService:
     def build_target_snapshot(self, results):
         target = float(results["total_target"] or 0)
         realization = float(results["total_realization"] or 0)
-        current_prime = float(results["breakdown"]["total"] or 0)
-        best_prime = max(
-            (float(item.get("total_prime", 0) or 0) for item in results["what_if_analysis"]),
-            default=current_prime,
-        )
+        balance = realization - target
         return {
             "target_tl": round(target, 2),
             "realization_tl": round(realization, 2),
-            "remaining_tl": round(max(0.0, target - realization), 2),
+            "remaining_tl": round(max(0.0, -balance), 2),
+            "surplus_tl": round(max(0.0, balance), 2),
+            "balance_label": "Hedef Fazlası" if balance > 0 else "Kalan Açık",
             "realization_percent": float(results["total_tl_percent"] or 0),
-            "current_prime": round(current_prime, 2),
-            "prime_opportunity": round(max(0.0, best_prime - current_prime), 2),
             "remaining_workdays": self.remaining_workdays(),
             "period_closed": self.period_closed(),
             "prime_eligible": bool(results["prime_eligible"]),
