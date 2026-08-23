@@ -56,14 +56,16 @@ def build_overrides(data):
             continue
 
         override = {"mode": mode}
-        if unit is not None:
-            override["unit"] = unit
-        if tl is not None:
-            override["tl"] = tl
-        if unit_delta is not None:
-            override["unit_delta"] = unit_delta
-        if tl_delta is not None:
-            override["tl_delta"] = tl_delta
+        if mode == "replace":
+            if unit is not None:
+                override["unit"] = unit
+            if tl is not None:
+                override["tl"] = tl
+        else:
+            if unit_delta is not None:
+                override["unit_delta"] = unit_delta
+            if tl_delta is not None:
+                override["tl_delta"] = tl_delta
         if slider_percent is not None:
             override["slider_percent"] = slider_percent
         if target_percent is not None:

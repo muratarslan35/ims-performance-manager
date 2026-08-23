@@ -195,6 +195,15 @@ class TestBuildOverrides(PrimeEngineBaseTestCase):
         self.assertEqual(overrides[self.prod1.id]["mode"], "delta")
         self.assertEqual(overrides[self.prod1.id]["tl_delta"], 250000)
 
+    def test_build_overrides_values_box_only_sales_with_period_price(self):
+        overrides, _ = build_overrides(
+            {"products": [{"product_id": self.prod1.id, "unit": 100, "tl": 0}]}
+        )
+
+        self.assertEqual(overrides[self.prod1.id]["unit_delta"], 100)
+        self.assertIsNone(overrides[self.prod1.id].get("tl_delta"))
+        self.assertNotIn("tl", overrides[self.prod1.id])
+
     def test_build_overrides_supports_replace_mode(self):
         overrides, _ = build_overrides({"products": [{"product_id": self.prod1.id, "mode": "replace", "tl": 200000}]})
         self.assertEqual(overrides[self.prod1.id]["mode"], "replace")
