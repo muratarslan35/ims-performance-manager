@@ -9,7 +9,7 @@
       <div><span>₺ Hedef</span><strong>{{ '{:,.0f}'.format(period.target_tl or 0) }} ₺</strong></div>
       <div><span>Gerçekleşen</span><strong>{% if period.complete %}{{ '{:,.0f}'.format(period.actual_tl or 0) }} ₺{% else %}Bekleniyor{% endif %}</strong></div>
       <div><span>Realizasyon</span><strong class="{% if (period.realization_percent or 0) >= 100 %}good{% elif (period.realization_percent or 0) >= 75 %}watch{% else %}risk{% endif %}">{% if period.complete %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong></div>
-      <div><span>Hedef Açığı</span><strong>{% if period.complete %}{{ '{:,.0f}'.format(period.gap_tl or 0) }} ₺{% else %}—{% endif %}</strong></div>
+      <div><span>{% if (period.gap_tl or 0) < 0 %}Hedef Üzeri{% else %}Hedef Açığı{% endif %}</span><strong class="{% if (period.gap_tl or 0) < 0 %}good{% endif %}">{% if period.complete %}{{ '{:,.0f}'.format((period.gap_tl or 0)|abs) }} ₺{% else %}—{% endif %}</strong></div>
     </div>
     <div class="scope-ai-grid">
       <div class="scope-ai-card"><h3><i class="bi bi-activity"></i> Kritik değerlendirme</h3>{% for text in period.insights %}<p><i class="bi bi-check2-circle"></i>{{ text }}</p>{% else %}<p>Değerlendirilecek veri bulunmuyor.</p>{% endfor %}</div>

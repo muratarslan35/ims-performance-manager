@@ -67,8 +67,7 @@
   </div>
 
   <div class="row g-4 mb-4">
-    <div class="col-xl-5"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">7 ürün · kutu karşılaştırması</h3></div><div class="card-body"><div class="representative-market-chart"><canvas id="representativeMarketChart"></canvas></div></div></div></div>
-    <div class="col-xl-7"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">Ürün bazlı kutu analizi</h3></div><div class="table-responsive"><table class="table table-vcenter card-table market-product-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Temsilci satışı</th><th class="text-end">Rakip kutu toplamı</th><th class="text-end">Toplam kutu pazarı</th><th class="text-end">Pazardan alınan pay</th><th>Dikkat</th></tr></thead><tbody>
+    <div class="col-12"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">Ürün bazlı kutu analizi</h3></div><div class="table-responsive"><table class="table table-vcenter card-table market-product-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Temsilci satışı</th><th class="text-end">Rakip kutu toplamı</th><th class="text-end">Toplam kutu pazarı</th><th class="text-end">Pazardan alınan pay</th><th>Dikkat</th></tr></thead><tbody>
       {% for item in market_analysis.rows %}<tr class="attention-row attention-{{ item.attention }}"><td><strong>{{ item.product.product_name }}</strong></td><td class="text-end">{{ '{:,.0f}'.format(item.actual_unit) }}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(item.competitor_unit) }}</td><td class="text-end">{{ '{:,.0f}'.format(item.market_unit) }}</td><td class="text-end"><span class="market-share-pill">%{{ item.share_percent }}</span></td><td><span class="attention-badge attention-{{ item.attention }}">{% if item.attention == 'critical' %}Öncelikli{% elif item.attention == 'warning' %}Takip{% else %}Güçlü{% endif %}</span></td></tr>{% endfor %}
     </tbody></table></div></div></div>
   </div>
@@ -147,10 +146,6 @@ document.addEventListener("DOMContentLoaded", function () {
     const params = new URLSearchParams({year: selector.dataset.year, month: selector.dataset.month});
     window.location.assign(`/representatives/view/${selector.value}?${params.toString()}`);
   });
-  const canvas = document.getElementById("representativeMarketChart");
-  if (!canvas || typeof Chart === "undefined") return;
-  const rows = {{ market_analysis.chart_rows|tojson }};
-  new Chart(canvas, {type:"bar",data:{labels:rows.map(item=>item.product_name),datasets:[{label:"Temsilci kutu",data:rows.map(item=>item.actual_unit),backgroundColor:"#0b4ea2",borderRadius:6},{label:"Rakip kutu",data:rows.map(item=>item.competitor_unit),backgroundColor:"#f4a300",borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:"y",plugins:{legend:{position:"bottom",labels:{usePointStyle:true}}},scales:{x:{stacked:false,ticks:{callback:value=>Number(value).toLocaleString("tr-TR")+" kutu"}},y:{grid:{display:false}}}}});
 });
 </script>
 {% endblock %}

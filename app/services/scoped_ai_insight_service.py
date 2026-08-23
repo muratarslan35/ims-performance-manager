@@ -50,7 +50,12 @@ class ScopedAIInsightService:
             if not source.get("complete"):
                 insights.append("Seçili kapsamın tüm aylarında kesinleşmiş satış verisi bulunmadığı için sonuç tamamlanmayı bekliyor.")
             elif percent is not None:
-                insights.append(f"{label} gerçekleşme %{percent:.1f}; hedef açığı {float(source.get('gap_tl') or 0):,.0f} ₺.")
+                gap_tl = float(source.get("gap_tl") or 0)
+                gap_text = (
+                    f"hedef üzeri gerçekleşme {abs(gap_tl):,.0f} ₺"
+                    if gap_tl < 0 else f"hedef açığı {gap_tl:,.0f} ₺"
+                )
+                insights.append(f"{label} gerçekleşme %{percent:.1f}; {gap_text}.")
                 if percent >= 100:
                     insights.append("Toplam hedef karşılandı; odağı ürün bazında hedef altında kalan kalemlere yöneltin.")
                 elif percent >= 75:

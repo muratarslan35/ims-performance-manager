@@ -186,7 +186,7 @@ class RepresentativePeriodSnapshotService:
                         cls._percent(values["actual"], values["target"]) if complete else None
                     ),
                     "gap_tl": (
-                        max(values["target"] - values["actual"], Decimal("0")) if complete else None
+                        values["target"] - values["actual"] if complete else None
                     ),
                     "complete": complete,
                 })
@@ -201,7 +201,7 @@ class RepresentativePeriodSnapshotService:
                 "target_tl": total_target,
                 "actual_tl": total_actual if complete else None,
                 "realization_percent": cls._percent(total_actual, total_target) if complete else None,
-                "gap_tl": max(total_target - total_actual, Decimal("0")) if complete else None,
+                "gap_tl": total_target - total_actual if complete else None,
                 "complete": complete,
                 "products": product_rows,
                 "representatives": [],
