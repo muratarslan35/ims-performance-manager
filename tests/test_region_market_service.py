@@ -75,11 +75,11 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert result["rival_rows"][1]["cities"] == [
                 {"city": "SIRNAK", "unit": 60.0, "market_unit": 60.0, "share_percent": 100.0}
             ]
-            assert len(result["rival_groups"]) == 1
-            assert result["rival_groups"][0]["product_name"] == "Travazol"
-            assert [item["name"] for item in result["rival_groups"][0]["rivals"]] == ["RAKIP A", "RAKIP B"]
+            travazol_group = next(item for item in result["rival_groups"] if item["product_name"] == "Travazol")
+            assert [item["name"] for item in travazol_group["rivals"]] == ["RAKIP A", "RAKIP B"]
+            assert any(item["product_name"] == "Fentivag" and not item["rivals"] for item in result["rival_groups"])
             assert result["default_rival_group_id"] == product.id
-            assert result["default_rival_key"] == result["rival_groups"][0]["rivals"][0]["pane_key"]
+            assert result["default_rival_key"] == travazol_group["rivals"][0]["pane_key"]
     finally:
         temporary.cleanup()
 
