@@ -733,17 +733,17 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "Yeni Hesaplama Yap" in html
     assert "finally" in html
     assert "setButtonState(false,completed)" in html
-    assert "Kutu Eksiği" in html
-    assert "₺ Eksiği" in html
-    assert "item.remaining_box" in html
-    assert "item.remaining_tl" in html
+    assert "Ek Kutu" in html
+    assert "Ek ₺ Ciro" in html
     assert "risk-row-high" in html
     assert "Temsilci Prim Hedef Özeti" in html
     assert 'id="targetSnapshot"' in html
-    assert "Temsilci Saha Aksiyon Planı" in html
+    assert "Dinamik Satış ve Prim Aksiyonları" in html
     assert 'id="actionPlanTable"' in html
-    assert "item.daily_box" in html
-    assert "item.daily_tl" in html
+    assert "item.suggested_box" in html
+    assert "item.projected_total_percent" in html
+    assert "Hedefe Ulaşma ve Prim Fırsatı" not in html
+    assert "Eşik:" not in html
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):

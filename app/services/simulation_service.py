@@ -1,5 +1,6 @@
 from calendar import monthrange
 from datetime import date, timedelta
+import math
 
 from app.extensions import db
 from app.models import Product, Representative
@@ -155,55 +156,54 @@ class SimulationService:
 
     def build_action_plan(self, results):
         workdays = self.remaining_workdays()
+        total_actual = float(results["total_realization"] or 0)
+        total_target = float(results["total_target"] or 0)
         actions = []
         for item in results["products"]:
             remaining_box = round(max(0.0, item["target_unit"] - item["actual_unit"]), 2)
             remaining_tl = round(max(0.0, item["target_tl"] - item["actual_tl"]), 2)
             percent = float(item["percent"] or 0)
-            required_percent = float(item["required_percent"] or 0)
             unit_price = (
                 float(item["target_tl"] or 0) / float(item["target_unit"] or 0)
                 if float(item["target_unit"] or 0) > 0 else 0.0
             )
-            threshold = 100.0 if not item["include_in_prime"] else (75.0 if percent < 75 else required_percent)
-            threshold_box = max(0.0, (float(item["target_unit"] or 0) * threshold / 100.0) - float(item["actual_unit"] or 0))
-            threshold_tl = max(0.0, (float(item["target_tl"] or 0) * threshold / 100.0) - float(item["actual_tl"] or 0))
-            next_box = max(1.0, round(float(item["target_unit"] or 0) * 0.05))
-            next_tl = round(next_box * unit_price, 2)
+            if percent < 75:
+                milestone = 75.0
+            elif percent < 90:
+                milestone = 90.0
+            elif percent < 100:
+                milestone = 100.0
+            elif percent < 140:
+                milestone = min(140.0, (math.floor(percent / 5.0) + 1) * 5.0)
+            else:
+                milestone = None
 
-            if threshold_box > 0:
-                priority = 1 if item["include_in_prime"] else 2
-                status = "Prim eşiği" if item["include_in_prime"] else "Toplam TL"
+            milestone_tl = (
+                max(0.0, float(item["target_tl"] or 0) * milestone / 100.0 - float(item["actual_tl"] or 0))
+                if milestone is not None else 0.0
+            )
+            suggested_box = math.ceil(milestone_tl / unit_price) if unit_price > 0 and milestone_tl > 0 else 0
+            suggested_tl = round(suggested_box * unit_price, 2)
+            projected_product_percent = round(
+                (float(item["actual_tl"] or 0) + suggested_tl) / float(item["target_tl"] or 1) * 100.0,
+                1,
+            ) if float(item["target_tl"] or 0) > 0 else 0.0
+            projected_total_tl = total_actual + (suggested_tl if item["include_in_total_tl"] else 0.0)
+            projected_total_percent = round(projected_total_tl / total_target * 100.0, 1) if total_target > 0 else 0.0
+
+            if milestone is None:
+                priority, status = 3, "Güçlü performans"
                 action = (
-                    f"{item['product_name']} için {threshold_box:,.0f} kutu daha satılırsa "
-                    f"%{threshold:g} seviyesine ulaşılır ve toplam TL gerçekleşmesine "
-                    f"{threshold_tl:,.0f} ₺ katkı sağlanır"
-                    + ("; prim koşulu güçlenebilir." if item["include_in_prime"] else ".")
-                )
-            elif remaining_tl <= 0:
-                priority, status = 3, "Hedef üzeri"
-                action = (
-                    f"{item['product_name']} %{percent:.1f} seviyesinde. {next_box:,.0f} kutu ek satış "
-                    f"{next_tl:,.0f} ₺ ilave ciro sağlar; toplam TL gerçekleşmesini ve mümkünse "
-                    "bir sonraki prim basamağını artırır."
-                )
-            elif item["include_in_prime"] and percent < 75:
-                priority, status = 1, "Kritik"
-                action = (
-                    f"%75 eşiğine {threshold_box:,.0f} kutu kaldı; bu satış "
-                    f"{threshold_tl:,.0f} ₺ toplam TL katkısı sağlar ve prim koşuluna yaklaşır."
-                )
-            elif item["include_in_prime"] and percent < required_percent:
-                priority, status = 1, "Prim Riski"
-                action = (
-                    f"%{required_percent:g} eşiğine {threshold_box:,.0f} kutu kaldı; "
-                    f"{threshold_tl:,.0f} ₺ ek ciro ile ürün şartı tamamlanabilir."
+                    f"{item['product_name']} %{percent:.1f} seviyesinde. Eklenen her kutu "
+                    f"yaklaşık {unit_price:,.2f} ₺ satış katkısı üretir; prim tavanı ayrıca korunur."
                 )
             else:
-                priority, status = 2, "Takip"
+                priority = 1 if percent < 75 else (2 if percent < 100 else 3)
+                status = "Öncelikli fırsat" if priority == 1 else ("Gelişim fırsatı" if priority == 2 else "Sonraki basamak")
                 action = (
-                    f"{remaining_box:,.0f} kutu / {remaining_tl:,.0f} ₺ açık var. Bu tutar toplam TL "
-                    "realizasyonuna doğrudan katkı verir."
+                    f"{item['product_name']} ürününde {suggested_box:,.0f} kutu ek satışla ürün "
+                    f"realizasyonu yaklaşık %{projected_product_percent:.1f}, toplam TL realizasyonu "
+                    f"%{projected_total_percent:.1f} olur; satışa {suggested_tl:,.0f} ₺ katkı sağlanır."
                 )
 
             if self.period_closed() and remaining_tl > 0:
@@ -218,15 +218,21 @@ class SimulationService:
                 "priority_label": f"P{priority}",
                 "status": status,
                 "percent": percent,
-                "required_percent": required_percent,
                 "target_box": item["target_unit"],
                 "actual_box": item["actual_unit"],
+                "actual_tl": item["actual_tl"],
                 "remaining_box": remaining_box,
                 "remaining_tl": remaining_tl,
                 "daily_box": round(remaining_box / workdays, 2) if workdays else 0,
                 "daily_tl": round(remaining_tl / workdays, 2) if workdays else 0,
+                "milestone_percent": milestone,
+                "suggested_box": suggested_box,
+                "suggested_tl": suggested_tl,
+                "projected_product_percent": projected_product_percent,
+                "projected_total_percent": projected_total_percent,
                 "action": action,
                 "include_in_prime": bool(item["include_in_prime"]),
+                "simulation": bool(item["simulation"]),
             })
         actions.sort(key=lambda row: (row["priority"], -row["remaining_tl"], row["product"]))
         return actions
@@ -261,9 +267,11 @@ class SimulationService:
         return response
 
     def run(self):
-        engine = self.create_prime_engine()
-        results = engine.calculate()
-        results["history"] = engine.load_history()
+        # A simulation is deliberately ephemeral: always read the latest DB
+        # snapshot, bypass result caches and never create a history file.
+        engine = self.create_prime_engine(use_cache=False)
+        results = engine.calculate(save_history=False)
+        results["history"] = []
         return self.build_response(results)
 
     def report(self):

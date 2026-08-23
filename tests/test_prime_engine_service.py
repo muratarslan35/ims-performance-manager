@@ -545,6 +545,31 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         result = SimulationService(self.rep.id, 2025, 6, {self.prod1.id: {"tl_delta": 250000, "mode": "delta"}}).report()
         self.assertEqual(len(result["overrides"]), 1)
 
+    def test_box_only_scenario_adds_units_and_period_price_without_persistence(self):
+        baseline = SimulationService(self.rep.id, 2025, 6, {}).report()
+        result = SimulationService(
+            self.rep.id,
+            2025,
+            6,
+            {self.prod1.id: {"unit_delta": 100, "tl_delta": None, "mode": "delta"}},
+        ).report()
+        base_product = next(item for item in baseline["prime"]["products"] if item["product_id"] == self.prod1.id)
+        simulated = next(item for item in result["prime"]["products"] if item["product_id"] == self.prod1.id)
+
+        self.assertEqual(simulated["actual_unit"], base_product["actual_unit"] + 100)
+        self.assertEqual(simulated["actual_tl"], base_product["actual_tl"] + 100000)
+        self.assertGreater(result["target_snapshot"]["realization_percent"], baseline["target_snapshot"]["realization_percent"])
+        self.assertEqual(SimulationService(self.rep.id, 2025, 6, {}).report()["prime"]["product_results"][self.prod1.id]["actual_unit"], base_product["actual_unit"])
+
+    def test_action_plan_exposes_dynamic_milestone_effect(self):
+        result = SimulationService(self.rep.id, 2025, 6, {}).report()
+        monurol = next(item for item in result["action_plan"] if item["product"] == "Monurol")
+
+        self.assertGreater(monurol["suggested_box"], 0)
+        self.assertGreater(monurol["suggested_tl"], 0)
+        self.assertGreater(monurol["projected_product_percent"], monurol["percent"])
+        self.assertIn("toplam TL realizasyonu", monurol["action"])
+
     def test_service_export_pdf_returns_metadata(self):
         export = SimulationService(self.rep.id, 2025, 6, {}).export_pdf()
         self.assertEqual(export["type"], "prime_report")
@@ -553,10 +578,10 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         export = SimulationService(self.rep.id, 2025, 6, {}).export_excel()
         self.assertEqual(export["type"], "excel")
 
-    def test_service_history_returns_saved_entries(self):
+    def test_service_report_does_not_create_persistent_history(self):
         service = SimulationService(self.rep.id, 2025, 6, {})
         service.report()
-        self.assertGreaterEqual(len(service.history()), 1)
+        self.assertEqual(service.history(), [])
 
     def test_service_capabilities_include_exports_and_cache(self):
         capabilities = SimulationService.capabilities()
