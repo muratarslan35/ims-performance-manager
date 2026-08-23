@@ -414,3 +414,31 @@ Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükl
 ## Sonraki adım
 
 Kullanıcı simülasyon ekranında farklı temsilci/ürün kutu senaryolarını görsel olarak doğrulayabilir; hesaplamalar sayfa dışına taşınmaz ve DB'ye yazılmaz.
+
+---
+
+# 16. 2026-08-23 — Bölgesel rakip ve pazar analiz merkezi
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] `app/services/region_market_service.py`
+  - Her temsilciyi ayrı ayrı sorgulamak yerine bölge kodu üzerinden tek toplulaştırılmış rekabet sorgusu kullanır.
+  - Seçili dönemin son tamamlanan IMS yüklemesindeki aylık rekabet kutu kayıtlarını şirket/rakip/brick/ürün bazında ayırır.
+  - Nihai üretim sonucu varsa bölgenin resmi şirket kutu çıkışını ve hedefini P2 > P1 > IMS önceliğiyle kullanır; kaynak tabloları değiştirmez.
+  - 60 saniyelik upload-kapsamlı önbellek, eşzamanlı bölge yöneticisi okumalarında CPU ve SQLite yükünü sınırlar.
+- [x] `app/templates/region_performance.html`
+  - AI Performans Rehberi'nin üstüne Bölgesel Rekabet ve Pazar Merkezi eklendi.
+  - Dikey ürün seçimi masaüstünde, yatay kaydırmalı seçim mobilde çalışır.
+  - 7 ürün için hedef kutu, şirket/rakip çıkışı, hedef realizasyonu, pazar payı ve rakip ürün dökümü gösterilir.
+  - Rakip baskısı yüksek ilk 10 brick ayrıca listelenir.
+- [x] Test ve production doğrulaması
+  - Yeni hedefli testler: `2 passed`; mevcut route paketi: `49 passed`.
+  - 101, 201, 301, 401, 501, 601, 602, 701, 801, 802 ve 901 sayfaları oturumlu gerçek DB ile HTTP 200 ve panel render PASS.
+  - 11 bölgenin tamamında 7 ürün ve gerçek şirket/rakip kutu verisi mevcut.
+  - 11 bölgenin soğuk toplu hesabı 5,22 sn; önbellekli toplu tekrar 0,02 sn.
+  - Servis `active`; mevcut DB üzerinde silme/reset/migration yapılmadı.
+- [x] GitHub / production commitleri: `d5fdbf8`, `3335e4a`.
+
+## Sonraki adım
+
+Bölgesel analizlerin aynı doğrulanmış veri sözleşmesiyle Türkiye Pazar Analizi ekranında birleştirilmesi.
