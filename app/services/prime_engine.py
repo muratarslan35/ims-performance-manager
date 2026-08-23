@@ -408,7 +408,7 @@ class PrimeEngine:
 
         # Prim basamağı kullanıcıya gösterilen tam realizasyon yüzdesiyle
         # değerlendirilir: 129,50 ve üzeri %130 kabul edilir.
-        qualified_percent = math.floor(max(0.0, float(total_percent)) + 0.5)
+        qualified_percent = int(max(0.0, float(total_percent)) + 0.5)
         if qualified_percent < minimum:
             return 0.0
 
