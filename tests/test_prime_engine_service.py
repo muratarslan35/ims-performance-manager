@@ -267,6 +267,15 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         result = self.calculate()
         self.assertEqual(result["breakdown"]["main_prime"], 0)
 
+    def test_main_prime_uses_exact_five_percent_steps(self):
+        engine = self.create_engine()
+
+        self.assertEqual(engine.calculate_main_prime(129.99), 62500)
+        self.assertEqual(engine.calculate_main_prime(130.00), 65000)
+        self.assertEqual(engine.calculate_main_prime(130.78), 65000)
+        self.assertEqual(engine.calculate_main_prime(135.00), 67500)
+        self.assertEqual(engine.calculate_main_prime(140.00), 70000)
+
     def test_override_can_unlock_main_prime(self):
         result = self.calculate(overrides={self.prod2.id: {"tl_delta": 40000, "mode": "delta"}})
         self.assertGreater(result["breakdown"]["main_prime"], 0)

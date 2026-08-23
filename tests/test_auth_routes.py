@@ -757,6 +757,7 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "AbortController" in html
     assert "requestVersion" in html
     assert "recalculationQueued" not in html
+    assert "percentNumber(target.realization_percent)" in html
 
 
 def test_simulation_lists_unassigned_representatives_last(app):
