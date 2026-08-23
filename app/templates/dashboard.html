@@ -21,7 +21,6 @@
 {% set ps = payload.prime_summary | default({}, true) %}
 {% set ud = payload.upload_details | default({}, true) %}
 {% set ais = payload.ai_scores | default({}, true) %}
-{% set ain = payload.ai_next_month | default({}, true) %}
 
 <div class="dash-hero mb-4">
   <div class="dash-hero-content">
@@ -255,11 +254,6 @@
       <div class="ai-score-value">{{ payload.ai_risky_products | default([], true) | length }}</div>
       <div class="ai-score-unit">Gerçekleşmesi düşük ürün adedi</div>
     </div>
-    <div class="ai-score-item">
-      <div class="ai-score-label">Gelecek Ay Ciro Tahmini</div>
-      <div class="ai-score-value ai-score-value-money text-success-soft">{% if ain.predicted_tl and ain.predicted_tl > 0 %}{{ "{:,.0f}".format(ain.predicted_tl) }} ₺{% else %}—{% endif %}</div>
-      <div class="ai-score-unit">Mevcut IMS eğiliminden hesaplanan</div>
-    </div>
   </div>
     <div class="ai-panel-sections">
     <div class="ai-panel-section">
@@ -341,29 +335,6 @@
       </div>
     </div>
 
-    <div class="ai-panel-section">
-      <div class="ai-section-title"><i class="bi bi-calendar-month-fill"></i> Önümüzdeki Ay Tahmini</div>
-      <div class="ai-section-body ai-forecast-body">
-        <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Gelecek Ay Tahmini</span>
-          <span class="ai-forecast-value">{% if ain.predicted_tl and ain.predicted_tl > 0 %}{{ "{:,.0f}".format(ain.predicted_tl) }} ₺{% else %}—{% endif %}</span>
-        </div>
-        <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Trend Yönü</span>
-          <span class="ai-forecast-value {% if ain.trend_direction == 'up' %}text-success-soft{% elif ain.trend_direction == 'down' %}text-danger-soft{% endif %}">
-            {% if ain.trend_direction == 'up' %}▲ Yükselen{% elif ain.trend_direction == 'down' %}▼ Düşen{% else %}→ Sabit{% endif %}
-          </span>
-        </div>
-        <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Mevcut Dönem Gerçekleşen</span>
-          <span class="ai-forecast-value">{{ "{:,.0f}".format(national_actual) }} ₺</span>
-        </div>
-        <div class="ai-forecast-item">
-          <span class="ai-forecast-label">Tahmin Farkı</span>
-          <span class="ai-forecast-value">{{ "{:,.0f}".format((ain.predicted_tl | default(0, true)) - national_actual) }} ₺</span>
-        </div>
-      </div>
-    </div>
   </div>
 </div>{% endif %}
 
@@ -412,18 +383,6 @@
   </div>
 
 </div>
-
-<div class="row g-4 mb-4" id="regionalMarketShareRankingSection">
-  <div class="col-12">
-    <div class="section-card executive-signal-card">
-      <div class="section-card-header"><h2 class="section-card-title"><i class="bi bi-radar"></i> Bölge Pazar Payları Sıralaması</h2><span class="section-chip">Türkiye ortalamasına göre</span></div>
-      <div class="section-card-body regional-signal-list">{% for item in payload.regional_competition.signals | default([], true) %}<div class="regional-signal-row {% if item.difference_pp < 0 %}signal-risk{% else %}signal-strong{% endif %}"><div><strong>{{ item.territory }}</strong><span>{{ item.product_group }}</span></div><div class="signal-share"><b>%{{ item.share_percent }}</b><small>TR %{{ item.national_share_percent }}</small></div><em class="{% if item.difference_pp >= 0 %}positive{% else %}negative{% endif %}">{% if item.difference_pp >= 0 %}▲ Güçlü{% else %}▼ Dikkat{% endif %} · {{ item.difference_pp | abs }} pp</em></div>{% else %}<div class="empty-state"><i class="bi bi-bar-chart"></i><p>Bu dönem için bölgesel rekabet verisi bulunmuyor</p></div>{% endfor %}</div>
-    </div>
-  </div>
-</div>
-
-{% set regional = payload.regional_competition | default({}, true) %}{% set regional_summary = regional.summary | default({}, true) %}{% set regional_validation = regional.validation | default({}, true) %}
-<div class="row g-4 mb-4"><div class="col-12"><div class="section-card"><div class="section-card-header regional-analysis-head"><div><h2 class="section-card-title"><i class="bi bi-globe-europe-africa"></i> Bölgesel Ürün Bazlı Rekabet Analizi</h2><div class="regional-summary-line"><span>{{ regional_summary.territory_count | default(0) }} bölge</span><span>{{ regional_summary.product_group_count | default(0) }} ürün grubu</span><span>{{ regional_summary.risk_count | default(0) }} dikkat alanı</span><span>{{ regional_summary.strong_count | default(0) }} güçlü alan</span></div></div><div class="regional-head-actions"><span class="validation-badge {% if regional_validation.is_valid %}valid{% else %}invalid{% endif %}"><i class="bi {% if regional_validation.is_valid %}bi-patch-check-fill{% else %}bi-exclamation-octagon-fill{% endif %}"></i>{% if regional_validation.is_valid %}{{ regional_validation.valid_rows }} satır doğrulandı{% else %}{{ regional_validation.invalid_rows }} tutarsız satır{% endif %}</span><div class="competition-filter" role="group" aria-label="Rekabet tablosu filtresi"><button type="button" class="active" data-competition-filter="all">Tümü</button><button type="button" data-competition-filter="risk">Dikkat</button><button type="button" data-competition-filter="strong">Güçlü</button></div></div></div><div class="table-responsive premium-table-wrap regional-table-scroll"><table class="table premium-table regional-competition-table align-middle mb-0" id="regionalCompetitionTable"><thead><tr><th>Bölge / Ürün</th><th>Şirket IMS</th><th>Rakip Alanı</th><th>Toplam Pazar</th><th>Şirket Payı</th><th>TR Ortalaması</th><th>Fark / Durum</th></tr></thead><tbody>{% for item in regional.table | default([], true) %}<tr data-signal-type="{{ item.signal_type }}"><td><strong>{{ item.territory }}</strong><small>{{ item.product_group }}</small></td><td>{{ "{:,.0f}".format(item.company_tl) }} ₺</td><td>{{ "{:,.0f}".format(item.competitor_tl) }} ₺</td><td>{{ "{:,.0f}".format(item.market_tl) }} ₺</td><td><span class="market-share-badge">%{{ item.share_percent }}</span></td><td>%{{ item.national_share_percent }}</td><td><span class="market-delta {% if item.difference_pp >= 0 %}positive{% else %}negative{% endif %}">{% if item.difference_pp >= 0 %}▲{% else %}▼{% endif %} {{ item.difference_pp | abs }} pp</span></td></tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-4">Rekabet TL verisi bulunmuyor.</td></tr>{% endfor %}</tbody></table></div><div class="regional-data-note"><i class="bi bi-calculator"></i> Pay = Şirket IMS ÷ Toplam Pazar. Türkiye farkı, aynı ürün grubunun ağırlıklı ulusal payına göre hesaplanır.</div></div></div></div>
 
 <div class="row g-4 mb-4" id="productPerformanceSection">
   <div class="col-12">

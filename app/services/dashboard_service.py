@@ -179,7 +179,6 @@ class DashboardService:
             "national_metrics": self.query_layer.load_national_dashboard_metrics(filters=filters),
             "competition": self.query_layer.load_competition_overview(filters=filters),
             "competitor_products": self.query_layer.load_competitor_product_rows(filters=filters),
-            "regional_competition": self.query_layer.load_regional_competition_rows(filters=filters),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -424,7 +423,6 @@ class DashboardService:
         fmt_prime = self.formatter.format_prime_summary(prime_data, ai_data)
         competition_overview = self._competition_overview(query_data.get("competition", []), query_data.get("product_performance", []))
         competitor_ai = self._competitor_ai(query_data.get("competitor_products", []), query_data.get("product_performance", []))
-        regional_competition = self._regional_competition(query_data.get("regional_competition", []), query_data.get("product_performance", []))
         region_realization = self._region_realization(query_data.get("region_perf", []))
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_FORMATTER_MS, (time.time() - t_formatter) * 1000)
 
@@ -441,7 +439,6 @@ class DashboardService:
                .set_competition_analysis(competition_overview) \
                .set_region_realization(region_realization) \
                .set_competitor_ai(competitor_ai) \
-               .set_regional_competition(regional_competition) \
                .set_history(fmt_history) \
                .set_brick_assignments(mapped_bricks) \
                .set_ai_data(ai_data) \

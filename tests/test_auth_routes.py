@@ -630,11 +630,10 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert html.count("Gerçekleşen Çıkış") == 1
     assert html.count("TL Realizasyonu") == 1
     assert "executive-market-kpis" not in html
-    assert "Bölge Pazar Payları Sıralaması" in html
-    assert "Bölgesel Ürün Bazlı Rekabet Analizi" in html
-    assert 'id="regionalCompetitionTable"' in html
-    assert 'data-competition-filter="risk"' in html
-    assert "Pay = Şirket IMS ÷ Toplam Pazar" in html
+    assert "Bölge Pazar Payları Sıralaması" not in html
+    assert "Bölgesel Ürün Bazlı Rekabet Analizi" not in html
+    assert 'id="regionalCompetitionTable"' not in html
+    assert 'data-competition-filter="risk"' not in html
     assert "Pazar Büyüklüğü" not in html
     assert "Bölgesel Aksiyon" not in html
     assert "Hedef Kutu" in html
@@ -662,16 +661,20 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert 'id="productPerformanceSection"' in html
     assert 'id="turkeyMapSection"' in html
     assert 'id="imsTurkeyRankingSection"' in html
-    assert 'id="regionalMarketShareRankingSection"' in html
+    assert 'id="regionalMarketShareRankingSection"' not in html
     assert "IMS Türkiye Sıralaması" in html
-    assert "Bölge Pazar Payları Sıralaması" in html
+    assert "Bölge Pazar Payları Sıralaması" not in html
     dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
-    assert dashboard_js.index('"productPerformanceSection"') < dashboard_js.index('"turkeyMapSection"') < dashboard_js.index('"imsTurkeyRankingSection"') < dashboard_js.index('"regionalMarketShareRankingSection"')
+    assert dashboard_js.index('"productPerformanceSection"') < dashboard_js.index('"turkeyMapSection"') < dashboard_js.index('"imsTurkeyRankingSection"')
+    assert '"regionalMarketShareRankingSection"' not in dashboard_js
     assert 'id="aiExecutiveSummary"' in html
     assert "Gerçekleşen Ciro" in html
     assert "Hedef Açığı" in html
     assert "Aksiyon Bölgesi" in html
     assert "Aksiyon Ürünü" in html
+    assert "Gelecek Ay Ciro Tahmini" not in html
+    assert "Önümüzdeki Ay Tahmini" not in html
+    assert "Tahmin Farkı" not in html
     assert "Risk Puanı" not in html
     assert "Beklenen Prim" not in html
     assert "Kaçırılan Prim" not in html

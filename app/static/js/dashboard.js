@@ -500,8 +500,7 @@ function applyDashboardSectionOrder() {
   const orderedIds = [
     "productPerformanceSection",
     "turkeyMapSection",
-    "imsTurkeyRankingSection",
-    "regionalMarketShareRankingSection"
+    "imsTurkeyRankingSection"
   ];
   let anchor = document.getElementById("executiveKpiLayout");
   if (!anchor) return;
@@ -553,20 +552,6 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".premium-table tbody tr").forEach((row) => {
         const name = (row.querySelector(".product-name-cell") || {}).textContent || "";
         row.style.display = name.toLowerCase().includes(q) ? "" : "none";
-      });
-    });
-  }
-
-  const competitionFilter = document.querySelector(".competition-filter");
-  const competitionTable = document.getElementById("regionalCompetitionTable");
-  if (competitionFilter && competitionTable) {
-    competitionFilter.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-competition-filter]");
-      if (!button) return;
-      const selected = button.dataset.competitionFilter;
-      competitionFilter.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
-      competitionTable.querySelectorAll("tbody tr[data-signal-type]").forEach((row) => {
-        row.hidden = selected !== "all" && row.dataset.signalType !== selected;
       });
     });
   }
