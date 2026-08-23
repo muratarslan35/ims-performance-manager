@@ -254,8 +254,20 @@ class PrimeEngine:
             if override.get("tl") is not None:
                 actual_tl = float(override.get("tl"))
         else:
-            actual_unit += float(override.get("unit_delta", override.get("unit", 0)) or 0)
-            actual_tl += float(override.get("tl_delta", override.get("tl", 0)) or 0)
+            unit_delta = float(override.get("unit_delta", override.get("unit", 0)) or 0)
+            tl_delta = override.get("tl_delta", override.get("tl"))
+            # In the UI a manager may enter only additional boxes.  Those
+            # boxes are sales, so value them with the period-specific price
+            # encoded by the target itself.  This preserves historical prices
+            # instead of using a later product price from the master table.
+            if tl_delta is None and unit_delta:
+                period_unit_price = (
+                    record["target_tl"] / record["target_unit"]
+                    if record["target_unit"] > 0 else float(getattr(product, "unit_price", 0) or 0)
+                )
+                tl_delta = unit_delta * period_unit_price
+            actual_unit += unit_delta
+            actual_tl += float(tl_delta or 0)
 
         return {
             **record,
@@ -509,6 +521,8 @@ class PrimeEngine:
         for item in products:
             remaining_tl = item["gap_tl"]
             remaining_box = max(0.0, item["target_unit"] - item["actual_unit"])
+            surplus_tl = max(0.0, item["actual_tl"] - item["target_tl"])
+            surplus_box = max(0.0, item["actual_unit"] - item["target_unit"])
             risk_score = 100 if item["target_tl"] <= 0 else max(0, 100 - int(item["gap_percent"]))
             status = "Tamamlandı"
             if remaining_tl > 0:
@@ -527,9 +541,11 @@ class PrimeEngine:
                     "product_name": item["product_name"],
                     "remaining_box": round(remaining_box, 2),
                     "remaining_tl": remaining_tl,
+                    "surplus_box": round(surplus_box, 2),
+                    "surplus_tl": round(surplus_tl, 2),
                     "risk_score": risk_score,
                     "status": status,
-                    "description": "Hedef kapandı." if remaining_tl <= 0.0 else f"₺{remaining_tl:,.0f} açık bulunuyor.",
+                    "description": (f"₺{surplus_tl:,.0f} hedef üzeri satış var." if surplus_tl > 0 else "Hedef kapandı.") if remaining_tl <= 0.0 else f"₺{remaining_tl:,.0f} açık bulunuyor.",
                     "can_close": remaining_tl <= 0.0,
                 }
             )

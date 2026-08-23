@@ -43,6 +43,11 @@ def build_overrides(data):
         else:
             unit_delta = unit_delta if unit_delta is not None else (unit or 0.0)
             tl_delta = tl_delta if tl_delta is not None else (tl or 0.0)
+            # A box-only scenario represents real additional sales.  Keep the
+            # TL delta unset so PrimeEngine can value it using that period's
+            # product target/unit ratio rather than treating it as zero ciro.
+            if abs(unit_delta or 0.0) > 0 and abs(tl_delta or 0.0) == 0:
+                tl_delta = None
             has_change = any(
                 abs(value) > 0 for value in [unit_delta, tl_delta] if value is not None
             ) or slider_percent not in (None, 100.0) or target_percent is not None

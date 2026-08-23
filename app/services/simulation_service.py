@@ -161,24 +161,55 @@ class SimulationService:
             remaining_tl = round(max(0.0, item["target_tl"] - item["actual_tl"]), 2)
             percent = float(item["percent"] or 0)
             required_percent = float(item["required_percent"] or 0)
+            unit_price = (
+                float(item["target_tl"] or 0) / float(item["target_unit"] or 0)
+                if float(item["target_unit"] or 0) > 0 else 0.0
+            )
+            threshold = 100.0 if not item["include_in_prime"] else (75.0 if percent < 75 else required_percent)
+            threshold_box = max(0.0, (float(item["target_unit"] or 0) * threshold / 100.0) - float(item["actual_unit"] or 0))
+            threshold_tl = max(0.0, (float(item["target_tl"] or 0) * threshold / 100.0) - float(item["actual_tl"] or 0))
+            next_box = max(1.0, round(float(item["target_unit"] or 0) * 0.05))
+            next_tl = round(next_box * unit_price, 2)
 
-            if remaining_tl <= 0:
-                priority, status = 3, "Koruma"
-                action = "Hedef kapandı; satış ivmesini ve müşteri sürekliliğini koruyun."
+            if threshold_box > 0:
+                priority = 1 if item["include_in_prime"] else 2
+                status = "Prim eşiği" if item["include_in_prime"] else "Toplam TL"
+                action = (
+                    f"{item['product_name']} için {threshold_box:,.0f} kutu daha satılırsa "
+                    f"%{threshold:g} seviyesine ulaşılır ve toplam TL gerçekleşmesine "
+                    f"{threshold_tl:,.0f} ₺ katkı sağlanır"
+                    + ("; prim koşulu güçlenebilir." if item["include_in_prime"] else ".")
+                )
+            elif remaining_tl <= 0:
+                priority, status = 3, "Hedef üzeri"
+                action = (
+                    f"{item['product_name']} %{percent:.1f} seviyesinde. {next_box:,.0f} kutu ek satış "
+                    f"{next_tl:,.0f} ₺ ilave ciro sağlar; toplam TL gerçekleşmesini ve mümkünse "
+                    "bir sonraki prim basamağını artırır."
+                )
             elif item["include_in_prime"] and percent < 75:
                 priority, status = 1, "Kritik"
-                action = "Prim alt eşiğinin altında; günlük kutu planı ve saha yöneticisi takibi başlatın."
+                action = (
+                    f"%75 eşiğine {threshold_box:,.0f} kutu kaldı; bu satış "
+                    f"{threshold_tl:,.0f} ₺ toplam TL katkısı sağlar ve prim koşuluna yaklaşır."
+                )
             elif item["include_in_prime"] and percent < required_percent:
                 priority, status = 1, "Prim Riski"
-                action = f"%{required_percent:g} ürün eşiğini kapatmak için öncelikli müşteri listesi oluşturun."
+                action = (
+                    f"%{required_percent:g} eşiğine {threshold_box:,.0f} kutu kaldı; "
+                    f"{threshold_tl:,.0f} ₺ ek ciro ile ürün şartı tamamlanabilir."
+                )
             else:
                 priority, status = 2, "Takip"
-                action = "Açığı haftalık kapanış planına bölün ve gerçekleşmeyi düzenli izleyin."
+                action = (
+                    f"{remaining_box:,.0f} kutu / {remaining_tl:,.0f} ₺ açık var. Bu tutar toplam TL "
+                    "realizasyonuna doğrudan katkı verir."
+                )
 
             if self.period_closed() and remaining_tl > 0:
-                action = "Dönem kapalı; açığı performans değerlendirmesine ve sonraki dönem planına taşıyın."
+                action += " Seçilen dönem kapalı olduğundan bu, tahmini senaryo etkisidir."
             elif workdays == 0 and remaining_tl > 0:
-                action = "Dönemde iş günü kalmadı; yönetici kararıyla acil kapanış aksiyonu değerlendirin."
+                action += " Dönemde iş günü kalmadığından bu, tahmini senaryo etkisidir."
 
             actions.append({
                 "product_id": item["product_id"],
