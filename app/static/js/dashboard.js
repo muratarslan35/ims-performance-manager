@@ -527,11 +527,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const rankingPanel = document.getElementById("topRepsCollapse");
   if (rankingToggle && rankingPanel) {
     const rankingToggleLabel = rankingToggle.querySelector("[data-ranking-toggle-label]");
+    const rankingItems = Array.from(rankingPanel.querySelectorAll("[data-ranking-item]"));
     const setRankingExpanded = (expanded) => {
       rankingToggle.setAttribute("aria-expanded", String(expanded));
-      rankingPanel.hidden = !expanded;
-      rankingPanel.classList.toggle("show", expanded);
-      if (rankingToggleLabel) rankingToggleLabel.textContent = expanded ? "Daralt" : "Genişlet";
+      rankingItems.forEach((item, index) => {
+        item.hidden = !expanded && index >= 3;
+      });
+      if (rankingToggleLabel) rankingToggleLabel.textContent = expanded ? "İlk 3'ü Göster" : "Tümünü Göster";
     };
     setRankingExpanded(rankingToggle.getAttribute("aria-expanded") !== "false");
     rankingToggle.addEventListener("click", () => {

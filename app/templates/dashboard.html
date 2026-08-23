@@ -387,7 +387,7 @@
         <div class="section-card-body rep-list-body">
           {% if payload.top_representatives %}
             {% for rep in payload.top_representatives %}
-            <div class="rep-row">
+            <div class="rep-row" data-ranking-item>
               <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank | default(loop.index, true) }}</div>
               <div class="rep-avatar"><i class="bi bi-person-circle"></i></div>
               <div class="rep-info">
