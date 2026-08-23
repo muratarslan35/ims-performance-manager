@@ -180,9 +180,9 @@ class DashboardQuery:
                 }
             if production_upload and len(production) != len(official):
                 production = {}
-                for item in official:
-                    values = production.get(item["product_id"], [Decimal(str(item["actual_tl"] or 0)), Decimal(str(item["actual_unit"] or 0))])
-                    item["actual_tl"] = float(values[0]); item["actual_unit"] = float(values[1])
+            for item in official:
+                values = production.get(item["product_id"], [Decimal(str(item["actual_tl"] or 0)), Decimal(str(item["actual_unit"] or 0))])
+                item["actual_tl"] = float(values[0]); item["actual_unit"] = float(values[1])
             products = []
             for item in official:
                 row = {
