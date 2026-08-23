@@ -44,12 +44,20 @@ class RegionMarketService:
 
     def _product_for(self, product_group, product_name, products):
         group_key, product_key = self._key(product_group), self._key(product_name)
+        # Product group is authoritative for competitor rows. Product name is
+        # used only when a source row has no recognizable group identity.
         for product in products:
             candidates = {
                 self._key(product.product_name), self._key(product.product_code),
                 self._key(product.ims_name), self._key(product.competitor_group),
             } - {""}
-            if any(key in group_key or key in product_key for key in candidates):
+            if any(key in group_key or group_key in key for key in candidates):
+                return product
+        for product in products:
+            candidates = {
+                self._key(product.product_name), self._key(product.product_code), self._key(product.ims_name),
+            } - {""}
+            if any(key in product_key or product_key in key for key in candidates):
                 return product
         return None
 

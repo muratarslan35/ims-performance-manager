@@ -76,3 +76,11 @@ def test_region_market_panel_is_above_ai_panel_and_has_product_tabs():
     assert template.index("BÖLGESEL REKABET VE PAZAR MERKEZİ") < template.index('include "partials/scoped_ai_panel.html"')
     assert "data-market-tab" in template
     assert "data-market-pane" in template
+
+
+def test_region_product_resolution_prefers_excel_group_over_rival_name():
+    service = object.__new__(RegionMarketService)
+    acnemix = Product(product_code="ACNEMIX", product_name="Acnemix", competitor_group="ACNEMIX GRUP")
+    monurol = Product(product_code="MONUROL", product_name="Monurol", competitor_group="MONUROL GRUP")
+    matched = service._product_for("ACNEMIX GRUP", "MONUROL BENZERİ RAKİP", [monurol, acnemix])
+    assert matched is acnemix

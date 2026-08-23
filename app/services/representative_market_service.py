@@ -268,6 +268,8 @@ class RepresentativeMarketService:
     def _product_for_row(self, row, products):
         group_key = self._key(row.product_group)
         product_key = self._key(row.product_name)
+        # The Excel group is authoritative. A rival name may contain another
+        # managed-product token, so product-name matching is only a fallback.
         for product in products:
             candidates = {
                 self._key(product.product_name),
@@ -275,7 +277,15 @@ class RepresentativeMarketService:
                 self._key(product.ims_name),
                 self._key(product.competitor_group),
             } - {""}
-            if any(key in group_key or key in product_key for key in candidates):
+            if any(key in group_key or group_key in key for key in candidates):
+                return product
+        for product in products:
+            candidates = {
+                self._key(product.product_name),
+                self._key(product.product_code),
+                self._key(product.ims_name),
+            } - {""}
+            if any(key in product_key or product_key in key for key in candidates):
                 return product
         return None
 
@@ -405,6 +415,9 @@ class RepresentativeMarketService:
                     product_bucket["market_unit"] += value
 
         if use_exact_brick_competition:
+            exact_grouped = defaultdict(
+                lambda: {"unit": 0.0, "subtotal_unit": 0.0, "rivals": defaultdict(float)}
+            )
             for row in brick_competition_rows:
                 product = self._product_for_row(row, products)
                 brick = str(row.subterritory or "").strip()
@@ -414,11 +427,20 @@ class RepresentativeMarketService:
                 product_bucket = brick_groups[brick]["products"][product.product_name]
                 if self._is_subtotal_product_name(row.product_name):
                     product_bucket["subtotal_unit"] += value
+                    exact_grouped[product.id]["subtotal_unit"] += value
                     continue
                 product_bucket["market_unit"] += value
                 product_bucket["market_products"][str(row.product_name).strip()] += value
+                exact_grouped[product.id]["unit"] += value
                 if self._is_company_product(row, product):
                     product_bucket["exact_company_unit"] += value
+                else:
+                    exact_grouped[product.id]["rivals"][str(row.product_name).strip()] += value
+
+            # The same complete named product rows that feed the brick view
+            # must feed the product view. This prevents representative-level
+            # summary rows from hiding named rivals present in assigned bricks.
+            grouped = exact_grouped
 
             for brick_data in brick_groups.values():
                 for product_data in brick_data["products"].values():
@@ -481,7 +503,7 @@ class RepresentativeMarketService:
             if effective.get("source", "IMS").startswith("PRODUCTION_"):
                 actual_unit = float(effective.get("actual_unit") or 0)
             calculated_share = actual_unit * 100.0 / market_unit if market_unit else 0.0
-            rivals = sorted(market["rivals"].items(), key=lambda item: item[1], reverse=True)[:5]
+            rivals = sorted(market["rivals"].items(), key=lambda item: (-item[1], item[0]))
             rows.append(
                 {
                     "product": product,

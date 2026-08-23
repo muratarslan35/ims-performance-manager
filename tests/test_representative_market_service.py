@@ -85,7 +85,8 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
 
             def competition(brick, product_name, metric_type, value):
                 return CompetitionData(
-                    upload_id=upload.id, year=2026, month=8, sheet_name=f"REKABET {metric_type}",
+                    upload_id=upload.id, year=2026, month=8,
+                    sheet_name="AYLIK REKABET KUTU" if metric_type == "UNIT" else f"REKABET {metric_type}",
                     period_type="MONTHLY", territory="101", subterritory=brick,
                     product_group="TRAVAZOL GRUBU", product_name=product_name,
                     metric_type=metric_type, metric_value=value, source_row=1,
@@ -100,7 +101,17 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
                     competition("BRICK A", "TRAVAZOL GRUP SUBTOTAL", "UNIT", 35),
                     competition("BRICK C", "TRAVAZOL", "UNIT", 5),
                     competition("BRICK C", "RAKIP C", "UNIT", 95),
+                    competition("BRICK C", "RAKIP D", "UNIT", 1),
+                    competition("BRICK C", "RAKIP E", "UNIT", 1),
+                    competition("BRICK C", "RAKIP F", "UNIT", 1),
+                    competition("BRICK C", "RAKIP G", "UNIT", 1),
                     competition("BRICK B", "RAKIP B", "UNIT", 900),
+                    CompetitionData(
+                        upload_id=upload.id, year=2026, month=8, sheet_name="TTS REKABET KUTU",
+                        period_type="MONTHLY", territory="101", subterritory="Temsilci Bir",
+                        product_group="TRAVAZOL GRUBU", product_name="ÖZET RAKİP",
+                        metric_type="UNIT", metric_value=999, source_row=2,
+                    ),
                 ]
             )
             db.session.add(CompetitionData(
@@ -117,17 +128,21 @@ def test_representative_market_analysis_is_brick_scoped_and_keeps_seven_products
             assert len(result["rows"]) == 7
             travazol = result["rows"][0]
             assert travazol["actual_unit"] == 10
-            assert travazol["market_unit"] == 140
-            assert travazol["competitor_unit"] == 130
-            assert travazol["share_percent"] == 7.1
+            assert travazol["market_unit"] == 144
+            assert travazol["competitor_unit"] == 134
+            assert travazol["share_percent"] == 6.9
             assert travazol["has_previous"] is True
             assert travazol["previous_actual_unit"] == 5
             assert travazol["actual_change_unit"] == 5
             assert travazol["actual_change_percent"] == 100.0
-            assert travazol["competitor_change_unit"] == 115
+            assert travazol["competitor_change_unit"] == 119
             assert travazol["rivals"] == [
                 {"name": "RAKIP C", "unit": 95.0},
                 {"name": "RAKIP A", "unit": 30.0},
+                {"name": "RAKIP D", "unit": 1.0},
+                {"name": "RAKIP E", "unit": 1.0},
+                {"name": "RAKIP F", "unit": 1.0},
+                {"name": "RAKIP G", "unit": 1.0},
             ]
             assert [row["brick"] for row in result["brick_rows"]] == ["BRICK C", "BRICK A"]
             assert result["brick_rows"][0]["attention"] == "critical"
