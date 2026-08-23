@@ -406,6 +406,7 @@ Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükl
 - [x] Test: `15 passed`; login 200, oturumsuz simülasyon 302, servis `active`, journal warning/error yok.
 - [x] GitHub / production uygulama commit: `c37a5a7`.
 - [x] Temsilci görünümü sadeleştirmesi (`a9fdb7a`): Yönetici Önerileri ve teknik DB ibareleri kaldırıldı; hedef özeti dört KPI oldu; kalan açık/hedef fazlası dinamik ayrıldı. Hedefli test: `16 passed`, production servis `active`.
+- [x] Canlı simülasyon (`53ae464`): ek kutu/TL girdileri 450 ms gecikmeyle otomatik hesaplanır, devam eden istekte son değişiklik sıraya alınır; Ana Prim tekrar kartı kaldırıldı. Production +386 Monurol testi: ürün %76,83→%90, toplam TL %124,48→%126,60, prim 60.000→62.500 ₺. Test: `16 passed`.
 
 ## Sonraki adım
 
