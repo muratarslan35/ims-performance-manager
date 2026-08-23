@@ -21,7 +21,7 @@ from app.models import (
     Product,
     Representative, 
     Target, 
-    IMSSummary, ProductionNationalProductResult, ProductionNationalTotal
+    IMSSummary, ProductionResult, ProductionNationalProductResult, ProductionNationalTotal
     , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
@@ -93,6 +93,57 @@ class DashboardQuery:
         raw_signature = "|".join(signature_parts)
         return hashlib.md5(raw_signature.encode('utf-8')).hexdigest()
 
+    def _effective_actuals_for_targets(self, year: int, month: int, targets) -> dict:
+        """Resolve production/IMS actuals for a target collection in bounded queries.
+
+        The dashboard previously called ``effective_product`` once for every
+        target row.  On a national dashboard that becomes hundreds of SQLite
+        queries.  This preserves the P2 > P1 > IMS priority in three bounded
+        reads and keeps the heavy dashboard path independent of row count.
+        """
+        targets = list(targets or ())
+        keys = {(int(row.representative_id), int(row.product_id)) for row in targets}
+        if not keys:
+            return {}
+
+        representative_ids = {key[0] for key in keys}
+        product_ids = {key[1] for key in keys}
+        resolved = {}
+        uploads = ProductionResultService.applied_uploads(year, month)
+        if uploads:
+            priority = {int(upload.id): index for index, upload in enumerate(uploads)}
+            production_rows = self.session.query(ProductionResult).filter(
+                ProductionResult.upload_id.in_(list(priority)),
+                ProductionResult.representative_id.in_(representative_ids),
+                ProductionResult.product_id.in_(product_ids),
+            ).all()
+            for row in sorted(production_rows, key=lambda item: priority[int(item.upload_id)]):
+                key = (int(row.representative_id), int(row.product_id))
+                if key in keys and key not in resolved:
+                    resolved[key] = (
+                        Decimal(str(row.actual_unit or 0)),
+                        Decimal(str(row.actual_tl or 0)),
+                    )
+
+        # Preserve the legacy IMS fallback for periods where a production file
+        # does not provide a particular representative/product result.
+        if len(resolved) < len(keys):
+            summaries = self.session.query(IMSSummary).filter(
+                IMSSummary.year == year,
+                IMSSummary.month == month,
+                IMSSummary.representative_id.in_(representative_ids),
+                IMSSummary.product_id.in_(product_ids),
+            ).order_by(desc(IMSSummary.upload_id), desc(IMSSummary.id)).all()
+            for row in summaries:
+                key = (int(row.representative_id), int(row.product_id))
+                if key in keys and key not in resolved:
+                    resolved[key] = (
+                        Decimal(str(row.unit or 0)),
+                        Decimal(str(row.tl or 0)),
+                    )
+
+        return resolved
+
     def load_top_representatives(
         self, 
         filters: Optional[DashboardFilterParams] = None, 
@@ -156,12 +207,13 @@ class DashboardQuery:
         targets = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
         if filters.representative_id is not None:
             targets = targets.filter(Target.representative_id == filters.representative_id)
+        target_rows = targets.all()
+        actual_by_key = self._effective_actuals_for_targets(filters.year, filters.month, target_rows)
         total_target = Decimal("0")
         total_actual = Decimal("0")
-        for target in targets.all():
-            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
+        for target in target_rows:
             total_target += Decimal(str(target.tl_target or 0))
-            total_actual += Decimal(str(effective.get("actual_tl") or 0))
+            total_actual += actual_by_key.get((int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0")))[1]
         return SimpleNamespace(realization_tl=total_actual, target_tl=total_target)
 
     def load_national_dashboard_metrics(self, filters: Optional[DashboardFilterParams] = None) -> dict:
@@ -382,13 +434,20 @@ class DashboardQuery:
                 production_exists = ProductionResultService.final_upload(filters.year, filters.month) is not None
                 actual_by_key = {}
                 if production_exists:
-                    for target in self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month).all():
-                        rep = self.session.get(Representative, target.representative_id)
-                        if rep is None or not rep.region: continue
+                    target_rep_rows = self.session.query(Target, Representative).join(
+                        Representative, Representative.id == Target.representative_id
+                    ).filter(Target.year == filters.year, Target.month == filters.month).all()
+                    actual_by_target = self._effective_actuals_for_targets(
+                        filters.year, filters.month, [target for target, _ in target_rep_rows]
+                    )
+                    for target, rep in target_rep_rows:
+                        if not rep.region: continue
                         rk = str(rep.region).strip().split()[0]
-                        effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
                         bucket = actual_by_key.setdefault((rk, target.product_id), [Decimal("0"), Decimal("0")])
-                        bucket[0] += Decimal(str(effective.get("actual_unit") or 0)); bucket[1] += Decimal(str(effective.get("actual_tl") or 0))
+                        actual_unit, actual_tl = actual_by_target.get(
+                            (int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0"))
+                        )
+                        bucket[0] += actual_unit; bucket[1] += actual_tl
                 else:
                     actual_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, ACTUAL_TYPE)
                     if actual_upload:
@@ -444,12 +503,15 @@ class DashboardQuery:
         targets = self.session.query(Target, Representative).join(Representative, Representative.id == Target.representative_id).filter(
             Target.year == filters.year, Target.month == filters.month, Representative.region.isnot(None)
         ).all()
+        actual_by_target = self._effective_actuals_for_targets(filters.year, filters.month, [target for target, _ in targets])
         buckets = {}
         for target, rep in targets:
             key = (rep.region, rep.city); bucket = buckets.setdefault(key, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), set()])
-            effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
-            bucket[0] += Decimal(str(target.unit_target or 0)); bucket[1] += Decimal(str(effective.get("actual_unit") or 0))
-            bucket[2] += Decimal(str(target.tl_target or 0)); bucket[3] += Decimal(str(effective.get("actual_tl") or 0)); bucket[4].add(rep.id)
+            actual_unit, actual_tl = actual_by_target.get(
+                (int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0"))
+            )
+            bucket[0] += Decimal(str(target.unit_target or 0)); bucket[1] += actual_unit
+            bucket[2] += Decimal(str(target.tl_target or 0)); bucket[3] += actual_tl; bucket[4].add(rep.id)
         return [SimpleNamespace(region=k[0], city=k[1], unit_target=v[0], unit_actual=v[1], tl_target=v[2], tl_actual=v[3], representative_count=len(v[4])) for k, v in sorted(buckets.items())]
 
     def load_competition_overview(self, filters: Optional[DashboardFilterParams] = None) -> Sequence[Row]:
