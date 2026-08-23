@@ -406,9 +406,12 @@ class PrimeEngine:
         step = max(1.0, self.get_setting("PRIME_STEP", 5.0))
         step_amount = self.get_setting("STEP_AMOUNT", 2500.0)
 
-        # Prim basamağı kullanıcıya gösterilen tam realizasyon yüzdesiyle
-        # değerlendirilir: 129,50 ve üzeri %130 kabul edilir.
-        qualified_percent = int(max(0.0, float(total_percent)) + 0.5)
+        # Prim basamağı tam realizasyon yüzdesiyle değerlendirilir. Ondalık
+        # kısım yalnızca ,50'yi aşarsa yukarı yuvarlanır; tam ,50 alt tam
+        # yüzde düzeyinde kalır (129,50 -> 129; 129,51 -> 130).
+        raw_percent = max(0.0, float(total_percent))
+        whole_percent = int(raw_percent)
+        qualified_percent = whole_percent + int((raw_percent - whole_percent) > 0.5)
         if qualified_percent < minimum:
             return 0.0
 

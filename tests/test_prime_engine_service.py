@@ -271,7 +271,7 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
         engine = self.create_engine()
 
         self.assertEqual(engine.calculate_main_prime(129.49), 62500)
-        self.assertEqual(engine.calculate_main_prime(129.50), 65000)
+        self.assertEqual(engine.calculate_main_prime(129.50), 62500)
         self.assertEqual(engine.calculate_main_prime(129.51), 65000)
         self.assertEqual(engine.calculate_main_prime(129.99), 65000)
         self.assertEqual(engine.calculate_main_prime(130.00), 65000)
