@@ -270,7 +270,10 @@ class TestPrimeEngineCalculations(PrimeEngineBaseTestCase):
     def test_main_prime_uses_exact_five_percent_steps(self):
         engine = self.create_engine()
 
-        self.assertEqual(engine.calculate_main_prime(129.99), 62500)
+        self.assertEqual(engine.calculate_main_prime(129.49), 62500)
+        self.assertEqual(engine.calculate_main_prime(129.50), 65000)
+        self.assertEqual(engine.calculate_main_prime(129.51), 65000)
+        self.assertEqual(engine.calculate_main_prime(129.99), 65000)
         self.assertEqual(engine.calculate_main_prime(130.00), 65000)
         self.assertEqual(engine.calculate_main_prime(130.78), 65000)
         self.assertEqual(engine.calculate_main_prime(135.00), 67500)

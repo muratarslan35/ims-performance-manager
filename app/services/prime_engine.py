@@ -405,11 +405,14 @@ class PrimeEngine:
         base = self.get_setting("MAIN_PRIME", 50000.0)
         step = max(1.0, self.get_setting("PRIME_STEP", 5.0))
         step_amount = self.get_setting("STEP_AMOUNT", 2500.0)
-        
-        if total_percent < minimum:
+
+        # Prim basamağı kullanıcıya gösterilen tam realizasyon yüzdesiyle
+        # değerlendirilir: 129,50 ve üzeri %130 kabul edilir.
+        qualified_percent = math.floor(max(0.0, float(total_percent)) + 0.5)
+        if qualified_percent < minimum:
             return 0.0
-            
-        capped = min(total_percent, maximum)
+
+        capped = min(qualified_percent, maximum)
         level = int(round(capped - minimum, 4) // step)
         return round(base + (level * step_amount), 2)
 
