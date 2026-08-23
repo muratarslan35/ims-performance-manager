@@ -33,8 +33,8 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             db.session.add_all([product, first, second])
             db.session.flush()
             db.session.add_all([
-                Target(year=2042, month=1, representative_id=first.id, product_id=product.id, unit_target=100),
-                Target(year=2042, month=1, representative_id=second.id, product_id=product.id, unit_target=200),
+                Target(year=2042, month=1, quarter="Q1", representative_id=first.id, product_id=product.id, unit_target=100),
+                Target(year=2042, month=1, quarter="Q1", representative_id=second.id, product_id=product.id, unit_target=200),
             ])
             upload = IMSUpload(file_name="region.xlsx", year=2042, month=1, quarter="Q1", week_number=5, status="COMPLETED")
             db.session.add(upload)
