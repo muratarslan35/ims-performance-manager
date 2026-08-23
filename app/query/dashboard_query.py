@@ -426,35 +426,23 @@ class DashboardQuery:
         if not filters or filters.year is None or filters.month is None:
             return []
         target_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, TARGET_TYPE)
-        if target_upload:
+        # A final production result establishes the period's operational
+        # target/actual source.  Region detail pages already use Target plus
+        # ProductionResultService in that case; the map must use the same
+        # source instead of an older workbook BAKIYE subtotal.
+        production_exists = ProductionResultService.final_upload(filters.year, filters.month) is not None
+        if target_upload and not production_exists:
             target_rows = self.session.query(IMSRawData).filter(
                 IMSRawData.upload_id == target_upload, IMSRawData.sheet_type == TARGET_TYPE, IMSRawData.territory != "NATIONAL"
             ).all()
             if target_rows:
-                production_exists = ProductionResultService.final_upload(filters.year, filters.month) is not None
                 actual_by_key = {}
-                if production_exists:
-                    target_rep_rows = self.session.query(Target, Representative).join(
-                        Representative, Representative.id == Target.representative_id
-                    ).filter(Target.year == filters.year, Target.month == filters.month).all()
-                    actual_by_target = self._effective_actuals_for_targets(
-                        filters.year, filters.month, [target for target, _ in target_rep_rows]
-                    )
-                    for target, rep in target_rep_rows:
-                        if not rep.region: continue
-                        rk = str(rep.region).strip().split()[0]
-                        bucket = actual_by_key.setdefault((rk, target.product_id), [Decimal("0"), Decimal("0")])
-                        actual_unit, actual_tl = actual_by_target.get(
-                            (int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0"))
-                        )
-                        bucket[0] += actual_unit; bucket[1] += actual_tl
-                else:
-                    actual_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, ACTUAL_TYPE)
-                    if actual_upload:
-                        for row in self.session.query(IMSRawData).filter(
-                            IMSRawData.upload_id == actual_upload, IMSRawData.sheet_type == ACTUAL_TYPE, IMSRawData.territory != "NATIONAL"
-                        ).all():
-                            actual_by_key[(str(row.territory), row.product_id)] = [Decimal(str(row.unit or 0)), Decimal(str(row.tl or 0))]
+                actual_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, ACTUAL_TYPE)
+                if actual_upload:
+                    for row in self.session.query(IMSRawData).filter(
+                        IMSRawData.upload_id == actual_upload, IMSRawData.sheet_type == ACTUAL_TYPE, IMSRawData.territory != "NATIONAL"
+                    ).all():
+                        actual_by_key[(str(row.territory), row.product_id)] = [Decimal(str(row.unit or 0)), Decimal(str(row.tl or 0))]
                 reps_by_region = {}; city_by_region = {}
                 for rep in self.session.query(Representative).filter(Representative.region.isnot(None)).all():
                     rk = str(rep.region).strip().split()[0]; reps_by_region.setdefault(rk, set()).add(rep.id)
