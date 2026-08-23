@@ -21,6 +21,7 @@ from app.services.representative_market_service import RepresentativeMarketServi
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.scoped_ai_insight_service import ScopedAIInsightService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
+from app.services.production_result_service import ProductionResultService
 
 
 representatives_bp = Blueprint(
@@ -476,10 +477,7 @@ def view(
         representative_id=id, year=year, month=month, active=True
     ).order_by(RepresentativeBrickAssignment.brick).all() if year and month else []
     targets = Target.query.filter_by(representative_id=id, year=year, month=month).join(Product).order_by(Product.display_order, Product.product_name).all()
-    summaries = {
-        item.product_id: item
-        for item in IMSSummary.query.filter_by(representative_id=id, year=year, month=month).all()
-    }
+    effective_products = ProductionResultService.effective_products(year, month, id)
     product_rows, totals = [], {
         "target_tl": 0.0,
         "actual_tl": 0.0,
@@ -488,11 +486,11 @@ def view(
         "remaining_tl": 0.0,
     }
     for target in targets:
-        summary = summaries.get(target.product_id)
-        actual_tl = float(summary.tl if summary else 0.0)
-        actual_unit = float(summary.unit if summary else 0.0)
-        target_tl = float(target.tl_target or 0.0)
-        target_unit = float(target.unit_target or 0.0)
+        resolved = effective_products.get(target.product_id, {})
+        actual_tl = float(resolved.get("actual_tl", 0.0))
+        actual_unit = float(resolved.get("actual_unit", 0.0))
+        target_tl = float(resolved.get("target_tl", target.tl_target or 0.0))
+        target_unit = float(resolved.get("target_unit", target.unit_target or 0.0))
         product_rows.append({
             "product": target.product,
             "target_tl": target_tl,
@@ -500,6 +498,7 @@ def view(
             "target_unit": target_unit,
             "actual_unit": actual_unit,
             "percent": round(actual_tl * 100.0 / target_tl, 1) if target_tl else 0.0,
+            "source": resolved.get("source", "IMS"),
         })
         totals["target_tl"] += target_tl
         totals["actual_tl"] += actual_tl
@@ -510,6 +509,10 @@ def view(
         totals["remaining_tl"] += max(target_tl - actual_tl, 0.0)
     totals = {key: round(value, 2) for key, value in totals.items()}
     totals["percent"] = round(totals["actual_tl"] * 100.0 / totals["target_tl"], 1) if totals["target_tl"] else 0.0
+    has_production_result = any(item["source"].startswith("PRODUCTION_") for item in product_rows)
+    result_source_label = "2. üretim nihai sonucu" if any(item["source"] == "PRODUCTION_2" for item in product_rows) else (
+        "1. üretim sonucu" if has_production_result else "Seçili IMS dönemine kadar"
+    )
     market_analysis = RepresentativeMarketService(representative, year, month).build()
     competitive_intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
     ai_report = ScopedAIInsightService.build(
@@ -532,6 +535,8 @@ def view(
         totals=totals,
         market_analysis=market_analysis,
         annual_realization=annual_realization,
+        has_production_result=has_production_result,
+        result_source_label=result_source_label,
         ai_report=ai_report,
         year=year,
         month=month,

@@ -22,7 +22,7 @@
 
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam TL hedefi</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.target_tl) }} ₺</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">Seçili IMS dönemine kadar</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">{{ result_source_label }}</div></div></div></div>
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kalan TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.remaining_tl) }} ₺</div><div class="small text-secondary">Açık ürün hedefleri toplamı</div></div></div></div>
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
 </div>
@@ -37,8 +37,8 @@
 <div class="row g-4">
   <div class="col-xl-7">
     <div class="card h-100">
-      <div class="card-header"><h2 class="card-title mb-0">Ürün hedefi ve IMS durumu</h2></div>
-      <div class="table-responsive"><table class="table table-vcenter card-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">TL hedef</th><th class="text-end">IMS TL ÇIKIŞI</th><th class="text-end">Kutu hedefi (ADET)</th><th class="text-end">IMS KUTU ÇIKIŞI (ADET)</th><th class="text-end">Realizasyon</th></tr></thead><tbody>
+      <div class="card-header"><h2 class="card-title mb-0">Ürün hedefi ve {{ result_source_label }} durumu</h2></div>
+      <div class="table-responsive"><table class="table table-vcenter card-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">TL hedef</th><th class="text-end">{% if has_production_result %}Nihai TL ÇIKIŞI{% else %}IMS TL ÇIKIŞI{% endif %}</th><th class="text-end">Kutu hedefi (ADET)</th><th class="text-end">{% if has_production_result %}Nihai KUTU ÇIKIŞI (ADET){% else %}IMS KUTU ÇIKIŞI (ADET){% endif %}</th><th class="text-end">Realizasyon</th></tr></thead><tbody>
       {% for item in products %}<tr><td class="fw-semibold">{{ item.product.product_name }}</td><td class="text-end">{{ '{:,.0f}'.format(item.target_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.target_unit) }} adet</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_unit) }} adet</td><td class="text-end"><span class="badge bg-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}-lt text-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ item.percent }}</span></td></tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün hedefi bulunamadı.</td></tr>{% endfor %}
       </tbody></table></div>
     </div>

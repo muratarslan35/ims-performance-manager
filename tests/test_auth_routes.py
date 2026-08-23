@@ -862,6 +862,45 @@ def test_representative_remaining_tl_sums_open_product_targets(app):
     assert "Açık ürün hedefleri toplamı" in html
 
 
+def test_representative_detail_uses_applied_production_result_for_kpis(app):
+    from app.extensions import db
+    from app.models import (
+        IMSSummary, IMSUpload, Product, ProductionResult,
+        ProductionResultUpload, Representative, Target,
+    )
+
+    with app.app_context():
+        representative = Representative(rep_code="DETAIL-PROD", rep_name="Üretim Sonuç Temsilcisi", active=True)
+        product = Product(product_code="DETAIL-PROD", product_name="Nihai Ürün", is_active=True)
+        ims_upload = IMSUpload(file_name="ims.xlsx", year=2026, month=1, quarter="Q1", status="COMPLETED")
+        production_upload = ProductionResultUpload(
+            file_name="production.xlsx", stored_file_name="production.xlsx", source_hash="p" * 64,
+            year=2026, month=1, production_stage=2,
+            status=ProductionResultUpload.STATUS_APPLIED,
+        )
+        db.session.add_all((representative, product, ims_upload, production_upload))
+        db.session.flush()
+        db.session.add_all((
+            Target(year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=product.id, tl_target=100, unit_target=10),
+            IMSSummary(upload_id=ims_upload.id, year=2026, month=1, quarter="Q1", representative_id=representative.id, product_id=product.id, tl=150, unit=15),
+            ProductionResult(upload_id=production_upload.id, representative_id=representative.id, product_id=product.id,
+                             target_tl=120, target_unit=12, actual_tl=240, actual_unit=24,
+                             realization_percent=200, unit_realization_percent=200),
+        ))
+        db.session.commit()
+        representative_id = representative.id
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    response = client.get(f"/representatives/view/{representative_id}?year=2026&month=1")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "240 ₺" in html
+    assert "2. üretim nihai sonucu" in html
+    assert "Nihai TL ÇIKIŞI" in html
+
+
 def test_ims_completed_status_is_rendered_in_turkish(app):
     from app.extensions import db
     from app.models import IMSUpload
