@@ -225,7 +225,7 @@ class DashboardRepository:
         )
 
     def load_available_quarters(self, year: int) -> Sequence[Row]:
-        """Seçilen yıla ait benzersiz (distinct) çeyrekleri SQLAlchemy Row dizisi olarak listeler."""
+        """Seçilen yıla ait benzersiz (distinct) Quarter değerlerini SQLAlchemy Row dizisi olarak listeler."""
         return (
             self.session.query(IMSSummary.quarter)
             .filter_by(year=year)

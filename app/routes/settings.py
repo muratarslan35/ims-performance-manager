@@ -51,7 +51,7 @@ PRIME_SETTING_CATALOG = {
     "TOTAL_PERCENT_REQUIRED": ("Toplam TL gerçekleşme şartı", "Aylık prim için toplam TL hedefinde gerekli en düşük oran.", "%"),
     "ALLOW_CIRO_WITHOUT_PRODUCT": ("Ürün şartı olmadan ciro primi", "1 ise ürün koşulu sağlanmasa da ciro primi kuralı değerlendirilir.", "0 / 1"),
     "RECOVERY_EFFECT_RATE": ("Telafi etkisi", "Telafi sonucunun prim skoruna etkisi.", "%"),
-    "QUARTER_EFFECT_RATE": ("Quarter etkisi", "Çeyrek dönem sonucunun prim skoruna etkisi.", "%"),
+    "QUARTER_EFFECT_RATE": ("Quarter etkisi", "Quarter dönem sonucunun prim skoruna etkisi.", "%"),
     "PRODUCT_COEFFICIENT_DEFAULT": ("Varsayılan ürün katsayısı", "Ürün için özel katsayı yoksa kullanılan çarpan.", "Katsayı"),
     "PRODUCT_BONUS_RATE": ("Ürün bonus oranı", "Ürün bazlı ek bonus hesaplama oranı.", "%"),
     "BONUS_RATE": ("Bonus oranı", "Hedef üzeri başarı için kullanılan bonus oranı.", "%"),

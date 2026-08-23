@@ -170,7 +170,7 @@
         <div class="ims-upload-card-title"><i class="bi bi-activity" style="color:#0b4ea2;"></i> Sistem Durumu</div>
       </div>
       <div class="ims-upload-card-body">
-        {% for svc in [("IMS Aktarım","bi-cloud-upload"), ("Eş Ad Hizmeti","bi-diagram-2"), ("Prim Motoru","bi-cash-stack"), ("Çeyrek Motoru","bi-calendar3-week"), ("Telafi Motoru","bi-arrow-repeat")] %}
+        {% for svc in [("IMS Aktarım","bi-cloud-upload"), ("Eş Ad Hizmeti","bi-diagram-2"), ("Prim Motoru","bi-cash-stack"), ("Quarter Motoru","bi-calendar3-week"), ("Telafi Motoru","bi-arrow-repeat")] %}
         <div class="d-flex justify-content-between align-items-center {% if not loop.last %}mb-2{% endif %}">
           <span style="font-size:12px;display:flex;align-items:center;gap:6px;"><i class="bi {{ svc[1] }}" style="color:#0b4ea2;"></i>{{ svc[0] }}</span>
           <span class="badge bg-success" style="font-size:10px;">Aktif</span>
@@ -279,7 +279,7 @@
   </div>
   <div class="ims-info-card">
     <div class="ims-info-card-icon blue"><i class="bi bi-pie-chart-fill"></i></div>
-    <div><div class="ims-info-card-title">Quarter Hesaplama</div><div class="ims-info-card-text">Çeyrek dönem analizleri otomatik</div></div>
+    <div><div class="ims-info-card-title">Quarter Hesaplama</div><div class="ims-info-card-text">Quarter dönem analizleri otomatik</div></div>
   </div>
   <div class="ims-info-card">
     <div class="ims-info-card-icon green"><i class="bi bi-arrow-repeat"></i></div>
@@ -325,7 +325,7 @@
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">#</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Dosya</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Dönem</th>
-          <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Çeyrek</th>
+          <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Quarter</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Sayfa</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Yükleyen</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Durum</th>

@@ -16,7 +16,7 @@ class QuarterEntitlementService:
         self.year = int(year)
         self.quarter = int(quarter)
         if self.quarter not in (1, 2, 3, 4):
-            raise ValueError("Çeyrek 1 ile 4 arasında olmalıdır.")
+            raise ValueError("Quarter 1 ile 4 arasında olmalıdır.")
         self.months = list(range((self.quarter - 1) * 3 + 1, (self.quarter - 1) * 3 + 4))
         self.engine = PrimeEngine(self.representative_id, self.year, self.months[-1], use_cache=False)
 
