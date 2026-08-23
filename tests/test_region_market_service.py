@@ -75,6 +75,11 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert result["rival_rows"][1]["cities"] == [
                 {"city": "SIRNAK", "unit": 60.0, "market_unit": 60.0, "share_percent": 100.0}
             ]
+            assert len(result["rival_groups"]) == 1
+            assert result["rival_groups"][0]["product_name"] == "Travazol"
+            assert [item["name"] for item in result["rival_groups"][0]["rivals"]] == ["RAKIP A", "RAKIP B"]
+            assert result["default_rival_group_id"] == product.id
+            assert result["default_rival_key"] == result["rival_groups"][0]["rivals"][0]["pane_key"]
     finally:
         temporary.cleanup()
 
@@ -86,6 +91,8 @@ def test_region_market_panel_is_above_ai_panel_and_has_product_tabs():
     assert "data-market-pane" in template
     assert "data-rival-tab" in template
     assert "data-rival-pane" in template
+    assert "data-rival-group" in template
+    assert "data-rival-group-list" in template
     assert "BÖLGESEL RAKİP TOPLAM KUTU ÇIKIŞI" in template
 
 

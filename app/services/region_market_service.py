@@ -242,14 +242,32 @@ class RegionMarketService:
                 for city, unit in sorted(cities.items(), key=lambda item: (-item[1], item[0]))
             ]
             rival_rows.append({
-                "name": rival_name, "product_name": product.product_name,
+                "name": rival_name, "product_id": product.id, "product_name": product.product_name,
                 "unit": round(total_unit, 2),
                 "share_percent": round(total_unit * 100.0 / region_market, 1) if region_market else 0.0,
                 "cities": city_rows,
             })
         rival_rows.sort(key=lambda item: (-item["unit"], item["name"]))
+        rival_groups = []
+        rival_sequence = 0
+        for product in products:
+            group_rivals = [item for item in rival_rows if item["product_id"] == product.id]
+            for rival in group_rivals:
+                rival["pane_key"] = f"{product.id}-{rival_sequence}"
+                rival_sequence += 1
+            rival_groups.append({
+                "product_id": product.id,
+                "product_name": product.product_name,
+                "rivals": group_rivals,
+                "total_unit": round(sum(item["unit"] for item in group_rivals), 2),
+            })
+        default_group = next((item for item in rival_groups if item["rivals"]), rival_groups[0] if rival_groups else None)
+        default_rival_key = default_group["rivals"][0]["pane_key"] if default_group and default_group["rivals"] else None
         return {
             "rows": rows, "top_bricks": bricks[:10], "rival_rows": rival_rows,
+            "rival_groups": rival_groups,
+            "default_rival_group_id": default_group["product_id"] if default_group else None,
+            "default_rival_key": default_rival_key,
             "available_periods": self._available_periods(), "upload_id": upload_id,
             "source": "PRODUCTION_AND_IMS_COMPETITION" if official else "IMS_COMPETITION",
             "has_data": any(item["market_unit"] > 0 for item in rows),
