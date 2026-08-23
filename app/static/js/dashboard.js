@@ -523,6 +523,21 @@ function applyDashboardSectionOrder() {
 
 document.addEventListener("DOMContentLoaded", () => {
   applyDashboardSectionOrder();
+  const rankingToggle = document.querySelector("[data-ranking-toggle]");
+  const rankingPanel = document.getElementById("topRepsCollapse");
+  if (rankingToggle && rankingPanel) {
+    const rankingToggleLabel = rankingToggle.querySelector("[data-ranking-toggle-label]");
+    const setRankingExpanded = (expanded) => {
+      rankingToggle.setAttribute("aria-expanded", String(expanded));
+      rankingPanel.hidden = !expanded;
+      rankingPanel.classList.toggle("show", expanded);
+      if (rankingToggleLabel) rankingToggleLabel.textContent = expanded ? "Daralt" : "Genişlet";
+    };
+    setRankingExpanded(rankingToggle.getAttribute("aria-expanded") !== "false");
+    rankingToggle.addEventListener("click", () => {
+      setRankingExpanded(rankingToggle.getAttribute("aria-expanded") !== "true");
+    });
+  }
   const lastUpdateEl = document.getElementById("dashLastUpdate");
   if (lastUpdateEl) {
     const now = new Date();

@@ -217,6 +217,7 @@
 }
 .section-collapse-btn i { transition: transform .2s ease; }
 .section-collapse-btn[aria-expanded="true"] i { transform: rotate(180deg); }
+.ranking-subtitle { margin: 4px 0 0 30px; color: #70819a; font-size: 12px; font-weight: 500; }
 
 .turkey-map-wrapper {
   position: relative;
