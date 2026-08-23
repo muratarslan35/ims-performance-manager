@@ -497,3 +497,26 @@ Kullanıcı temsilci ürün sekmelerinde 7 ürünün rakip adlarını görsel ol
 ## Sonraki adım
 
 Bu doğrulanmış bölge-il-rakip sözleşmesini Türkiye Pazar Analizi ekranında toplamlaştırmak.
+
+---
+
+# 19. 2026-08-24 — Bölgesel rakip analizinde iki seviyeli ürün seçimi
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] İkinci rakip analiz alanı 7 yönetilen ürün grubu → rakip ürün → il analizi şeklinde üç panelli yapıya dönüştürüldü.
+- [x] Ürün grupları sabit iş sırasındadır: Travazol, Monurol, Acnemix, Mixovul, Stiderm, Brimoder, Fentivag.
+- [x] Grup seçildiğinde yalnızca o grubun rakip listesi açılır; ilk rakip otomatik seçilir ve sağdaki il tablosu aynı anda güncellenir.
+- [x] Rakip seçildiğinde sayfa yenilenmeden il çıkışı, il ürün-grubu pazarı ve il pazar payı değişir.
+- [x] Masaüstünde iki dikey seçim sütunu, mobilde iki yatay kaydırmalı seçim sırası kullanılır.
+- [x] Yeni sorgu eklenmedi; mevcut tek bölgesel toplulaştırma ve 60 saniyelik cache korunmuştur.
+- [x] Gerçek 901 DB kontrolü: 7 grup; Travazol 6, Monurol 2, Acnemix 8, Mixovul 3, Stiderm 3, Brimoder 1, Fentivag 6 rakip; toplam 29/29.
+- [x] 11 bölgenin tamamında 7 grup ve kaynakla eşit 29/29 rakip ürün doğrulandı.
+- [x] Zalain Travazol grubunda 16.252 kutu olarak korunmuştur.
+- [x] Hedefli servis/template testleri: `9 passed`; oturumlu 901 render HTTP 200; servis `active`.
+- [x] DB, migration ve import verisi değiştirilmedi.
+- [x] GitHub / production commitleri: `71a32cf`, `66ca479`.
+
+## Sonraki adım
+
+Kullanıcı iki seviyeli grup/rakip seçimini masaüstü ve mobil görünümde görsel olarak doğrulayabilir.
