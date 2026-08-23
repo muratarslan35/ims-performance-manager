@@ -49,9 +49,9 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
                 )
 
             db.session.add_all([
-                row("901 DIYARBAKIR", "BRICK A", "TRAVAZOL", 120, company=True),
-                row("901 DIYARBAKIR", "BRICK A", "RAKIP A", 180, competitor=True),
-                row("901 DIYARBAKIR", "BRICK B", "RAKIP B", 60, competitor=True),
+                row("901 DIYARBAKIR", "MARDIN BRICK A", "TRAVAZOL", 120, company=True),
+                row("901 DIYARBAKIR", "MARDIN BRICK A", "RAKIP A", 180, competitor=True),
+                row("901 DIYARBAKIR", "SIRNAK BRICK B", "RAKIP B", 60, competitor=True),
                 row("201 KADIKOY", "BRICK X", "RAKIP X", 999, competitor=True),
             ])
             db.session.commit()
@@ -65,8 +65,16 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert travazol["market_unit"] == 360
             assert travazol["share_percent"] == 33.3
             assert [item["name"] for item in travazol["rivals"]] == ["RAKIP A", "RAKIP B"]
-            assert [item["brick"] for item in result["top_bricks"]] == ["BRICK A", "BRICK B"]
+            assert [item["brick"] for item in result["top_bricks"]] == ["MARDIN BRICK A", "SIRNAK BRICK B"]
             assert result["totals"]["competitor_unit"] == 240
+            assert result["available_periods"] == [{"year": 2042, "month": 1, "label": "01/2042"}]
+            assert result["rival_rows"][0]["name"] == "RAKIP A"
+            assert result["rival_rows"][0]["cities"] == [
+                {"city": "MARDIN", "unit": 180.0, "market_unit": 300.0, "share_percent": 60.0}
+            ]
+            assert result["rival_rows"][1]["cities"] == [
+                {"city": "SIRNAK", "unit": 60.0, "market_unit": 60.0, "share_percent": 100.0}
+            ]
     finally:
         temporary.cleanup()
 
@@ -76,6 +84,9 @@ def test_region_market_panel_is_above_ai_panel_and_has_product_tabs():
     assert template.index("BÖLGESEL REKABET VE PAZAR MERKEZİ") < template.index('include "partials/scoped_ai_panel.html"')
     assert "data-market-tab" in template
     assert "data-market-pane" in template
+    assert "data-rival-tab" in template
+    assert "data-rival-pane" in template
+    assert "BÖLGESEL RAKİP TOPLAM KUTU ÇIKIŞI" in template
 
 
 def test_region_product_resolution_prefers_excel_group_over_rival_name():

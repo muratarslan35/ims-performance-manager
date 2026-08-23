@@ -13,6 +13,19 @@ from app.services.production_result_service import ProductionResultService
 
 class RegionMarketService:
     PRODUCT_ORDER = ("TRAVAZOL", "MONUROL", "ACNEMIX", "MIXOVUL", "STIDERM", "BRIMODER", "FENTIVAG")
+    PROVINCES = (
+        "ADANA", "ADIYAMAN", "AFYONKARAHISAR", "AGRI", "AKSARAY", "AMASYA", "ANKARA", "ANTALYA",
+        "ARDAHAN", "ARTVIN", "AYDIN", "BALIKESIR", "BARTIN", "BATMAN", "BAYBURT", "BILECIK",
+        "BINGOL", "BITLIS", "BOLU", "BURDUR", "BURSA", "CANAKKALE", "CANKIRI", "CORUM", "DENIZLI",
+        "DIYARBAKIR", "DUZCE", "EDIRNE", "ELAZIG", "ERZINCAN", "ERZURUM", "ESKISEHIR", "GAZIANTEP",
+        "GIRESUN", "GUMUSHANE", "HAKKARI", "HATAY", "IGDIR", "ISPARTA", "ISTANBUL", "IZMIR",
+        "KAHRAMANMARAS", "KARABUK", "KARAMAN", "KARS", "KASTAMONU", "KAYSERI", "KILIS", "KIRIKKALE",
+        "KIRKLARELI", "KIRSEHIR", "KOCAELI", "KONYA", "KUTAHYA", "MALATYA", "MANISA", "MARDIN",
+        "MERSIN", "MUGLA", "MUS", "NEVSEHIR", "NIGDE", "ORDU", "OSMANIYE", "RIZE", "SAKARYA",
+        "SAMSUN", "SANLIURFA", "SIIRT", "SINOP", "SIRNAK", "SIVAS", "TEKIRDAG", "TOKAT", "TRABZON",
+        "TUNCELI", "USAK", "VAN", "YALOVA", "YOZGAT", "ZONGULDAK",
+    )
+    PROVINCE_ALIASES = {"ANK": "ANKARA", "IST": "ISTANBUL", "IZM": "IZMIR", "KADIKOY": "ISTANBUL", "AFYON": "AFYONKARAHISAR"}
 
     def __init__(self, region_key, representative_ids, year, month):
         self.region_key = str(region_key or "").strip()
@@ -32,6 +45,25 @@ class RegionMarketService:
         ).order_by(
             desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)
         ).limit(1).scalar()
+
+    def _available_periods(self):
+        return [
+            {"year": int(year), "month": int(month), "label": f"{int(month):02d}/{int(year)}"}
+            for year, month in db.session.query(
+                CompetitionData.year, CompetitionData.month
+            ).join(IMSUpload, IMSUpload.id == CompetitionData.upload_id).filter(
+                IMSUpload.status == "COMPLETED",
+                CompetitionData.metric_type == "UNIT",
+                CompetitionData.territory.like(f"{self.region_key}%"),
+            ).distinct().order_by(CompetitionData.year.desc(), CompetitionData.month.desc()).all()
+        ]
+
+    def _province_for_brick(self, brick):
+        normalized = AliasService.normalize(brick)
+        first = normalized.split()[0] if normalized.split() else ""
+        if first in self.PROVINCE_ALIASES:
+            return self.PROVINCE_ALIASES[first]
+        return next((province for province in self.PROVINCES if normalized.startswith(province)), None)
 
     def _products(self):
         products = Product.query.order_by(Product.display_order.asc(), Product.product_name.asc()).all()
@@ -136,6 +168,9 @@ class RegionMarketService:
         official = self._official_products(production_upload_id)
         product_buckets = defaultdict(lambda: {"company": 0.0, "competitor": 0.0, "rivals": defaultdict(float)})
         brick_buckets = defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
+        city_group_market = defaultdict(float)
+        rival_city = defaultdict(lambda: defaultdict(float))
+        rival_product = {}
 
         for group, name, brick, stored_company, stored_competitor, value in self._competition_rows(upload_id):
             product = self._product_for(group, name, products)
@@ -146,8 +181,15 @@ class RegionMarketService:
             side = "company" if is_company else "competitor"
             product_buckets[product.id][side] += amount
             brick_buckets[str(brick or "Brick bilgisi yok").strip()][side] += amount
+            city = self._province_for_brick(brick)
+            if city:
+                city_group_market[(product.id, city)] += amount
             if not is_company:
-                product_buckets[product.id]["rivals"][str(name or "Rakip ürün").strip()] += amount
+                rival_name = str(name or "Rakip ürün").strip()
+                product_buckets[product.id]["rivals"][rival_name] += amount
+                rival_product[rival_name] = product
+                if city:
+                    rival_city[rival_name][city] += amount
 
         rows = []
         for product in products:
@@ -184,8 +226,31 @@ class RegionMarketService:
         total_company = sum(item["company_unit"] for item in rows)
         total_competitor = sum(item["competitor_unit"] for item in rows)
         total_market = total_company + total_competitor
+        row_by_product = {item["product_id"]: item for item in rows}
+        rival_rows = []
+        for rival_name, cities in rival_city.items():
+            product = rival_product[rival_name]
+            region_market = row_by_product.get(product.id, {}).get("market_unit", 0.0)
+            total_unit = sum(cities.values())
+            city_rows = [
+                {
+                    "city": city, "unit": round(unit, 2),
+                    "market_unit": round(city_group_market[(product.id, city)], 2),
+                    "share_percent": round(unit * 100.0 / city_group_market[(product.id, city)], 1)
+                    if city_group_market[(product.id, city)] else 0.0,
+                }
+                for city, unit in sorted(cities.items(), key=lambda item: (-item[1], item[0]))
+            ]
+            rival_rows.append({
+                "name": rival_name, "product_name": product.product_name,
+                "unit": round(total_unit, 2),
+                "share_percent": round(total_unit * 100.0 / region_market, 1) if region_market else 0.0,
+                "cities": city_rows,
+            })
+        rival_rows.sort(key=lambda item: (-item["unit"], item["name"]))
         return {
-            "rows": rows, "top_bricks": bricks[:10], "upload_id": upload_id,
+            "rows": rows, "top_bricks": bricks[:10], "rival_rows": rival_rows,
+            "available_periods": self._available_periods(), "upload_id": upload_id,
             "source": "PRODUCTION_AND_IMS_COMPETITION" if official else "IMS_COMPETITION",
             "has_data": any(item["market_unit"] > 0 for item in rows),
             "totals": {
