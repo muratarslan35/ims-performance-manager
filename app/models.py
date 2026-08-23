@@ -366,6 +366,52 @@ class ProductionNationalProductResult(db.Model):
     product = db.relationship("Product")
 
 
+class ProductionRegionTotal(db.Model):
+    """Authoritative region total printed by a production workbook."""
+
+    __tablename__ = "production_region_totals"
+    __table_args__ = (
+        db.UniqueConstraint("upload_id", "region_code", name="uq_production_region_total"),
+        db.Index("ix_production_region_total_upload_region", "upload_id", "region_code"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False)
+    region_code = db.Column(db.String(20), nullable=False)
+    target_tl = db.Column(db.Float, nullable=False)
+    target_unit = db.Column(db.Float, nullable=False)
+    actual_tl = db.Column(db.Float, nullable=False)
+    actual_unit = db.Column(db.Float, nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    unit_realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("region_totals", lazy="dynamic"))
+
+
+class ProductionRegionProductResult(db.Model):
+    """Authoritative region/product result printed by a production workbook."""
+
+    __tablename__ = "production_region_product_results"
+    __table_args__ = (
+        db.UniqueConstraint("upload_id", "region_code", "product_id", name="uq_production_region_product"),
+        db.Index("ix_production_region_product_upload_region", "upload_id", "region_code"),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.Integer, db.ForeignKey("production_result_uploads.id"), nullable=False)
+    region_code = db.Column(db.String(20), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    target_tl = db.Column(db.Float, nullable=False)
+    target_unit = db.Column(db.Float, nullable=False)
+    actual_tl = db.Column(db.Float, nullable=False)
+    actual_unit = db.Column(db.Float, nullable=False)
+    realization_percent = db.Column(db.Float, nullable=False)
+    unit_realization_percent = db.Column(db.Float, nullable=False)
+    source_sheet = db.Column(db.String(150), nullable=True)
+    source_row = db.Column(db.Integer, nullable=True)
+    upload = db.relationship("ProductionResultUpload", backref=db.backref("region_product_results", lazy="dynamic"))
+    product = db.relationship("Product")
+
+
 class IMSRawData(db.Model):
     __tablename__ = "ims_raw_data"
     __table_args__ = (

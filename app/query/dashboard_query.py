@@ -21,7 +21,7 @@ from app.models import (
     Product,
     Representative, 
     Target, 
-    IMSSummary, ProductionResult, ProductionNationalProductResult, ProductionNationalTotal
+    IMSSummary, ProductionResult, ProductionNationalProductResult, ProductionNationalTotal, ProductionRegionTotal
     , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
@@ -430,7 +430,18 @@ class DashboardQuery:
         # target/actual source.  Region detail pages already use Target plus
         # ProductionResultService in that case; the map must use the same
         # source instead of an older workbook BAKIYE subtotal.
-        production_exists = ProductionResultService.final_upload(filters.year, filters.month) is not None
+        production_upload = ProductionResultService.final_upload(filters.year, filters.month)
+        production_exists = production_upload is not None
+        if production_upload:
+            official_regions = self.session.query(ProductionRegionTotal).filter_by(upload_id=production_upload.id).all()
+            if official_regions:
+                reps_by_region, city_by_region = {}, {}
+                for rep in self.session.query(Representative).filter(Representative.region.isnot(None)).all():
+                    region = str(rep.region).strip().split()[0]
+                    reps_by_region.setdefault(region, set()).add(rep.id)
+                    if rep.city and region not in city_by_region:
+                        city_by_region[region] = rep.city
+                return [SimpleNamespace(region=row.region_code, city=city_by_region.get(str(row.region_code)), unit_target=Decimal(str(row.target_unit or 0)), unit_actual=Decimal(str(row.actual_unit or 0)), tl_target=Decimal(str(row.target_tl or 0)), tl_actual=Decimal(str(row.actual_tl or 0)), representative_count=len(reps_by_region.get(str(row.region_code), set()))) for row in sorted(official_regions, key=lambda item: item.region_code)]
         if target_upload and not production_exists:
             target_rows = self.session.query(IMSRawData).filter(
                 IMSRawData.upload_id == target_upload, IMSRawData.sheet_type == TARGET_TYPE, IMSRawData.territory != "NATIONAL"

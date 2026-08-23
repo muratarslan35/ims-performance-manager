@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, desc
 
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, Product, Representative, Target
+from app.models import IMSRawData, IMSUpload, Product, ProductionRegionProductResult, Representative, Target
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.production_result_service import ProductionResultService
 
@@ -57,8 +57,11 @@ class RegionPerformanceService:
 
     def _official_ims_region_month(self, year, month):
         """Return explicit workbook region subtotal metrics for an IMS month."""
-        if ProductionResultService.final_upload(year, month) is not None:
-            return {}
+        production_upload = ProductionResultService.final_upload(year, month)
+        if production_upload is not None:
+            production_rows = ProductionRegionProductResult.query.filter_by(upload_id=production_upload.id, region_code=self.region_key).all()
+            if production_rows:
+                return {row.product_id: [Decimal(str(row.target_tl or 0)), Decimal(str(row.actual_tl or 0)), True] for row in production_rows}
         upload_id = db.session.query(IMSUpload.id).filter(
             IMSUpload.year == year,
             IMSUpload.month == month,
