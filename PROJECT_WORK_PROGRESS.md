@@ -382,3 +382,30 @@ Issue #69'da acceptance FAIL olduğu için process restart yapılmadı.
 ## Sonraki adım
 
 Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükler. Form tüm kapsam/doğruluk kontrolleri başarılıysa otomatik uygular; aksi halde veri yazmadan eksik satır/eşleşme nedenini gösterir.
+
+---
+
+# 15. 2026-08-23 — Geçici ve dinamik prim simülasyonu
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] `app/services/simulation_service.py`
+  - Simülasyon her hesaplamada en güncel DB verisini salt okunur kullanır.
+  - Sonuç önbelleği ve kalıcı JSON geçmiş kaydı devre dışı bırakıldı.
+  - Ek kutu, dönemin hedef TL/kutu oranıyla ek satış TL'sine çevrilir; hedefler değiştirilmez.
+  - Dinamik sonraki gelişim basamağı, gerekli kutu, ek TL, ürün realizasyonu ve toplam TL realizasyonu hesaplanır.
+- [x] `app/templates/simulation.html`
+  - Sabit ürün eşik etiketleri kaldırıldı.
+  - Ürün tablosuna simüle kutu, simüle TL satış ve realizasyon eklendi.
+  - İki tekrar eden alt tablo tek `Dinamik Satış ve Prim Aksiyonları` tablosunda birleştirildi.
+- [x] Production gerçek veri testi
+  - Murat Arslan / Ocak / Travazol: 11.856,57 + 100 = 11.956,57 kutu.
+  - Dönem fiyatıyla geçici TL katkısı: 11.165,52 ₺.
+  - Toplam TL realizasyonu: %124,48 → %125,18.
+  - Kalıcı history sonucu: 0; sonraki baz hesap tekrar gerçek DB değerinden başladı.
+- [x] Test: `15 passed`; login 200, oturumsuz simülasyon 302, servis `active`, journal warning/error yok.
+- [x] GitHub / production uygulama commit: `c37a5a7`.
+
+## Sonraki adım
+
+Kullanıcı simülasyon ekranında farklı temsilci/ürün kutu senaryolarını görsel olarak doğrulayabilir; hesaplamalar sayfa dışına taşınmaz ve DB'ye yazılmaz.
