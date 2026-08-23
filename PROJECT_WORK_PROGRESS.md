@@ -442,3 +442,23 @@ Kullanıcı simülasyon ekranında farklı temsilci/ürün kutu senaryolarını 
 ## Sonraki adım
 
 Bölgesel analizlerin aynı doğrulanmış veri sözleşmesiyle Türkiye Pazar Analizi ekranında birleştirilmesi.
+
+---
+
+# 17. 2026-08-23 — Temsilci ve bölge rakip ürün kapsamı
+
+## Durum: TAMAMLANDI / PRODUCTION AKTİF
+
+- [x] Temsilci ürün analizindeki ilk 5 rakip sınırı kaldırıldı.
+- [x] Ürün görünümü, temsilcinin bağlı bricklerindeki eksiksiz `AYLIK REKABET KUTU` ürün adlarıyla beslendi; temsilci toplam KPI kaynak önceliği korunarak mevcut tutarlar değiştirilmedi.
+- [x] Ürün eşleştirmesinde Excel ürün grubu, rakip ürün adından önce gelir. Böylece başka bir şirket ürünü adını içeren rakip adları yanlış gruba taşınmaz.
+- [x] Aynı grup-öncelikli çözüm bölge analizine uygulandı.
+- [x] Gerçek DB doğrulaması: Murat Arslan için Travazol 6/6, Monurol 2/2, Acnemix 8/8, Mixovul 3/3, Stiderm 3/3, Brimoder 1/1, Fentivag 6/6 rakip adı ürün ve brick görünümlerinde eşleşti.
+- [x] 11 bölgenin her birinde kaynakta bulunan 29 benzersiz rakip adının 29'u gösterildi; toplam eksik `0`.
+- [x] Hedefli testler `9 passed`; temsilci ve 11 bölge route'u gerçek DB ile HTTP 200; login 200; servis `active`.
+- [x] DB/migration değişikliği yok; veri silinmedi veya yeniden import edilmedi.
+- [x] GitHub / production commitleri: `8b3a88d`, `62cd880`.
+
+## Sonraki adım
+
+Kullanıcı temsilci ürün sekmelerinde 7 ürünün rakip adlarını görsel olarak doğrulayabilir; sonraki geliştirme Türkiye Pazar Analizi toplamlaştırmasıdır.
