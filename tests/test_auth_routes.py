@@ -750,9 +750,35 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "target.balance_label" in html
     assert 'id="mainPrime"' not in html
     assert html.count('id="totalPrime"') == 1
+    assert 'id="quarterPercent"' not in html
     assert "scheduleLiveCalculation" in html
     assert "form.requestSubmit()" in html
     assert 'addEventListener("input"' in html
+    assert "AbortController" in html
+    assert "requestVersion" in html
+    assert "recalculationQueued" not in html
+
+
+def test_simulation_lists_unassigned_representatives_last(app):
+    from app.extensions import db
+    from app.models import Representative
+
+    with app.app_context():
+        db.session.add_all([
+            Representative(rep_code="SIM-NORMAL-Z", rep_name="ZZZ NORMAL TEMSİLCİ", active=True),
+            Representative(
+                rep_code="SIM-UNASSIGNED-A",
+                rep_name="ATANMAMIŞ · 101 İSTANBUL · İSTANBUL BOŞ",
+                active=True,
+            ),
+        ])
+        db.session.commit()
+
+    client = app.test_client()
+    client.post("/login", data={"email": "test@example.com", "password": "password123"})
+    html = client.get("/simulation/").get_data(as_text=True)
+
+    assert html.index("ZZZ NORMAL TEMSİLCİ") < html.index("ATANMAMIŞ · 101 İSTANBUL")
 
 
 def test_representative_detail_renders_dynamic_market_analysis(app):

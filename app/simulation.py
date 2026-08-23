@@ -104,7 +104,13 @@ def _server_error(message, exc):
 @simulation_bp.route("/", methods=["GET"])
 @login_required
 def index():
-    representatives = Representative.query.filter_by(active=True).order_by(Representative.rep_name.asc()).all()
+    representatives = Representative.query.filter_by(active=True).all()
+    representatives.sort(
+        key=lambda representative: (
+            str(representative.rep_name or "").strip().upper().startswith(("ATANMAMIŞ", "ATANMAMIS")),
+            str(representative.rep_name or "").strip().upper(),
+        )
+    )
     products = Product.query.filter_by(is_active=True).order_by(Product.display_order.asc()).all()
     return render_template("simulation.html", representatives=representatives, products=products)
 
