@@ -407,6 +407,8 @@ Kullanıcı IMS Merkezi’ndeki **2. üretim** yükleme formundan dosyayı yükl
 - [x] GitHub / production uygulama commit: `c37a5a7`.
 - [x] Temsilci görünümü sadeleştirmesi (`a9fdb7a`): Yönetici Önerileri ve teknik DB ibareleri kaldırıldı; hedef özeti dört KPI oldu; kalan açık/hedef fazlası dinamik ayrıldı. Hedefli test: `16 passed`, production servis `active`.
 - [x] Canlı simülasyon (`53ae464`): ek kutu/TL girdileri 450 ms gecikmeyle otomatik hesaplanır, devam eden istekte son değişiklik sıraya alınır; Ana Prim tekrar kartı kaldırıldı. Production +386 Monurol testi: ürün %76,83→%90, toplam TL %124,48→%126,60, prim 60.000→62.500 ₺. Test: `16 passed`.
+- [x] Canlı sonuç ve seçim sırası düzeltmesi (`b3bbf71`, `9ec0b9e`): atanmamış/boş temsilciler seçim listesinin sonuna taşındı; tekrar eden Quarter kartı kaldırıldı; eski HTTP yanıtının yeni simülasyonu ezmesi `AbortController` ve istek sürümüyle engellendi.
+- [x] Ek kutunun TL etkisi düzeltildi: delta modunda formun sıfır TL alanı otomatik dönem fiyatlamasını artık bastırmıyor. Production gerçek route testi (Murat Arslan / Ocak / +400 Monurol / +8 Mixovul): gerçekleşen 1.981.806,33 ₺ → 2.017.861,04 ₺, realizasyon %124,48 → %126,75, prim 60.000 ₺ → 62.500 ₺; Monurol %90,48 ve Mixovul %95,71. Test: `25 passed`; servis `active`.
 
 ## Sonraki adım
 
