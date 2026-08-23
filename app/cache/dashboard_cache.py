@@ -34,7 +34,10 @@ class DashboardCache:
     __slots__ = ()
 
     _MAX_ENTRIES: Final[int] = 128
-    _MAX_TTL_SECONDS: Final[int] = DashboardConstants.CACHE_TTL_SHORT
+    # The dashboard payload is period-scoped and invalidated after imports.
+    # Keep it for the advertised medium/default TTL instead of silently
+    # truncating every five-minute cache entry to one minute.
+    _MAX_TTL_SECONDS: Final[int] = DashboardConstants.CACHE_TTL_MEDIUM
     _GLOBAL_KEY_SUFFIX: Final[str] = ":rep_None"
     _REFRESH_WAIT_SECONDS: Final[float] = 30.0
     _store: "OrderedDict[str, tuple[float, Dict[str, Any]]]" = OrderedDict()

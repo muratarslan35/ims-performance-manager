@@ -30,7 +30,10 @@ def test_dashboard_cache_expires_and_invalidates_by_prefix():
         cache.set("dashboard:v3:2026:1:rep_None", {"value": 1}, ttl_seconds=300)
         cache.set("dashboard:v3:2026:2:rep_None", {"value": 2}, ttl_seconds=300)
 
-    with patch("app.cache.dashboard_cache.time.monotonic", return_value=161.0):
+    with patch("app.cache.dashboard_cache.time.monotonic", return_value=399.0):
+        assert cache.get("dashboard:v3:2026:1:rep_None") == {"value": 1}
+
+    with patch("app.cache.dashboard_cache.time.monotonic", return_value=401.0):
         assert cache.get("dashboard:v3:2026:1:rep_None") is None
 
     cache.invalidate_prefix("dashboard:v3:2026")
