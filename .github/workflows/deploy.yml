@@ -5,6 +5,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+    paths-ignore:
+      - "PROJECT_WORK_PROGRESS.md"
   workflow_dispatch:
 
 permissions:
