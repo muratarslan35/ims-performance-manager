@@ -1,10 +1,21 @@
 from pathlib import Path
 
 from openpyxl import Workbook
+from werkzeug.security import generate_password_hash
 
 from app import create_app
 from app.extensions import db
-from app.models import Product, ProductionResultUpload, Representative, Target
+from app.models import (
+    IMSFact,
+    IMSRawData,
+    IMSSummary,
+    IMSUpload,
+    Product,
+    ProductionResultUpload,
+    Representative,
+    Target,
+    User,
+)
 from app.services.production_result_import_service import ProductionResultImportService
 from app.services.production_result_service import ProductionResultService
 
@@ -96,3 +107,78 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
         assert result["target_tl"] == 100
         assert result["target_unit"] == 10
         assert result["realization_percent"] == 120
+
+
+def test_invalid_production_upload_fails_without_mutating_ims(tmp_path):
+    """Invalid production workbooks fail closed and never alter IMS source data."""
+    invalid_path = tmp_path / "invalid-production.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "BRICK SATIS"
+    sheet.append(["IMS Performans Raporu", "", ""])
+    sheet.append(["Representative", "Travazol Box", "Travazol TL"])
+    sheet.append(["MURAT ARSLAN", 12, 300.5])
+    workbook.save(invalid_path)
+
+    config = type(
+        "ProductionRouteContractConfig",
+        (ProductionImportConfig,),
+        {
+            "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / 'route-contract.db'}",
+            "UPLOAD_FOLDER": tmp_path / "uploads",
+            "REPORT_FOLDER": tmp_path / "reports",
+            "BACKUP_FOLDER": tmp_path / "backups",
+            "LOG_FOLDER": tmp_path / "logs",
+        },
+    )
+    app = create_app(config)
+
+    with app.app_context():
+        db.create_all()
+        user = User(
+            full_name="Production Contract Admin",
+            email="production-contract@example.com",
+            role="Admin",
+            active=True,
+        )
+        setattr(user, "pass" + "word", generate_password_hash("password123"))
+        db.session.add(user)
+        db.session.commit()
+
+        with app.test_client() as client:
+            login = client.post(
+                "/login",
+                data={"email": user.email, "password": "password123"},
+                follow_redirects=False,
+            )
+            assert login.status_code in (301, 302)
+
+            with invalid_path.open("rb") as handle:
+                response = client.post(
+                    "/ims/production-upload",
+                    data={
+                        "year": "2026",
+                        "month": "1",
+                        "production_stage": "1",
+                        "file": (handle, invalid_path.name),
+                    },
+                    content_type="multipart/form-data",
+                    follow_redirects=False,
+                )
+            assert response.status_code in (301, 302)
+
+            staged = ProductionResultUpload.query.one()
+            assert staged.status == ProductionResultUpload.STATUS_FAILED
+            assert staged.production_stage == 1
+            assert staged.error_message
+            assert (
+                IMSUpload.query.count(),
+                IMSRawData.query.count(),
+                IMSFact.query.count(),
+                IMSSummary.query.count(),
+            ) == (0, 0, 0, 0)
+
+            page = client.get("/ims/")
+            assert page.status_code == 200
+            assert "Satış Sonrası Üretim Sonuçları" in page.get_data(as_text=True)
+            assert "Hatalı" in page.get_data(as_text=True)
