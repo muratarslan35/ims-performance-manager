@@ -8,71 +8,38 @@
 
 # 1. AKTİF DURUM — BURADAN DEVAM ET
 
-## GitHub / production main
+## Production
 
-- Güncel `main`: **`783a000389c08408e36376f93b9355371c31b569`**
-- Bu SHA PR **#145 — Recycle heavy IMS upload worker after response** merge commitidir.
+- Canlı uygulama kod SHA: **`73c64343f5555db5087b7a4120e64018c2ffeb0a`**
+- Bu SHA PR **#147 — Memoize representative market period reads** merge commitidir.
+- Production workflow: **`32759379739`**
+- Kalıcı deployment evidence: **Issue #148 — IMS production deployment SUCCESS**
 - Production host: `130.162.48.162:8000`
 - Service: `ims-performance-manager.service`
 - Oracle Cloud Frankfurt; yaklaşık 2 CPU / 1 GB RAM / 2 GB swap.
-- SQLite WAL + busy_timeout=30000 korunuyor.
+- SQLite: WAL, `busy_timeout=30000`, integrity OK.
+- Production `/login` health check: **PASS**.
+- Acceptance sonrası gerçek systemd service restartı tamamlandı.
 
-### Çok önemli: #145 kodu henüz canlı service'e geçirilmedi
+> Bu dosyanın daha sonraki yalnız-dokümantasyon commit SHA'sı production kod SHA'sından farklı olabilir. `PROJECT_WORK_PROGRESS.md`-only main push'ları deploy workflow'da `paths-ignore` ile hariç tutulmuştur; böylece checkpoint güncellemesi gereksiz production restart oluşturmaz.
 
-`main` merge oldu fakat production workflow **Issue #146** ile güvenlik kapısında FAIL etti.
+## Şu an açık kritik blocker
 
-- Workflow: `32755810634`
-- Issue: **#146 — IMS production deployment FAILED**
-- Failure service restarttan **önce**, representative performance gate'te oluştu.
-- Bu nedenle Gunicorn post-IMS worker recycle fix'i henüz çalışan production processlerine yüklenmedi.
-- Mevcut production service, kullanıcının manuel restartı sonrası hızlı çalışan önceki runtime ile devam ediyor.
+**Yok.**
 
-## Şu an açık çalışma
-
-Branch: **`agent/representative-market-query-memoization`**
-
-Amaç:
-
-1. Issue #146'da Şubat döneminde ortaya çıkan `31 SELECT > 30` performance-gate failure'ını gerçek sorgu tekrarlarını kaldırarak düzeltmek.
-2. Eşiği yükseltmemek; aynı current upload ID ve brick-scope sorgularını tek market build içinde tekrar tekrar çağırmamak.
-3. PR #145 worker recycle fix'inin acceptance sonrası gerçekten production'a geçmesini sağlamak.
-4. `PROJECT_WORK_PROGRESS.md` güncellemelerinin tek başına gereksiz production deploy tetiklemesini önlemek.
-
-Uygulanan query optimizasyonu:
-
-- `RepresentativeMarketService` optimizer içinde current/previous `(year, month) -> latest upload id` yalnız **service instance/build** boyunca memoize edilir.
-- Aynı `(year, month) -> brick/fallback scope` yalnız **service instance/build** boyunca memoize edilir.
-- Global/process cache değildir; requestler arasında stale veri taşımaz.
-- `build()` başında request-local memo sıfırlanır.
-- aggregate competition / raw brick / exact brick competition aynı aktif upload ve brick scope'u tekrar SELECT etmez.
-- Business data veya hesap semantiği değişmez.
-
-Yeni regresyon testi:
-
-`tests/test_representative_market_query_memoization.py`
-
-- market read path'leri art arda çalıştırılır;
-- aynı current-period `ims_uploads` SELECT'i **1** kez;
-- aynı brick-scope `representative_brick_assignments` SELECT'i **1** kez çalışmak zorundadır.
-
-Deploy workflow değişikliği:
-
-- `pull_request -> main` CI davranışı aynen korunur.
-- `push -> main` içinde yalnız `PROJECT_WORK_PROGRESS.md` değişen push için `paths-ignore` eklendi.
-- Böylece kod PR'ları full CI + production deploy akışından geçmeye devam eder.
-- Gelecekte checkpoint dosyasını güncellemek tek başına gereksiz server deploy/restart oluşturmaz.
+Şubat IMS yüklemelerine devam edilebilir. Tüm IMS tarihçesi bitene kadar final Türkiye Pazar Analizi oluşturulmayacak.
 
 ---
 
-# 2. 24 AĞUSTOS 2026 — ŞUBAT 6. HAFTA PERFORMANS OLAYI
+# 2. 24 AĞUSTOS 2026 — ŞUBAT 6. HAFTA PERFORMANS OLAYI VE ÇÖZÜMÜ
 
 Şubat **6. hafta IMS** yüklendikten sonra:
 
 - login sonrası `/dashboard/` server-side yanıtı yaklaşık **11 saniyeye** çıktı;
 - sayfalar genel olarak ağırlaştı;
 - loglarda 500/traceback yerine uzun request süreleri görüldü;
-- IMS importu aynı Gunicorn web worker içinde pandas/openpyxl ile çalışıyor;
-- worker normalde `max_requests=1000` olana kadar yaşadığı için küçük ~1 GB hostta import sonrası retained heap + swap baskısı oluşabildi.
+- IMS importu aynı Gunicorn web worker içinde pandas/openpyxl ile çalışıyordu;
+- worker `max_requests` süresince yaşamaya devam ettiği için küçük ~1 GB hostta import sonrası retained heap + swap baskısı oluşabildi.
 
 Kullanıcı production'da manuel:
 
@@ -81,65 +48,111 @@ sudo systemctl restart ims-performance-manager.service
 ims-kontrol
 ```
 
-çalıştırdı.
-
-Sonuç:
+çalıştırdı. Sonuç:
 
 - otomatik başlatma: `enabled`
 - çalışma durumu: `active`
-- dashboard tekrar **1 saniyeden daha hızlı** açılmaya başladı.
+- dashboard yeniden **1 saniyeden hızlı** açıldı.
 
-Bu canlı A/B gözlemi, ana yavaşlığın veri hacminin kalıcı DB sorgu maliyetinden değil import sonrası worker memory/swap pressure'dan kaynaklandığını güçlü biçimde doğruladı.
+Bu canlı A/B gözlemi, ana yavaşlığın Şubat verisinin kalıcı DB sorgu maliyetinden değil import sonrası worker memory/swap pressure'dan kaynaklandığını güçlü biçimde doğruladı.
 
----
-
-# 3. PR #145 — WORKER RECYCLE FIX
+## Kalıcı çözüm — PR #145
 
 PR #145 merge SHA:
 
 `783a000389c08408e36376f93b9355371c31b569`
 
-Gunicorn `post_request` hook:
+Gunicorn `post_request` koruması:
 
 - yalnız `POST /ims/upload` isteğini işleyen worker response tamamlandıktan sonra graceful recycle edilir;
 - diğer worker hizmet vermeye devam eder;
-- import tamamlandıktan sonra pandas/openpyxl retained heap'i yeni worker process ile bırakılır;
-- normal dashboard/login requestleri worker recycle etmez.
+- pandas/openpyxl importundan kalan process heap yeni worker ile bırakılır;
+- normal dashboard/login requestleri worker recycle etmez;
+- DB transaction, import lock, WAL ve IMS business semantiği değişmez.
 
 PR #145 final CI:
 
-- **307 collected**
-- **305 passed**
-- **2 skipped**
-- **0 failed**
+- 307 collected
+- 305 passed
+- 2 skipped
+- 0 failed
 - 50-upload / 5,000,000 competition-row scale probe PASS.
 
-İlk PR CI'de PC Codex döneminden kalmış eski production-upload testi `PENDING_VALIDATION` beklediği için failure vermişti. Güncel route artık request içinde production workbook'u doğrular; invalid source `FAILED` olur. Eski assertion açıkça superseded olarak işaretlendi ve güncel contract için `test_invalid_production_upload_fails_without_mutating_ims` eklendi. Bu test invalid production workbook'un `FAILED/Hatalı` olduğunu ve IMS tablolarını değiştirmediğini doğrular.
+PR #145'in ilk production denemesi Issue #146'da representative query budget nedeniyle service restarttan önce güvenli biçimde durdu: `31 SELECT > 30`. Bu failure artık **Issue #148 SUCCESS tarafından superseded** edilmiştir.
+
+## Query tekrarlarının kaldırılması — PR #147
+
+PR #147:
+
+- `(year, month) -> latest IMS upload id` aynı `RepresentativeMarketService` build'i içinde memoize edilir;
+- `(year, month) -> brick/fallback scope` aynı build içinde memoize edilir;
+- memo yalnız service instance/build ömründedir; process/global stale cache değildir;
+- `build()` başlangıcında sıfırlanır;
+- aggregate competition / raw brick / exact brick competition aynı aktif upload ve brick scope'u tekrar SELECT etmez;
+- performans eşiği gevşetilmemiştir; gerçek redundant sorgular kaldırılmıştır.
+
+Regression testi:
+
+`tests/test_representative_market_query_memoization.py`
+
+- aynı current-period upload sorgusu bir kez;
+- aynı representative brick-scope sorgusu bir kez çalışmak zorundadır.
+
+PR #147 final CI run: **#406 / `32759129475`**
+
+- **308 collected**
+- **306 passed**
+- **2 skipped**
+- **0 failed**
+- 50-upload scale probe PASS
+- synthetic rows: 5,000,000 competition / 1,404,550 raw / 158,200 fact
+- competition six-upload query: ~0.0109 s
+- latest fact: ~0.0014 s
+- raw brick: ~0.0001 s
+- integrity OK.
 
 ---
 
-# 4. ISSUE #146 PRODUCTION GATE EVIDENCE
+# 3. PRODUCTION SUCCESS — ISSUE #148
 
 Commit:
 
-`783a000389c08408e36376f93b9355371c31b569`
+`73c64343f5555db5087b7a4120e64018c2ffeb0a`
 
 Workflow:
 
-`32755810634`
+`32759379739`
 
-SQLite / capacity:
+Result: **SUCCESS**
+
+## Representative performance — 2026/02
+
+Issue #146 öncesi → Issue #148 sonrası:
+
+- max total SELECT: **31 → 26** (`threshold=30`)
+- warm SELECT: **25 → 20**
+- max competition SELECT: **4 / threshold 4**
+- unscoped competition SELECT: **0**
+- cold max/p95: **0.6698 s**
+- warm max/p95: **0.1296 s**
+- result: **PASS**
+
+Bu nedenle query eşiği yükseltilmeden gerçek tekrar sorguları kaldırılmıştır.
+
+## SQLite / capacity
 
 - journal mode: WAL
 - busy_timeout: 30000
 - integrity: OK
 - active DB: **250,650,624 bytes**
-- disk free: **36,689,305,600 bytes**
-- +49 IMS estimated active growth: **3,307,748,307 bytes**
-- capacity result: **PASS**
-- all bounded query plans/indexes: PASS
+- disk free at capacity gate: **36,187,828,224 bytes**
+- +49 IMS estimated active DB growth: **3,307,748,307 bytes**
+- storage projection: **PASS**
+- blocking: `[]`
+- bütün gerekli kompozit indeksler mevcut
+- competition/fact/raw/summary/target query planları bounded/indexed: PASS.
 
-Current row counts at #146:
+Current production row counts:
 
 - `ims_competition_data`: **386,300**
 - `ims_facts`: **10,472**
@@ -148,31 +161,72 @@ Current row counts at #146:
 - `ims_uploads`: **4**
 - `targets`: **1,582**
 
-Representative performance at 2026/02:
+## Şubat 6. hafta IMS acceptance
 
-- cold max/p95: **0.6239 s**
-- warm max/p95: **0.1815 s**
-- max competition SELECT: **4 / threshold 4**
-- unscoped competition SELECT: **0**
-- max total SELECT: **31 / threshold 30 → FAIL**
+Baseline workbook:
 
-Yani gerçek latency iyi; failure yalnız sorgu-budget regressiyonudur. Eşik yükseltilmeyecek. Tek build içindeki tekrar upload/scope sorguları memoize edilerek yeniden <=30 hedefleniyor.
+`Tayfun-1_6.Hafta_Subat_Brick_Analizi_.xlsx`
+
+- year/month/week: `2026 / 2 / 6`
+- source records: **28,098**
+- stored source records: **28,098**
+- competition: **99,756**
+- fact: **3,164**
+- summary: **791**
+- target: **791**
+- official aggregates: **168**
+- sheets: **16/16 verified**
+- representatives: **113**
+- regions: **11**
+- products: **7**
+- vacancies: **11**
+- zero metrics: **3,197** (gerçek veri olarak korunuyor)
+- unresolved representative/product: **0**
+- invalid metric / row error / duplicate conflict / conflicting match: **0**
+- national/region target + actual consistency: **PASS**
+- manager report: **PASS**
+- IMS acceptance: **PASS**
+- IMS acceptance extras: **PASS**
+
+Şubat 6. hafta toplamları:
+
+- summary TL: **18,480,007.44**
+- summary UNIT: **192,446**
+- target TL: **134,284,969.30908635**
+- target UNIT: **1,196,980**
+
+## Restart / health / worker recycle
+
+Production workflow acceptance kapılarının tamamı geçtikten sonra managed systemd service yeniden kuruldu/restart edildi ve `/login` health **PASS** oldu. Böylece PR #145'te eklenen **post-IMS upload worker recycle artık canlı production runtime'dadır**.
+
+Bundan sonraki büyük IMS uploadlarında upload'u yapan worker response sonrasında yenilenir; kullanıcının her IMS'ten sonra manuel `systemctl restart` yapması gerekmemelidir.
+
+## Backup retention
+
+Issue #148 retention sonucu PASS:
+
+- yeni doğrulanmış rollback stamp: `20260824-175726`
+- retained managed: current IPM predeploy + competition-backfill + users predeploy
+- retained integrity: IPM `ok`, users `ok`
+
+Not: backup klasöründe PC Codex döneminden kalan birkaç `.bak` adlı unmanaged güvenlik kopyası retention aracı tarafından korunmuştur. Bunlar current deployment blocker değildir; otomatik managed rollback setinden ayrıdır. Silme kapsamı ayrıca değiştirilmeden tutulmuştur.
 
 ---
 
-# 5. KULLANICININ AKTİF IMS ÇALIŞMA PLANI
+# 4. KULLANICININ AKTİF IMS ÇALIŞMA PLANI
 
 - Ocak IMS yüklemeleri tamamlandı.
 - Şubat IMS yüklemelerine geçildi.
-- 6. hafta Şubat IMS production DB'ye yüklendi.
+- 6. hafta Şubat IMS production DB'ye doğrulanmış şekilde yüklendi.
+- Sonraki Şubat IMS dosyaları sırayla yüklenecek.
 - Tüm IMS dosyaları tamamlanana kadar Türkiye Pazar Analizi final olarak kurulmayacak.
 - Tüm IMS tarihçesi yüklendikten sonra Türkiye Pazar Analizi toplu üretilecek.
-- Analiz hedef kırılımları: Türkiye → bölge → il → brick; ürün grubu → rakip ürün; aylık / 3 aylık / 6 aylık / yıllık.
+- Hedef kırılımlar: Türkiye → bölge → il → brick; ürün grubu → rakip ürün; aylık / 3 aylık / 6 aylık / yıllık.
 - Gerçek `0` data olarak korunacak; eksik veri sıfır diye uydurulmayacak.
 
 ---
 
-# 6. PC CODEX İLE 23–24 AĞUSTOS'TA GELEN ÖNEMLİ İLERLEMELER
+# 5. PC CODEX İLE 23–24 AĞUSTOS'TA GELEN ÖNEMLİ İLERLEMELER
 
 - 1. ve 2. üretim Excel entegrasyonu kuruldu.
 - Production TL/kutu hedef ve gerçekleşmeleri kaynak olarak ayrı saklanıyor.
@@ -189,7 +243,7 @@ Yani gerçek latency iyi; failure yalnız sorgu-budget regressiyonudur. Eşik y�
 
 ---
 
-# 7. DEĞİŞTİRİLMEYECEK BUSINESS KURALLARI
+# 6. DEĞİŞTİRİLMEYECEK BUSINESS KURALLARI
 
 - Production satış kaynağı önceliği: **P2 > P1 > IMS**.
 - P1 geldiğinde IMS beklenmez; P1 IMS'in yerini hemen alır.
@@ -212,7 +266,7 @@ Yani gerçek latency iyi; failure yalnız sorgu-budget regressiyonudur. Eşik y�
 
 ---
 
-# 8. BOS / BOŞ / VACANCY KURALLARI
+# 7. BOS / BOŞ / VACANCY KURALLARI
 
 - `BOS != BOŞ`.
 - `DİYARBAKIR BOS != DİYARBAKIR BOŞ`; ayrı stable Representative ID.
@@ -225,7 +279,7 @@ Yani gerçek latency iyi; failure yalnız sorgu-budget regressiyonudur. Eşik y�
 
 ---
 
-# 9. IMS IMPORTER SÖZLEŞMESİ
+# 8. IMS IMPORTER SÖZLEŞMESİ
 
 Importer tek dosya adına, sheet sırasına veya sabit header satırına bağlı olmayacak.
 
@@ -240,7 +294,7 @@ Importer tek dosya adına, sheet sırasına veya sabit header satırına bağlı
 
 ---
 
-# 10. SQLITE / UZUN DÖNEM DB KARARI
+# 9. SQLITE / UZUN DÖNEM DB KARARI
 
 **Tek `ipm.db` ile devam et. Şimdilik yıllık SQLite shard oluşturma.**
 
@@ -260,34 +314,33 @@ Bu büyüklükler tek başına SQLite limiti değildir; karar p95 latency, WAL c
 
 ---
 
-# 11. PERFORMANS MİLESTONE'LARI
+# 10. PERFORMANS MİLESTONE'LARI
 
 ## Temsilci ekranı
 
-PR #130 / #132 / #135 sonrası production referansı:
+Eski 25–30 saniyelik temsilci detail problemi daha önce giderildi. Şubat 6. hafta son production sonucu (#148):
 
-- cold yaklaşık <0.5 s;
-- warm yaklaşık <0.2 s;
-- max competition SELECT ~3;
-- max total SELECT ~28;
-- unscoped competition SELECT 0.
-
-Şubat 6. hafta sonrası Issue #146 latency halen iyi, fakat total query count 31'e çıktı; current branch bunun tekrarlarını kaldırıyor.
+- cold max/p95: **0.6698 s**
+- warm max/p95: **0.1296 s**
+- max competition SELECT: **4**
+- max total SELECT: **26**
+- unscoped competition SELECT: **0**
+- result: **PASS**.
 
 ## SQLite scale
 
-PR #141:
+PR #141 ve sonraki gate'ler:
 
 - WAL / busy_timeout korunuyor;
 - connection cache / mmap / temp_store optimizasyonları;
 - post-import `PRAGMA optimize` + `wal_checkpoint(PASSIVE)`;
 - otomatik full VACUUM yok;
-- +49 IMS capacity gate;
-- synthetic 50-upload probe ~5M competition row seviyesinde bounded indexed queries PASS.
+- +49 IMS capacity gate PASS;
+- synthetic 50-upload / 5M competition probe bounded indexed queries PASS.
 
 ---
 
-# 12. ORACLE ALTYAPI KARARI
+# 11. ORACLE ALTYAPI KARARI
 
 Yeni Always Free Ampere A1 denendi:
 
@@ -300,15 +353,10 @@ Yeni Always Free Ampere A1 denendi:
 
 ---
 
-# 13. SONRAKİ ADIM
+# 12. SONRAKİ ADIM
 
-1. `agent/representative-market-query-memoization` için full CI çalıştır.
-2. Yeni query memoization regression testi PASS olmalı.
-3. 50-upload scale probe PASS olmalı.
-4. Full CI green ise PR aç/merge et.
-5. Main production workflow'da representative performance gate'in **<=30 total SELECT** olduğunu doğrula.
-6. SQLite runtime/capacity/IMS acceptance/representative performance bütün gate'leri PASS olmadan service restart kabul etme.
-7. Production SUCCESS evidence Issue oluşmalı ve `/login` health PASS olmalı.
-8. Sonra worker recycle fix'inin artık canlı main/service içinde olduğunu doğrula.
-9. `PROJECT_WORK_PROGRESS.md` dosyasını final merge SHA + workflow + Issue + query sayılarıyla güncelle. Progress-only main update artık deploy tetiklememeli.
-10. Ardından Şubat IMS yüklemelerine devam et.
+1. Şubat IMS yüklemelerine sırayla devam et.
+2. Her IMS uploadundan sonra service genel performansını gözle; worker recycle nedeniyle manuel restart normalde gerekmemeli.
+3. Yeni IMS'de manager report / import acceptance warning çıkarsa dosyayı tahminle kabul etme; blocker'ı kaynaktan çöz.
+4. Önemli her kod/veri/deploy değişikliğinde bu `PROJECT_WORK_PROGRESS.md` dosyasını güncelle.
+5. Tüm IMS tarihçesi tamamlanınca bütün dönemleri kullanan Türkiye Pazar Analizi'ni topluca tasarla ve kur.
