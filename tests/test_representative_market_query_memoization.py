@@ -101,9 +101,10 @@ def test_market_build_paths_reuse_current_upload_and_scope_queries(tmp_path):
                 upload_id=upload.id,
                 year=2026,
                 month=2,
+                quarter="Q1",
                 sheet_name="BRICK SATIS",
                 sheet_type="brick_sales",
-                row_number=1,
+                source_row=1,
                 representative="MEMO TEMSILCI",
                 representative_id=representative.id,
                 product="Travazol",
@@ -111,6 +112,7 @@ def test_market_build_paths_reuse_current_upload_and_scope_queries(tmp_path):
                 brick="BRICK A",
                 unit=10,
                 tl=100,
+                raw_json="{}",
             )
         )
         db.session.commit()
