@@ -54,10 +54,41 @@ def install_representative_market_query_optimizer():
 
     original_workbook_fallback = RepresentativeMarketService._brick_competition_rows_from_workbook
     original_build = RepresentativeMarketService.build
+    original_latest_upload_id = RepresentativeMarketService._latest_upload_id
+
+    def latest_upload_id(self, year, month):
+        """Resolve one period upload once per market-service build.
+
+        A representative market build asks for the active upload from several
+        independent read paths (aggregate competition, brick raw rows and exact
+        brick competition).  The value cannot change inside one request/build,
+        so repeating the same indexed SELECT only adds latency/query pressure.
+        Keep the memo strictly on this service instance: no cross-request or
+        cross-period state is shared.
+        """
+        key = (int(year), int(month))
+        cache = getattr(self, "_rep_query_upload_id_cache", None)
+        if cache is None:
+            cache = {}
+            self._rep_query_upload_id_cache = cache
+        if key not in cache:
+            cache[key] = original_latest_upload_id(*key)
+        return cache[key]
 
     def scope_values(self, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
+        key = (year, month)
+        cache = getattr(self, "_rep_query_scope_values_cache", None)
+        if cache is None:
+            cache = {}
+            self._rep_query_scope_values_cache = cache
+        cached = cache.get(key)
+        if cached is not None:
+            # Return copies so downstream normalization cannot mutate the
+            # request-local memo used by another path in this same build.
+            return set(cached[0]), set(cached[1])
+
         rows = db.session.query(RepresentativeBrickAssignment.brick).filter(
             RepresentativeBrickAssignment.representative_id == self.representative.id,
             RepresentativeBrickAssignment.year == year,
@@ -71,12 +102,13 @@ def install_representative_market_query_optimizer():
             for value in (self.representative.territory, self.representative.city, self.representative.region)
             if str(value or "").strip()
         }
+        cache[key] = (set(brick_values), set(fallback_values))
         return brick_values, fallback_values
 
     def competition_rows(self, brick_keys, fallback_keys, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
-        upload_id = self._latest_upload_id(year, month)
+        upload_id = latest_upload_id(self, year, month)
         if upload_id is None:
             return None, []
 
@@ -134,7 +166,7 @@ def install_representative_market_query_optimizer():
     def brick_raw_rows(self, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
-        upload_id = self._latest_upload_id(year, month)
+        upload_id = latest_upload_id(self, year, month)
         brick_values, _ = scope_values(self, year, month)
         brick_keys = {_key(value) for value in brick_values if _key(value)}
         brick_labels = _candidate_set(brick_values)
@@ -164,7 +196,7 @@ def install_representative_market_query_optimizer():
         return upload_id, RepresentativeAnalysisCache.get_or_compute(cache_key, load, ttl_seconds=45)
 
     def brick_competition_rows(self, brick_keys):
-        upload_id = self._latest_upload_id(self.year, self.month)
+        upload_id = latest_upload_id(self, self.year, self.month)
         brick_values, _ = scope_values(self, self.year, self.month)
         brick_labels = _candidate_set(brick_values)
         if upload_id is None or not brick_keys:
@@ -204,6 +236,12 @@ def install_representative_market_query_optimizer():
         return upload_id, RepresentativeAnalysisCache.get_or_compute(cache_key, load, ttl_seconds=60)
 
     def build_with_batched_production(self):
+        # Clear only request/build-local memo state. A service instance may be
+        # reused explicitly in tests or internal callers, and a later build
+        # must re-resolve period identity rather than carrying stale state.
+        self._rep_query_upload_id_cache = {}
+        self._rep_query_scope_values_cache = {}
+
         # RepresentativeMarketService renders seven products and historically
         # called effective_product() once per row. Resolve the whole period once
         # and expose it only inside this execution context, so concurrent
