@@ -29,6 +29,55 @@ def test_runtime_uses_threaded_workers_without_preloading_sqlite_state():
     assert 2 <= config.workers <= 4
 
 
+def test_heavy_ims_upload_recycles_only_the_serving_worker_after_response():
+    config = _load_config()
+
+    class Log:
+        def __init__(self):
+            self.messages = []
+
+        def info(self, message):
+            self.messages.append(message)
+
+    class Worker:
+        def __init__(self):
+            self.alive = True
+            self.log = Log()
+
+    worker = Worker()
+    config.post_request(
+        worker,
+        req=None,
+        environ={"PATH_INFO": "/ims/upload", "REQUEST_METHOD": "POST"},
+        resp=None,
+    )
+
+    assert worker.alive is False
+    assert worker.log.messages
+
+
+def test_normal_requests_do_not_force_worker_recycle():
+    config = _load_config()
+
+    class Log:
+        def info(self, message):
+            raise AssertionError("normal request should not log a forced recycle")
+
+    class Worker:
+        alive = True
+        log = Log()
+
+    worker = Worker()
+    config.post_request(
+        worker,
+        req=None,
+        environ={"PATH_INFO": "/dashboard/", "REQUEST_METHOD": "GET"},
+        resp=None,
+    )
+
+    assert worker.alive is True
+
+
 def test_deploy_restarts_only_after_acceptance_checks():
     workflow = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.yml"
