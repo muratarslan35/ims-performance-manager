@@ -65,12 +65,6 @@ def _competition_signature_from_frame(frame):
     if not explicit_competition and len(productish) < 18:
         return None
 
-    exact_values = set(values)
-    has_monthly_scope = bool(exact_values & {"AYLIK", "MONTHLY", "MONTHLY REPORT", "AYLIK RAPOR"})
-    has_weekly_scope = bool(exact_values & {"HAFTALIK", "WEEKLY", "WEEKLY REPORT", "HAFTALIK RAPOR"})
-    monthly_matrix = has_monthly_scope or (
-        "IAM BRICK" in text and any(token in text for token in ("1 TTS ISMI", "2 TTS ISMI"))
-    )
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
     has_value = any(token in text for token in ("VALUES REPORT", "VALUE REPORT", " CIRO ", " TUTAR ", " TL ", "| TL"))
@@ -131,6 +125,12 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
         return named
     if not has_rep and len(productish) < 18:
         return named
+    exact_values = set(values)
+    has_monthly_scope = bool(exact_values & {"AYLIK", "MONTHLY", "MONTHLY REPORT", "AYLIK RAPOR"})
+    has_weekly_scope = bool(exact_values & {"HAFTALIK", "WEEKLY", "WEEKLY REPORT", "HAFTALIK RAPOR"})
+    monthly_matrix = has_monthly_scope or (
+        "IAM BRICK" in text and any(token in text for token in ("1 TTS ISMI", "2 TTS ISMI"))
+    )
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
     has_value = any(token in text for token in ("VALUES REPORT", "VALUE REPORT", " CIRO ", " TUTAR ", " TL ", "| TL"))
@@ -214,11 +214,23 @@ def install_semantic_import_discovery():
         return supported
 
     def type_by_content(self, sheet_name):
-        # Content wins even when a legacy name happens to be recognised.
+        named = self.classify_sheet(sheet_name)
         semantic = _competition_type_for_loaded_sheet(self, sheet_name)
-        if semantic is not None:
+        if named is None:
+            if semantic is None:
+                return original_get_type(self, sheet_name)
             return semantic.value
-        return original_get_type(self, sheet_name)
+        # The legacy mapper's generic fallback is WEEKLY_UNITS. Override only
+        # that weak default when loaded cells prove a monthly matrix. Explicit
+        # PP/TL/KUTU name hints remain stable unless a future classifier can
+        # prove a conflict strongly enough to fail closed.
+        if named == SheetType.WEEKLY_UNITS and semantic in {
+            SheetType.MONTHLY_COMPETITION_UNITS,
+            SheetType.MONTHLY_COMPETITION_VALUE,
+            SheetType.MARKET_REFERENCE,
+        }:
+            return semantic.value
+        return named.value
 
     CompetitionImportService.get_supported_sheets = supported_by_content
     CompetitionImportService.get_sheet_type = type_by_content
