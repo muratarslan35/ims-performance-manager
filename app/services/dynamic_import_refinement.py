@@ -156,7 +156,8 @@ def refined_competition_structure(service, sheet_name):
     best = None
     explicit_dimension_tokens = (
         "IAM BRICK", "BRICK", "TERRITOR", "SUBTERRITOR", "TTS ISMI",
-        "TEMSILCI", "REPRESENTATIVE", "BOLGE", "REGION", "NATIONAL",
+        "TEMSILCI", "TEMSİLCİ", "REPRESENTATIVE", "BOLGE", "BÖLGE", "REGION", "NATIONAL",
+        "TTS İSMİ",
     )
 
     for row in range(1, min(max_row, 80) + 1):
@@ -277,7 +278,7 @@ def refined_competition_structure(service, sheet_name):
     }
     territory_semantic = [
         item for item in ranked
-        if any(token in dimension_labels[item[0]] for token in ("TERRITOR", "BOLGE", "REGION"))
+        if any(token in dimension_labels[item[0]] for token in ("TERRITOR", "BOLGE", "BÖLGE", "REGION"))
         and not any(token in dimension_labels[item[0]] for token in ("SUBTERRITOR", "BRICK"))
     ]
     territory_pool = territory_semantic or ranked
@@ -300,9 +301,9 @@ def refined_competition_structure(service, sheet_name):
     ]
     representative_semantic = [
         item for item in sub_candidates
-        if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE"))
+        if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TTS İSMİ", "TEMSILCI", "TEMSİLCİ", "REPRESENTATIVE"))
     ]
-    sub_pool = brick_semantic or subterritory_semantic or representative_semantic or sub_candidates
+    sub_pool = brick_semantic or representative_semantic or subterritory_semantic or sub_candidates
     subterritory_column = (
         max(sub_pool, key=lambda item: (item[2], -item[1]))[0]
         if sub_pool else territory_column
