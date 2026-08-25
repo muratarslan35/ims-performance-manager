@@ -164,9 +164,15 @@ def refined_competition_structure(service, sheet_name):
         normalized = [service._normalize_turkish_text(value) for value in values]
         product_columns = {}
         numeric_coverage = 0
+        textual_header_labels = 0
         for column, value in enumerate(values, start=1):
             text = str(value).strip() if value is not None else ""
-            if not text or service._is_meta_col(text):
+            normalized_text = service._normalize_turkish_text(text)
+            if (
+                not text
+                or normalized_text in {"-", "—", "N/A", "NA", "NULL"}
+                or service._is_meta_col(text)
+            ):
                 continue
             numeric_below = 0
             for data_row in range(row + 1, min(max_row, row + 250) + 1):
@@ -176,6 +182,16 @@ def refined_competition_structure(service, sheet_name):
             if numeric_below:
                 product_columns[column] = text
                 numeric_coverage += numeric_below
+                if not re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", text):
+                    textual_header_labels += 1
+
+        if product_columns and (
+            textual_header_labels / len(product_columns) < 0.60
+        ):
+            # A body row can have numeric values below it, but it is not a
+            # product header unless most candidate labels are textual.
+            product_columns = {}
+            numeric_coverage = 0
 
         dimension_candidates = []
         for column, label in enumerate(normalized, start=1):
