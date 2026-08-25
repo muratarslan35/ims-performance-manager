@@ -268,3 +268,29 @@ def test_content_classification_overrides_misleading_legacy_competition_name():
     install_semantic_import_discovery()
 
     assert service.get_sheet_type(sheet.title) == SheetType.MONTHLY_COMPETITION_UNITS.value
+
+
+def test_competition_metric_uses_semantic_type_not_misleading_sheet_name():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "MARKET REPORT"
+    sheet.append(["BÖLGE", "BRICK", "RIVAL"])
+    sheet.append(["101", "0001", 125.5])
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    records = service._parse_sheet_records({
+        "sheet_name": sheet.title,
+        "sheet_type": SheetType.MONTHLY_COMPETITION_VALUE.value,
+        "period_type": "MONTHLY",
+        "year": 2026,
+        "month": 2,
+        "data_start_row": 2,
+        "data_end_row": 2,
+        "territory_column": 1,
+        "subterritory_column": 2,
+        "product_groups": {"MARKET": [("RIVAL", 3)]},
+    })
+
+    assert len(records) == 1
+    assert records[0]["metric_type"] == "TL"
+    assert records[0]["metric_value"] == 125.5
