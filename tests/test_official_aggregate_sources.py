@@ -128,6 +128,29 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         self.assertAlmostEqual(region[0]["target_unit"], 100.5, places=8)
         self.assertNotAlmostEqual(national[0]["target_unit"], self.target.unit_target, places=2)
 
+    def test_compact_region_subtotal_rows_are_preserved_and_reconciled(self):
+        workbook = self._workbook()
+        # Week-7 style pivot export: region subtotal label remains in column B
+        # while the hierarchy cell in column A is blank. Representative rows
+        # below it still keep their region in column A.
+        workbook["BAKİYE"].iat[3, 0] = None
+        workbook["TTS HAFTALIK ÇIKIŞLARI"].iat[3, 0] = None
+
+        service = IMSImportService(Path(self.temp_dir.name) / "official.xlsx")
+        service.upload = self.upload
+        service.workbook = workbook
+        result = persist_official_aggregates(service, 2038, 1)
+        db.session.commit()
+
+        self.assertTrue(result["reconciliation"]["passed"])
+        self.assertEqual(result["reconciliation"]["targets"]["region_count"], 1)
+        self.assertEqual(result["reconciliation"]["actuals"]["region_count"], 1)
+        region = OfficialAggregateService.product_totals(2038, 1, "901")
+        self.assertEqual(len(region), 1)
+        self.assertAlmostEqual(region[0]["target_tl"], 1005.0, places=8)
+        self.assertAlmostEqual(region[0]["actual_tl"], 250.0, places=8)
+        self.assertAlmostEqual(region[0]["actual_unit"], 17.25, places=8)
+
     def test_dashboard_uses_official_box_target_and_direct_box_actual(self):
         service = IMSImportService(Path(self.temp_dir.name) / "official.xlsx")
         service.upload = self.upload
