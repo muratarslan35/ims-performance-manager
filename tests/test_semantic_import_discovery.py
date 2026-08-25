@@ -219,3 +219,12 @@ def test_competition_acceptance_canonicalizes_physical_grain_not_business_values
     baseline = _fingerprint(_competition_semantic_rows(legacy))
     assert _fingerprint(_competition_semantic_rows(semantic)) == baseline
     assert _fingerprint(_competition_semantic_rows(changed)) != baseline
+
+
+def test_competition_product_text_cannot_override_upload_month():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["AUGUST MARKET PRODUCT", "WEEKLY BRAND NAME"])
+    service = CompetitionImportService(upload_id=1, year=2026, month=2, week_number=7)
+    period_type, year, month = service._discover_metadata(sheet)
+    assert (year, month) == (2026, 2)

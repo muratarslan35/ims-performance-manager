@@ -195,7 +195,7 @@ class CompetitionImportService:
         period_type = PeriodType.MONTHLY.value
         # The upload period is authoritative; product labels can contain numbers
         # that look like years (for example, 2076) and must not override it.
-        year, month = self.year, None
+        year, month = self.year, self.month
 
         for r in range(1, 6):
             for c in range(1, (sheet.max_column or 1) + 1):

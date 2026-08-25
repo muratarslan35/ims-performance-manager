@@ -77,12 +77,18 @@ def _period_query(model, upload):
     return model.query.filter_by(year=upload.year, month=upload.month)
 
 
-def _competition_semantic_rows(query):
+def _competition_semantic_rows(query, upload=None):
     """Canonical business totals independent of physical source row/grain labels."""
     grouped = {}
     for row in query.all():
+        scoped_year = upload.year if upload is not None else row.year
+        scoped_month = upload.month if upload is not None else row.month
+        scoped_week = (
+            upload.week_number if upload is not None and row.period_type == "weekly"
+            else (None if upload is not None else row.week_number)
+        )
         key = (
-            row.period_type, row.year, row.month, row.week_number,
+            row.period_type, scoped_year, scoped_month, scoped_week,
             row.territory, row.product_group, row.product_name, row.metric_type,
             bool(row.is_subtotal), bool(row.is_grand_total),
         )
@@ -110,7 +116,7 @@ def _snapshot(upload):
     targets = _sorted_rows(_rows(Target, _period_query(Target, upload)))
     competition_query = CompetitionData.query.filter_by(upload_id=upload.id)
     competition = _sorted_rows(_rows(CompetitionData, competition_query))
-    competition_semantic = _competition_semantic_rows(competition_query)
+    competition_semantic = _competition_semantic_rows(competition_query, upload)
     spread = _sorted_rows(_rows(
         IMSRawData,
         IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_brick_spread_master"),
