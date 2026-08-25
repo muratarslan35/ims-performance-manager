@@ -446,7 +446,14 @@ class CompetitionImportService:
 
             for col_idx, (product_group, prod_name) in col_to_group_and_prod.items():
                 cell_val = self._get_cell_value(sheet, r, col_idx)
-                if cell_val is None or str(cell_val).strip() == "":
+                normalized_cell = str(cell_val).strip()
+                if (
+                    cell_val is None
+                    or normalized_cell == ""
+                    or normalized_cell.upper() in {"-", "—", "–", "N/A", "NA", "NULL"}
+                ):
+                    # Workbook placeholders carry no observation. Preserve the
+                    # distinction between missing and the real numeric value 0.
                     self.parse_statistics["blank_cells"] += 1
                     continue
 
