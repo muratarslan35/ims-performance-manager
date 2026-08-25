@@ -305,7 +305,14 @@ def refined_competition_structure(service, sheet_name):
     for row in range(header_row + 1, max_row + 1):
         territory = service._get_cell_value(sheet, row, territory_column)
         subterritory = service._get_cell_value(sheet, row, subterritory_column)
-        if str(territory or "").strip() or str(subterritory or "").strip():
+        has_dimension = bool(
+            str(territory or "").strip() or str(subterritory or "").strip()
+        )
+        has_numeric_metric = any(
+            isinstance(service._get_cell_value(sheet, row, column), (int, float))
+            for column in product_columns
+        )
+        if has_dimension and has_numeric_metric:
             data_start = row
             break
     if data_start is None:
