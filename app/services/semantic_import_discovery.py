@@ -36,7 +36,7 @@ def _competition_signature_from_frame(frame):
     has_geo = any(token in text for token in (
         "IAM BRICK", "BRICK", "TERRITOR", "BOLGE", "REGION",
     ))
-    if not (has_rep and has_geo):
+    if not has_geo:
         return None
     # Dedicated target/realisation layouts are not competition merely because
     # they also carry representatives and monetary/unit columns.
@@ -62,7 +62,7 @@ def _competition_signature_from_frame(frame):
             continue
         productish.add(value)
     explicit_competition = any(token in text for token in ("REKABET", "RAKIP", "RAKİP", "COMPETITOR"))
-    if not explicit_competition and len(productish) < 12:
+    if not explicit_competition and len(productish) < 18:
         return None
 
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
@@ -101,18 +101,29 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
         return None
     has_rep = any(token in text for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE", "1 TTS ISMI", "2 TTS ISMI"))
     has_geo = any(token in text for token in ("IAM BRICK", "BRICK", "TERRITOR", "BOLGE", "REGION"))
-    if not (has_rep and has_geo) or any(token in text for token in ("HEDEF", "TARGET", "REALIZASYON", "REALİZASYON")):
+    if not has_geo or any(token in text for token in ("HEDEF", "TARGET", "REALIZASYON", "REALİZASYON")):
         return None
     explicit = any(token in text for token in ("REKABET", "RAKIP", "RAKİP", "COMPETITOR"))
-    # Count distinct header-like labels; broad market sheets have materially
-    # more semantic product labels than the seven-product company sales view.
-    headerish = {
-        value for value in values
-        if len(value) >= 3
-        and not re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", value)
-        and not any(marker in value for marker in ("PIVOTTABLE", "GROUPTABLE"))
+    generic = {
+        "TTS", "ISMI", "TEMSILCI", "REPRESENTATIVE", "IAM", "BRICK", "TERRITORIES",
+        "TERRITORY", "SUBTERRITORIES", "SUBTERRITORY", "BOLGE", "REGION", "TL",
+        "KUTU", "UNIT", "UNITS", "VALUES", "VALUE", "REPORT", "PP", "PAZAR", "PAYI",
+        "MARKET", "SHARE", "TOPLAM", "TOTAL", "GRAND", "CIKIS", "ÇIKIŞ", "AYLIK",
+        "HAFTALIK", "MONTH", "WEEK", "NATIONAL",
     }
-    if not explicit and len(headerish) < 18:
+    productish = set()
+    for value in values:
+        tokens = set(re.findall(r"[A-Z0-9ÇĞİÖŞÜ]+", value))
+        if not tokens or tokens <= generic:
+            continue
+        if len(value) < 3 or any(marker in value for marker in ("PIVOTTABLE", "GROUPTABLE")):
+            continue
+        productish.add(value)
+    # Representative headers are useful but not mandatory for NATIONAL/brick
+    # market matrices. Breadth supplies the authority evidence in that shape.
+    if not explicit and len(productish) < 18:
+        return None
+    if not has_rep and len(productish) < 18:
         return None
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
