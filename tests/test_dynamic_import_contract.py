@@ -195,11 +195,11 @@ def test_weekly_source_prefers_resolved_representative_semantics_over_brick_matr
     _temp, _app, upload, _product, _rep = dynamic_env
     weekly = _shifted_semantic_workbook()["CURRENT PERIOD SALES RENAMED AND MOVED"].copy()
     brick = weekly.copy()
-    header_row = 20
-    brick.iloc[header_row, 0] = "IAM BRICK"
-    brick.iloc[header_row + 2, 0] = "BRICK-001"
-    brick.iloc[header_row + 3, 0] = "BRICK-002"
-    brick.iloc[header_row + 4, 0] = "BRICK-003"
+    section_row = 19
+    brick.iloc[section_row, 0] = "IAM BRICK"
+    brick.iloc[section_row + 2, 0] = "BRICK-001"
+    brick.iloc[section_row + 3, 0] = "BRICK-002"
+    brick.iloc[section_row + 4, 0] = "BRICK-003"
 
     service = IMSImportService("unused.xlsx")
     service.upload = upload
