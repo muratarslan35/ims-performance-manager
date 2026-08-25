@@ -131,6 +131,7 @@ jobs:
           venv/bin/python verify_representative_performance.py
 
           echo '--- ISOLATED IMS ACCEPTANCE / FINGERPRINT ---'
+          acceptance_started=$SECONDS
           acceptance_db="/tmp/ims-acceptance-${stamp}.db"
           cleanup_acceptance() { rm -f "$acceptance_db" "$acceptance_db-wal" "$acceptance_db-shm"; }
           trap cleanup_acceptance EXIT
@@ -141,6 +142,12 @@ jobs:
             venv/bin/python verify_ims_acceptance_extras.py
           cleanup_acceptance
           trap - EXIT
+
+          acceptance_seconds=$((SECONDS - acceptance_started))
+          echo '--- PRODUCTION RESOURCE SAFETY GATE ---'
+          venv/bin/python production_resource_gate.py \
+            --database instance/ipm.db \
+            --acceptance-seconds "$acceptance_seconds"
 
           echo '--- PRODUCTION CAPACITY SNAPSHOT ---'
           echo "CPU_COUNT=$(nproc)"
@@ -193,7 +200,7 @@ jobs:
           if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-deploy.log"
           if [ -f "$evidence_file" ]; then
-            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||DB_CAPACITY\||REPRESENTATIVE_PERFORMANCE\||BACKUP_RETENTION\||Production health check|PRODUCTION CAPACITY|PROJECTED DATABASE CAPACITY|CPU_COUNT|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 180 || true)
+            evidence=$(grep -E 'IMS_ACCEPTANCE\||IMS_ACCEPTANCE_EXTRA\||SQLITE_RUNTIME\||DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\||BACKUP_RETENTION\||Production health check|PRODUCTION CAPACITY|PROJECTED DATABASE CAPACITY|CPU_COUNT|MASTER_SNAPSHOT|TARGET_AUDIT|RUNTIME' "$evidence_file" | tail -n 180 || true)
           else
             evidence="Production SSH/deploy log was not created."
           fi
