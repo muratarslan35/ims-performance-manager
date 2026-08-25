@@ -228,3 +228,28 @@ def test_competition_product_text_cannot_override_upload_month():
     service = CompetitionImportService(upload_id=1, year=2026, month=2, week_number=7)
     period_type, year, month = service._discover_metadata(sheet)
     assert (year, month) == (2026, 2)
+
+
+def test_competition_product_text_cannot_override_semantic_period_type():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "renamed monthly matrix"
+    products = [f"RIVAL {index}" for index in range(1, 19)]
+    sheet.append(["BÖLGE", "BRICK", *products])
+    sheet.append(["101", "0001", *([10] * len(products))])
+    sheet.append(["101", "0002", *([20] * len(products))])
+    service = CompetitionImportService(upload_id=1, year=2026, month=2, week_number=7)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=3)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("WEEKLY", 2026, 2)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(
+            service,
+            "get_sheet_type",
+            return_value=SheetType.MONTHLY_COMPETITION_UNITS.value,
+        ),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["period_type"] == "MONTHLY"
