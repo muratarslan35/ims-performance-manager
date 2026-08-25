@@ -661,6 +661,7 @@ class CompetitionImportService:
         model_instances = []
 
         existing_values: Dict[Tuple[Any, ...], float] = {}
+        existing_sources: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
         existing_rows = db.session.query(
             CompetitionData.upload_id,
             CompetitionData.sheet_name,
@@ -712,14 +713,22 @@ class CompetitionImportService:
             metric_value = float(norm.get("metric_value") or 0.0)
             if biz_key in existing_values:
                 if abs(existing_values[biz_key] - metric_value) > 1e-9:
+                    first_source = existing_sources.get(biz_key, {})
                     raise ValueError(
                         "Aynı rekabet veri anahtarında çelişen değerler bulundu: "
-                        f"key={biz_key}, first={existing_values[biz_key]}, second={metric_value}"
+                        f"key={biz_key}, first={existing_values[biz_key]}, second={metric_value}, "
+                        f"first_source={first_source}, "
+                        f"second_source={{'row': {norm.get('source_row')!r}, "
+                        f"'column': {norm.get('source_column')!r}}}"
                     )
                 duplicate_count += 1
                 continue
 
             existing_values[biz_key] = metric_value
+            existing_sources[biz_key] = {
+                "row": norm.get("source_row"),
+                "column": norm.get("source_column"),
+            }
 
             model_obj = self.map_record_to_model(norm, sheet_name)
             model_instances.append(model_obj)
