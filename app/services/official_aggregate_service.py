@@ -14,7 +14,14 @@ def _aggregate_key(location,representative):
     rep=_norm(representative); loc=_norm(location)
     if rep=="NATIONAL": return "NATIONAL"
     code=_region_code(location)
-    return code if code and rep==loc else None
+    if code and rep==loc:return code
+    # Some IMS pivot exports render region subtotal rows in compact form:
+    # column A is blank while column B carries the deterministic region label
+    # (for example "101 ISTANBUL"). Person rows still carry their region in
+    # column A, so this fallback cannot turn an ordinary representative row
+    # into a region subtotal.
+    rep_code=_region_code(representative)
+    return rep_code if not loc and rep_code else None
 def _upsert(importer,year,month,sheet_name,sheet_type,territory,representative,product_id,unit,tl,metadata):
     record=IMSRawData.query.filter_by(upload_id=importer.upload.id,sheet_type=sheet_type,product_id=product_id,territory=territory).first()
     values=dict(year=year,month=month,quarter=importer.quarter_for(month),week_number=importer.upload.week_number,sheet_name=sheet_name,sheet_type=sheet_type,source_row=0,product_id=product_id,representative=representative,territory=territory,unit=float(unit or 0),tl=float(tl or 0),raw_json=json.dumps(metadata,ensure_ascii=False))
