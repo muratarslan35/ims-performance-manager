@@ -375,7 +375,16 @@ def refined_competition_structure(service, sheet_name):
     # section, not the worksheet data. Scan to the last row carrying a numeric
     # observation in a discovered product column so later regions are retained.
     data_end = data_start
+    relevant_columns = set(product_columns) | {territory_column, subterritory_column}
     for row in range(data_start, max_row + 1):
+        # A completely blank semantic row terminates the current table. Unlike
+        # TOPLAM/SUBTOTAL rows it carries neither dimensions nor observations,
+        # so distant worksheet formatting/formulas cannot inflate the scan.
+        if not any(
+            str(service._get_cell_value(sheet, row, column) or "").strip()
+            for column in relevant_columns
+        ):
+            break
         has_dimension = any(
             str(service._get_cell_value(sheet, row, column) or "").strip()
             for column in (territory_column, subterritory_column)
