@@ -24,7 +24,7 @@ def test_renamed_competition_sheet_is_discovered_from_content():
 
 
 def test_broad_brick_market_without_representative_header_is_competition():
-    products = [f"RAKIP URUN {index}" for index in range(1, 14)]
+    products = [f"RAKIP URUN {index}" for index in range(1, 21)]
     frame = pd.DataFrame([
         ["Aylık Kutu Raporu", None, *products],
         ["BÖLGE", "IAM BRICK", *(["KUTU"] * len(products))],
