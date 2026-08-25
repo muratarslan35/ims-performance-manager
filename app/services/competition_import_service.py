@@ -689,7 +689,13 @@ class CompetitionImportService:
             CompetitionData.metric_type,
             CompetitionData.metric_value,
         ).filter_by(
-            upload_id=self.upload_id
+            upload_id=self.upload_id,
+            # Sheet name is part of the duplicate business key. Reading every
+            # row accumulated by earlier sheets makes a workbook import
+            # quadratic in both memory and time on the 1 GB production host.
+            # Stored names are normalized by map_record_to_model(), so this
+            # bounded predicate preserves the exact duplicate/conflict rule.
+            sheet_name=norm_sheet_name,
         ).all()
 
         for row in existing_rows:
@@ -785,29 +791,30 @@ class CompetitionImportService:
             for s_name in supported_sheets:
                 self.validate_sheet_structure(s_name)
 
-            structures = {s: self._parse_sheet_structure(s) for s in supported_sheets}
-
-            records_by_sheet = {
-                s_name: self._parse_sheet_records(struct_info)
-                for s_name, struct_info in structures.items()
-            }
-            if self.invalid_cells:
-                raise ValueError(
-                    "Rekabet sayfalarında geçersiz metrik hücreleri bulundu: "
-                    f"count={len(self.invalid_cells)}, sample={self.invalid_cells[:10]}"
-                )
-
             sheet_statistics = []
             total_inserted = 0
             total_duplicates = 0
             total_invalid = 0
 
-            for s_name, sheet_records in records_by_sheet.items():
+            # Parse, validate and persist one semantic sheet at a time. Keeping
+            # every sheet's expanded cell records and ORM objects alive at once
+            # caused swap pressure and production acceptance timeouts. Atomicity
+            # is unchanged: the outer IMS transaction still commits only after
+            # the complete workbook reconciles successfully.
+            for s_name in supported_sheets:
+                struct_info = self._parse_sheet_structure(s_name)
+                sheet_records = self._parse_sheet_records(struct_info)
+                if self.invalid_cells:
+                    raise ValueError(
+                        "Rekabet sayfalarında geçersiz metrik hücreleri bulundu: "
+                        f"count={len(self.invalid_cells)}, sample={self.invalid_cells[:10]}"
+                    )
                 stats = self.import_records(sheet_records, s_name)
                 sheet_statistics.append(stats)
                 total_inserted += stats["inserted"]
                 total_duplicates += stats["duplicates"]
                 total_invalid += stats["invalid"]
+                del sheet_records
 
             if total_invalid or total_inserted + total_duplicates != self.parse_statistics["numeric_cells"]:
                 raise ValueError(
