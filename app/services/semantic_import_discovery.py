@@ -62,7 +62,7 @@ def _competition_signature_from_frame(frame):
             continue
         productish.add(value)
     explicit_competition = any(token in text for token in ("REKABET", "RAKIP", "RAKİP", "COMPETITOR"))
-    if not explicit_competition and len(productish) < 12:
+    if not explicit_competition and len(productish) < 18:
         return None
 
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
@@ -121,9 +121,9 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
         productish.add(value)
     # Representative headers are useful but not mandatory for NATIONAL/brick
     # market matrices. Breadth supplies the authority evidence in that shape.
-    if not explicit and len(productish) < 12:
+    if not explicit and len(productish) < 18:
         return None
-    if not has_rep and len(productish) < 12:
+    if not has_rep and len(productish) < 18:
         return None
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
