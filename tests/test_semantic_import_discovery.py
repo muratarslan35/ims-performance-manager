@@ -321,6 +321,7 @@ def test_competition_data_end_continues_after_intermediate_subtotal():
 
     assert structure["data_start_row"] == 2
     assert structure["data_end_row"] == 4
+    assert structure["data_rows"] == [2, 3, 4]
 
 
 def test_competition_data_end_ignores_distant_numeric_without_dimensions():
@@ -346,3 +347,4 @@ def test_competition_data_end_ignores_distant_numeric_without_dimensions():
         structure = refined_competition_structure(service, sheet.title)
 
     assert structure["data_end_row"] == 2
+    assert structure["data_rows"] == [2]
