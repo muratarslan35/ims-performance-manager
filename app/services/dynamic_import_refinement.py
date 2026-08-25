@@ -371,7 +371,16 @@ def refined_competition_structure(service, sheet_name):
             break
     if data_start is None:
         raise ValueError(f"{original}: rekabet veri başlangıcı bulunamadı.")
-    data_end = service._find_data_end(sheet, data_start)
+    # Subtotals can occur between region blocks. They delimit a logical
+    # section, not the worksheet data. Scan to the last row carrying a numeric
+    # observation in a discovered product column so later regions are retained.
+    data_end = data_start
+    for row in range(data_start, max_row + 1):
+        if any(
+            isinstance(service._get_cell_value(sheet, row, column), (int, float))
+            for column in product_columns
+        ):
+            data_end = row
 
     original_groups = service._extract_product_groups(sheet, header_row)
     dimension_set = {item[0] for item in ranked}
