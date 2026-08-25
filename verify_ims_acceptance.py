@@ -105,6 +105,40 @@ def _competition_semantic_rows(query, upload=None):
     ])
 
 
+def _competition_diagnostics(query, upload=None):
+    """Read-only migration diagnostics at progressively stable business grains."""
+    rows = query.all()
+    variants = {
+        "without_territory": lambda row: (
+            row.period_type, upload.year if upload else row.year,
+            upload.month if upload else row.month,
+            row.product_group, row.product_name, row.metric_type,
+            bool(row.is_subtotal), bool(row.is_grand_total),
+        ),
+        "without_period": lambda row: (
+            row.territory, row.product_group, row.product_name, row.metric_type,
+            bool(row.is_subtotal), bool(row.is_grand_total),
+        ),
+        "product_metric": lambda row: (
+            row.product_group, row.product_name, row.metric_type,
+            bool(row.is_subtotal), bool(row.is_grand_total),
+        ),
+        "metric": lambda row: (row.metric_type,),
+    }
+    result = {}
+    for name, key_fn in variants.items():
+        grouped = {}
+        for row in rows:
+            key = key_fn(row)
+            grouped[key] = grouped.get(key, Decimal("0")) + Decimal(str(row.metric_value))
+        canonical = _sorted_rows([
+            {"key": list(key), "metric_total": str(value)}
+            for key, value in grouped.items()
+        ])
+        result[name] = {"count": len(canonical), "sha256": _fingerprint(canonical)}
+    return result
+
+
 def _snapshot(upload):
     # FACT rows are versioned by upload_id. Comparing the whole month would
     # incorrectly mix baseline and acceptance uploads in the isolated DB and
@@ -117,6 +151,7 @@ def _snapshot(upload):
     competition_query = CompetitionData.query.filter_by(upload_id=upload.id)
     competition = _sorted_rows(_rows(CompetitionData, competition_query))
     competition_semantic = _competition_semantic_rows(competition_query, upload)
+    competition_diagnostics = _competition_diagnostics(competition_query, upload)
     spread = _sorted_rows(_rows(
         IMSRawData,
         IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_brick_spread_master"),
@@ -138,6 +173,7 @@ def _snapshot(upload):
             "count": len(competition_semantic),
             "sha256": _fingerprint(competition_semantic),
         },
+        "competition_diagnostics": competition_diagnostics,
         "official_brick_spread": {"count": len(spread), "sha256": _fingerprint(spread)},
         "official_aggregates": {"count": len(official_aggregates), "sha256": _fingerprint(official_aggregates)},
         "summary_unit": sum(float(row.unit or 0) for row in _period_query(IMSSummary, upload).all()),
@@ -219,11 +255,13 @@ def main():
 
         for domain in ("fact", "summary", "target", "official_brick_spread", "official_aggregates"):
             _assert_equal(domain, before[domain], after[domain])
-        _assert_equal(
-            "competition semantic business totals",
-            before["competition_semantic"],
-            after["competition_semantic"],
-        )
+        if before["competition_semantic"] != after["competition_semantic"]:
+            raise AssertionError(
+                "competition semantic business totals fingerprint/count değişti: "
+                f"before={before['competition_semantic']}, after={after['competition_semantic']}, "
+                f"diagnostics_before={before['competition_diagnostics']}, "
+                f"diagnostics_after={after['competition_diagnostics']}"
+            )
         for total in ("summary_unit", "summary_tl", "target_unit", "target_tl"):
             if abs(float(before[total]) - float(after[total])) > 1e-6:
                 raise AssertionError(f"{total} değişti: before={before[total]}, after={after[total]}")
