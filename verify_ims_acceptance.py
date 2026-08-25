@@ -136,6 +136,8 @@ def _competition_diagnostics(query, upload=None):
             for key, value in grouped.items()
         ])
         result[name] = {"count": len(canonical), "sha256": _fingerprint(canonical)}
+        if name in {"product_metric", "metric"}:
+            result[name]["entries"] = canonical
     return result
 
 
@@ -181,6 +183,34 @@ def _snapshot(upload):
         "target_unit": sum(float(row.unit_target or 0) for row in _period_query(Target, upload).all()),
         "target_tl": sum(float(row.tl_target or 0) for row in _period_query(Target, upload).all()),
     }
+
+
+def _competition_delta(before, after, limit=30):
+    """Return bounded product/metric evidence without weakening acceptance."""
+    result = {}
+    for grain in ("product_metric", "metric"):
+        before_rows = {
+            json.dumps(row["key"], ensure_ascii=False, sort_keys=True): Decimal(row["metric_total"])
+            for row in before[grain].get("entries", [])
+        }
+        after_rows = {
+            json.dumps(row["key"], ensure_ascii=False, sort_keys=True): Decimal(row["metric_total"])
+            for row in after[grain].get("entries", [])
+        }
+        keys = sorted(set(before_rows) | set(after_rows))
+        changes = []
+        for key in keys:
+            old = before_rows.get(key)
+            new = after_rows.get(key)
+            if old == new:
+                continue
+            changes.append({
+                "key": json.loads(key), "before": None if old is None else str(old),
+                "after": None if new is None else str(new),
+                "delta": str((new or Decimal("0")) - (old or Decimal("0"))),
+            })
+        result[grain] = changes[:limit]
+    return result
 
 
 def _source_path(app, upload):
@@ -259,8 +289,7 @@ def main():
             raise AssertionError(
                 "competition semantic business totals fingerprint/count değişti: "
                 f"before={before['competition_semantic']}, after={after['competition_semantic']}, "
-                f"diagnostics_before={before['competition_diagnostics']}, "
-                f"diagnostics_after={after['competition_diagnostics']}"
+                f"delta={_competition_delta(before['competition_diagnostics'], after['competition_diagnostics'])}"
             )
         for total in ("summary_unit", "summary_tl", "target_unit", "target_tl"):
             if abs(float(before[total]) - float(after[total])) > 1e-6:
