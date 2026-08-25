@@ -29,7 +29,7 @@ def _competition_signature_from_frame(frame):
     """Return preflight competition type or None using strong content evidence."""
     values, text = _frame_text(frame)
     if not values:
-        return named
+        return None
     has_rep = any(token in text for token in (
         "TTS ISMI", "TEMSILCI", "REPRESENTATIVE", "1 TTS ISMI", "2 TTS ISMI",
     ))
@@ -214,6 +214,7 @@ def install_semantic_import_discovery():
         return supported
 
     def type_by_content(self, sheet_name):
+        from app.services.competition_import_service import SheetType
         named = self.classify_sheet(sheet_name)
         semantic = _competition_type_for_loaded_sheet(self, sheet_name)
         if named is None:
