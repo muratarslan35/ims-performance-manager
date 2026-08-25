@@ -149,7 +149,17 @@ def refined_competition_structure(service, sheet_name):
         raise ValueError(f"Sayfa bulunamadı: '{sheet_name}'")
     original = actual_map[norm_target]
     sheet = service._workbook[original]
-    period_type, year, month = service._discover_metadata(sheet)
+    _metadata_period_type, year, month = service._discover_metadata(sheet)
+    sheet_type = service.get_sheet_type(original)
+    # Reporting cadence is a property of the semantically classified data
+    # matrix, never of arbitrary title/product cells. Product names such as
+    # "WEEKLY BRAND" must not turn a monthly competition matrix into weekly.
+    from app.services.competition_import_service import PeriodType, SheetType
+    period_type = (
+        PeriodType.WEEKLY.value
+        if sheet_type in {SheetType.WEEKLY_UNITS.value, SheetType.WEEKLY_VALUE.value}
+        else PeriodType.MONTHLY.value
+    )
 
     max_row = sheet.max_row or 0
     max_col = sheet.max_column or 0
@@ -380,7 +390,7 @@ def refined_competition_structure(service, sheet_name):
 
     return {
         "sheet_name": original,
-        "sheet_type": service.get_sheet_type(original),
+        "sheet_type": sheet_type,
         "period_type": period_type,
         "year": year,
         "month": month,
