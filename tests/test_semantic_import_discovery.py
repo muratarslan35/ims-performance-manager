@@ -321,3 +321,28 @@ def test_competition_data_end_continues_after_intermediate_subtotal():
 
     assert structure["data_start_row"] == 2
     assert structure["data_end_row"] == 4
+
+
+def test_competition_data_end_ignores_distant_numeric_without_dimensions():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "bounded market matrix"
+    products = [f"RIVAL {index}" for index in range(1, 19)]
+    sheet.append(["BÖLGE", "BRICK", *products])
+    sheet.append(["101", "0001", *([10] * len(products))])
+    sheet.cell(5000, 3, 999)
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=3)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("MONTHLY", 2026, 2)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(
+            service,
+            "get_sheet_type",
+            return_value=SheetType.MONTHLY_COMPETITION_UNITS.value,
+        ),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["data_end_row"] == 2
