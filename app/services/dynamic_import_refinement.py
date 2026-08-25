@@ -252,11 +252,37 @@ def refined_competition_structure(service, sheet_name):
     ]
     if not ranked:
         raise ValueError(f"{original}: rekabet dimension kolonları bulunamadı.")
-    territory_column = max(ranked, key=lambda item: (item[1], -item[2]))[0]
+
+    dimension_labels = {
+        column: service._normalize_turkish_text(
+            service._get_cell_value(sheet, header_row, column)
+        )
+        for column, _territory_score, _sub_score in ranked
+    }
+    territory_semantic = [
+        item for item in ranked
+        if any(token in dimension_labels[item[0]] for token in ("TERRITOR", "BOLGE", "REGION"))
+        and not any(token in dimension_labels[item[0]] for token in ("SUBTERRITOR", "BRICK"))
+    ]
+    territory_pool = territory_semantic or ranked
+    territory_column = max(
+        territory_pool,
+        key=lambda item: (item[1], -item[2]),
+    )[0]
+
     sub_candidates = [item for item in ranked if item[0] != territory_column]
+    finest_geo = [
+        item for item in sub_candidates
+        if any(token in dimension_labels[item[0]] for token in ("SUBTERRITOR", "IAM BRICK", "BRICK"))
+    ]
+    representative_semantic = [
+        item for item in sub_candidates
+        if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE"))
+    ]
+    sub_pool = finest_geo or representative_semantic or sub_candidates
     subterritory_column = (
-        max(sub_candidates, key=lambda item: (item[2], -item[1]))[0]
-        if sub_candidates else territory_column
+        max(sub_pool, key=lambda item: (item[2], -item[1]))[0]
+        if sub_pool else territory_column
     )
 
     data_start = None

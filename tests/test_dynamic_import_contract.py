@@ -228,15 +228,18 @@ def test_competition_header_and_dimension_positions_can_move(dynamic_env):
     sheet.cell(row=25, column=1, value="RAKIP A")
     sheet.cell(row=25, column=2, value="TERRITORY")
     sheet.cell(row=25, column=3, value="RAKIP B")
-    sheet.cell(row=25, column=4, value="SUBTERRITORY")
+    sheet.cell(row=25, column=4, value="TTS ISMI")
+    sheet.cell(row=25, column=5, value="IAM BRICK")
     sheet.cell(row=26, column=1, value=10)
     sheet.cell(row=26, column=2, value="901 DIYARBAKIR")
     sheet.cell(row=26, column=3, value=20)
     sheet.cell(row=26, column=4, value="DYNAMIC TEST REP")
+    sheet.cell(row=26, column=5, value="DIYARBAKIR MERKEZ")
     sheet.cell(row=27, column=1, value=30)
     sheet.cell(row=27, column=2, value="901 DIYARBAKIR")
     sheet.cell(row=27, column=3, value=40)
     sheet.cell(row=27, column=4, value="OTHER REP")
+    sheet.cell(row=27, column=5, value="DIYARBAKIR BATI")
     workbook.save(file_path)
 
     service = CompetitionImportService(
@@ -255,6 +258,6 @@ def test_competition_header_and_dimension_positions_can_move(dynamic_env):
 
     assert structure["header_row"] == 25
     assert structure["territory_column"] == 2
-    assert structure["subterritory_column"] == 4
+    assert structure["subterritory_column"] == 5
     assert set(structure["product_columns"]) == {1, 3}
     assert structure["data_start_row"] == 26
