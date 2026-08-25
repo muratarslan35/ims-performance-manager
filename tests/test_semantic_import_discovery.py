@@ -150,3 +150,25 @@ def test_turkish_representative_dimension_beats_parent_subterritory():
 
     assert structure["territory_column"] == 1
     assert structure["subterritory_column"] == 3
+
+
+def test_unlabeled_finer_dimension_is_inferred_from_content_grain():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "content grain matrix"
+    products = [f"RIVAL {index}" for index in range(1, 21)]
+    sheet.append(["BÖLGE", "SUBTERRITORIES", "WORK AREA", *products])
+    sheet.append(["101 ISTANBUL", "308", "AREA A", *([0] * len(products))])
+    sheet.append(["101 ISTANBUL", "308", "AREA B", *([40] * len(products))])
+
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=4)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("monthly", 2026, 2)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(service, "get_sheet_type", return_value="monthly_competition_units"),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["subterritory_column"] == 3
