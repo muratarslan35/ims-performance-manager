@@ -197,9 +197,9 @@ def test_weekly_source_prefers_resolved_representative_semantics_over_brick_matr
     brick = weekly.copy()
     section_row = 19
     brick.iloc[section_row, 0] = "IAM BRICK"
-    brick.iloc[section_row + 2, 0] = "BRICK-001"
-    brick.iloc[section_row + 3, 0] = "BRICK-002"
-    brick.iloc[section_row + 4, 0] = "BRICK-003"
+    brick.iloc[section_row + 2, 0] = "DYNAMIC TEST REP"
+    brick.iloc[section_row + 3, 0] = "DYNAMIC TEST REP"
+    brick.iloc[section_row + 4, 0] = "DYNAMIC TEST REP"
 
     service = IMSImportService("unused.xlsx")
     service.upload = upload
