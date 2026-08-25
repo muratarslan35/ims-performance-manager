@@ -228,7 +228,7 @@ def refined_competition_structure(service, sheet_name):
                     inferred.append((score, column))
             inferred.sort(reverse=True)
             dimension_candidates.extend(
-                column for _score, column in inferred[:4]
+                column for _score, column in inferred
                 if column not in dimension_candidates
             )
 
