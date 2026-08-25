@@ -121,6 +121,7 @@ def _snapshot(upload):
             IMSRawData.upload_id == upload.id,
             IMSRawData.sheet_type.in_(("official_target_aggregate", "official_actual_aggregate")),
         ),
+        extra_excluded=("sheet_name", "source_row", "raw_json"),
     ))
     return {
         "fact": {"count": len(facts), "sha256": _fingerprint(facts)},
