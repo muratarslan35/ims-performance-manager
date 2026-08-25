@@ -5,6 +5,7 @@ from openpyxl import Workbook
 
 from app.services.alias_service import AliasService
 from app.services.competition_import_service import CompetitionImportService
+from app.services.dynamic_import_refinement import refined_competition_structure
 from app.services.semantic_import_discovery import (
     _competition_signature_from_frame,
     install_semantic_import_discovery,
@@ -104,3 +105,26 @@ def test_competition_placeholders_are_missing_but_numeric_zero_is_preserved():
         "invalid_cells": 0,
     }
     assert service.invalid_cells == []
+
+
+def test_competition_structure_prefers_brick_over_parent_subterritory():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "renamed units matrix"
+    products = [f"RIVAL {index}" for index in range(1, 21)]
+    sheet.append(["BÖLGE", "SUBTERRITORIES", "IAM BRICK", *products])
+    sheet.append(["101 ISTANBUL", "308", "308001 KADIKOY", *([0] * len(products))])
+    sheet.append(["101 ISTANBUL", "308", "308002 USKUDAR", *([40] * len(products))])
+
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=4)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("monthly", 2026, 2)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(service, "get_sheet_type", return_value="monthly_competition_units"),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["territory_column"] == 1
+    assert structure["subterritory_column"] == 3
