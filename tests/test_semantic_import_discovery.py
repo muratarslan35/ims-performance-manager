@@ -23,6 +23,16 @@ def test_renamed_competition_sheet_is_discovered_from_content():
     assert _competition_signature_from_frame(frame) == "competition_tl"
 
 
+def test_broad_brick_market_without_representative_header_is_competition():
+    products = [f"RAKIP URUN {index}" for index in range(1, 14)]
+    frame = pd.DataFrame([
+        ["Aylık Kutu Raporu", None, *products],
+        ["BÖLGE", "IAM BRICK", *(["KUTU"] * len(products))],
+        ["101", "KADIKOY MERKEZ", *range(1, len(products) + 1)],
+    ])
+    assert _competition_signature_from_frame(frame) == "competition_box"
+
+
 def test_small_company_sales_sheet_is_not_guessed_as_competition():
     frame = pd.DataFrame([
         ["BÖLGE", "TTS ISMI", "TRAVAZOL TL", "MONUROL TL"],
