@@ -1,10 +1,117 @@
 # IMS Performance Manager — Kanonik Çalışma / Devir Kaydı
 
-> Son güncelleme: **25 Ağustos 2026 (Europe/Istanbul)**  
+> Son güncelleme: **26 Ağustos 2026 (Europe/Istanbul)**  
 > Repo: `muratarslan35/ims-performance-manager`  
 > Bu dosya PC Codex, mobil ChatGPT ve sonraki çalışma oturumları için **tek güncel checkpoint** olarak kullanılmalıdır.
 
 ---
+
+# 0. 26 AĞUSTOS 2026 — PC CODEX KESİN DEVAM NOKTASI
+
+Bu bölüm aşağıdaki eski kayıtların üzerindedir; çelişki halinde bu bölüm esas alınır.
+
+# IMS Performance Manager — PC Codex Devir Noktası
+
+Tarih: 25 Ağustos 2026 (Europe/Istanbul)
+
+## Git durumu
+
+- Repo: `muratarslan35/ims-performance-manager`
+- Güncel GitHub main: `9637f6877ed2a9fd5beaa390cccc140c62004b6d`
+- Bu commit PR #206 merge sonucudur.
+- Paket içindeki `ims-performance-manager-all.bundle` bütün branch/ref geçmişini içerir ve `git bundle verify` PASS olmuştur.
+
+## Uygulanan son değişiklikler
+
+- Rekabet importer tüm sheet kayıtlarını aynı anda RAM'de tutmak yerine sheet-bazlı işler.
+- Duplicate lookup yalnız business key'in parçası olan mevcut normalized sheet ile sınırlıdır.
+- Production restart öncesi CPU load, available RAM, swap, disk, inode, DB/WAL boyutu ve acceptance süresi fail-closed ölçülür.
+- Business kuralları, atomik transaction, conflict davranışı ve P2 > P1 > IMS önceliği değiştirilmedi.
+
+## Production kanıtı
+
+- Workflow #475 / run `32874274592` full suite ve 50-upload scale probe PASS.
+- İlk deploy denemesi production representative performance gate FAIL; restart olmadı.
+- Failed-job rerun'da sunucu büyük ölçüde normale döndü:
+  - 7/8 cold ölçüm yaklaşık 0.4–1.2 saniye;
+  - ilk cold ölçüm 7.2739 saniye;
+  - p95 mevcut küçük örneklem hesabında max ile aynı olduğu için 5 saniye eşiğini aştı;
+  - max 8 saniye eşiği aşılmadı;
+  - warm p95 yaklaşık 0.2971 saniye;
+  - SELECT sayısı 26, competition SELECT 4, unscoped 0.
+- Acceptance adımına geçilmedi; production service restart edilmedi.
+- Issue #208 ve #209 kalıcı FAILED evidence içerir.
+
+## Yerel test kanıtı
+
+Temiz worktree güncel main'den oluşturuldu ve ayrı `.venv` içinde full suite çalıştırıldı:
+
+- 326 passed
+- 2 skipped
+- 1 failed
+- süre: 91.23 saniye
+
+Tek hata:
+
+`tests/test_sqlite_scale_guard.py::test_capacity_audit_projects_49_uploads_and_rejects_full_scans`
+
+Bu testin ayrıntılı `result["blocking"]` alanını yazdırarak gerçek nedeni doğrula. Test sentetik WAL DB kuruyor; CI aynı committe PASS olduğu için PC ortamı/SQLite davranışı ayrıştırılmadan test veya gate gevşetilmemeli.
+
+## PC'de geri yükleme
+
+```bash
+git clone ims-performance-manager-all.bundle ims-performance-manager
+cd ims-performance-manager
+git remote set-url origin https://github.com/muratarslan35/ims-performance-manager.git
+git fetch origin --prune
+git switch main
+git merge --ff-only origin/main
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt pytest
+APP_ENV=testing SECRET_KEY=local-test-secret DATABASE_URL=sqlite:////tmp/ims-local-full.db \
+  .venv/bin/python -m pytest tests/ -q
+.venv/bin/python scripts/sqlite_scale_probe.py \
+  --uploads 50 --competition-per-upload 100000 \
+  --raw-per-upload 28091 --facts-per-upload 3164 \
+  --max-query-seconds 3.0
+```
+
+## Kesin devam sırası
+
+1. Yerel tek scale-guard hatasının `blocking` nedenini kanıtla ve deterministik düzelt.
+2. Production performance ölçümünde ilk-run host/cache etkisini ayrı warmup ölçümüyle ayır; threshold yükseltme.
+3. Timeout/cancel sonrasında uzakta kalan acceptance süreçlerini güvenli biçimde tespit/temizle ve geçici acceptance DB retention ekle.
+4. Yerel full suite PASS ve 50-upload scale PASS olmadan push/PR yapma.
+5. GitHub full CI PASS olmadan merge etme.
+6. Production acceptance + resource gate + health PASS olmadan restart/tamamlandı iddiası verme.
+7. Sonuçta `PROJECT_WORK_PROGRESS.md` dosyasını güncelle.
+
+## Değiştirilmeyecek kurallar
+
+- P2 > P1 > IMS ve product-level fallback.
+- Gerçek 0 korunur; blank ile karıştırılmaz.
+- NATIONAL/region official aggregates kişi toplamıyla değiştirilmez.
+- Official Brick Spread side-channel masterdır, FACT değildir.
+- BOS != BOŞ; BOSTANCI vacancy değildir; ambiguity'de tahmin yoktur.
+- SQLite WAL, busy_timeout=30000, single-writer ve user vault korunur.
+- Acceptance fail olursa mevcut canlı snapshot korunur.
+
+## Ek production rerun kanıtı
+
+- Workflow #475 / run `32874274592`, failed-job rerun da FAIL oldu.
+- Sunucu normale yaklaştı: 7/8 cold ölçüm 0.4–1.2 saniye, ilk ölçüm 7.2739 saniye, warm p95 0.2971 saniye.
+- Query sınırları korundu: total SELECT 26, competition SELECT 4, unscoped 0.
+- Cold max 8 saniye sınırını geçmedi; 8 örnekli percentile hesabı p95'i max seçtiği için 5 saniye p95 gate'i FAIL oldu.
+- Acceptance, resource gate, restart ve health adımlarına geçilmedi. Issue #209 kalıcı evidence'tır.
+
+## PC Codex için ek zorunlu işler
+
+- `verify_representative_performance.py` ölçümünden önce sonuç dışı kontrollü warmup/telemetry ekle; performans eşiklerini yükseltme.
+- Timeout/cancel sonrası kalan acceptance süreçlerini ve stale `/tmp/ims-acceptance-*.db*` dosyalarını güvenli bounded cleanup ile yönet.
+- Yerel scale-guard failure için `result["blocking"]`, journal mode ve query plans kanıtını al; testi körlemesine değiştirme.
+
+---
+
 
 # 1. AKTİF DURUM — BURADAN DEVAM ET
 
