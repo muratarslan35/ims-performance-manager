@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import Workbook
 
 from app.services.alias_service import AliasService
+from app.services.competition_import_service import CompetitionImportService
 from app.services.semantic_import_discovery import (
     _competition_signature_from_frame,
     install_semantic_import_discovery,
@@ -68,3 +69,38 @@ def test_renamed_official_brick_spread_is_discovered_from_content():
     sheet.append(headers)
     sheet.append(["101", "AYSE KAYA", 10, 1, 2, 3, 4, 5, 6, 21])
     assert _discover_spread_sheet(OfficialBrickSpreadService, workbook) == sheet.title
+
+
+def test_competition_placeholders_are_missing_but_numeric_zero_is_preserved():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "renamed market matrix"
+    sheet.append(["BÖLGE", "IAM BRICK", "PRODUCT A", "PRODUCT B"])
+    sheet.append(["101", "KADIKOY", "-", 0])
+
+    service = CompetitionImportService(upload_id=77, year=2026, month=2)
+    service._workbook = workbook
+    records = service._parse_sheet_records({
+        "sheet_name": sheet.title,
+        "sheet_type": "monthly_competition_units",
+        "period_type": "monthly",
+        "year": 2026,
+        "month": 2,
+        "data_start_row": 2,
+        "data_end_row": 2,
+        "territory_column": 1,
+        "subterritory_column": 2,
+        "product_groups": {
+            "MARKET": [("PRODUCT A", 3), ("PRODUCT B", 4)],
+        },
+    })
+
+    assert len(records) == 1
+    assert records[0]["product_name"] == "PRODUCT B"
+    assert records[0]["metric_value"] == 0.0
+    assert service.parse_statistics == {
+        "numeric_cells": 1,
+        "blank_cells": 1,
+        "invalid_cells": 0,
+    }
+    assert service.invalid_cells == []
