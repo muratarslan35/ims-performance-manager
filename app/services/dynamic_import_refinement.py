@@ -375,6 +375,7 @@ def refined_competition_structure(service, sheet_name):
     # section, not the worksheet data. Scan to the last row carrying a numeric
     # observation in a discovered product column so later regions are retained.
     data_end = data_start
+    semantic_data_rows = []
     relevant_columns = set(product_columns) | {territory_column, subterritory_column}
     for row in range(data_start, max_row + 1):
         # A completely blank semantic row terminates the current table. Unlike
@@ -394,6 +395,7 @@ def refined_competition_structure(service, sheet_name):
             for column in product_columns
         )
         if has_dimension and has_numeric_metric:
+            semantic_data_rows.append(row)
             data_end = row
 
     original_groups = service._extract_product_groups(sheet, header_row)
@@ -420,6 +422,7 @@ def refined_competition_structure(service, sheet_name):
         "header_row": header_row,
         "data_start_row": data_start,
         "data_end_row": data_end,
+        "data_rows": semantic_data_rows,
         "max_columns": max_col,
         "territory_column": territory_column,
         "subterritory_column": subterritory_column,
