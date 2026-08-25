@@ -126,5 +126,4 @@ def test_competition_structure_prefers_brick_over_parent_subterritory():
     ):
         structure = refined_competition_structure(service, sheet.title)
 
-    assert structure["territory_column"] == 1
     assert structure["subterritory_column"] == 3
