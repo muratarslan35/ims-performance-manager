@@ -77,6 +77,8 @@ class FlexibleSemanticLocator(base.WorkbookSemanticLocator):
             if any(token in header_context for token in representative_headers):
                 representative_evidence += 25
 
+            matched_representative_ids = []
+            vacancy_keys = []
             for row_index in range(
                 header_row + 1,
                 min(len(frame), header_row + 1 + self.MAX_PROFILE_ROWS),
@@ -85,17 +87,30 @@ class FlexibleSemanticLocator(base.WorkbookSemanticLocator):
                 if not value or base._norm(value) == "NATIONAL":
                     continue
                 if self.importer._is_vacancy_representative(value):
-                    representative_evidence += 3
+                    vacancy_keys.append(base._norm(value))
                     continue
                 try:
                     match = self.importer.resolve_representative_match(value)
                 except Exception:
                     match = {"matched": False}
                 if match.get("matched"):
-                    representative_evidence += 3
-                if representative_evidence >= 55:
-                    break
-            score += min(representative_evidence, 55)
+                    obj = match.get("object")
+                    matched_representative_ids.append(
+                        getattr(obj, "id", None) or base._norm(value)
+                    )
+
+            semantic_ids = matched_representative_ids + vacancy_keys
+            if semantic_ids:
+                unique_count = len(set(semantic_ids))
+                uniqueness_ratio = unique_count / len(semantic_ids)
+                # Representative summaries are one row per semantic identity.
+                # Brick matrices repeat the same representative over locations;
+                # their lower uniqueness ratio is therefore weaker authority.
+                representative_evidence += min(unique_count, 20)
+                representative_evidence += int(round(uniqueness_ratio * 40))
+                duplicate_count = len(semantic_ids) - unique_count
+                representative_evidence -= min(duplicate_count, 20)
+            score += representative_evidence
 
             # Aggregate rows are confidence evidence, not a prerequisite for
             # representative-level parsing. This preserves partial/compact IMS
