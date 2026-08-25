@@ -158,8 +158,8 @@ def test_unlabeled_finer_dimension_is_inferred_from_content_grain():
     sheet.title = "content grain matrix"
     products = [f"RIVAL {index}" for index in range(1, 21)]
     sheet.append(["BÖLGE", "SUBTERRITORIES", "WORK AREA", *products])
-    sheet.append(["101 ISTANBUL", "308", "AREA A", *([0] * len(products))])
-    sheet.append(["101 ISTANBUL", "308", "AREA B", *([40] * len(products))])
+    sheet.append(["101 ISTANBUL", "308", "0001", *([0] * len(products))])
+    sheet.append(["101 ISTANBUL", "308", "0002", *([40] * len(products))])
 
     service = CompetitionImportService(upload_id=1, year=2026, month=2)
     service._workbook = workbook

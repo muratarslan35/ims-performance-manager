@@ -206,15 +206,24 @@ def refined_competition_structure(service, sheet_name):
                 if column in product_columns:
                     continue
                 score = 0
-                for data_row in range(row + 1, min(max_row, row + 50) + 1):
+                populated_values = []
+                for data_row in range(row + 1, min(max_row, row + 250) + 1):
                     value = str(service._get_cell_value(sheet, data_row, column) or "").strip()
                     normalized_value = service._normalize_turkish_text(value)
+                    if normalized_value:
+                        populated_values.append(normalized_value)
                     if normalized_value == "NATIONAL":
                         score += 5
                     if re.match(r"^\s*\d{3}\b", normalized_value):
                         score += 4
                     if value and " " in value and not re.search(r"\d", value):
                         score += 1
+                # Non-metric code dimensions can be entirely numeric or
+                # compact identifiers. Their repeated/distinct content is
+                # semantic evidence even when formatting supplies no hint.
+                distinct_count = len(set(populated_values))
+                if populated_values and distinct_count >= 2:
+                    score += min(distinct_count, 100)
                 if score:
                     inferred.append((score, column))
             inferred.sort(reverse=True)
