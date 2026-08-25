@@ -294,3 +294,30 @@ def test_competition_metric_uses_semantic_type_not_misleading_sheet_name():
     assert len(records) == 1
     assert records[0]["metric_type"] == "TL"
     assert records[0]["metric_value"] == 125.5
+
+
+def test_competition_data_end_continues_after_intermediate_subtotal():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "regional market matrix"
+    products = [f"RIVAL {index}" for index in range(1, 19)]
+    sheet.append(["BÖLGE", "BRICK", *products])
+    sheet.append(["101", "0001", *([10] * len(products))])
+    sheet.append(["101 TOPLAM", "", *([10] * len(products))])
+    sheet.append(["102", "0002", *([20] * len(products))])
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=3)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("MONTHLY", 2026, 2)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(
+            service,
+            "get_sheet_type",
+            return_value=SheetType.MONTHLY_COMPETITION_UNITS.value,
+        ),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["data_start_row"] == 2
+    assert structure["data_end_row"] == 4
