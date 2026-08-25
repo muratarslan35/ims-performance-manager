@@ -60,6 +60,43 @@ class FlexibleSemanticLocator(base.WorkbookSemanticLocator):
             except ValueError:
                 continue
 
+            # A representative-level cumulative source is stronger than a
+            # brick/location matrix that happens to expose the same product
+            # metrics.  Score semantic evidence from the resolved master and
+            # explicit representative headers; never from worksheet names or
+            # physical column positions. Identical authoritative sources retain
+            # identical scores and therefore still fail closed in locate().
+            representative_evidence = 0
+            header_context = " ".join(
+                base._norm(frame.iloc[row, representative_column])
+                for row in range(max(0, header_row - 2), header_row + 1)
+            )
+            representative_headers = getattr(self.importer, "REPRESENTATIVE_HEADERS", {
+                "TEMSILCI", "REPRESENTATIVE", "TTS ISMI", "ADI SOYADI",
+            })
+            if any(token in header_context for token in representative_headers):
+                representative_evidence += 25
+
+            for row_index in range(
+                header_row + 1,
+                min(len(frame), header_row + 1 + self.MAX_PROFILE_ROWS),
+            ):
+                value = self.importer.clean_text(frame.iloc[row_index, representative_column])
+                if not value or base._norm(value) == "NATIONAL":
+                    continue
+                if self.importer._is_vacancy_representative(value):
+                    representative_evidence += 3
+                    continue
+                try:
+                    match = self.importer.resolve_representative_match(value)
+                except Exception:
+                    match = {"matched": False}
+                if match.get("matched"):
+                    representative_evidence += 3
+                if representative_evidence >= 55:
+                    break
+            score += min(representative_evidence, 55)
+
             # Aggregate rows are confidence evidence, not a prerequisite for
             # representative-level parsing. This preserves partial/compact IMS
             # worksheets while aggregate persistence remains explicit-only.
