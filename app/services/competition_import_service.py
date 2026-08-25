@@ -424,7 +424,9 @@ class CompetitionImportService:
         records: List[Dict[str, Any]] = []
         last_valid_territory = ""
 
-        for r in range(start_row, end_row + 1):
+        data_rows = structure_info.get("data_rows")
+        row_numbers = data_rows if data_rows is not None else range(start_row, end_row + 1)
+        for r in row_numbers:
             territory_val = self._get_cell_value(sheet, r, t_col)
             if territory_val is not None and str(territory_val).strip() != "":
                 last_valid_territory = str(territory_val).strip()
