@@ -485,13 +485,25 @@ class CompetitionImportService:
                 self.parse_statistics["numeric_cells"] += 1
 
                 sheet_type = structure_info["sheet_type"]
-                s_upper = sheet_name.upper()
-                if "PAZAR" in s_upper or "MARKET" in s_upper or sheet_type == SheetType.MARKET_REFERENCE.value:
+                # Metric semantics come exclusively from content-classified
+                # SheetType. A renamed sheet or a generic word such as MARKET
+                # must never reinterpret TL values as market share.
+                if sheet_type == SheetType.MARKET_REFERENCE.value:
                     metric_type = MetricType.MARKET_SHARE.value
-                elif "TL" in s_upper or "VALUE" in s_upper:
+                elif sheet_type in {
+                    SheetType.MONTHLY_VALUE.value,
+                    SheetType.WEEKLY_VALUE.value,
+                    SheetType.MONTHLY_COMPETITION_VALUE.value,
+                }:
                     metric_type = MetricType.TL.value
-                else:
+                elif sheet_type in {
+                    SheetType.MONTHLY_UNITS.value,
+                    SheetType.WEEKLY_UNITS.value,
+                    SheetType.MONTHLY_COMPETITION_UNITS.value,
+                }:
                     metric_type = MetricType.UNIT.value
+                else:
+                    raise ValueError(f"Semantik metric türü çözülemedi: {sheet_type}")
 
                 record = {
                     "year": year,
