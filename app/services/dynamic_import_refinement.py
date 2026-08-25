@@ -163,17 +163,19 @@ def refined_competition_structure(service, sheet_name):
         values = [service._get_cell_value(sheet, row, column) for column in range(1, max_col + 1)]
         normalized = [service._normalize_turkish_text(value) for value in values]
         product_columns = {}
+        numeric_coverage = 0
         for column, value in enumerate(values, start=1):
             text = str(value).strip() if value is not None else ""
             if not text or service._is_meta_col(text):
                 continue
             numeric_below = 0
-            for data_row in range(row + 1, min(max_row, row + 8) + 1):
+            for data_row in range(row + 1, min(max_row, row + 250) + 1):
                 cell = service._get_cell_value(sheet, data_row, column)
                 if isinstance(cell, (int, float)):
                     numeric_below += 1
             if numeric_below:
                 product_columns[column] = text
+                numeric_coverage += numeric_below
 
         dimension_candidates = []
         for column, label in enumerate(normalized, start=1):
@@ -211,10 +213,15 @@ def refined_competition_structure(service, sheet_name):
         # decorative/group row whose columns merely happen to have numbers
         # beneath them. Product breadth remains useful for pivot-style headers
         # that legitimately omit dimension labels.
+        # Prefer the header that explains the greatest numeric body
+        # coverage. Explicit dimension labels are a high-confidence semantic
+        # discriminator, while full-body coverage prevents selecting a narrow
+        # decorative sub-block from a wide competition pivot.
         score = (
-            len(product_columns) * 4
+            numeric_coverage * 10
+            + len(product_columns) * 4
             + len(dimension_candidates) * 3
-            + explicit_dimension_count * 25
+            + explicit_dimension_count * 250
         )
         if best is None or score > best[0]:
             best = (score, row, product_columns, dimension_candidates)
