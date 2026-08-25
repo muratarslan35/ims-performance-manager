@@ -484,7 +484,7 @@ class CompetitionImportService:
                     continue
                 self.parse_statistics["numeric_cells"] += 1
 
-                sheet_type = structure_info["sheet_type"]
+                sheet_type = str(structure_info["sheet_type"]).strip().upper()
                 # Metric semantics come exclusively from content-classified
                 # SheetType. A renamed sheet or a generic word such as MARKET
                 # must never reinterpret TL values as market share.
