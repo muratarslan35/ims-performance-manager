@@ -200,7 +200,7 @@ def refined_competition_structure(service, sheet_name):
                 dimension_candidates.append(column)
         explicit_dimension_count = len(dimension_candidates)
 
-        if product_columns and len(dimension_candidates) < 2:
+        if product_columns:
             inferred = []
             for column in range(1, max_col + 1):
                 if column in product_columns:
@@ -219,7 +219,7 @@ def refined_competition_structure(service, sheet_name):
                     inferred.append((score, column))
             inferred.sort(reverse=True)
             dimension_candidates.extend(
-                column for _score, column in inferred[:2]
+                column for _score, column in inferred[:4]
                 if column not in dimension_candidates
             )
 
@@ -303,7 +303,34 @@ def refined_competition_structure(service, sheet_name):
         item for item in sub_candidates
         if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TTS İSMİ", "TEMSILCI", "TEMSİLCİ", "REPRESENTATIVE"))
     ]
-    sub_pool = brick_semantic or representative_semantic or subterritory_semantic or sub_candidates
+    def semantic_grain(item):
+        column = item[0]
+        values = []
+        for data_row in range(header_row + 1, min(max_row, header_row + 500) + 1):
+            value = service._normalize_turkish_text(
+                service._get_cell_value(sheet, data_row, column)
+            )
+            if value and value != "NATIONAL":
+                values.append(value)
+        return (len(set(values)), len(values))
+
+    # When a layout omits a known dimension label, choose a finer content
+    # grain only when it has strictly more distinct identities than the parent.
+    # Equal evidence retains the explicit hierarchy and never guesses.
+    content_finest = []
+    if sub_candidates:
+        ranked_grain = sorted(
+            ((semantic_grain(item), item) for item in sub_candidates),
+            reverse=True,
+        )
+        best_grain, best_item = ranked_grain[0]
+        parent_grain = max(
+            (semantic_grain(item) for item in subterritory_semantic),
+            default=(0, 0),
+        )
+        if best_grain[0] > parent_grain[0]:
+            content_finest = [best_item]
+    sub_pool = brick_semantic or representative_semantic or content_finest or subterritory_semantic or sub_candidates
     subterritory_column = (
         max(sub_pool, key=lambda item: (item[2], -item[1]))[0]
         if sub_pool else territory_column
