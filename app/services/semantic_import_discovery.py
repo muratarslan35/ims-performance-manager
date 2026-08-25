@@ -93,16 +93,16 @@ def _worksheet_text(service, sheet_name, rows=30):
 def _competition_type_for_loaded_sheet(service, sheet_name):
     from app.services.competition_import_service import SheetType
 
+    # A sheet name is only a fallback hint. Loaded-cell semantics are the
+    # authoritative classifier, including for historically recognised names.
     named = service.classify_sheet(sheet_name)
-    if named is not None:
-        return named
     values, text = _worksheet_text(service, sheet_name)
     if not values:
         return None
     has_rep = any(token in text for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE", "1 TTS ISMI", "2 TTS ISMI"))
     has_geo = any(token in text for token in ("IAM BRICK", "BRICK", "TERRITOR", "BOLGE", "REGION"))
     if not has_geo or any(token in text for token in ("HEDEF", "TARGET", "REALIZASYON", "REALİZASYON")):
-        return None
+        return named
     explicit = any(token in text for token in ("REKABET", "RAKIP", "RAKİP", "COMPETITOR"))
     generic = {
         "TTS", "ISMI", "TEMSILCI", "REPRESENTATIVE", "IAM", "BRICK", "TERRITORIES",
@@ -122,19 +122,29 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
     # Representative headers are useful but not mandatory for NATIONAL/brick
     # market matrices. Breadth supplies the authority evidence in that shape.
     if not explicit and len(productish) < 18:
-        return None
+        return named
     if not has_rep and len(productish) < 18:
-        return None
+        return named
+    exact_values = set(values)
+    has_monthly_scope = bool(exact_values & {"AYLIK", "MONTHLY", "MONTHLY REPORT", "AYLIK RAPOR"})
+    has_weekly_scope = bool(exact_values & {"HAFTALIK", "WEEKLY", "WEEKLY REPORT", "HAFTALIK RAPOR"})
+    monthly_matrix = has_monthly_scope or (
+        "IAM BRICK" in text and any(token in text for token in ("1 TTS ISMI", "2 TTS ISMI"))
+    )
     has_share = any(token in text for token in ("PAZAR PAY", "MARKET SHARE", "VALUE SHARE", " PP ", "| PP"))
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
     has_value = any(token in text for token in ("VALUES REPORT", "VALUE REPORT", " CIRO ", " TUTAR ", " TL ", "| TL"))
     if has_share:
         return SheetType.MARKET_REFERENCE
+    if has_weekly_scope and not monthly_matrix:
+        return SheetType.WEEKLY_VALUE if has_value and not has_unit else SheetType.WEEKLY_UNITS
     if has_value and not has_unit:
         return SheetType.MONTHLY_COMPETITION_VALUE
     if has_unit and not has_value:
         return SheetType.MONTHLY_COMPETITION_UNITS
-    return None
+    if monthly_matrix:
+        return SheetType.MONTHLY_COMPETITION_UNITS
+    return named
 
 
 def install_semantic_import_discovery():
@@ -204,13 +214,24 @@ def install_semantic_import_discovery():
         return supported
 
     def type_by_content(self, sheet_name):
-        try:
-            return original_get_type(self, sheet_name)
-        except ValueError:
-            semantic = _competition_type_for_loaded_sheet(self, sheet_name)
+        from app.services.competition_import_service import SheetType
+        named = self.classify_sheet(sheet_name)
+        semantic = _competition_type_for_loaded_sheet(self, sheet_name)
+        if named is None:
             if semantic is None:
-                raise
+                return original_get_type(self, sheet_name)
             return semantic.value
+        # The legacy mapper's generic fallback is WEEKLY_UNITS. Override only
+        # that weak default when loaded cells prove a monthly matrix. Explicit
+        # PP/TL/KUTU name hints remain stable unless a future classifier can
+        # prove a conflict strongly enough to fail closed.
+        if named == SheetType.WEEKLY_UNITS and semantic in {
+            SheetType.MONTHLY_COMPETITION_UNITS,
+            SheetType.MONTHLY_COMPETITION_VALUE,
+            SheetType.MARKET_REFERENCE,
+        }:
+            return semantic.value
+        return named.value
 
     CompetitionImportService.get_supported_sheets = supported_by_content
     CompetitionImportService.get_sheet_type = type_by_content
