@@ -287,15 +287,22 @@ def refined_competition_structure(service, sheet_name):
     )[0]
 
     sub_candidates = [item for item in ranked if item[0] != territory_column]
-    finest_geo = [
+    # Preserve the finest available geography. IAM BRICK/BRICK identifies
+    # individual market rows; SUBTERRITORY is a coarser parent and can repeat
+    # across multiple bricks with legitimately different values.
+    brick_semantic = [
         item for item in sub_candidates
-        if any(token in dimension_labels[item[0]] for token in ("SUBTERRITOR", "IAM BRICK", "BRICK"))
+        if any(token in dimension_labels[item[0]] for token in ("IAM BRICK", "BRICK"))
+    ]
+    subterritory_semantic = [
+        item for item in sub_candidates
+        if "SUBTERRITOR" in dimension_labels[item[0]]
     ]
     representative_semantic = [
         item for item in sub_candidates
         if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE"))
     ]
-    sub_pool = finest_geo or representative_semantic or sub_candidates
+    sub_pool = brick_semantic or subterritory_semantic or representative_semantic or sub_candidates
     subterritory_column = (
         max(sub_pool, key=lambda item: (item[2], -item[1]))[0]
         if sub_pool else territory_column
