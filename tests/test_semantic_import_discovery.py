@@ -5,7 +5,7 @@ import pandas as pd
 from openpyxl import Workbook
 
 from app.services.alias_service import AliasService
-from app.services.competition_import_service import CompetitionImportService
+from app.services.competition_import_service import CompetitionImportService, SheetType
 from app.services.dynamic_import_refinement import refined_competition_structure
 from app.services.semantic_import_discovery import (
     _competition_signature_from_frame,
