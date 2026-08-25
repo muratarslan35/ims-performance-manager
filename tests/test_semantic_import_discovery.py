@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
@@ -192,3 +193,29 @@ def test_fine_dimension_is_not_lost_after_many_coarse_candidates():
     ):
         structure = refined_competition_structure(service, sheet.title)
     assert structure["subterritory_column"] == 7
+
+
+def test_competition_acceptance_canonicalizes_physical_grain_not_business_values():
+    from verify_ims_acceptance import _competition_semantic_rows, _fingerprint
+
+    class Query:
+        def __init__(self, rows):
+            self.rows = rows
+        def all(self):
+            return self.rows
+
+    def record(subterritory, value):
+        return SimpleNamespace(
+            period_type="monthly", year=2026, month=2, week_number=None,
+            territory="101", subterritory=subterritory,
+            product_group="MARKET", product_name="RIVAL", metric_type="UNIT",
+            metric_value=value, is_subtotal=False, is_grand_total=False,
+        )
+
+    legacy = Query([record("308", 40), record("308", 0), record("308", 60)])
+    semantic = Query([record("0001", 40), record("0002", 60)])
+    changed = Query([record("0001", 40), record("0002", 61)])
+
+    baseline = _fingerprint(_competition_semantic_rows(legacy))
+    assert _fingerprint(_competition_semantic_rows(semantic)) == baseline
+    assert _fingerprint(_competition_semantic_rows(changed)) != baseline

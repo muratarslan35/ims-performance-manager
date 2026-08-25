@@ -77,6 +77,28 @@ def _period_query(model, upload):
     return model.query.filter_by(year=upload.year, month=upload.month)
 
 
+def _competition_semantic_rows(query):
+    """Canonical business totals independent of physical source row/grain labels."""
+    grouped = {}
+    for row in query.all():
+        key = (
+            row.period_type, row.year, row.month, row.week_number,
+            row.territory, row.product_group, row.product_name, row.metric_type,
+            bool(row.is_subtotal), bool(row.is_grand_total),
+        )
+        grouped[key] = grouped.get(key, Decimal("0")) + Decimal(str(row.metric_value))
+    return _sorted_rows([
+        {
+            "period_type": key[0], "year": key[1], "month": key[2],
+            "week_number": key[3], "territory": key[4],
+            "product_group": key[5], "product_name": key[6],
+            "metric_type": key[7], "is_subtotal": key[8],
+            "is_grand_total": key[9], "metric_total": str(value),
+        }
+        for key, value in grouped.items()
+    ])
+
+
 def _snapshot(upload):
     # FACT rows are versioned by upload_id. Comparing the whole month would
     # incorrectly mix baseline and acceptance uploads in the isolated DB and
@@ -86,7 +108,9 @@ def _snapshot(upload):
     # production model, so they continue to be compared by year/month.
     summaries = _sorted_rows(_rows(IMSSummary, _period_query(IMSSummary, upload)))
     targets = _sorted_rows(_rows(Target, _period_query(Target, upload)))
-    competition = _sorted_rows(_rows(CompetitionData, CompetitionData.query.filter_by(upload_id=upload.id)))
+    competition_query = CompetitionData.query.filter_by(upload_id=upload.id)
+    competition = _sorted_rows(_rows(CompetitionData, competition_query))
+    competition_semantic = _competition_semantic_rows(competition_query)
     spread = _sorted_rows(_rows(
         IMSRawData,
         IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_brick_spread_master"),
@@ -103,6 +127,10 @@ def _snapshot(upload):
         "summary": {"count": len(summaries), "sha256": _fingerprint(summaries)},
         "target": {"count": len(targets), "sha256": _fingerprint(targets)},
         "competition": {"count": len(competition), "sha256": _fingerprint(competition)},
+        "competition_semantic": {
+            "count": len(competition_semantic),
+            "sha256": _fingerprint(competition_semantic),
+        },
         "official_brick_spread": {"count": len(spread), "sha256": _fingerprint(spread)},
         "official_aggregates": {"count": len(official_aggregates), "sha256": _fingerprint(official_aggregates)},
         "summary_unit": sum(float(row.unit or 0) for row in _period_query(IMSSummary, upload).all()),
@@ -182,8 +210,13 @@ def main():
             raise AssertionError("Acceptance upload COMPLETED olmadı.")
         after = _snapshot(new_upload)
 
-        for domain in ("fact", "summary", "target", "competition", "official_brick_spread", "official_aggregates"):
+        for domain in ("fact", "summary", "target", "official_brick_spread", "official_aggregates"):
             _assert_equal(domain, before[domain], after[domain])
+        _assert_equal(
+            "competition semantic business totals",
+            before["competition_semantic"],
+            after["competition_semantic"],
+        )
         for total in ("summary_unit", "summary_tl", "target_unit", "target_tl"):
             if abs(float(before[total]) - float(after[total])) > 1e-6:
                 raise AssertionError(f"{total} değişti: before={before[total]}, after={after[total]}")
@@ -221,6 +254,8 @@ def main():
                 "summary": after["summary"]["count"],
                 "target": after["target"]["count"],
                 "competition": after["competition"]["count"],
+                "competition_baseline_physical": before["competition"]["count"],
+                "competition_semantic": after["competition_semantic"]["count"],
                 "official_brick_spread": after["official_brick_spread"]["count"],
                 "official_aggregates": after["official_aggregates"]["count"],
                 "source": new_upload.source_record_count,
@@ -234,7 +269,7 @@ def main():
             },
             "fingerprints": {
                 domain: after[domain]["sha256"]
-                for domain in ("fact", "summary", "target", "competition", "official_brick_spread", "official_aggregates")
+                for domain in ("fact", "summary", "target", "competition", "competition_semantic", "official_brick_spread", "official_aggregates")
             },
             "semantic_relationships": result.get("semantic_relationships", []),
             "previous_ims_delta": result.get("previous_ims_delta"),
