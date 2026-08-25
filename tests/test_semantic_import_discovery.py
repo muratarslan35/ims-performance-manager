@@ -253,3 +253,18 @@ def test_competition_product_text_cannot_override_semantic_period_type():
         structure = refined_competition_structure(service, sheet.title)
 
     assert structure["period_type"] == "MONTHLY"
+
+
+def test_content_classification_overrides_misleading_legacy_competition_name():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "AYLIK REKABET"
+    products = [f"RIVAL {index}" for index in range(1, 19)]
+    sheet.append(["AYLIK"])
+    sheet.append(["BÖLGE", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI", *products])
+    sheet.append(["101", "0001", "AYSE", "FATMA", *([10] * len(products))])
+    service = CompetitionImportService(upload_id=1, year=2026, month=2)
+    service._workbook = workbook
+    install_semantic_import_discovery()
+
+    assert service.get_sheet_type(sheet.title) == SheetType.MONTHLY_COMPETITION_UNITS.value
