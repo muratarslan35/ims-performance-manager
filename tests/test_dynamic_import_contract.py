@@ -13,6 +13,7 @@ from app.models import IMSSummary, IMSUpload, Product, Representative, Target
 from app.services.alias_service import AliasService
 from app.services.competition_import_service import CompetitionImportService
 from app.services.dynamic_import_contract import WorkbookSemanticLocator
+from app.services.dynamic_import_refinement import FlexibleSemanticLocator
 from app.services.ims_import_service import IMSImportService
 from app.services.official_aggregate_service import OfficialAggregateService
 
@@ -188,6 +189,29 @@ def test_equal_authoritative_sources_fail_closed(dynamic_env):
 
     with pytest.raises(ValueError, match="belirsiz kaynak"):
         WorkbookSemanticLocator(service).locate("balance", required=True)
+
+
+def test_weekly_source_prefers_resolved_representative_semantics_over_brick_matrix(dynamic_env):
+    _temp, _app, upload, _product, _rep = dynamic_env
+    weekly = _shifted_semantic_workbook()["CURRENT PERIOD SALES RENAMED AND MOVED"].copy()
+    brick = weekly.copy()
+    section_row = 19
+    brick.iloc[section_row, 0] = "IAM BRICK"
+    brick.iloc[section_row + 2, 0] = "BRICK-001"
+    brick.iloc[section_row + 3, 0] = "BRICK-002"
+    brick.iloc[section_row + 4, 0] = "BRICK-003"
+
+    service = IMSImportService("unused.xlsx")
+    service.upload = upload
+    service.workbook = {
+        "LOCATION MATRIX": brick,
+        "REPRESENTATIVE CUMULATIVE SOURCE": weekly,
+    }
+
+    profile = FlexibleSemanticLocator(service).locate("weekly", required=True)
+
+    assert profile.sheet_name == "REPRESENTATIVE CUMULATIVE SOURCE"
+    assert profile.representative_column == 0
 
 
 def test_competition_header_and_dimension_positions_can_move(dynamic_env):
