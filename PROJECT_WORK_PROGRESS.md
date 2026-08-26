@@ -14,6 +14,7 @@ Bu bölüm aşağıdaki eski kayıtların üzerindedir; çelişki halinde bu bö
 
 - Main workflow #479 / run `32934093945`: full CI PASS; gerçek import `490.0356s` ve acceptance snapshot `43.6945s` ile timeout çözümü kanıtlandı. Deploy, Excel manifestindeki `TTS Rekabet` / `TTS Rekabet PP` adları ile DB'nin normalize `TTS REKABET` / `TTS REKABET PP` adlarını case-sensitive karşılaştırdığı için fail-closed oldu; restart yapılmadı, Issue #213 açıldı.
 - Sheet identity karşılaştırması sistemin mevcut `AliasService.normalize` standardına bağlandı. Production workbook'un gerçek 16-sheet manifesti ile retained acceptance DB üzerinde coverage PASS; veri satır sayısı ve territory/product/metric fingerprint korumaları değiştirilmedi.
+- Takip PR'ı: #215 (`fix/acceptance-sheet-identity`); final CI ve production deploy kanıtı bekleniyor.
 
 - PR #210 merge edilmiştir; GitHub main SHA `cb7943382f5d059d1d35d6a732ce409659c277e8`.
 - Workflow #476 / run `32930433808`: full suite ve 50-upload scale probe PASS.
