@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -25,6 +26,7 @@ from app.models import (
     User,
 )
 from app.services.alias_service import AliasService
+from app.services.competition_import_service import CompetitionImportService
 from app.services.ims_import_service import IMSImportService
 
 
@@ -72,6 +74,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
 
     def tearDown(self):
         db.session.remove()
+        db.engine.dispose()
         self.context.pop()
         self.temp_dir.cleanup()
 
@@ -170,6 +173,43 @@ class IMSImportServiceTestCase(unittest.TestCase):
         self.assertEqual(stage_map["source_reconciliation"]["source_metric_records"], 1)
         self.assertEqual(stage_map["source_reconciliation"]["stored_source_records"], 1)
         self.assertEqual(stage_map["source_reconciliation"]["unclassified_records"], 0)
+
+        timing_payloads = [
+            json.loads(call.args[1])
+            for call in mocked_logger.info.call_args_list
+            if call.args and call.args[0] == "ims_import_stage_timing %s"
+        ]
+        expected_timing_stages = {
+            "validate_and_load_workbook",
+            "discover_and_prepare_sheets",
+            "stage_raw_rows",
+            "assignments_and_targets",
+            "facts_summary_and_official_aggregates",
+            "competition_import",
+            "source_reconciliation",
+            "commit_upload",
+        }
+        self.assertEqual({payload["stage"] for payload in timing_payloads}, expected_timing_stages)
+        self.assertTrue(all(payload["duration_seconds"] >= 0 for payload in timing_payloads))
+        self.assertTrue(all(payload["outcome"] == "PASS" for payload in timing_payloads))
+        self.assertEqual(set(result["statistics"]["stage_telemetry"]), expected_timing_stages)
+
+    def test_competition_mapping_writes_are_bounded_without_committing(self):
+        service = CompetitionImportService(upload_id=123, year=2026, month=1)
+        mappings = [{"upload_id": 123, "source_row": index} for index in range(2005)]
+
+        with mock.patch.object(db.session, "bulk_insert_mappings") as bulk_insert, mock.patch.object(
+            db.session, "commit"
+        ) as commit:
+            inserted = service.bulk_insert(mappings)
+
+        self.assertEqual(inserted, 2005)
+        self.assertEqual(bulk_insert.call_count, 3)
+        self.assertEqual(
+            [len(call.args[1]) for call in bulk_insert.call_args_list],
+            [1000, 1000, 5],
+        )
+        commit.assert_not_called()
 
     def test_week_number_extracted_from_filename(self):
         """Week number is parsed from the file name (e.g. '24.Hafta')."""
@@ -639,17 +679,21 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 )
                 self.assertIn(login_response.status_code, (301, 302))
 
-                with workbook_path.open("rb") as workbook_file:
-                    response = client.post(
-                        "/ims/upload",
-                        data={
-                            "year": "2026",
-                            "month": "1",
-                            "file": (workbook_file, "upload-route.xlsx"),
-                        },
-                        content_type="multipart/form-data",
-                        follow_redirects=False,
-                    )
+                with mock.patch(
+                    "app.ims.ImportCoordinator.acquire",
+                    return_value=nullcontext({"test_lock": True}),
+                ):
+                    with workbook_path.open("rb") as workbook_file:
+                        response = client.post(
+                            "/ims/upload",
+                            data={
+                                "year": "2026",
+                                "month": "1",
+                                "file": (workbook_file, "upload-route.xlsx"),
+                            },
+                            content_type="multipart/form-data",
+                            follow_redirects=False,
+                        )
                 self.assertIn(response.status_code, (301, 302))
 
             after_counts = {

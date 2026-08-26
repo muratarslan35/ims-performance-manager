@@ -10,6 +10,49 @@
 
 Bu bölüm aşağıdaki eski kayıtların üzerindedir; çelişki halinde bu bölüm esas alınır.
 
+## 26 Ağustos 2026 04:56 sonrası — aktarım engeli checkpoint'i
+
+- Yerel commit hazır ve temizdir: `70df8e72d8fe09ffd571a0484cc698affe751315` (`Harden SQLite acceptance and import telemetry`).
+- `git push -u origin fix/pc-sqlite-acceptance-stability` yeniden denendi; çalışma ortamı `github.com:443` bağlantısını sistem düzeyinde reddetti.
+- Alternatif `ssh.github.com:443` ve production `130.162.48.162:22` bağlantıları da TCP seviyesinde kapalıdır.
+- Bağlı GitHub repository API'si branch'i okuyabiliyor fakat bu oturumun `approval policy=never` kuralı mutasyonları (branch/push/PR) reddediyor; in-app/external browser bağlantısı da bulunamadı.
+- Bu nedenle PR, CI, merge, production acceptance, restart ve post-restart health adımları **çalıştırılmadı**; canlı servis/snapshot değiştirilmedi.
+- Ağ erişimi açıldığında yeniden analiz veya test yapılmadan aşağıdaki SHA push edilerek zorunlu sıra `Branch/PR` adımından devam edilecektir. Production kapıları PASS olmadan tamamlandı/canlıya alındı denmeyecektir.
+
+## 26 Ağustos 2026 00:44 — PC Codex uygulama checkpoint'i
+
+Çalışma branch'i: `fix/pc-sqlite-acceptance-stability`
+
+Temiz worktree: `work/ims-performance-manager-pc-20260826`
+
+Başlangıç SHA: `b55a87447bc9873ce42cbb92e70d8248a8153eb1`
+
+Tamamlanan işler:
+
+- PC SQLite scale-guard hatası yeniden üretildi. WAL=`wal`, integrity=`ok`, NTFS/disk projeksiyonu PASS iken SQLite 3.53.1'in tek satırlı sentetik tablolarda `PRAGMA optimize` sonrasında rasyonel olarak table scan seçtiği kanıtlandı. Fixture, production access path'ini temsil eden bounded tarihsel satırlarla düzeltildi; audit/gate/eşikler gevşetilmedi.
+- Representative performance gate'te ilk process/host çalışması ayrı telemetry olarak tutuldu; ilk-run hâlâ cold max `8s` ve query-count kapılarına dahildir. Ölçülen cold p95 `5s`, warm p95 `2s`, toplam SELECT `30`, competition SELECT `4` eşikleri değiştirilmedi.
+- Acceptance timeout/cancel süreci için kullanıcı/cwd/cmdline doğrulamalı bounded process cleanup, `/tmp/ims-acceptance-*.db*` için owner/age/path doğrulamalı bounded cleanup ve başarısız DB için 60 dakikalık retention eklendi.
+- Import aşama süreleri ve Linux peak RSS telemetry eklendi; acceptance bu telemetry eksik/geçersizse fail-closed olur.
+- Competition persist yolu `1000` kayıtlık bounded `bulk_insert_mappings` parçalarına geçirildi; dış transaction commit/rollback ve duplicate/conflict semantiği korunmuştur.
+- User vault SQLite bağlantıları işlem sonunda açık kalmayacak şekilde kesin kapatıldı.
+- Windows test ortamındaki geçici SQLite dosya kilitleri production havuzuna dokunmadan TESTING-only `NullPool` ile izole edildi. POSIX lock sözleşmeleri Windows'ta skip, Linux CI/production'da aktiftir.
+
+Yerel kanıt:
+
+- Hedefli import/performance/deploy testleri: `38 passed, 1 skipped`.
+- Full suite: `326 passed, 5 skipped, 0 failed` — `209.75s`.
+- 50-upload scale probe: PASS; competition=`5,000,000`, raw=`1,404,550`, facts=`158,200`, DB=`529,477,632` byte, integrity=`ok`.
+- Bounded query süreleri: competition six-upload=`0.0121s`, facts latest-upload=`0.0018s`, raw latest-brick=`0.0003s`; üç plan da beklenen composite indexleri kullandı.
+- YAML parse ve Python syntax/diff-check: PASS.
+
+Henüz tamamlanmayan zorunlu sıra:
+
+1. Branch commit/push ve PR.
+2. GitHub full CI PASS sonrası merge.
+3. Production isolated acceptance + extras + SQLite integrity/WAL + representative performance + CPU/RAM/disk resource gate PASS.
+4. Yalnız tüm kapılar PASS ise service restart ve post-restart health.
+5. Final production kanıtını bu bölüme ekle; Issue #208/#209'u sonuçla ilişkilendir.
+
 # IMS Performance Manager — PC Codex Devir Noktası
 
 Tarih: 25 Ağustos 2026 (Europe/Istanbul)

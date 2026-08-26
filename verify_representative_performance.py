@@ -109,6 +109,89 @@ def _build_read_model(representative, year, month):
     return market, intelligence, periods, annual
 
 
+def _memory_telemetry():
+    """Return bounded, best-effort host memory evidence without new dependencies."""
+    result = {"rss_bytes": None, "peak_rss_bytes": None}
+    try:
+        status = Path("/proc/self/status").read_text(encoding="utf-8")
+        for line in status.splitlines():
+            if line.startswith("VmRSS:"):
+                result["rss_bytes"] = int(line.split()[1]) * 1024
+            elif line.startswith("VmHWM:"):
+                result["peak_rss_bytes"] = int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return result
+
+
+def host_telemetry():
+    database = db.engine.url.database
+    database_path = Path(database).resolve() if database else None
+    try:
+        load_average = [round(value, 4) for value in os.getloadavg()]
+    except (AttributeError, OSError):
+        load_average = None
+    return {
+        "cpu_count": os.cpu_count(),
+        "load_average_1_5_15": load_average,
+        "database_bytes": (
+            database_path.stat().st_size
+            if database_path is not None and database_path.is_file()
+            else None
+        ),
+        **_memory_telemetry(),
+    }
+
+
+def warmup_runtime(representative, year, month):
+    """Prime interpreter/SQLite host caches, then clear application result caches.
+
+    The first full read-model build is reported separately and remains subject to
+    the cold-max and query-count safety gates.  It is intentionally excluded from
+    the post-warmup p95 sample so an eight-item sample does not turn p95 into the
+    one-off process/host startup maximum.
+    """
+    RepresentativeAnalysisCache.clear()
+    select_statements = []
+    competition_statements = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        normalized = statement.lstrip().upper()
+        if not normalized.startswith("SELECT"):
+            return
+        select_statements.append(statement)
+        if "IMS_COMPETITION_DATA" in normalized:
+            competition_statements.append(statement)
+
+    before_memory = _memory_telemetry()
+    event.listen(db.engine, "before_cursor_execute", capture)
+    try:
+        started = time.perf_counter()
+        _build_read_model(representative, year, month)
+        seconds = time.perf_counter() - started
+    finally:
+        event.remove(db.engine, "before_cursor_execute", capture)
+        # Preserve cold application-cache semantics for every measured sample;
+        # only interpreter, filesystem and SQLite page caches stay warm.
+        RepresentativeAnalysisCache.clear()
+
+    unscoped = [
+        " ".join(statement.split())[:500]
+        for statement in competition_statements
+        if not is_scoped_competition_select(statement)
+    ]
+    return {
+        "representative_id": representative.id,
+        "representative": representative.rep_name,
+        "seconds": round(seconds, 4),
+        "selects": len(select_statements),
+        "competition_selects": len(competition_statements),
+        "unscoped_competition_selects": unscoped,
+        "memory_before": before_memory,
+        "memory_after": _memory_telemetry(),
+    }
+
+
 def measure_representative(representative, year, month):
     RepresentativeAnalysisCache.clear()
     select_statements = []
@@ -189,28 +272,39 @@ def main():
             print("REPRESENTATIVE_PERFORMANCE|" + json.dumps(payload, ensure_ascii=False, sort_keys=True))
             return 0
 
+        first_run = warmup_runtime(representatives[0], year, month)
         measurements = [measure_representative(rep, year, month) for rep in representatives]
         cold = [item["cold_seconds"] for item in measurements]
         warm = [item["warm_seconds"] for item in measurements]
-        unscoped = sum(len(item["unscoped_competition_selects"]) for item in measurements)
+        unscoped = (
+            len(first_run["unscoped_competition_selects"])
+            + sum(len(item["unscoped_competition_selects"]) for item in measurements)
+        )
         max_competition_selects = max(
-            max(item["cold_competition_selects"], item["warm_competition_selects"])
-            for item in measurements
+            [first_run["competition_selects"]]
+            + [
+                max(item["cold_competition_selects"], item["warm_competition_selects"])
+                for item in measurements
+            ]
         )
         max_total_selects = max(
-            max(item["cold_selects"], item["warm_selects"])
-            for item in measurements
+            [first_run["selects"]]
+            + [
+                max(item["cold_selects"], item["warm_selects"])
+                for item in measurements
+            ]
         )
         cold_p95 = percentile(cold, 0.95)
         warm_p95 = percentile(warm, 0.95)
         cold_max = max(cold)
+        gated_cold_max = max(cold_max, first_run["seconds"])
 
         passed = (
             unscoped == 0
             and max_competition_selects <= MAX_COMPETITION_SELECTS
             and max_total_selects <= MAX_TOTAL_SELECTS
             and cold_p95 <= MAX_COLD_P95
-            and cold_max <= MAX_COLD
+            and gated_cold_max <= MAX_COLD
             and warm_p95 <= MAX_WARM_P95
         )
         payload = {
@@ -218,10 +312,14 @@ def main():
             "period": [year, month],
             "upload_id": upload_id,
             "sample_size": len(measurements),
+            "sample_policy": "controlled_first_run_then_cache_cleared_cold_warm_pairs",
+            "first_run_warmup": first_run,
+            "host": host_telemetry(),
             "cold_seconds": {
                 "mean": round(statistics.mean(cold), 4),
                 "p95": round(cold_p95, 4),
                 "max": round(cold_max, 4),
+                "gated_max_including_first_run": round(gated_cold_max, 4),
             },
             "warm_seconds": {
                 "mean": round(statistics.mean(warm), 4),

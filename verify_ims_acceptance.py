@@ -37,6 +37,16 @@ BLOCKING_STATS = (
     "unresolved_product", "invalid_metric", "row_error", "conflicting_match",
     "duplicate_conflict",
 )
+REQUIRED_IMPORT_STAGES = (
+    "validate_and_load_workbook",
+    "discover_and_prepare_sheets",
+    "stage_raw_rows",
+    "assignments_and_targets",
+    "facts_summary_and_official_aggregates",
+    "competition_import",
+    "source_reconciliation",
+    "commit_upload",
+)
 
 
 class AcceptanceConfig(Config):
@@ -308,6 +318,23 @@ def main():
                 f"Upload reconciliation başarısız: invalid={new_upload.invalid_metric_count}, status={new_upload.reconciliation_status}"
             )
 
+        stage_telemetry = stats.get("stage_telemetry") or {}
+        missing_stages = [stage for stage in REQUIRED_IMPORT_STAGES if stage not in stage_telemetry]
+        failed_stages = [
+            stage
+            for stage, telemetry in stage_telemetry.items()
+            if telemetry.get("outcome") != "PASS" or float(telemetry.get("duration_seconds", -1)) < 0
+        ]
+        if missing_stages or failed_stages:
+            raise AssertionError(
+                f"Import stage telemetry eksik/geçersiz: missing={missing_stages}, failed={failed_stages}"
+            )
+        if Path("/proc/self/status").is_file() and any(
+            stage_telemetry[stage].get("peak_rss_bytes_after") is None
+            for stage in REQUIRED_IMPORT_STAGES
+        ):
+            raise AssertionError("Linux acceptance importunda peak RSS telemetry eksik.")
+
         manifest = result.get("workbook_manifest", [])
         if not manifest or len(manifest) != int(new_upload.sheet_count or 0):
             raise AssertionError(f"Manifest sheet sayısı uyuşmuyor: manifest={len(manifest)}, upload={new_upload.sheet_count}")
@@ -347,6 +374,17 @@ def main():
             },
             "semantic_relationships": result.get("semantic_relationships", []),
             "previous_ims_delta": result.get("previous_ims_delta"),
+            "import_telemetry": {
+                "processing_seconds": result.get("processing_time"),
+                "peak_rss_bytes": max(
+                    (
+                        int(telemetry.get("peak_rss_bytes_after") or 0)
+                        for telemetry in stage_telemetry.values()
+                    ),
+                    default=0,
+                ) or None,
+                "stages": stage_telemetry,
+            },
         }
         print("IMS_ACCEPTANCE|" + json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
         return 0

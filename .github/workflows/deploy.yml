@@ -133,15 +133,111 @@ jobs:
           echo '--- ISOLATED IMS ACCEPTANCE / FINGERPRINT ---'
           acceptance_started=$SECONDS
           acceptance_db="/tmp/ims-acceptance-${stamp}.db"
-          cleanup_acceptance() { rm -f "$acceptance_db" "$acceptance_db-wal" "$acceptance_db-shm"; }
-          trap cleanup_acceptance EXIT
+          acceptance_pid=""
+          acceptance_succeeded=0
+          acceptance_timeout_seconds="${IMS_ACCEPTANCE_TIMEOUT_SECONDS:-900}"
+          if ! [[ "$acceptance_timeout_seconds" =~ ^[0-9]+$ ]] \
+             || [ "$acceptance_timeout_seconds" -lt 60 ] \
+             || [ "$acceptance_timeout_seconds" -gt 1200 ]; then
+            echo "Invalid IMS_ACCEPTANCE_TIMEOUT_SECONDS=$acceptance_timeout_seconds"
+            exit 1
+          fi
+
+          cleanup_stale_acceptance_processes() {
+            local current_uid candidate_pid command_line process_cwd checked=0
+            current_uid="$(id -u)"
+            while read -r candidate_pid; do
+              [ -n "$candidate_pid" ] || continue
+              checked=$((checked + 1))
+              [ "$checked" -le 8 ] || break
+              [ "$candidate_pid" != "$$" ] || continue
+              [ -r "/proc/$candidate_pid/cmdline" ] || continue
+              command_line="$(tr '\0' ' ' < "/proc/$candidate_pid/cmdline" 2>/dev/null || true)"
+              case "$command_line" in
+                *verify_ims_acceptance.py*|*verify_ims_acceptance_extras.py*) ;;
+                *) continue ;;
+              esac
+              process_cwd="$(readlink -f "/proc/$candidate_pid/cwd" 2>/dev/null || true)"
+              [ "$process_cwd" = "$IMS_PATH" ] || continue
+              echo "Stopping stale bounded acceptance process pid=$candidate_pid"
+              kill -TERM "$candidate_pid" 2>/dev/null || true
+              for _ in $(seq 1 10); do
+                kill -0 "$candidate_pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$candidate_pid" 2>/dev/null; then
+                kill -KILL "$candidate_pid" 2>/dev/null || true
+              fi
+            done < <(pgrep -u "$current_uid" -f 'verify_ims_acceptance(_extras)?\.py' || true)
+          }
+
+          cleanup_stale_acceptance_files() {
+            local candidate resolved owner checked=0 current_uid
+            current_uid="$(id -u)"
+            while IFS= read -r -d '' candidate; do
+              checked=$((checked + 1))
+              [ "$checked" -le 24 ] || break
+              resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
+              case "$resolved" in
+                /tmp/ims-acceptance-*.db|/tmp/ims-acceptance-*.db-wal|/tmp/ims-acceptance-*.db-shm) ;;
+                *) continue ;;
+              esac
+              [ -f "$resolved" ] || continue
+              owner="$(stat -c '%u' "$resolved" 2>/dev/null || true)"
+              [ "$owner" = "$current_uid" ] || continue
+              echo "Removing stale acceptance file $resolved"
+              rm -f -- "$resolved"
+            done < <(
+              find /tmp -maxdepth 1 -type f -user "$current_uid" \
+                -name 'ims-acceptance-*.db*' -mmin +60 -print0 2>/dev/null
+            )
+          }
+
+          cleanup_current_acceptance() {
+            if [ -n "$acceptance_pid" ] && kill -0 "$acceptance_pid" 2>/dev/null; then
+              kill -TERM "$acceptance_pid" 2>/dev/null || true
+              for _ in $(seq 1 10); do
+                kill -0 "$acceptance_pid" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL "$acceptance_pid" 2>/dev/null || true
+              wait "$acceptance_pid" 2>/dev/null || true
+            fi
+            if [ "$acceptance_succeeded" = "1" ]; then
+              rm -f -- "$acceptance_db" "$acceptance_db-wal" "$acceptance_db-shm"
+            elif [ -f "$acceptance_db" ]; then
+              echo "Acceptance DB retained for at most 60 minutes: $acceptance_db"
+            fi
+          }
+
+          run_acceptance_gate() {
+            local script="$1" rc
+            timeout --signal=TERM --kill-after=30s "${acceptance_timeout_seconds}s" \
+              env DATABASE_URL="sqlite:///$acceptance_db" \
+              venv/bin/python "$script" &
+            acceptance_pid=$!
+            set +e
+            wait "$acceptance_pid"
+            rc=$?
+            set -e
+            acceptance_pid=""
+            if [ "$rc" -ne 0 ]; then
+              echo "Acceptance gate failed: script=$script exit=$rc"
+              return "$rc"
+            fi
+          }
+
+          cleanup_stale_acceptance_processes
+          cleanup_stale_acceptance_files
+          trap cleanup_current_acceptance EXIT
+          trap 'exit 130' HUP INT TERM
           venv/bin/python sqlite_online_backup.py instance/ipm.db "$acceptance_db"
-          DATABASE_URL="sqlite:///$acceptance_db" \
-            venv/bin/python verify_ims_acceptance.py
-          DATABASE_URL="sqlite:///$acceptance_db" \
-            venv/bin/python verify_ims_acceptance_extras.py
-          cleanup_acceptance
-          trap - EXIT
+          chmod 600 "$acceptance_db"
+          run_acceptance_gate verify_ims_acceptance.py
+          run_acceptance_gate verify_ims_acceptance_extras.py
+          acceptance_succeeded=1
+          cleanup_current_acceptance
+          trap - EXIT HUP INT TERM
 
           acceptance_seconds=$((SECONDS - acceptance_started))
           echo '--- PRODUCTION RESOURCE SAFETY GATE ---'

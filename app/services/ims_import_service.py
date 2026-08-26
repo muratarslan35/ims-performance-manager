@@ -20,6 +20,7 @@ import time
 import logging
 logger = logging.getLogger(__name__)
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
 
 import pandas as pd
@@ -192,6 +193,7 @@ class IMSImportService:
             "aggregate_rows_excluded": 0,
             "reconciliation_difference": 0,
             "reconciliation_status": "PENDING",
+            "stage_telemetry": {},
         }
         self.skipped_logs = []
         self.excluded_logs = []
@@ -550,6 +552,50 @@ class IMSImportService:
     def _log_stage_metrics(self, stage, **metrics):
         payload = {"stage": stage, "upload_id": self.upload.id if self.upload else None, **metrics}
         logger.info("ims_import_stage_metrics %s", self._json_dump(payload))
+
+    @staticmethod
+    def _peak_rss_bytes():
+        """Return process peak RSS on Linux without adding a runtime package."""
+        try:
+            with open("/proc/self/status", encoding="utf-8") as status_file:
+                for line in status_file:
+                    if line.startswith("VmHWM:"):
+                        return int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            return None
+        return None
+
+    @contextmanager
+    def _measure_stage(self, stage):
+        """Record elapsed time and process high-water RSS for one import stage."""
+        started = time.monotonic()
+        peak_before = self._peak_rss_bytes()
+        outcome = "PASS"
+        try:
+            yield
+        except Exception:
+            outcome = "FAIL"
+            raise
+        finally:
+            peak_after = self._peak_rss_bytes()
+            telemetry = {
+                "duration_seconds": round(time.monotonic() - started, 4),
+                "peak_rss_bytes_before": peak_before,
+                "peak_rss_bytes_after": peak_after,
+                "peak_rss_growth_bytes": (
+                    max(0, peak_after - peak_before)
+                    if peak_before is not None and peak_after is not None
+                    else None
+                ),
+                "outcome": outcome,
+            }
+            self.statistics["stage_telemetry"][stage] = telemetry
+            payload = {
+                "stage": stage,
+                "upload_id": self.upload.id if self.upload else None,
+                **telemetry,
+            }
+            logger.info("ims_import_stage_timing %s", self._json_dump(payload))
 
     def parse_metric_value(self, value):
         if value is None or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
@@ -2210,57 +2256,67 @@ class IMSImportService:
                         self._upsert_auto_brick_assignment(match["object"].id, year, month, brick)
 
     def process_workbook(self, year, month, week_number=None):
-        sheets = self.analyze_workbook()
-        prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
-        self.bootstrap_vacancy_representatives_from_balance()
-        normalized_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") == "normalized"]
-        wide_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") != "normalized"]
-        if normalized_sheets:
-            self.statistics["processed_sheets"] += len(normalized_sheets)
-            normalized_rows = self.merge_normalized_sheets(normalized_sheets)
-            self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
-        self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
-        self._flush_raw_batch()
-        self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
-        publish_period_snapshot = self._is_current_week_snapshot(year, month, week_number)
-        if publish_period_snapshot:
-            TargetImportService(
-                file_path=self.file_path,
-                upload_id=self.upload.id,
-                workbook=self.workbook,
-            ).run(
-                year=year,
-                month=month,
-            )
-        else:
-            self.warnings.append(
-                f"{week_number}. hafta yeniden işlendi; daha yeni haftanın dönem hedef/realizasyon özeti korundu."
-            )
-        self._remove_legacy_general_vacancy_facts(year, month)
-        self.transform_raw_to_facts(year, month, week_number=week_number)
-        self.rebuild_summary(year, month)
-        if publish_period_snapshot:
-            self.apply_balance_summary(year, month)
-            self.apply_weekly_sales_summary(year, month)
-            self.persist_national_dashboard_metrics(year, month)
+        with self._measure_stage("discover_and_prepare_sheets"):
+            sheets = self.analyze_workbook()
+            prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
+            self.bootstrap_vacancy_representatives_from_balance()
+            normalized_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") == "normalized"]
+            wide_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") != "normalized"]
 
-        available_sheets = (self.workbook or {}).keys()
-        if CompetitionImportService.has_competition_sheets(available_sheets):
-            competition_result = CompetitionImportService(
-                file_path=self.file_path,
-                upload_id=self.upload.id,
-                year=year,
-                month=month,
-                week_number=week_number,
-            ).run()
-            competition_summary = competition_result.get("summary", {})
-            self.statistics["competition_records"] = competition_summary.get("total_inserted", 0)
-            self.statistics["competition_duplicates"] = competition_summary.get("total_duplicates", 0)
-            self.statistics["competition_invalid"] = competition_summary.get("total_invalid", 0)
-            self.statistics["competition_source_records"] = competition_summary.get("numeric_cells", 0)
-        else:
-            self.warnings.append("Rekabet etiketi taşıyan bir sayfa bulunamadığı için rekabet importu atlandı.")
-        self._finalize_source_reconciliation()
+        with self._measure_stage("stage_raw_rows"):
+            if normalized_sheets:
+                self.statistics["processed_sheets"] += len(normalized_sheets)
+                normalized_rows = self.merge_normalized_sheets(normalized_sheets)
+                self.stage_normalized_raw_data(normalized_rows, year, month, week_number=week_number)
+            self.stage_raw_data(wide_sheets, year, month, week_number=week_number)
+            self._flush_raw_batch()
+
+        publish_period_snapshot = self._is_current_week_snapshot(year, month, week_number)
+        with self._measure_stage("assignments_and_targets"):
+            self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
+            if publish_period_snapshot:
+                TargetImportService(
+                    file_path=self.file_path,
+                    upload_id=self.upload.id,
+                    workbook=self.workbook,
+                ).run(
+                    year=year,
+                    month=month,
+                )
+            else:
+                self.warnings.append(
+                    f"{week_number}. hafta yeniden işlendi; daha yeni haftanın dönem hedef/realizasyon özeti korundu."
+                )
+
+        with self._measure_stage("facts_summary_and_official_aggregates"):
+            self._remove_legacy_general_vacancy_facts(year, month)
+            self.transform_raw_to_facts(year, month, week_number=week_number)
+            self.rebuild_summary(year, month)
+            if publish_period_snapshot:
+                self.apply_balance_summary(year, month)
+                self.apply_weekly_sales_summary(year, month)
+                self.persist_national_dashboard_metrics(year, month)
+
+        with self._measure_stage("competition_import"):
+            available_sheets = (self.workbook or {}).keys()
+            if CompetitionImportService.has_competition_sheets(available_sheets):
+                competition_result = CompetitionImportService(
+                    file_path=self.file_path,
+                    upload_id=self.upload.id,
+                    year=year,
+                    month=month,
+                    week_number=week_number,
+                ).run()
+                competition_summary = competition_result.get("summary", {})
+                self.statistics["competition_records"] = competition_summary.get("total_inserted", 0)
+                self.statistics["competition_duplicates"] = competition_summary.get("total_duplicates", 0)
+                self.statistics["competition_invalid"] = competition_summary.get("total_invalid", 0)
+                self.statistics["competition_source_records"] = competition_summary.get("numeric_cells", 0)
+            else:
+                self.warnings.append("Rekabet etiketi taşıyan bir sayfa bulunamadığı için rekabet importu atlandı.")
+
+        with self._measure_stage("source_reconciliation"):
+            self._finalize_source_reconciliation()
 
     def write_audit_log(self, year, month, week_number, success):
         """Write an ImportAuditLog record for this import run."""
@@ -2366,17 +2422,18 @@ class IMSImportService:
             week_number = self.extract_week_number(self.file_path)
 
         try:
-            self.validate()
-            AliasService.warmup()
-            self.load_workbook()
-            detected_month = self.detect_workbook_month()
-            if detected_month and detected_month != month:
-                self.warnings.append(
-                    f"Form ayı ({month}) Excel üst bilgisinden algılanan ayla ({detected_month}) değiştirildi."
-                )
-                month = detected_month
-            self.create_upload(year, month, week_number=week_number)
-            workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
+            with self._measure_stage("validate_and_load_workbook"):
+                self.validate()
+                AliasService.warmup()
+                self.load_workbook()
+                detected_month = self.detect_workbook_month()
+                if detected_month and detected_month != month:
+                    self.warnings.append(
+                        f"Form ayı ({month}) Excel üst bilgisinden algılanan ayla ({detected_month}) değiştirildi."
+                    )
+                    month = detected_month
+                self.create_upload(year, month, week_number=week_number)
+                workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
             self._log_stage_metrics("workbook_rows_read", workbook_rows_read=workbook_rows_read)
             if clear_before_import and week_number is None:
                 self.clear_month(year, month)
@@ -2406,8 +2463,9 @@ class IMSImportService:
                 "created_summaries",
                 created_summaries=self.statistics.get("summary_records", 0),
             )
-            self.finish(success=True, year=year, month=month, week_number=week_number)
-            db.session.commit()
+            with self._measure_stage("commit_upload"):
+                self.finish(success=True, year=year, month=month, week_number=week_number)
+                db.session.commit()
         except (OSError, ValueError, SQLAlchemyError, Exception) as exc:
             db.session.rollback()
             logger.error(f"IMS Import Pipeline Failed: {exc}", exc_info=True)

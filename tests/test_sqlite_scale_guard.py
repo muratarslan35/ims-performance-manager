@@ -104,6 +104,43 @@ def _make_capacity_db(path: Path):
                 ON targets(representative_id, year, month, product_id);
             INSERT INTO targets(representative_id,product_id,year,month,unit_target,tl_target)
                 VALUES (1,1,2026,1,1.0,100.0);
+
+            -- Keep the synthetic database large enough for EXPLAIN to exercise
+            -- the production access path after PRAGMA optimize has populated
+            -- sqlite_stat1.  Newer SQLite versions correctly prefer a table
+            -- scan for a one-row table, which is not evidence about the
+            -- projected multi-upload database this guard is intended to test.
+            -- Historical upload_id=0 rows preserve the latest-upload assertions.
+            WITH RECURSIVE seq(n) AS (
+                VALUES (2) UNION ALL SELECT n + 1 FROM seq WHERE n <= 256
+            )
+            INSERT INTO ims_competition_data(
+                upload_id,metric_type,is_subtotal,is_grand_total,subterritory,metric_value
+            ) SELECT 0,'UNIT',0,0,printf('HISTORIC BRICK %04d', n),1.0 FROM seq;
+
+            WITH RECURSIVE seq(n) AS (
+                VALUES (2) UNION ALL SELECT n + 1 FROM seq WHERE n <= 256
+            )
+            INSERT INTO ims_raw_data(upload_id,sheet_type,brick,unit,tl)
+                SELECT 0,'weekly_sales',printf('HISTORIC BRICK %04d', n),1.0,1.0 FROM seq;
+
+            WITH RECURSIVE seq(n) AS (
+                VALUES (2) UNION ALL SELECT n + 1 FROM seq WHERE n <= 256
+            )
+            INSERT INTO ims_facts(upload_id,representative_id,product_id,unit,tl)
+                SELECT 0,n,n,1.0,1.0 FROM seq;
+
+            WITH RECURSIVE seq(n) AS (
+                VALUES (2) UNION ALL SELECT n + 1 FROM seq WHERE n <= 256
+            )
+            INSERT INTO ims_summary(upload_id,representative_id,product_id,year,month,unit,tl)
+                SELECT 0,n,n,2025,12,1.0,1.0 FROM seq;
+
+            WITH RECURSIVE seq(n) AS (
+                VALUES (2) UNION ALL SELECT n + 1 FROM seq WHERE n <= 256
+            )
+            INSERT INTO targets(representative_id,product_id,year,month,unit_target,tl_target)
+                SELECT n,n,2025,12,1.0,1.0 FROM seq;
             """
         )
         connection.commit()

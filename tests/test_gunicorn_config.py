@@ -89,6 +89,12 @@ def test_deploy_restarts_only_after_acceptance_checks():
     assert "nohup venv/bin/python run.py" not in workflow
     assert "ServerAliveInterval=30" in workflow
     assert "ServerAliveCountMax=20" in workflow
+    assert "timeout --signal=TERM --kill-after=30s" in workflow
+    assert "cleanup_stale_acceptance_processes" in workflow
+    assert "cleanup_stale_acceptance_files" in workflow
+    assert "[ \"$checked\" -le 8 ]" in workflow
+    assert "[ \"$checked\" -le 24 ]" in workflow
+    assert "Acceptance DB retained for at most 60 minutes" in workflow
 
 
 def test_managed_service_requires_persistent_secret_environment():

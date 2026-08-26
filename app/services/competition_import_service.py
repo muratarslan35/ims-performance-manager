@@ -636,23 +636,32 @@ class CompetitionImportService:
             source_row=norm_rec.get("source_row")
         )
 
-    def bulk_insert(self, model_instances: List[CompetitionData]) -> int:
-        """Perform chunked bulk insertion using SQLAlchemy bulk_save_objects and verify zero pending session objects without commit/rollback."""
-        if not model_instances:
+    @staticmethod
+    def _model_mapping(model: CompetitionData) -> Dict[str, Any]:
+        """Convert one validated model to a compact mapping for bounded writes."""
+        return {
+            column.name: getattr(model, column.name)
+            for column in CompetitionData.__table__.columns
+            if column.name not in {"id", "created_at"} and getattr(model, column.name) is not None
+        }
+
+    def bulk_insert(self, model_mappings: List[Dict[str, Any]]) -> int:
+        """Persist mappings without committing the outer atomic IMS transaction."""
+        if not model_mappings:
             return 0
-        
+
         inserted_count = 0
         try:
-            for i in range(0, len(model_instances), self.BULK_CHUNK_SIZE):
-                chunk = model_instances[i:i + self.BULK_CHUNK_SIZE]
-                db.session.bulk_save_objects(chunk)
+            for i in range(0, len(model_mappings), self.BULK_CHUNK_SIZE):
+                chunk = model_mappings[i:i + self.BULK_CHUNK_SIZE]
+                db.session.bulk_insert_mappings(CompetitionData, chunk)
                 inserted_count += len(chunk)
-            
+
             # Verify no unintended pending transaction failures or state corruption
             if db.session.new or db.session.dirty:
                 logger.debug("[CompetitionImportService] Session has pending manual changes accompanying bulk save.")
 
-            logger.info("[CompetitionImportService] Successfully bulk saved %d competition records in chunks for upload_id=%s", inserted_count, self.upload_id)
+            logger.info("[CompetitionImportService] Successfully bulk inserted %d competition mappings in chunks for upload_id=%s", inserted_count, self.upload_id)
             return inserted_count
         except Exception as exc:
             logger.exception("[CompetitionImportService] Failed to perform chunked bulk_save_objects for competition records: %s", exc)
@@ -672,7 +681,7 @@ class CompetitionImportService:
         duplicate_count = 0
         invalid_count = 0
         sheet_warnings: List[Dict[str, Any]] = []
-        model_instances = []
+        mapping_batch: List[Dict[str, Any]] = []
 
         existing_values: Dict[Tuple[Any, ...], float] = {}
         existing_sources: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
@@ -751,10 +760,14 @@ class CompetitionImportService:
             }
 
             model_obj = self.map_record_to_model(norm, sheet_name)
-            model_instances.append(model_obj)
+            mapping_batch.append(self._model_mapping(model_obj))
+            if len(mapping_batch) >= self.BULK_CHUNK_SIZE:
+                inserted_count += self.bulk_insert(mapping_batch)
+                mapping_batch.clear()
 
-        if model_instances:
-            inserted_count = self.bulk_insert(model_instances)
+        if mapping_batch:
+            inserted_count += self.bulk_insert(mapping_batch)
+            mapping_batch.clear()
 
         sheet_exec_time = round(time.time() - sheet_start_time, 4)
         logger.info(
