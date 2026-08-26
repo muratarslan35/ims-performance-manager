@@ -143,7 +143,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 "competition_sheets": after["sheets"],
                 "competition_sheet_without_period": after["sheet_without_period"],
             },
-            set(after["sheets"]),
+            {"Aylık Rekabet Kutu", "Yeni Sınıflandırılmış Sheet"},
         )
         self.assertEqual(coverage["new_sheets"], ["YENI SINIFLANDIRILMIS SHEET"])
 
@@ -182,7 +182,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
             "competition_sheet_without_period": after_stream["sheet_without_period"],
         }
         coverage = _validate_competition_coverage(
-            before, after, {"TTS REKABET"}
+            before, after, {"TTS Rekabet"}
         )
         self.assertEqual(coverage["metadata_migrated_sheets"], ["TTS REKABET"])
 
@@ -197,7 +197,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
             "competition_sheet_without_period": changed_stream["sheet_without_period"],
         }
         with self.assertRaises(AssertionError):
-            _validate_competition_coverage(before, changed, {"TTS REKABET"})
+            _validate_competition_coverage(before, changed, {"TTS Rekabet"})
 
     def _make_workbook(self, directory, filename="ims.xlsx"):
         workbook_path = Path(directory) / filename

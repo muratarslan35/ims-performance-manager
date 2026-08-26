@@ -26,6 +26,7 @@ from app.models import (
     Target,
 )
 from app.services.ims_import_service import IMSImportService
+from app.services.alias_service import AliasService
 from config import Config
 
 
@@ -353,23 +354,45 @@ def _validate_competition_coverage(before, after, manifest_names):
     MONTHLY -> WEEKLY classification on TTS REKABET without accepting any loss
     or movement of business values.
     """
+    def canonical_map(sheets, label):
+        indexed = {}
+        for source_name, state in sheets.items():
+            identity = AliasService.normalize(source_name)
+            if not identity:
+                raise AssertionError(f"{label} boş competition sheet kimliği içeriyor.")
+            if identity in indexed and indexed[identity][0] != source_name:
+                raise AssertionError(
+                    f"{label} normalize sheet çakışması: "
+                    f"{indexed[identity][0]!r}, {source_name!r}"
+                )
+            indexed[identity] = (source_name, state)
+        return indexed
+
     before_sheets = before["competition_sheets"]
     after_sheets = after["competition_sheets"]
-    missing = sorted(set(before_sheets) - set(after_sheets))
-    unmanifested = sorted(set(after_sheets) - set(manifest_names))
+    before_index = canonical_map(before_sheets, "baseline")
+    after_index = canonical_map(after_sheets, "acceptance")
+    manifest_identities = {AliasService.normalize(name) for name in manifest_names}
+    manifest_identities.discard("")
+    missing_ids = set(before_index) - set(after_index)
+    unmanifested_ids = set(after_index) - manifest_identities
+    missing = sorted(before_index[item][0] for item in missing_ids)
+    unmanifested = sorted(after_index[item][0] for item in unmanifested_ids)
     changed = []
     migrated_grain = []
-    for sheet in sorted(set(before_sheets) & set(after_sheets)):
-        if before_sheets[sheet] == after_sheets[sheet]:
+    for identity in sorted(set(before_index) & set(after_index)):
+        before_name, before_state = before_index[identity]
+        after_name, after_state = after_index[identity]
+        if before_state == after_state:
             continue
-        changed.append(sheet)
-        count_equal = before_sheets[sheet]["count"] == after_sheets[sheet]["count"]
+        changed.append(after_name)
+        count_equal = before_state["count"] == after_state["count"]
         stable_equal = (
-            before["competition_sheet_without_period"].get(sheet)
-            == after["competition_sheet_without_period"].get(sheet)
+            before["competition_sheet_without_period"].get(before_name)
+            == after["competition_sheet_without_period"].get(after_name)
         )
         if count_equal and stable_equal:
-            migrated_grain.append(sheet)
+            migrated_grain.append(after_name)
 
     unsafe_changed = sorted(set(changed) - set(migrated_grain))
     if missing or unsafe_changed or unmanifested:
@@ -384,8 +407,10 @@ def _validate_competition_coverage(before, after, manifest_names):
             f"before={before['competition']['count']}, after={after['competition']['count']}"
         )
     return {
-        "baseline_sheet_count": len(before_sheets),
-        "new_sheets": sorted(set(after_sheets) - set(before_sheets)),
+        "baseline_sheet_count": len(before_index),
+        "new_sheets": sorted(
+            after_index[item][0] for item in set(after_index) - set(before_index)
+        ),
         "metadata_migrated_sheets": migrated_grain,
     }
 
