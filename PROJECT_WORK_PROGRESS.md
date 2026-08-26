@@ -10,6 +10,19 @@
 
 Bu bölüm aşağıdaki eski kayıtların üzerindedir; çelişki halinde bu bölüm esas alınır.
 
+## 26 Ağustos 2026 — workflow #477 sonrası kesin durum
+
+- PR #210 merge edilmiştir; GitHub main SHA `cb7943382f5d059d1d35d6a732ce409659c277e8`.
+- Workflow #476 / run `32930433808`: full suite ve 50-upload scale probe PASS.
+- Main workflow #477 / run `32930657915`: test ve scale PASS; production pre-acceptance kapıları PASS, ancak izole IMS importu tamamlandıktan sonra acceptance snapshot eski kodun 262.882 rekabet satırını üç kez ORM ile materialize etmesi nedeniyle 900 saniye timeout oldu. Service restart edilmedi ve canlı snapshot korunmuştur; Issue #211 açılmıştır.
+- Retained acceptance DB kanıtı: upload `7` COMPLETED, import `533.71s`, source/stored `28098/28098`, reconciliation `PASSED`, RAW `29338`, FACT `3164`, SUMMARY `791`, competition `262882`.
+- Yeni branch `fix/acceptance-streaming-fingerprint`: competition kabul snapshotı tek bounded streaming pass'e geçirildi. Retained production DB üzerinde baseline snapshot `11.892s`, acceptance snapshot `31.701s`.
+- Eski competition kapsamı `99.756` satır / 4 sheet tamamen korunmuştur. Yeni kapsam `262.882` satır / 10 sheet; 6 yeni manifest sheet sınıflandırılmıştır. `TTS REKABET` için 5.456 satır, toplam 4.144.565 ve bölge/ürün/metrik kırılımı birebir aynı; yalnız eski yanlış `MONTHLY` etiketi doğru `WEEKLY` olarak düzelmiştir.
+- Acceptance artık fiziksel değişikliğe yalnız sheet satır sayısı ve territory/product/metric iş toplamları birebir aynıysa izin verir; veri değeri, kapsam veya manifest sapmasında fail-closed kalır.
+- Yerel hedefli import suite: `29 passed, 1 skipped`; full suite: `328 passed, 5 skipped, 0 failed` (`249.94s`).
+- 50-upload scale probe tekrar PASS: competition `5,000,000`, raw `1,404,550`, facts `158,200`, integrity `ok`, DB `529,477,632` byte; tüm planlar bounded index kullanıyor.
+- Sonraki zorunlu sıra: bu branch'i commit/push → PR/full CI → merge → production acceptance/extras/integrity-WAL/performance/resource/health PASS → yalnız sonra service restart ve tamamlandı kaydı.
+
 ## 26 Ağustos 2026 04:56 sonrası — aktarım engeli checkpoint'i
 
 - Yerel commit hazır ve temizdir: `70df8e72d8fe09ffd571a0484cc698affe751315` (`Harden SQLite acceptance and import telemetry`).

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -151,6 +152,129 @@ def _competition_diagnostics(query, upload=None):
     return result
 
 
+def _grouped_competition_snapshot(grouped, include_entries=False):
+    canonical = _sorted_rows([
+        {"key": list(key), "metric_total": str(value)}
+        for key, value in grouped.items()
+    ])
+    result = {"count": len(canonical), "sha256": _fingerprint(canonical)}
+    if include_entries:
+        result["entries"] = canonical
+    return result
+
+
+def _streaming_competition_snapshot(upload):
+    """Fingerprint one upload in one bounded streaming pass.
+
+    The previous acceptance path materialized the same large competition upload
+    three times through the ORM.  On the two-core production host this consumed
+    the entire deployment timeout after a successful import.  This pass retains
+    exact physical per-sheet evidence plus every semantic diagnostic grain while
+    keeping only compact aggregate dictionaries in memory.
+    """
+    excluded = EXCLUDED_COLUMNS
+    columns = [
+        column for column in CompetitionData.__table__.columns
+        if column.name not in excluded
+    ]
+    names = [column.name for column in columns]
+    query = (
+        db.session.query(*(getattr(CompetitionData, name) for name in names))
+        .filter(CompetitionData.upload_id == upload.id)
+        .order_by(*(getattr(CompetitionData, name) for name in names))
+        .yield_per(5000)
+    )
+
+    physical = hashlib.sha256()
+    sheet_hashers = {}
+    sheet_semantic = {}
+    sheet_without_period = {}
+    semantic = {}
+    diagnostics = {
+        "without_territory": {},
+        "without_period": {},
+        "product_metric": {},
+        "metric": {},
+    }
+    count = 0
+    for values in query:
+        row = {name: _json_value(value) for name, value in zip(names, values)}
+        encoded = json.dumps(
+            row, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8") + b"\n"
+        physical.update(encoded)
+        sheet_name = str(row.get("sheet_name") or "")
+        sheet_state = sheet_hashers.setdefault(
+            sheet_name, {"count": 0, "hasher": hashlib.sha256()}
+        )
+        sheet_state["count"] += 1
+        sheet_state["hasher"].update(encoded)
+        count += 1
+
+        period_type = row.get("period_type")
+        scoped_week = upload.week_number if period_type == "weekly" else None
+        metric_value = Decimal(str(row.get("metric_value") or 0))
+        semantic_key = (
+            period_type, upload.year, upload.month, scoped_week,
+            row.get("territory"), row.get("product_group"), row.get("product_name"),
+            row.get("metric_type"), bool(row.get("is_subtotal")),
+            bool(row.get("is_grand_total")),
+        )
+        semantic[semantic_key] = semantic.get(semantic_key, Decimal("0")) + metric_value
+        sheet_grouped = sheet_semantic.setdefault(sheet_name, {})
+        sheet_grouped[semantic_key] = (
+            sheet_grouped.get(semantic_key, Decimal("0")) + metric_value
+        )
+        diagnostic_keys = {
+            "without_territory": (
+                period_type, upload.year, upload.month, row.get("product_group"),
+                row.get("product_name"), row.get("metric_type"),
+                bool(row.get("is_subtotal")), bool(row.get("is_grand_total")),
+            ),
+            "without_period": (
+                row.get("territory"), row.get("product_group"), row.get("product_name"),
+                row.get("metric_type"), bool(row.get("is_subtotal")),
+                bool(row.get("is_grand_total")),
+            ),
+            "product_metric": (
+                row.get("product_group"), row.get("product_name"), row.get("metric_type"),
+                bool(row.get("is_subtotal")), bool(row.get("is_grand_total")),
+            ),
+            "metric": (row.get("metric_type"),),
+        }
+        for grain, key in diagnostic_keys.items():
+            grouped = diagnostics[grain]
+            grouped[key] = grouped.get(key, Decimal("0")) + metric_value
+        stable_sheet_key = diagnostic_keys["without_period"]
+        stable_sheet_grouped = sheet_without_period.setdefault(sheet_name, {})
+        stable_sheet_grouped[stable_sheet_key] = (
+            stable_sheet_grouped.get(stable_sheet_key, Decimal("0")) + metric_value
+        )
+
+    return {
+        "physical": {"count": count, "sha256": physical.hexdigest()},
+        "sheets": {
+            sheet: {"count": state["count"], "sha256": state["hasher"].hexdigest()}
+            for sheet, state in sorted(sheet_hashers.items())
+        },
+        "sheet_semantic": {
+            sheet: _grouped_competition_snapshot(grouped)
+            for sheet, grouped in sorted(sheet_semantic.items())
+        },
+        "sheet_without_period": {
+            sheet: _grouped_competition_snapshot(grouped)
+            for sheet, grouped in sorted(sheet_without_period.items())
+        },
+        "semantic": _grouped_competition_snapshot(semantic),
+        "diagnostics": {
+            grain: _grouped_competition_snapshot(
+                grouped, include_entries=grain in {"product_metric", "metric"}
+            )
+            for grain, grouped in diagnostics.items()
+        },
+    }
+
+
 def _snapshot(upload):
     # FACT rows are versioned by upload_id. Comparing the whole month would
     # incorrectly mix baseline and acceptance uploads in the isolated DB and
@@ -160,10 +284,7 @@ def _snapshot(upload):
     # production model, so they continue to be compared by year/month.
     summaries = _sorted_rows(_rows(IMSSummary, _period_query(IMSSummary, upload)))
     targets = _sorted_rows(_rows(Target, _period_query(Target, upload)))
-    competition_query = CompetitionData.query.filter_by(upload_id=upload.id)
-    competition = _sorted_rows(_rows(CompetitionData, competition_query))
-    competition_semantic = _competition_semantic_rows(competition_query, upload)
-    competition_diagnostics = _competition_diagnostics(competition_query, upload)
+    competition = _streaming_competition_snapshot(upload)
     spread = _sorted_rows(_rows(
         IMSRawData,
         IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_brick_spread_master"),
@@ -180,12 +301,12 @@ def _snapshot(upload):
         "fact": {"count": len(facts), "sha256": _fingerprint(facts)},
         "summary": {"count": len(summaries), "sha256": _fingerprint(summaries)},
         "target": {"count": len(targets), "sha256": _fingerprint(targets)},
-        "competition": {"count": len(competition), "sha256": _fingerprint(competition)},
-        "competition_semantic": {
-            "count": len(competition_semantic),
-            "sha256": _fingerprint(competition_semantic),
-        },
-        "competition_diagnostics": competition_diagnostics,
+        "competition": competition["physical"],
+        "competition_sheets": competition["sheets"],
+        "competition_sheet_semantic": competition["sheet_semantic"],
+        "competition_sheet_without_period": competition["sheet_without_period"],
+        "competition_semantic": competition["semantic"],
+        "competition_diagnostics": competition["diagnostics"],
         "official_brick_spread": {"count": len(spread), "sha256": _fingerprint(spread)},
         "official_aggregates": {"count": len(official_aggregates), "sha256": _fingerprint(official_aggregates)},
         "summary_unit": sum(float(row.unit or 0) for row in _period_query(IMSSummary, upload).all()),
@@ -221,6 +342,52 @@ def _competition_delta(before, after, limit=30):
             })
         result[grain] = changes[:limit]
     return result
+
+
+def _validate_competition_coverage(before, after, manifest_names):
+    """Preserve every baseline sheet while permitting proven metadata fixes.
+
+    A source sheet may change its physical fingerprint only when its row count
+    and territory/product/metric totals (the stable business grain) remain
+    identical.  This permits correcting metadata such as the historical
+    MONTHLY -> WEEKLY classification on TTS REKABET without accepting any loss
+    or movement of business values.
+    """
+    before_sheets = before["competition_sheets"]
+    after_sheets = after["competition_sheets"]
+    missing = sorted(set(before_sheets) - set(after_sheets))
+    unmanifested = sorted(set(after_sheets) - set(manifest_names))
+    changed = []
+    migrated_grain = []
+    for sheet in sorted(set(before_sheets) & set(after_sheets)):
+        if before_sheets[sheet] == after_sheets[sheet]:
+            continue
+        changed.append(sheet)
+        count_equal = before_sheets[sheet]["count"] == after_sheets[sheet]["count"]
+        stable_equal = (
+            before["competition_sheet_without_period"].get(sheet)
+            == after["competition_sheet_without_period"].get(sheet)
+        )
+        if count_equal and stable_equal:
+            migrated_grain.append(sheet)
+
+    unsafe_changed = sorted(set(changed) - set(migrated_grain))
+    if missing or unsafe_changed or unmanifested:
+        raise AssertionError(
+            "Competition kaynak sheet koruması başarısız: "
+            f"missing={missing}, changed={unsafe_changed}, "
+            f"unmanifested={unmanifested}"
+        )
+    if after["competition"]["count"] < before["competition"]["count"]:
+        raise AssertionError(
+            "Competition kapsamı azaldı: "
+            f"before={before['competition']['count']}, after={after['competition']['count']}"
+        )
+    return {
+        "baseline_sheet_count": len(before_sheets),
+        "new_sheets": sorted(set(after_sheets) - set(before_sheets)),
+        "metadata_migrated_sheets": migrated_grain,
+    }
 
 
 def _source_path(app, upload):
@@ -263,7 +430,13 @@ def main():
             raise RuntimeError("Acceptance için COMPLETED IMS upload bulunamadı.")
 
         source = _source_path(app, baseline_upload)
+        stage_started = time.monotonic()
         before = _snapshot(baseline_upload)
+        before_snapshot_seconds = time.monotonic() - stage_started
+        print(
+            "IMS_ACCEPTANCE_STAGE|"
+            + json.dumps({"stage": "baseline_snapshot", "seconds": round(before_snapshot_seconds, 4)})
+        )
         baseline_counters = {
             "upload_id": baseline_upload.id,
             "file_name": baseline_upload.file_name,
@@ -277,6 +450,7 @@ def main():
             "reconciliation_status": baseline_upload.reconciliation_status,
         }
 
+        stage_started = time.monotonic()
         result = IMSImportService(str(source), uploaded_by="DEPLOY_ACCEPTANCE").run(
             baseline_upload.year,
             baseline_upload.month,
@@ -287,20 +461,34 @@ def main():
             raise AssertionError(f"Acceptance re-import FAILED: {result.get('errors')}")
         if result.get("final_result") != "PASS":
             raise AssertionError(f"Whole-workbook final_result PASS değil: {result.get('final_result')}")
+        import_wall_seconds = time.monotonic() - stage_started
+        print(
+            "IMS_ACCEPTANCE_STAGE|"
+            + json.dumps({"stage": "isolated_import", "seconds": round(import_wall_seconds, 4)})
+        )
 
         new_upload = db.session.get(IMSUpload, int(result["upload_id"]))
         if new_upload is None or new_upload.status != "COMPLETED":
             raise AssertionError("Acceptance upload COMPLETED olmadı.")
+        stage_started = time.monotonic()
         after = _snapshot(new_upload)
+        after_snapshot_seconds = time.monotonic() - stage_started
+        print(
+            "IMS_ACCEPTANCE_STAGE|"
+            + json.dumps({"stage": "acceptance_snapshot", "seconds": round(after_snapshot_seconds, 4)})
+        )
 
         for domain in ("fact", "summary", "target", "official_brick_spread", "official_aggregates"):
             _assert_equal(domain, before[domain], after[domain])
-        if before["competition_semantic"] != after["competition_semantic"]:
+        manifest = result.get("workbook_manifest", [])
+        if not manifest or len(manifest) != int(new_upload.sheet_count or 0):
             raise AssertionError(
-                "competition semantic business totals fingerprint/count değişti: "
-                f"before={before['competition_semantic']}, after={after['competition_semantic']}, "
-                f"delta={_competition_delta(before['competition_diagnostics'], after['competition_diagnostics'])}"
+                f"Manifest sheet sayısı uyuşmuyor: manifest={len(manifest)}, upload={new_upload.sheet_count}"
             )
+        manifest_names = {str(item.get("sheet_name") or "") for item in manifest}
+        competition_coverage = _validate_competition_coverage(
+            before, after, manifest_names
+        )
         for total in ("summary_unit", "summary_tl", "target_unit", "target_tl"):
             if abs(float(before[total]) - float(after[total])) > 1e-6:
                 raise AssertionError(f"{total} değişti: before={before[total]}, after={after[total]}")
@@ -335,10 +523,6 @@ def main():
         ):
             raise AssertionError("Linux acceptance importunda peak RSS telemetry eksik.")
 
-        manifest = result.get("workbook_manifest", [])
-        if not manifest or len(manifest) != int(new_upload.sheet_count or 0):
-            raise AssertionError(f"Manifest sheet sayısı uyuşmuyor: manifest={len(manifest)}, upload={new_upload.sheet_count}")
-
         report = {
             "result": "PASS",
             "baseline": baseline_counters,
@@ -357,6 +541,9 @@ def main():
                 "competition": after["competition"]["count"],
                 "competition_baseline_physical": before["competition"]["count"],
                 "competition_semantic": after["competition_semantic"]["count"],
+                "competition_baseline_sheets_preserved": competition_coverage["baseline_sheet_count"],
+                "competition_new_sheets": competition_coverage["new_sheets"],
+                "competition_metadata_migrated_sheets": competition_coverage["metadata_migrated_sheets"],
                 "official_brick_spread": after["official_brick_spread"]["count"],
                 "official_aggregates": after["official_aggregates"]["count"],
                 "source": new_upload.source_record_count,
@@ -384,6 +571,11 @@ def main():
                     default=0,
                 ) or None,
                 "stages": stage_telemetry,
+            },
+            "acceptance_telemetry": {
+                "baseline_snapshot_seconds": round(before_snapshot_seconds, 4),
+                "isolated_import_wall_seconds": round(import_wall_seconds, 4),
+                "acceptance_snapshot_seconds": round(after_snapshot_seconds, 4),
             },
         }
         print("IMS_ACCEPTANCE|" + json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
