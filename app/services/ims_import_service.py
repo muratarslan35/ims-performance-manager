@@ -910,9 +910,108 @@ class IMSImportService:
         db.session.add(representative)
         db.session.flush()
         AliasService.refresh()
-        self._representative_match_cache[normalized] = AliasService.find_representative(name)
+        # AliasService.refresh() invalidates its own caches, but the importer
+        # also keeps a resolver cache.  Clear it instead of writing a legacy
+        # string key: the central resolver deliberately uses typed tuple keys
+        # so vacancy and person identities can never collide.  Retaining a
+        # previously cached negative tuple here made a safely-created person
+        # appear unresolved in later worksheets of the same workbook.
+        self._representative_match_cache.clear()
         self.statistics["matched_representatives"] += 1
         return representative.id, False
+
+    def bootstrap_representatives_from_context(self, prepared_sheets):
+        """Create safe person masters before any worksheet stages RAW rows.
+
+        Some workbooks put a secondary representative beside the primary
+        representative on a brick-level source, then refer to that person as
+        the primary identity on a different worksheet.  Worksheet order must
+        not decide whether that person resolves.  This pass uses only sheets
+        whose semantic contract exposes brick + region context and explicitly
+        permits representative onboarding.  Conflicting region evidence fails
+        closed and is left for the normal unresolved/manual-review gate.
+
+        This method creates identity masters only.  It intentionally does not
+        duplicate brick sales across primary and secondary representatives;
+        shared brick membership remains the responsibility of
+        ``sync_brick_assignments``.
+        """
+        candidates = {}
+        for sheet in prepared_sheets or []:
+            brick_column = sheet.get("brick_column")
+            region_column = sheet.get("region_column")
+            province_column = sheet.get("province_column")
+            if (
+                not sheet.get("auto_create_representatives")
+                or not brick_column
+            ):
+                continue
+
+            representative_columns = sheet.get("representative_columns") or [
+                sheet["representative_column"]
+            ]
+            for _, row in sheet["dataframe"].iterrows():
+                brick = self.clean_text(row[brick_column])
+                region_value = self.clean_text(row[region_column]) if region_column else None
+                province_value = self.clean_text(row[province_column]) if province_column else None
+                parsed_region, parsed_city = self._region_context(region_value, province_value)
+                # Styled workbooks can leave the authoritative region column's
+                # header blank while retaining values such as ``401 IZMIR``.
+                # Discover that row identity by content. Repeated equivalent
+                # cells are accepted, conflicting region codes fail closed.
+                row_regions = {}
+                for value in row.values:
+                    row_region, row_city = self._region_context(self.clean_text(value))
+                    if row_region:
+                        row_regions.setdefault(row_region, row_city)
+                if parsed_region:
+                    row_regions.setdefault(parsed_region, parsed_city)
+                if len(row_regions) > 1:
+                    continue
+                if len(row_regions) == 1:
+                    parsed_region, discovered_city = next(iter(row_regions.items()))
+                    parsed_city = parsed_city or discovered_city
+                region_identity = parsed_region or AliasService.normalize(region_value)
+                if not brick or not region_identity:
+                    continue
+
+                for column in representative_columns:
+                    representative_name = self.clean_text(row[column])
+                    if (
+                        not self._is_probable_representative_name(representative_name)
+                        or self._is_vacancy_representative(representative_name)
+                    ):
+                        continue
+                    key = AliasService.normalize(representative_name)
+                    candidate = candidates.setdefault(
+                        key,
+                        {
+                            "name": representative_name,
+                            "regions": set(),
+                            "contexts": [],
+                        },
+                    )
+                    candidate["regions"].add(region_identity)
+                    candidate["contexts"].append(
+                        {
+                            "territory": brick,
+                            "region": parsed_region or region_value or None,
+                            "city": province_value or parsed_city,
+                        }
+                    )
+
+        for candidate in candidates.values():
+            if len(candidate["regions"]) != 1:
+                self.warnings.append(
+                    "Temsilci birden fazla bölge bağlamında bulundu; otomatik master "
+                    f"oluşturulmadı ({candidate['name']})."
+                )
+                continue
+            match = self.resolve_representative_match(candidate["name"])
+            if match["matched"]:
+                continue
+            context = candidate["contexts"][0]
+            self._ensure_representative(candidate["name"], **context)
 
     @staticmethod
     def _team_for_context(region=None, city=None):
@@ -2260,6 +2359,7 @@ class IMSImportService:
             sheets = self.analyze_workbook()
             prepared_sheets = [sheet for sheet in (self.prepare_sheet(item) for item in sheets) if sheet]
             self.bootstrap_vacancy_representatives_from_balance()
+            self.bootstrap_representatives_from_context(prepared_sheets)
             normalized_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") == "normalized"]
             wide_sheets = [sheet for sheet in prepared_sheets if sheet.get("mode") != "normalized"]
 
