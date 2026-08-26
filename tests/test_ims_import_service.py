@@ -766,6 +766,82 @@ class IMSImportServiceTestCase(unittest.TestCase):
         raw = IMSRawData.query.one()
         self.assertEqual(raw.representative, "Ayşe Kaya")
 
+    def test_contextual_secondary_representative_resolves_before_earlier_sheet(self):
+        """Workbook order cannot leave a safe shared-brick person unresolved."""
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "semantic-order.xlsx"
+            with pd.ExcelWriter(workbook_path) as writer:
+                pd.DataFrame(
+                    [
+                        ["1 TTS ISMI", "Travazol Box", "Travazol TL"],
+                        ["Yeni Temsilci", 3, 45.0],
+                    ]
+                ).to_excel(
+                    writer, index=False, header=False, sheet_name="first semantic matrix"
+                )
+                pd.DataFrame(
+                    [
+                        [
+                            "BOLGE", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI",
+                            "Travazol Box", "Travazol TL",
+                        ],
+                        ["401 IZMIR", "IZM PAYLASILAN", "Ayşe Kaya", "Yeni Temsilci", 8, 120.0],
+                    ]
+                ).to_excel(
+                    writer, index=False, header=False, sheet_name="context semantic matrix"
+                )
+
+            result = IMSImportService(workbook_path, uploaded_by="Test User").run(2026, 2)
+
+        self.assertTrue(result["success"], result["errors"])
+        self.assertEqual(result["statistics"]["unresolved_representative_rows"], 0)
+        created = Representative.query.filter_by(rep_name="Yeni Temsilci").one()
+        self.assertEqual(created.region, "401")
+        # The contextual row remains attributed only to its primary person;
+        # onboarding a shared-brick member must not duplicate sales.
+        self.assertEqual(IMSRawData.query.filter_by(representative_id=created.id).count(), 1)
+
+    def test_context_bootstrap_discovers_region_when_source_header_is_blank(self):
+        service = IMSImportService("unused.xlsx", uploaded_by="Test User")
+        prepared = {
+            "auto_create_representatives": True,
+            "brick_column": "IAM BRICK",
+            "region_column": "BOLGE MUDURU",
+            "province_column": None,
+            "representative_column": "1 TTS ISMI",
+            "representative_columns": ["1 TTS ISMI", "2 TTS ISMI"],
+            "dataframe": pd.DataFrame(
+                [
+                    {
+                        "COLUMN_1": "401 IZMIR",
+                        "IAM BRICK": "IZM PAYLASILAN",
+                        "1 TTS ISMI": "Ayşe Kaya",
+                        "2 TTS ISMI": "Yeni Temsilci",
+                        "BOLGE MUDURU": None,
+                    }
+                ]
+            ),
+        }
+
+        service.bootstrap_representatives_from_context([prepared])
+
+        created = Representative.query.filter_by(rep_name="Yeni Temsilci").one()
+        self.assertEqual(created.region, "401")
+        self.assertEqual(created.city, "IZMIR")
+
+    def test_created_representative_invalidates_typed_negative_cache(self):
+        service = IMSImportService("unused.xlsx", uploaded_by="Test User")
+        self.assertFalse(service.resolve_representative_match("Yeni Temsilci")["matched"])
+
+        representative_id, existed = service._ensure_representative(
+            "Yeni Temsilci", region="401", city="IZMIR"
+        )
+
+        self.assertFalse(existed)
+        resolved = service.resolve_representative_match("Yeni Temsilci")
+        self.assertTrue(resolved["matched"])
+        self.assertEqual(resolved["object"].id, representative_id)
+
     def test_competitor_like_header_is_not_fuzzy_matched_to_company_product(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "competitor-fuzzy-header.xlsx"

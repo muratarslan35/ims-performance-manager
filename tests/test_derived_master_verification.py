@@ -97,3 +97,44 @@ def test_header_and_metadata_cells_are_explicit_nondata_not_fake_derived_metrics
     headers = [cell for cell in importer.workbook_cell_ledger if cell["sheet_name"] == "renamed-pivot-anything" and cell["row"] <= 4]
     assert headers
     assert all(cell["classification"] == "EXPLICIT_NONDATA" for cell in headers)
+
+
+def test_month_and_week_groups_for_same_product_keep_distinct_semantic_grain():
+    frame = pd.DataFrame(
+        [
+            ["PivotTable", "HAFTA", None, None, None, None],
+            [None, None, "AY", None, "HAFTA", None],
+            [None, None, "KETORAL SAMP DIGER", None, "KETORAL SAMP DIGER", None],
+            ["TERRITORIES", "SUBTERRITORIES", "VALUES REPORT", "UNITS REPORT", "VALUES REPORT", "UNITS REPORT"],
+            ["401 IZMIR", "IZM ALSANCAK", 24141.05, 261, 6198.10, 67],
+        ]
+    )
+    importer = FakeImporter(include_source=False)
+    importer.workbook = {"periodic pivot": frame}
+    importer.workbook_manifest = [
+        {
+            "sheet_name": "periodic pivot",
+            "sheet_type": "master_pivot_derived",
+            "coverage": "specialized_parser",
+            "header_row": 3,
+        }
+    ]
+    importer.workbook_cell_ledger = []
+    for row in range(frame.shape[0]):
+        for col in range(frame.shape[1]):
+            value = frame.iloc[row, col]
+            if value is not None and not (isinstance(value, float) and pd.isna(value)):
+                importer.workbook_cell_ledger.append(
+                    {
+                        "sheet_name": "periodic pivot",
+                        "row": row + 1,
+                        "column": col + 1,
+                        "classification": "VERIFIED_DERIVED",
+                        "sheet_type": "master_pivot_derived",
+                    }
+                )
+
+    result = apply_derived_verification_gate(importer)
+
+    assert result["conflicts"] == 0
+    assert importer.statistics["duplicate_conflict"] == 0

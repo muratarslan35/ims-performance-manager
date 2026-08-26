@@ -171,11 +171,25 @@ class WorkbookSemanticReconciler:
         return "market"
 
     def _period_scope(self, raw_parts, carried_parts, sheet_type):
-        text = " ".join(raw_parts + carried_parts)
-        if "HAFTA" in text or "WEEK" in text:
-            return "weekly"
-        if "MONTH" in text or re.search(r"\bAY\b", text) or any(token in text for token in self.MONTH_TOKENS):
-            return "monthly"
+        def explicit_scope(parts):
+            # Read the nearest/local header first. Horizontally carried pivot
+            # labels can contain both a parent WEEK label and a later MONTH
+            # sub-group; merging all text would incorrectly collapse those
+            # two physical measures into one semantic key.
+            for part in reversed(parts):
+                normalized = self._norm(part)
+                if normalized in {"HAFTA", "WEEK", "WEEKLY"}:
+                    return "weekly"
+                if normalized in {"AY", "MONTH", "MONTHLY"} or normalized in self.MONTH_TOKENS:
+                    return "monthly"
+            return None
+
+        local_scope = explicit_scope(raw_parts)
+        if local_scope:
+            return local_scope
+        carried_scope = explicit_scope(carried_parts)
+        if carried_scope:
+            return carried_scope
         if sheet_type in self.MONTHLY_HINT_TYPES or str(sheet_type).startswith("monthly_master"):
             return "monthly"
         return "unspecified"
