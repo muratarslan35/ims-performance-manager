@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 
 from app import create_app
 from app.database import initialize_database
+from app.extensions import db
 from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Product, Representative
 
 
@@ -258,6 +259,7 @@ def _create_legacy_schema(db_url):
                 created_at=created_at,
             )
         )
+    engine.dispose()
 
 
 def _build_test_app(db_url, *, strict_schema_validation=False):
@@ -569,6 +571,9 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
 
         cycle_inspector = sa.inspect(engine)
         self._assert_required_schema(cycle_inspector)
+        with app.app_context():
+            db.engine.dispose()
+        engine.dispose()
         return fingerprint
 
     def test_sqlite_migration_safety_and_reentrancy(self):
@@ -630,7 +635,8 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
             with app.app_context():
                 upgrade(directory=MIGRATIONS_DIR)
 
-            inspector = sa.inspect(sa.create_engine(sqlite_url))
+            inspection_engine = sa.create_engine(sqlite_url)
+            inspector = sa.inspect(inspection_engine)
             model_tables = {
                 "ims_uploads": IMSUpload,
                 "ims_raw_data": IMSRawData,
@@ -645,6 +651,9 @@ class DatabaseMigrationsTestCase(unittest.TestCase):
                     db_columns,
                     f"Schema mismatch for {table_name}: model={sorted(model_columns)} db={sorted(db_columns)}",
                 )
+            inspection_engine.dispose()
+            with app.app_context():
+                db.engine.dispose()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 
 from flask_migrate import upgrade
 from sqlalchemy import event, text
@@ -13,6 +14,7 @@ from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSUpload, Product, Representative, RepresentativeBrickAssignment
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
 from app.services.representative_market_service import RepresentativeMarketService
+import verify_representative_performance as performance_gate
 
 
 MIGRATIONS_DIR = str(Path(__file__).resolve().parents[1] / "migrations")
@@ -203,3 +205,28 @@ def test_representative_read_indexes_are_used(tmp_path):
 
         assert "ix_competition_upload_metric_flags_subterritory" in competition_plan
         assert "ix_ims_raw_upload_sheet_brick" in raw_plan
+
+
+def test_performance_gate_first_run_is_separate_and_clears_result_cache(tmp_path, monkeypatch):
+    application = _app(tmp_path)
+    with application.app_context():
+        calls = []
+        monkeypatch.setattr(
+            performance_gate,
+            "_build_read_model",
+            lambda representative, year, month: calls.append((representative.id, year, month)),
+        )
+        RepresentativeAnalysisCache.get_or_compute(
+            "first-run-sentinel", lambda: {"cached": True}, force_enable=True
+        )
+
+        result = performance_gate.warmup_runtime(
+            SimpleNamespace(id=77, rep_name="PERF WARMUP"), 2026, 8
+        )
+
+        assert calls == [(77, 2026, 8)]
+        assert result["representative_id"] == 77
+        assert result["seconds"] >= 0
+        assert result["selects"] == 0
+        assert result["competition_selects"] == 0
+        assert not RepresentativeAnalysisCache._store

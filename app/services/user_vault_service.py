@@ -2,6 +2,7 @@
 
 import sqlite3
 import os
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -66,38 +67,39 @@ class UserVaultService:
             return
         users = User.query.all()
         now = datetime.utcnow().isoformat()
-        with cls._connect() as connection:
-            for user in users:
-                connection.execute(
-                    """
-                    INSERT INTO users
-                    (email, full_name, password, phone, role, active,
-                     last_login, created_at, saved_at, user_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(email) DO UPDATE SET
-                        full_name=excluded.full_name,
-                        password=excluded.password,
-                        phone=excluded.phone,
-                        role=excluded.role,
-                        active=excluded.active,
-                        last_login=excluded.last_login,
-                        created_at=excluded.created_at,
-                        saved_at=excluded.saved_at,
-                        user_id=excluded.user_id
-                    """,
-                    (
-                        user.email,
-                        user.full_name,
-                        user.password,
-                        user.phone,
-                        user.role,
-                        int(user.active),
-                        user.last_login.isoformat() if user.last_login else None,
-                        user.created_at.isoformat(),
-                        now,
-                        user.id,
-                    ),
-                )
+        with closing(cls._connect()) as connection:
+            with connection:
+                for user in users:
+                    connection.execute(
+                        """
+                        INSERT INTO users
+                        (email, full_name, password, phone, role, active,
+                         last_login, created_at, saved_at, user_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO UPDATE SET
+                            full_name=excluded.full_name,
+                            password=excluded.password,
+                            phone=excluded.phone,
+                            role=excluded.role,
+                            active=excluded.active,
+                            last_login=excluded.last_login,
+                            created_at=excluded.created_at,
+                            saved_at=excluded.saved_at,
+                            user_id=excluded.user_id
+                        """,
+                        (
+                            user.email,
+                            user.full_name,
+                            user.password,
+                            user.phone,
+                            user.role,
+                            int(user.active),
+                            user.last_login.isoformat() if user.last_login else None,
+                            user.created_at.isoformat(),
+                            now,
+                            user.id,
+                        ),
+                    )
 
     @classmethod
     def load_user_by_id(cls, user_id):
@@ -117,7 +119,7 @@ class UserVaultService:
         path = cls._path()
         if not path.exists():
             return None
-        with cls._connect() as connection:
+        with closing(cls._connect()) as connection:
             row = connection.execute(
                 """
                 SELECT user_id, email, full_name, password, phone, role, active,
@@ -149,7 +151,7 @@ class UserVaultService:
         path = cls._path()
         if not path.exists():
             return 0
-        with cls._connect() as connection:
+        with closing(cls._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT user_id, email, full_name, password, phone, role, active,

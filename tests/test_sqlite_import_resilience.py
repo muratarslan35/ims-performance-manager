@@ -2,6 +2,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,8 @@ def test_sqlite_runtime_enables_wal_and_busy_timeout(resilient_app):
 
 
 def test_import_coordinator_reports_live_owner_and_clears_idle_metadata(resilient_app):
+    if os.name == "nt":
+        pytest.skip("POSIX advisory lock contract is exercised on Linux CI/production.")
     with resilient_app.app_context():
         from app.services.import_coordinator import ImportCoordinator
 
@@ -145,6 +148,8 @@ def test_user_vault_can_load_session_identity_independently(resilient_app):
 
 
 def test_import_coordinator_rejects_second_writer_with_metadata(resilient_app):
+    if os.name == "nt":
+        pytest.skip("POSIX advisory lock contract is exercised on Linux CI/production.")
     from app.services.import_coordinator import ImportBusyError, ImportCoordinator
 
     with resilient_app.app_context():
@@ -300,5 +305,5 @@ def test_online_backup_is_consistent_in_wal_mode(resilient_app):
 
     assert destination.is_file()
     assert result["integrity_check"] == "ok"
-    with sqlite3.connect(destination) as connection:
+    with closing(sqlite3.connect(destination)) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0].lower() == "ok"

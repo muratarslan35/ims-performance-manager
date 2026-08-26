@@ -3,6 +3,9 @@ from flask import render_template
 from pathlib import Path
 from datetime import timezone
 from zoneinfo import ZoneInfo
+import os
+
+from sqlalchemy.pool import NullPool
 
 from config import Config
 
@@ -144,6 +147,20 @@ def create_database(app):
 def create_app(config_object=Config):
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(config_object)
+    database_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI", ""))
+    if (
+        app.config.get("TESTING", False)
+        and os.name == "nt"
+        and database_uri.startswith("sqlite:///")
+        and database_uri != "sqlite:///"
+    ):
+        # Windows does not allow a TemporaryDirectory to remove a SQLite file
+        # while QueuePool retains an idle handle.  Test-only NullPool keeps each
+        # file-backed database isolated and makes teardown deterministic; the
+        # production WAL/single-writer connection policy is unchanged.
+        engine_options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
+        engine_options["poolclass"] = NullPool
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
     create_directories(app)
 
     install_sqlite_connection_pragmas()
