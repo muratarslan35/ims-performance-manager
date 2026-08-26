@@ -13,6 +13,7 @@ from werkzeug.security import generate_password_hash
 from app import create_app
 from app.extensions import db
 from app.models import (
+    CompetitionData,
     IMSFact,
     IMSRawData,
     IMSSummary,
@@ -77,6 +78,126 @@ class IMSImportServiceTestCase(unittest.TestCase):
         db.engine.dispose()
         self.context.pop()
         self.temp_dir.cleanup()
+
+    def test_acceptance_competition_snapshot_streams_and_preserves_source_sheets(self):
+        from verify_ims_acceptance import (
+            _streaming_competition_snapshot,
+            _validate_competition_coverage,
+        )
+
+        baseline = IMSUpload(file_name="baseline.xlsx", year=2026, month=2, week_number=5)
+        expanded = IMSUpload(file_name="expanded.xlsx", year=2026, month=2, week_number=5)
+        db.session.add_all([baseline, expanded])
+        db.session.flush()
+
+        def row(upload_id, sheet_name, product_name, value, source_row):
+            return CompetitionData(
+                upload_id=upload_id,
+                year=2026,
+                month=2,
+                week_number=None,
+                sheet_name=sheet_name,
+                period_type="monthly",
+                territory="101 ISTANBUL",
+                subterritory="ISTANBUL MERKEZ",
+                product_group="TRAVAZOL GROUP",
+                product_name=product_name,
+                metric_type="UNIT",
+                metric_value=value,
+                source_row=source_row,
+            )
+
+        db.session.add_all([
+            row(baseline.id, "AYLIK REKABET KUTU", "ZALAIN", 10, 1),
+            row(expanded.id, "AYLIK REKABET KUTU", "ZALAIN", 10, 1),
+            row(expanded.id, "YENI SINIFLANDIRILMIS SHEET", "TRACOVOL", 5, 2),
+        ])
+        db.session.commit()
+
+        before = _streaming_competition_snapshot(baseline)
+        after = _streaming_competition_snapshot(expanded)
+
+        self.assertEqual(before["physical"]["count"], 1)
+        self.assertEqual(after["physical"]["count"], 2)
+        self.assertEqual(
+            before["sheets"]["AYLIK REKABET KUTU"],
+            after["sheets"]["AYLIK REKABET KUTU"],
+        )
+        self.assertEqual(
+            before["sheet_semantic"]["AYLIK REKABET KUTU"],
+            after["sheet_semantic"]["AYLIK REKABET KUTU"],
+        )
+        self.assertEqual(
+            after["sheets"]["YENI SINIFLANDIRILMIS SHEET"]["count"], 1
+        )
+        self.assertEqual(after["semantic"]["count"], 2)
+        self.assertIn("entries", after["diagnostics"]["product_metric"])
+        coverage = _validate_competition_coverage(
+            {
+                "competition": before["physical"],
+                "competition_sheets": before["sheets"],
+                "competition_sheet_without_period": before["sheet_without_period"],
+            },
+            {
+                "competition": after["physical"],
+                "competition_sheets": after["sheets"],
+                "competition_sheet_without_period": after["sheet_without_period"],
+            },
+            set(after["sheets"]),
+        )
+        self.assertEqual(coverage["new_sheets"], ["YENI SINIFLANDIRILMIS SHEET"])
+
+    def test_acceptance_allows_only_value_preserving_period_metadata_migration(self):
+        from verify_ims_acceptance import (
+            _streaming_competition_snapshot,
+            _validate_competition_coverage,
+        )
+
+        baseline = IMSUpload(file_name="baseline.xlsx", year=2026, month=1, week_number=5)
+        corrected = IMSUpload(file_name="corrected.xlsx", year=2026, month=1, week_number=5)
+        db.session.add_all([baseline, corrected])
+        db.session.flush()
+        common = dict(
+            year=2026, month=1, week_number=5, sheet_name="TTS REKABET",
+            territory="901 DIYARBAKIR", subterritory="MARDIN MERKEZ",
+            product_group="TRAVAZOL GROUP", product_name="ZALAIN",
+            metric_type="UNIT", metric_value=125, source_row=12,
+        )
+        db.session.add_all([
+            CompetitionData(upload_id=baseline.id, period_type="MONTHLY", **common),
+            CompetitionData(upload_id=corrected.id, period_type="WEEKLY", **common),
+        ])
+        db.session.commit()
+
+        before_stream = _streaming_competition_snapshot(baseline)
+        after_stream = _streaming_competition_snapshot(corrected)
+        before = {
+            "competition": before_stream["physical"],
+            "competition_sheets": before_stream["sheets"],
+            "competition_sheet_without_period": before_stream["sheet_without_period"],
+        }
+        after = {
+            "competition": after_stream["physical"],
+            "competition_sheets": after_stream["sheets"],
+            "competition_sheet_without_period": after_stream["sheet_without_period"],
+        }
+        coverage = _validate_competition_coverage(
+            before, after, {"TTS REKABET"}
+        )
+        self.assertEqual(coverage["metadata_migrated_sheets"], ["TTS REKABET"])
+
+        CompetitionData.query.filter_by(upload_id=corrected.id).update(
+            {"metric_value": 126}
+        )
+        db.session.commit()
+        changed_stream = _streaming_competition_snapshot(corrected)
+        changed = {
+            "competition": changed_stream["physical"],
+            "competition_sheets": changed_stream["sheets"],
+            "competition_sheet_without_period": changed_stream["sheet_without_period"],
+        }
+        with self.assertRaises(AssertionError):
+            _validate_competition_coverage(before, changed, {"TTS REKABET"})
 
     def _make_workbook(self, directory, filename="ims.xlsx"):
         workbook_path = Path(directory) / filename
