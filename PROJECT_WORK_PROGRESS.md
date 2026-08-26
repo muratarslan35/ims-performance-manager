@@ -10,6 +10,15 @@
 
 Bu bölüm aşağıdaki eski kayıtların üzerindedir; çelişki halinde bu bölüm esas alınır.
 
+## 26 Ağustos 2026 04:56 sonrası — aktarım engeli checkpoint'i
+
+- Yerel commit hazır ve temizdir: `70df8e72d8fe09ffd571a0484cc698affe751315` (`Harden SQLite acceptance and import telemetry`).
+- `git push -u origin fix/pc-sqlite-acceptance-stability` yeniden denendi; çalışma ortamı `github.com:443` bağlantısını sistem düzeyinde reddetti.
+- Alternatif `ssh.github.com:443` ve production `130.162.48.162:22` bağlantıları da TCP seviyesinde kapalıdır.
+- Bağlı GitHub repository API'si branch'i okuyabiliyor fakat bu oturumun `approval policy=never` kuralı mutasyonları (branch/push/PR) reddediyor; in-app/external browser bağlantısı da bulunamadı.
+- Bu nedenle PR, CI, merge, production acceptance, restart ve post-restart health adımları **çalıştırılmadı**; canlı servis/snapshot değiştirilmedi.
+- Ağ erişimi açıldığında yeniden analiz veya test yapılmadan aşağıdaki SHA push edilerek zorunlu sıra `Branch/PR` adımından devam edilecektir. Production kapıları PASS olmadan tamamlandı/canlıya alındı denmeyecektir.
+
 ## 26 Ağustos 2026 00:44 — PC Codex uygulama checkpoint'i
 
 Çalışma branch'i: `fix/pc-sqlite-acceptance-stability`
