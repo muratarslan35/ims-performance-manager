@@ -1,0 +1,132 @@
+name: IMS Server Import Benchmark
+
+on:
+  workflow_run:
+    workflows: ["Validate and Deploy IMS Performance Manager"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ims-server-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Benchmark latest failed IMS on production host
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run isolated import benchmark
+        id: benchmark
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" 2>&1 <<'REMOTE' | tee "$RUNNER_TEMP/ims-benchmark.log"
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          git pull --ff-only origin main
+
+          stamp=$(date +%Y%m%d-%H%M%S)
+          benchmark_db="/tmp/ims-benchmark-${stamp}.db"
+          cleanup() {
+            rm -f -- "$benchmark_db" "$benchmark_db-wal" "$benchmark_db-shm"
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          echo '--- IMS SERVER BENCHMARK: ISOLATED DB COPY ---'
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "$benchmark_db"
+          chmod 600 "$benchmark_db"
+
+          echo '--- IMS SERVER BENCHMARK: IMPORT ---'
+          /usr/bin/time -f 'IMS_SERVER_BENCHMARK_RESOURCE|elapsed_seconds=%e|max_rss_kb=%M|cpu_percent=%P' \
+            env DATABASE_URL="sqlite:///$benchmark_db" \
+            venv/bin/python benchmark_ims_import.py
+
+          echo '--- IMS SERVER BENCHMARK: LIVE DB UNCHANGED CHECK ---'
+          venv/bin/python - <<'PY'
+          import sqlite3
+          connection = sqlite3.connect('instance/ipm.db', timeout=30)
+          try:
+              mode = connection.execute('PRAGMA journal_mode').fetchone()[0]
+              integrity = connection.execute('PRAGMA integrity_check').fetchone()[0]
+          finally:
+              connection.close()
+          print(f'IMS_SERVER_BENCHMARK_LIVE_DB|journal_mode={mode}|integrity={integrity}')
+          if str(mode).lower() != 'wal' or str(integrity).lower() != 'ok':
+              raise SystemExit('Live DB post-benchmark verification failed')
+          PY
+
+          cleanup
+          trap - EXIT HUP INT TERM
+          REMOTE
+          rc=${PIPESTATUS[0]}
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish benchmark evidence
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCHMARK_EXIT: ${{ steps.benchmark.outputs.exit_code }}
+        run: |
+          status="SUCCESS"
+          if [ "${BENCHMARK_EXIT:-1}" != "0" ]; then status="FAILED"; fi
+          evidence_file="$RUNNER_TEMP/ims-benchmark.log"
+          if [ -f "$evidence_file" ]; then
+            evidence=$(grep -E 'IMS_SERVER_BENCHMARK\||IMS_SERVER_BENCHMARK_RESOURCE\||IMS_SERVER_BENCHMARK_LIVE_DB\|' "$evidence_file" | tail -n 80 || true)
+          else
+            evidence="Benchmark SSH log was not created."
+          fi
+          body=$(jq -n \
+            --arg title "IMS server import benchmark ${status}" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg status "$status" \
+            --arg evidence "$evidence" \
+            '{title:$title, body:("Workflow: "+$run+"\n\nResult: **"+$status+"**\n\n```text\n"+$evidence+"\n```") }')
+          curl --fail-with-body -sS \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" \
+            -d "$body"
+
+      - name: Enforce benchmark result
+        if: always()
+        shell: bash
+        env:
+          BENCHMARK_EXIT: ${{ steps.benchmark.outputs.exit_code }}
+        run: test "${BENCHMARK_EXIT:-1}" = "0"
