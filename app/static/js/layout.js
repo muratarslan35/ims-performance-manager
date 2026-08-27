@@ -110,6 +110,54 @@
         }
     }
 
+    function renderImportNotifications(jobs) {
+        const container = document.getElementById('imsImportNotifications');
+        const empty = document.getElementById('notificationsEmpty');
+        const countLabel = document.getElementById('notificationCount');
+        const badge = document.querySelector('.notification-badge');
+        if (!container || !empty || !countLabel || !badge) return;
+        const active = (jobs || []).filter(function (job) {
+            return ['QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED'].includes(job.status);
+        });
+        const unread = active.filter(function (job) {
+            return ['QUEUED', 'PROCESSING', 'FAILED'].includes(job.status);
+        }).length;
+        badge.textContent = String(unread);
+        badge.setAttribute('aria-label', unread + ' okunmamış bildirim');
+        countLabel.textContent = unread + ' Yeni';
+        empty.classList.toggle('d-none', active.length > 0);
+        container.innerHTML = active.map(function (job) {
+            const period = job.month + '/' + job.year;
+            let icon = 'bi-hourglass-split';
+            let text = period + ' IMS sırada bekliyor';
+            let tone = 'text-primary';
+            if (job.status === 'PROCESSING') text = period + ' IMS işleniyor';
+            if (job.status === 'COMPLETED') {
+                icon = 'bi-check-circle-fill';
+                tone = 'text-success';
+                text = period + ' IMS başarıyla tamamlandı — raporu aç';
+            }
+            if (job.status === 'FAILED') {
+                icon = 'bi-exclamation-triangle-fill';
+                tone = 'text-danger';
+                text = 'IMS yüklenemedi — hata raporunu aç';
+            }
+            return '<a class="list-group-item list-group-item-action" href="/ims">' +
+                '<i class="bi ' + icon + ' ' + tone + ' me-2"></i>' +
+                '<span>' + text + '</span><small class="d-block text-muted">' +
+                job.file_name.replace(/[&<>"']/g, '') + '</small></a>';
+        }).join('');
+        updateNotificationBadge();
+    }
+
+    function refreshImportNotifications() {
+        if (!document.getElementById('imsImportNotifications')) return;
+        fetch('/ims/import-jobs', {headers: {'Accept': 'application/json'}})
+            .then(function (response) { return response.ok ? response.json() : Promise.reject(); })
+            .then(function (payload) { renderImportNotifications(payload.jobs); })
+            .catch(function () {});
+    }
+
     /* ─── ACTIVE NAV LINK HIGHLIGHT ────────────────────────── */
     function highlightActiveNav() {
         const currentPath = window.location.pathname;
@@ -193,6 +241,8 @@
 
         // Runtime setup
         updateNotificationBadge();
+        refreshImportNotifications();
+        window.setInterval(refreshImportNotifications, 15000);
         highlightActiveNav();
         setupDropdownKeyClose();
         setupUserMenu();
