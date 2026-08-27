@@ -61,6 +61,13 @@ def main():
             "targets": Target.query.filter_by(year=upload.year, month=upload.month).count(),
             "competition": CompetitionData.query.filter_by(upload_id=upload.id).count(),
             "raw": IMSRawData.query.filter_by(upload_id=upload.id).count(),
+            "official_brick_spread": IMSRawData.query.filter_by(
+                upload_id=upload.id, sheet_type="official_brick_spread_master"
+            ).count(),
+            "official_aggregates": IMSRawData.query.filter(
+                IMSRawData.upload_id == upload.id,
+                IMSRawData.sheet_type.in_(("official_target_aggregate", "official_actual_aggregate")),
+            ).count(),
         }
         expected_counts = report.get("counts") or {}
         for key in ("facts", "summary", "targets", "competition"):
@@ -68,7 +75,26 @@ def main():
             _require(expected > 0, f"audit {key}=0")
             _require(actual_counts[key] == expected, f"{key} count mismatch: db={actual_counts[key]} audit={expected}")
 
-        _require(actual_counts["raw"] == int(upload.raw_record_count or 0), f"raw mismatch: db={actual_counts['raw']} upload={upload.raw_record_count}")
+        # raw_record_count is the importer semantic/raw metric counter, not the
+        # physical ims_raw_data row count. The table also stores side-channel
+        # rows such as official aggregate and Brick Spread masters. Therefore a
+        # healthy upload can legitimately have physical RAW > raw_record_count
+        # (week 7: 25,104 vs 24,816). Guard against loss instead of treating the
+        # additional validated side-channel rows as corruption.
+        semantic_raw = int(upload.raw_record_count or 0)
+        _require(semantic_raw > 0, "raw_record_count sıfır.")
+        _require(
+            actual_counts["raw"] >= semantic_raw,
+            f"physical raw eksik: db={actual_counts['raw']} semantic={semantic_raw}",
+        )
+        for key in ("official_brick_spread", "official_aggregates"):
+            if key in expected_counts:
+                expected = int(expected_counts.get(key, 0) or 0)
+                _require(
+                    actual_counts[key] == expected,
+                    f"{key} count mismatch: db={actual_counts[key]} audit={expected}",
+                )
+
         _require(actual_counts["facts"] == int(upload.fact_record_count or 0), f"fact mismatch: db={actual_counts['facts']} upload={upload.fact_record_count}")
 
         national = report.get("national_region")
@@ -84,6 +110,9 @@ def main():
             "period": [upload.year, upload.month, upload.week_number],
             "source": int(upload.source_record_count or 0),
             "stored": int(upload.stored_source_record_count or 0),
+            "semantic_raw": semantic_raw,
+            "physical_raw": actual_counts["raw"],
+            "raw_side_channel_delta": actual_counts["raw"] - semantic_raw,
             "reconciliation": upload.reconciliation_status,
             "critical": critical,
             "sheets": sheets,
