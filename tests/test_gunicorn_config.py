@@ -32,9 +32,6 @@ def test_runtime_uses_threaded_workers_without_preloading_sqlite_state():
 def test_ims_upload_response_is_not_force_recycled_in_post_request():
     config = _load_config()
 
-    # A forced post_request recycle can abort the browser socket even when the
-    # importer itself succeeds. Upload response stability therefore requires
-    # that no custom post_request hook marks the serving worker dead.
     assert not hasattr(config, "post_request")
     source = (Path(__file__).resolve().parents[1] / "gunicorn.conf.py").read_text(encoding="utf-8")
     assert "worker.alive = False" not in source
@@ -47,23 +44,23 @@ def test_periodic_worker_recycling_remains_enabled():
     assert config.max_requests_jitter >= 0
 
 
-def test_deploy_restarts_only_after_acceptance_checks():
+def test_heavy_deploy_restarts_only_after_isolated_acceptance():
     workflow = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.yml"
     ).read_text(encoding="utf-8")
 
-    acceptance = workflow.index("verify_ims_acceptance.py")
+    acceptance = workflow.index("venv/bin/python verify_ims_acceptance.py")
     service_start = workflow.index("deploy/install_systemd_service.sh")
-    assert acceptance < service_start
+    heavy_gate = workflow.index('if [ "$RELEASE_MODE" = "heavy" ]; then')
+    assert heavy_gate < acceptance < service_start
     assert "nohup venv/bin/python run.py" not in workflow
     assert "ServerAliveInterval=30" in workflow
     assert "ServerAliveCountMax=20" in workflow
-    assert "timeout --signal=TERM --kill-after=30s" in workflow
-    assert "cleanup_stale_acceptance_processes" in workflow
-    assert "cleanup_stale_acceptance_files" in workflow
-    assert "[ \"$checked\" -le 8 ]" in workflow
-    assert "[ \"$checked\" -le 24 ]" in workflow
-    assert "Acceptance DB retained for at most 60 minutes" in workflow
+    assert "timeout --signal=TERM --kill-after=30s 900s" in workflow
+    assert 'sqlite_online_backup.py instance/ipm.db "$acceptance_db"' in workflow
+    assert "FAST BACKEND RELEASE GATES" in workflow
+    assert "FAST UI RELEASE: DB/IMS GATES SKIPPED" in workflow
+    assert "Production health check passed." in workflow
 
 
 def test_managed_service_requires_persistent_secret_environment():
