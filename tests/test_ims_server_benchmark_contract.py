@@ -23,10 +23,10 @@ def test_server_benchmark_exposes_bounded_progress_without_relaxing_timeout():
     assert "timeout-minutes: 20" in workflow
 
 
-def test_server_benchmark_workflow_uses_isolated_online_backup_after_successful_deploy():
+def test_server_benchmark_is_manual_heavy_gate_and_uses_isolated_online_backup():
     text = Path(".github/workflows/ims-server-benchmark.yml").read_text(encoding="utf-8")
-    assert "workflow_run:" in text
-    assert "github.event.workflow_run.conclusion == 'success'" in text
+    assert "workflow_dispatch:" in text
+    assert "workflow_run:" not in text
     assert 'benchmark_db="/tmp/ims-benchmark-${stamp}.db"' in text
     assert 'sqlite_online_backup.py instance/ipm.db "$benchmark_db"' in text
     assert 'DATABASE_URL="sqlite:///$benchmark_db"' in text
