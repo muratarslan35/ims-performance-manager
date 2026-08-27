@@ -10,6 +10,7 @@ from sqlalchemy import update
 
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
+from app.services.competition_import_service import CompetitionImportService
 from app.services.import_coordinator import ImportCoordinator
 from app.services.ims_import_service import IMSImportService
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
@@ -62,13 +63,23 @@ class IMSImportQueue:
                 file_name=job.file_name,
                 wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
             ):
+                # The competition extension is the dominant write volume (hundreds
+                # of thousands of rows for week 7).  The historical 1,000-row
+                # batch caused hundreds of SQLAlchemy executemany calls on the
+                # production SQLite host.  Keep the outer atomic transaction and
+                # duplicate/reconciliation rules unchanged, but use a bounded,
+                # production-safe larger batch for background imports.
+                configured_chunk = int(current_app.config.get("IMS_COMPETITION_BULK_CHUNK_SIZE", 10000) or 10000)
+                CompetitionImportService.BULK_CHUNK_SIZE = max(1000, min(configured_chunk, 25000))
+
                 job.heartbeat_at = datetime.utcnow()
                 db.session.commit()
-                result = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by).run(
-                    year=job.year,
-                    month=job.month,
-                    clear_before_import=job.clear_before_import,
-                )
+                with db.session.no_autoflush:
+                    result = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by).run(
+                        year=job.year,
+                        month=job.month,
+                        clear_before_import=job.clear_before_import,
+                    )
                 if not result.get("success"):
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
                 spread = OfficialBrickSpreadService.persist(
@@ -85,6 +96,7 @@ class IMSImportQueue:
                 if upload is not None:
                     upload.warning_message = "\n".join(warnings) or None
                 stats = dict(result.get("statistics") or {})
+                stats["competition_bulk_chunk_size"] = CompetitionImportService.BULK_CHUNK_SIZE
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
                 job.ims_upload_id = result["upload_id"]
