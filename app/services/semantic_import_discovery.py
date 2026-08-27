@@ -1,8 +1,8 @@
 """Semantic discovery adapters for import capabilities whose legacy entrypoints used sheet names.
 
-Sheet names remain a backwards-compatible hint only.  Future workbooks may rename
+Sheet names remain a backwards-compatible hint only. Future workbooks may rename
 or reorder sheets; content structure decides whether a target or competition
-capability is present.  Ambiguous content is never guessed.
+capability is present. Ambiguous content is never guessed.
 """
 from __future__ import annotations
 
@@ -38,14 +38,9 @@ def _competition_signature_from_frame(frame):
     ))
     if not has_geo:
         return None
-    # Dedicated target/realisation layouts are not competition merely because
-    # they also carry representatives and monetary/unit columns.
     if "HEDEF" in text or "TARGET" in text or "REALIZASYON" in text or "REALİZASYON" in text:
         return None
 
-    # A renamed competition sheet still exposes a broad market-product header
-    # surface.  Small company-only sales sheets intentionally remain below this
-    # threshold and fall through to their normal parser.
     generic = {
         "TTS", "ISMI", "TEMSILCI", "REPRESENTATIVE", "IAM", "BRICK", "TERRITORIES",
         "TERRITORY", "SUBTERRITORIES", "SUBTERRITORY", "BOLGE", "REGION", "TL",
@@ -74,8 +69,6 @@ def _competition_signature_from_frame(frame):
         return "competition_tl"
     if has_unit and not has_value:
         return "competition_box"
-    # If both metric families coexist, content is not deterministic enough to
-    # choose a competition parser.  Fail closed via ordinary preflight instead.
     return None
 
 
@@ -93,15 +86,22 @@ def _worksheet_text(service, sheet_name, rows=30):
 def _competition_type_for_loaded_sheet(service, sheet_name):
     from app.services.competition_import_service import SheetType
 
-    # A sheet name is only a fallback hint. Loaded-cell semantics are the
-    # authoritative classifier, including for historically recognised names.
+    cache = getattr(service, "_semantic_sheet_type_cache", None)
+    if cache is None:
+        cache = {}
+        service._semantic_sheet_type_cache = cache
+    if sheet_name in cache:
+        return cache[sheet_name]
+
     named = service.classify_sheet(sheet_name)
     values, text = _worksheet_text(service, sheet_name)
     if not values:
+        cache[sheet_name] = None
         return None
     has_rep = any(token in text for token in ("TTS ISMI", "TEMSILCI", "REPRESENTATIVE", "1 TTS ISMI", "2 TTS ISMI"))
     has_geo = any(token in text for token in ("IAM BRICK", "BRICK", "TERRITOR", "BOLGE", "REGION"))
     if not has_geo or any(token in text for token in ("HEDEF", "TARGET", "REALIZASYON", "REALİZASYON")):
+        cache[sheet_name] = named
         return named
     explicit = any(token in text for token in ("REKABET", "RAKIP", "RAKİP", "COMPETITOR"))
     generic = {
@@ -119,11 +119,11 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
         if len(value) < 3 or any(marker in value for marker in ("PIVOTTABLE", "GROUPTABLE")):
             continue
         productish.add(value)
-    # Representative headers are useful but not mandatory for NATIONAL/brick
-    # market matrices. Breadth supplies the authority evidence in that shape.
     if not explicit and len(productish) < 18:
+        cache[sheet_name] = named
         return named
     if not has_rep and len(productish) < 18:
+        cache[sheet_name] = named
         return named
     exact_values = set(values)
     has_monthly_scope = bool(exact_values & {"AYLIK", "MONTHLY", "MONTHLY REPORT", "AYLIK RAPOR"})
@@ -135,16 +135,19 @@ def _competition_type_for_loaded_sheet(service, sheet_name):
     has_unit = any(token in text for token in ("KUTU", "UNITS REPORT", "UNIT REPORT", " BOX ", "ADET"))
     has_value = any(token in text for token in ("VALUES REPORT", "VALUE REPORT", " CIRO ", " TUTAR ", " TL ", "| TL"))
     if has_share:
-        return SheetType.MARKET_REFERENCE
-    if has_weekly_scope and not monthly_matrix:
-        return SheetType.WEEKLY_VALUE if has_value and not has_unit else SheetType.WEEKLY_UNITS
-    if has_value and not has_unit:
-        return SheetType.MONTHLY_COMPETITION_VALUE
-    if has_unit and not has_value:
-        return SheetType.MONTHLY_COMPETITION_UNITS
-    if monthly_matrix:
-        return SheetType.MONTHLY_COMPETITION_UNITS
-    return named
+        result = SheetType.MARKET_REFERENCE
+    elif has_weekly_scope and not monthly_matrix:
+        result = SheetType.WEEKLY_VALUE if has_value and not has_unit else SheetType.WEEKLY_UNITS
+    elif has_value and not has_unit:
+        result = SheetType.MONTHLY_COMPETITION_VALUE
+    elif has_unit and not has_value:
+        result = SheetType.MONTHLY_COMPETITION_UNITS
+    elif monthly_matrix:
+        result = SheetType.MONTHLY_COMPETITION_UNITS
+    else:
+        result = named
+    cache[sheet_name] = result
+    return result
 
 
 def install_semantic_import_discovery():
@@ -159,9 +162,6 @@ def install_semantic_import_discovery():
     original_preflight_classify = WorkbookPreflight._content_classify
 
     def content_classify_with_competition(self, frame):
-        # Preserve all established deterministic rules first. If they only see
-        # a generic representative sheet, allow a stronger broad-market
-        # competition signature to override that generic fallback.
         detected = original_preflight_classify(self, frame)
         competition = _competition_signature_from_frame(frame)
         if competition and detected in {None, "representative_sales"}:
@@ -178,9 +178,6 @@ def install_semantic_import_discovery():
         _values, text = _frame_text(dataframe, rows=20)
         if "HEDEF" not in text and "TARGET" not in text:
             return False
-        # Mixed target/actual sheets are handled by the compact content parser
-        # before this method. The generic fallback is reserved for dedicated
-        # target tables so a renamed sales sheet cannot be double-imported.
         if any(token in text for token in ("CIKIS", "ÇIKIŞ", "REALIZASYON", "REALİZASYON")):
             return False
         has_rep = any(token in text for token in self.REPRESENTATIVE_HEADERS)
@@ -208,6 +205,9 @@ def install_semantic_import_discovery():
         supported = list(named)
         for sheet_name in self._workbook.sheetnames:
             if sheet_name in supported:
+                # Populate the cache for legacy names as well so get_sheet_type
+                # never has to rescan the header surface later.
+                _competition_type_for_loaded_sheet(self, sheet_name)
                 continue
             if _competition_type_for_loaded_sheet(self, sheet_name) is not None:
                 supported.append(sheet_name)
@@ -221,10 +221,6 @@ def install_semantic_import_discovery():
             if semantic is None:
                 return original_get_type(self, sheet_name)
             return semantic.value
-        # The legacy mapper's generic fallback is WEEKLY_UNITS. Override only
-        # that weak default when loaded cells prove a monthly matrix. Explicit
-        # PP/TL/KUTU name hints remain stable unless a future classifier can
-        # prove a conflict strongly enough to fail closed.
         if named == SheetType.WEEKLY_UNITS and semantic in {
             SheetType.MONTHLY_COMPETITION_UNITS,
             SheetType.MONTHLY_COMPETITION_VALUE,
@@ -240,36 +236,35 @@ def install_semantic_import_discovery():
 
     def process_with_competition_fallback(self, year, month, week_number=None):
         result = original_process(self, year, month, week_number=week_number)
-        # The legacy branch already imported name-recognised sheets. Only invoke
-        # the semantic fallback when no old-style name was present.
         if CompetitionImportService.has_competition_sheets((self.workbook or {}).keys()):
             return result
-        probe = CompetitionImportService(
-            file_path=self.file_path, upload_id=self.upload.id,
-            year=year, month=month, week_number=week_number,
+
+        # Reuse the sanitized dataframes already loaded by IMSImportService.
+        # The previous fallback opened the same Excel file twice more (probe +
+        # real import), which dominated production time after semantic support
+        # was introduced. Discovery and persistence now share one prepared view.
+        competition = CompetitionImportService(
+            file_path=self.file_path,
+            upload_id=self.upload.id,
+            year=year,
+            month=month,
+            week_number=week_number,
+            workbook=self.workbook,
         )
-        probe.load_workbook(self.file_path)
-        try:
-            supported = probe.get_supported_sheets()
-        finally:
-            if probe._workbook:
-                probe._workbook.close()
-                probe._workbook = None
+        supported = competition.get_supported_sheets()
         if not supported:
             return result
-        competition_result = CompetitionImportService(
-            file_path=self.file_path, upload_id=self.upload.id,
-            year=year, month=month, week_number=week_number,
-        ).run()
+        competition_result = competition.run()
         summary = competition_result.get("summary", {})
         self.statistics["competition_records"] = summary.get("total_inserted", 0)
         self.statistics["competition_duplicates"] = summary.get("total_duplicates", 0)
         self.statistics["competition_invalid"] = summary.get("total_invalid", 0)
         self.statistics["competition_source_records"] = summary.get("numeric_cells", 0)
         self.statistics["competition_semantic_discovery"] = 1
+        self.statistics["competition_reused_prepared_workbook"] = 1
         self.warnings = [
             warning for warning in self.warnings
-            if "Rekabet etiketi taşıyan bir sayfa bulunamadığı için rekabet importu atlandı" not in str(warning)
+            if "Rekabet etiketi taşıyan bir sayfa bulunmadığı için rekabet importu atlandı" not in str(warning)
         ]
         self._finalize_source_reconciliation()
         return result
