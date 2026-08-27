@@ -62,7 +62,7 @@ jobs:
               app/templates/*|app/static/*)
                 [ "$mode" = "docs" ] && mode="ui"
                 ;;
-              app/ims.py|app/models.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/import_result_report.py|migrations/*|backfill_competition_data.py|verify_ims_acceptance.py|verify_ims_acceptance_extras.py|database_capacity_audit.py|scripts/sqlite_scale_probe.py|benchmark_ims_import.py|config.py)
+              .github/workflows/deploy.yml|app/ims.py|app/models.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/import_result_report.py|migrations/*|backfill_competition_data.py|verify_ims_acceptance.py|verify_ims_acceptance_extras.py|database_capacity_audit.py|scripts/sqlite_scale_probe.py|benchmark_ims_import.py|config.py)
                 mode="heavy"
                 ;;
               *)
@@ -152,7 +152,7 @@ jobs:
     needs: [classify, main_smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.mode != 'docs'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
