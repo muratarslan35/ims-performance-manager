@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from app import create_app
@@ -32,10 +34,73 @@ BLOCKING_STATS = (
     "duplicate_conflict",
 )
 
+HEARTBEAT_SECONDS = 30
+
 
 class BenchmarkConfig(Config):
     TESTING = True
     USER_VAULT_PATH = Path("/tmp/ims-benchmark-users-disabled.db")
+
+
+def _proc_memory() -> dict[str, int | None]:
+    values = {"rss_bytes": None, "peak_rss_bytes": None}
+    try:
+        with open("/proc/self/status", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    values["rss_bytes"] = int(line.split()[1]) * 1024
+                elif line.startswith("VmHWM:"):
+                    values["peak_rss_bytes"] = int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return values
+
+
+def _emit(kind: str, **payload) -> None:
+    print(
+        "IMS_SERVER_BENCHMARK_" + kind + "|" + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+        flush=True,
+    )
+
+
+class InstrumentedIMSImportService(IMSImportService):
+    """Benchmark-only wrapper exposing stage progress without changing import semantics."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.benchmark_current_stage = "pre_run"
+
+    @contextmanager
+    def _measure_stage(self, stage):
+        self.benchmark_current_stage = stage
+        started = time.monotonic()
+        _emit("STAGE_START", stage=stage, elapsed_seconds=round(started - self.started, 4), **_proc_memory())
+        try:
+            with super()._measure_stage(stage):
+                yield
+        finally:
+            telemetry = (self.statistics.get("stage_telemetry") or {}).get(stage) or {}
+            _emit(
+                "STAGE_END",
+                stage=stage,
+                elapsed_seconds=round(time.monotonic() - self.started, 4),
+                duration_seconds=round(time.monotonic() - started, 4),
+                telemetry=telemetry,
+                **_proc_memory(),
+            )
+            self.benchmark_current_stage = "between_stages"
+
+
+def _heartbeat(service: InstrumentedIMSImportService, stop_event: threading.Event, started: float) -> None:
+    while not stop_event.wait(HEARTBEAT_SECONDS):
+        proc_times = os.times()
+        _emit(
+            "HEARTBEAT",
+            elapsed_seconds=round(time.monotonic() - started, 4),
+            stage=service.benchmark_current_stage,
+            cpu_seconds=round(proc_times.user + proc_times.system, 4),
+            **_proc_memory(),
+        )
 
 
 def _source_path(app, upload: IMSUpload) -> Path:
@@ -110,14 +175,37 @@ def main() -> int:
 
         source = _source_path(app, source_upload)
         before_ids = {row[0] for row in db.session.query(IMSUpload.id).all()}
-
-        started = time.monotonic()
-        result = IMSImportService(str(source), uploaded_by="SERVER_BENCHMARK").run(
-            source_upload.year,
-            source_upload.month,
-            clear_before_import=False,
+        _emit(
+            "SELECTED",
+            upload_id=source_upload.id,
+            file_name=source_upload.file_name,
+            year=source_upload.year,
+            month=source_upload.month,
             week_number=source_upload.week_number,
+            database=str(db_path),
+            **_proc_memory(),
         )
+
+        service = InstrumentedIMSImportService(str(source), uploaded_by="SERVER_BENCHMARK")
+        started = time.monotonic()
+        stop_event = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            args=(service, stop_event, started),
+            name="ims-benchmark-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        try:
+            result = service.run(
+                source_upload.year,
+                source_upload.month,
+                clear_before_import=False,
+                week_number=source_upload.week_number,
+            )
+        finally:
+            stop_event.set()
+            heartbeat_thread.join(timeout=2)
         wall_seconds = time.monotonic() - started
 
         stats = result.get("statistics") or {}
@@ -168,7 +256,7 @@ def main() -> int:
             "reconciliation_status": new_upload.reconciliation_status,
             "errors": result.get("errors") or [],
         }
-        print("IMS_SERVER_BENCHMARK|" + json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
+        print("IMS_SERVER_BENCHMARK|" + json.dumps(report, ensure_ascii=False, sort_keys=True, default=str), flush=True)
 
         if report["result"] != "PASS":
             raise AssertionError(f"IMS benchmark import FAIL: {report['errors']}")
@@ -190,5 +278,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
-        print("IMS_SERVER_BENCHMARK|" + json.dumps({"result": "FAIL", "error": str(exc)}, ensure_ascii=False))
+        print("IMS_SERVER_BENCHMARK|" + json.dumps({"result": "FAIL", "error": str(exc)}, ensure_ascii=False), flush=True)
         raise
