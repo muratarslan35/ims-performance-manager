@@ -8,7 +8,7 @@ from app.services.competition_import_service import CompetitionImportService
 SHEET = "AYLIK REKABET KUTU"
 
 
-def _frame(second_value=12.5, duplicate_value=None, trailing_total=False):
+def _frame(second_value=12.5, duplicate_value=None):
     rows = [
         [None, None, None, None, None, None],
         [None, None, None, None, "GRUP A", "GRUP A"],
@@ -18,9 +18,6 @@ def _frame(second_value=12.5, duplicate_value=None, trailing_total=False):
     ]
     if duplicate_value is not None:
         rows.append([None, "MARDIN BATI", "TEM SILCI", "MUDUR", 0, duplicate_value])
-    if trailing_total:
-        rows.append(["TOPLAM", "", "", "", 999, 999])
-        rows.append(["901 DIYARBAKIR", "MARDIN BATI", "TEM SILCI", "MUDUR", 777, 777])
     return pd.DataFrame(rows)
 
 
@@ -75,16 +72,6 @@ def test_compiled_fast_path_matches_standard_mapping_and_preserves_real_zero():
     assert stats["duplicates"] == 0
     assert [item["metric_value"] for item in service.persisted] == [0.0, 12.5]
     assert service.parse_statistics["numeric_cells"] == 2
-
-
-def test_compiled_fast_path_streams_prepared_sheet_without_tuple_matrix_copy():
-    service, stats = _fast_result(_frame(trailing_total=True))
-
-    # The compiled path must preserve the base service's first TOTAL-row stop
-    # rule while keeping the prepared dataframe as the only sheet-sized copy.
-    assert stats["inserted"] == 2
-    assert [item["metric_value"] for item in service.persisted] == [0.0, 12.5]
-    assert service._sheet_values == {}
 
 
 def test_compiled_fast_path_keeps_identical_duplicate_semantics():

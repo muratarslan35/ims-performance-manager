@@ -8,7 +8,7 @@ objects hundreds of thousands of times.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.extensions import db
 from app.models import CompetitionData
@@ -18,40 +18,17 @@ from app.services.competition_import_service import (
     MetricType,
     PeriodType,
     SheetType,
-    _PreparedWorksheet,
 )
 
 
 class CompiledCompetitionImportService(CompetitionImportService):
     """Semantically identical competition importer with a compiled hot loop.
 
-    Discovery, source-value parsing, duplicate/conflict policy, zero-vs-blank
-    behavior and the outer IMS transaction all remain unchanged. Values that
-    are constant for a sheet/column/row are normalized once instead of once per
-    numeric cell. Prepared pandas sheets are streamed row-by-row and are never
-    expanded into a second Python tuple matrix.
+    Discovery, sheet bounds, source-value parsing, duplicate/conflict policy,
+    zero-vs-blank behavior and the outer IMS transaction all remain unchanged.
+    Only values that are constant for a sheet/column/row are normalized once
+    instead of once per numeric cell.
     """
-
-    def _get_cell_value(self, sheet: Any, row: int, col: int) -> Any:
-        """Read prepared workbook cells without materializing a second sheet.
-
-        The normal service caches openpyxl rows because random access on a
-        ReadOnlyWorksheet restarts the XML stream. The background worker already
-        owns sanitized pandas dataframes, so copying a wide competition sheet
-        to ``list[tuple]`` only increases RSS and swap pressure. ``iat`` keeps
-        semantic discovery O(1) while the hot data loop below uses itertuples.
-        """
-        if isinstance(sheet, _PreparedWorksheet):
-            if row < 1 or col < 1 or row > sheet.max_row or col > sheet.max_column:
-                return None
-            return sheet._clean_value(sheet._frame.iat[row - 1, col - 1])
-        return super()._get_cell_value(sheet, row, col)
-
-    def _find_data_end(self, sheet: Any, start_row: int) -> int:
-        """Defer prepared-sheet stop detection to the single streaming pass."""
-        if isinstance(sheet, _PreparedWorksheet):
-            return int(sheet.max_row or start_row)
-        return super()._find_data_end(sheet, start_row)
 
     @staticmethod
     def _metric_type_for_sheet(sheet_type: str) -> str:
@@ -102,52 +79,6 @@ class CompiledCompetitionImportService(CompetitionImportService):
             return True, float(normalized.replace(",", ".")), None
         except (ValueError, TypeError):
             return True, None, normalized
-
-    def _prepared_row_stops_import(self, row_values: Tuple[Any, ...]) -> bool:
-        """Mirror the base service's first-empty/total-row termination rule."""
-        non_empty = [
-            value for value in row_values
-            if value is not None and str(value).strip()
-        ]
-        if not non_empty:
-            return True
-        return any(
-            any(stop in str(value).strip().upper() for stop in self.STOP_KEYWORDS)
-            for value in non_empty
-        )
-
-    def _source_rows(
-        self,
-        sheet: Any,
-        structure_info: Dict[str, Any],
-    ) -> Iterator[Tuple[int, Tuple[Any, ...] | None]]:
-        """Yield each prepared source row once, retaining 1-based Excel indices."""
-        start_row = int(structure_info["data_start_row"])
-        end_row = int(structure_info["data_end_row"])
-        data_rows = structure_info.get("data_rows")
-        row_numbers = data_rows if data_rows is not None else range(start_row, end_row + 1)
-
-        if not isinstance(sheet, _PreparedWorksheet):
-            for source_row in row_numbers:
-                yield int(source_row), None
-            return
-
-        frame = sheet._frame
-        if data_rows is None:
-            source_frame = frame.iloc[start_row - 1:end_row]
-            for source_row, values in enumerate(
-                source_frame.itertuples(index=False, name=None),
-                start=start_row,
-            ):
-                yield source_row, tuple(sheet._clean_value(value) for value in values)
-            return
-
-        for source_row in row_numbers:
-            source_row = int(source_row)
-            if source_row < 1 or source_row > sheet.max_row:
-                continue
-            values = frame.iloc[source_row - 1].tolist()
-            yield source_row, tuple(sheet._clean_value(value) for value in values)
 
     def _existing_sheet_values(self, norm_sheet_name: str) -> Dict[Tuple[Any, ...], Tuple[float, Any]]:
         """Load only the current sheet's exact duplicate business keys.
@@ -209,17 +140,13 @@ class CompiledCompetitionImportService(CompetitionImportService):
         total_input = 0
         mapping_batch: List[Dict[str, Any]] = []
         last_valid_territory = ""
+        data_rows = structure_info.get("data_rows")
+        row_numbers = data_rows if data_rows is not None else range(
+            int(structure_info["data_start_row"]), int(structure_info["data_end_row"]) + 1
+        )
 
-        for source_row, prepared_values in self._source_rows(sheet, structure_info):
-            if prepared_values is not None and self._prepared_row_stops_import(prepared_values):
-                break
-
-            def cell_value(column: int) -> Any:
-                if prepared_values is not None:
-                    return prepared_values[column - 1] if column <= len(prepared_values) else None
-                return self._get_cell_value(sheet, source_row, column)
-
-            territory_value = cell_value(territory_column)
+        for source_row in row_numbers:
+            territory_value = self._get_cell_value(sheet, source_row, territory_column)
             if territory_value is not None and str(territory_value).strip() != "":
                 last_valid_territory = str(territory_value).strip()
             if not last_valid_territory:
@@ -231,7 +158,7 @@ class CompiledCompetitionImportService(CompetitionImportService):
             ):
                 continue
 
-            subterritory_value = cell_value(subterritory_column)
+            subterritory_value = self._get_cell_value(sheet, source_row, subterritory_column)
             raw_subterritory = str(subterritory_value).strip() if subterritory_value is not None else ""
             subterritory_upper = raw_subterritory.upper()
             if any(stop in subterritory_upper for stop in self.STOP_KEYWORDS):
@@ -243,8 +170,8 @@ class CompiledCompetitionImportService(CompetitionImportService):
             subterritory = self._normalize_turkish_text(raw_subterritory)
 
             for column, product_group, product_name, is_subtotal, is_grand_total in columns:
-                cell = cell_value(column)
-                has_observation, metric_value, invalid_text = self._parse_metric_value(cell)
+                cell_value = self._get_cell_value(sheet, source_row, column)
+                has_observation, metric_value, invalid_text = self._parse_metric_value(cell_value)
                 if not has_observation:
                     self.parse_statistics["blank_cells"] += 1
                     continue
@@ -281,7 +208,7 @@ class CompiledCompetitionImportService(CompetitionImportService):
                             f"key={(self.upload_id, norm_sheet_name, *key)}, "
                             f"first={prior_value}, second={metric_value}, "
                             f"first_source={{'row': {prior_row!r}, 'column': None}}, "
-                            f"second_source={{'row': {source_row!r}, 'column': {column!r}}}"
+                            f"second_source={{'row': {source_row!r}, 'column': None}}"
                         )
                     duplicates += 1
                     continue
@@ -384,7 +311,6 @@ class CompiledCompetitionImportService(CompetitionImportService):
                     **self.parse_statistics,
                     "execution_time": round(time.time() - pipeline_started, 4),
                     "compiled_fast_path": True,
-                    "prepared_sheet_streaming": True,
                 },
                 "sheet_statistics": sheet_statistics,
                 "errors": self.errors,
