@@ -26,7 +26,7 @@ from datetime import datetime
 import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
-from sqlalchemy import func
+from sqlalchemy import func, inspect as sa_inspect
 from sqlalchemy.exc import SQLAlchemyError
 from openpyxl import load_workbook as openpyxl_load_workbook
 
@@ -615,13 +615,29 @@ class IMSImportService:
         normalized = AliasService.normalize(representative_name)
         if normalized not in self._representative_match_cache:
             self._representative_match_cache[normalized] = AliasService.find_representative(representative_name)
-        return self._representative_match_cache[normalized]
+        match = self._representative_match_cache[normalized]
+        obj = match.get("object") if match else None
+        identity = sa_inspect(obj).identity if obj is not None else None
+        if identity:
+            attached = db.session.get(Representative, identity[0])
+            if attached is not obj:
+                match = {**match, "object": attached}
+                self._representative_match_cache[normalized] = match
+        return match
 
     def resolve_product_match(self, product_group_name):
         normalized = AliasService.normalize(product_group_name)
         if normalized not in self._product_match_cache:
             self._product_match_cache[normalized] = AliasService.find_product(product_group_name)
-        return self._product_match_cache[normalized]
+        match = self._product_match_cache[normalized]
+        obj = match.get("object") if match else None
+        identity = sa_inspect(obj).identity if obj is not None else None
+        if identity:
+            attached = db.session.get(Product, identity[0])
+            if attached is not obj:
+                match = {**match, "object": attached}
+                self._product_match_cache[normalized] = match
+        return match
 
     def _unique_product_code(self, product_name):
         base = re.sub(r"[^A-Z0-9]+", "", AliasService.normalize(product_name))[:24] or "PRODUCT"
