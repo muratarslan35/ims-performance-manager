@@ -214,7 +214,7 @@ class CompiledCompetitionImportService(CompetitionImportService):
                     continue
 
                 seen[key] = (metric_value, source_row)
-                mapping_batch.append({
+                mapping = {
                     "upload_id": self.upload_id,
                     "sheet_name": norm_sheet_name,
                     "period_type": period_type,
@@ -230,7 +230,11 @@ class CompiledCompetitionImportService(CompetitionImportService):
                     "is_subtotal": is_subtotal,
                     "is_grand_total": is_grand_total,
                     "source_row": int(source_row),
-                })
+                }
+                # Keep exact parity with the standard persistence mapping:
+                # optional None values are omitted rather than passed through
+                # explicitly. This protects byte-level regression equivalence.
+                mapping_batch.append({key: value for key, value in mapping.items() if value is not None})
                 if len(mapping_batch) >= self.BULK_CHUNK_SIZE:
                     inserted += self.bulk_insert(mapping_batch)
                     mapping_batch.clear()
