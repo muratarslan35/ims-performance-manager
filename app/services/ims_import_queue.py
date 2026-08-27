@@ -67,6 +67,14 @@ class IMSImportQueue:
                 file_name=job.file_name,
                 wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
             ):
+                # The queue stages files under a UUID name so simultaneous
+                # browser uploads can never collide. The business period,
+                # however, belongs to the original IMS filename. Preserve that
+                # identity explicitly: otherwise ``7.Hafta`` becomes invisible
+                # to IMSImportService and a weekly snapshot is misclassified as
+                # a destructive monthly replacement.
+                detected_week_number = IMSImportService.extract_week_number(job.file_name)
+
                 # The worker is the only production writer. Semantic discovery
                 # remains in the established importer, while the already-
                 # resolved competition plan is executed by the compiled hot
@@ -88,6 +96,7 @@ class IMSImportQueue:
                         year=job.year,
                         month=job.month,
                         clear_before_import=job.clear_before_import,
+                        week_number=detected_week_number,
                     )
                 if not result.get("success"):
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
@@ -103,12 +112,16 @@ class IMSImportQueue:
                 ]
                 upload = db.session.get(IMSUpload, result["upload_id"])
                 if upload is not None:
+                    # Keep the human/source filename in history even though the
+                    # physical staging file is collision-safe and UUID-named.
+                    upload.file_name = job.file_name
                     upload.warning_message = "\n".join(warnings) or None
 
                 completed_at = datetime.utcnow()
                 stats = dict(result.get("statistics") or {})
                 stats["competition_bulk_chunk_size"] = effective_chunk_size
                 stats["competition_compiled_fast_path"] = True
+                stats["detected_week_number"] = detected_week_number
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
                 stats["background_job_seconds"] = (
