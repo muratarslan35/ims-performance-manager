@@ -9,6 +9,9 @@ from flask_migrate import upgrade
 from app import create_app
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
+from app.services import ims_import_service as ims_import_service_module
+from app.services.compiled_competition_import_service import CompiledCompetitionImportService
+from app.services.competition_import_service import CompetitionImportService
 from app.services.ims_import_queue import IMSImportQueue
 
 
@@ -74,8 +77,13 @@ def test_worker_completes_job_and_links_business_upload(app):
         staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         staging.parent.mkdir(parents=True, exist_ok=True)
         staging.write_bytes(b"workbook")
+        observed = {}
+        original_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
+        original_service = ims_import_service_module.CompetitionImportService
 
         def fake_run(**_kwargs):
+            observed["competition_service"] = ims_import_service_module.CompetitionImportService
+            observed["chunk_size"] = CompetitionImportService.BULK_CHUNK_SIZE
             upload = IMSUpload(file_name=job.file_name, year=2026, month=2, status="COMPLETED")
             db.session.add(upload)
             db.session.commit()
@@ -90,6 +98,11 @@ def test_worker_completes_job_and_links_business_upload(app):
         assert job.status == IMSImportJob.STATUS_COMPLETED
         assert job.ims_upload_id is not None
         assert not staging.exists()
+        assert observed["competition_service"] is CompiledCompetitionImportService
+        assert observed["chunk_size"] == 25000
+        assert ims_import_service_module.CompetitionImportService is original_service
+        assert CompetitionImportService.BULK_CHUNK_SIZE == original_chunk_size
+        assert '"competition_compiled_fast_path": true' in job.result_summary
 
 
 def test_worker_failure_marks_job_without_business_upload(app):
@@ -98,9 +111,13 @@ def test_worker_failure_marks_job_without_business_upload(app):
         staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         staging.parent.mkdir(parents=True, exist_ok=True)
         staging.write_bytes(b"workbook")
+        original_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
+        original_service = ims_import_service_module.CompetitionImportService
         with mock.patch("app.services.ims_import_queue.ImportCoordinator.acquire", return_value=nullcontext()), \
              mock.patch("app.services.ims_import_queue.IMSImportService.run", side_effect=RuntimeError("invalid workbook")):
             IMSImportQueue.process(job)
         db.session.refresh(job)
         assert job.status == IMSImportJob.STATUS_FAILED
         assert IMSUpload.query.count() == 0
+        assert ims_import_service_module.CompetitionImportService is original_service
+        assert CompetitionImportService.BULK_CHUNK_SIZE == original_chunk_size
