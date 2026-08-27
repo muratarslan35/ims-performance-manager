@@ -29,53 +29,22 @@ def test_runtime_uses_threaded_workers_without_preloading_sqlite_state():
     assert 2 <= config.workers <= 4
 
 
-def test_heavy_ims_upload_recycles_only_the_serving_worker_after_response():
+def test_ims_upload_response_is_not_force_recycled_in_post_request():
     config = _load_config()
 
-    class Log:
-        def __init__(self):
-            self.messages = []
-
-        def info(self, message):
-            self.messages.append(message)
-
-    class Worker:
-        def __init__(self):
-            self.alive = True
-            self.log = Log()
-
-    worker = Worker()
-    config.post_request(
-        worker,
-        req=None,
-        environ={"PATH_INFO": "/ims/upload", "REQUEST_METHOD": "POST"},
-        resp=None,
-    )
-
-    assert worker.alive is False
-    assert worker.log.messages
+    # A forced post_request recycle can abort the browser socket even when the
+    # importer itself succeeds. Upload response stability therefore requires
+    # that no custom post_request hook marks the serving worker dead.
+    assert not hasattr(config, "post_request")
+    source = (Path(__file__).resolve().parents[1] / "gunicorn.conf.py").read_text(encoding="utf-8")
+    assert "worker.alive = False" not in source
 
 
-def test_normal_requests_do_not_force_worker_recycle():
+def test_periodic_worker_recycling_remains_enabled():
     config = _load_config()
 
-    class Log:
-        def info(self, message):
-            raise AssertionError("normal request should not log a forced recycle")
-
-    class Worker:
-        alive = True
-        log = Log()
-
-    worker = Worker()
-    config.post_request(
-        worker,
-        req=None,
-        environ={"PATH_INFO": "/dashboard/", "REQUEST_METHOD": "GET"},
-        resp=None,
-    )
-
-    assert worker.alive is True
+    assert config.max_requests > 0
+    assert config.max_requests_jitter >= 0
 
 
 def test_deploy_restarts_only_after_acceptance_checks():
