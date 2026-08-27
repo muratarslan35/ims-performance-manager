@@ -2406,6 +2406,7 @@ class IMSImportService:
                     year=year,
                     month=month,
                     week_number=week_number,
+                    workbook=self.workbook,
                 ).run()
                 competition_summary = competition_result.get("summary", {})
                 self.statistics["competition_records"] = competition_summary.get("total_inserted", 0)

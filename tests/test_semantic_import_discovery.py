@@ -105,6 +105,57 @@ def test_competition_placeholders_are_missing_but_numeric_zero_is_preserved():
         "blank_cells": 1,
         "invalid_cells": 0,
     }
+
+
+def test_competition_service_reuses_prepared_workbook_without_reopening_excel():
+    frame = pd.DataFrame([
+        ["BÖLGE", "IAM BRICK", "PRODUCT A", "PRODUCT B"],
+        ["101", "KADIKOY", 12, 0],
+    ])
+    service = CompetitionImportService(
+        file_path="must-not-be-opened.xlsx",
+        upload_id=77,
+        year=2026,
+        month=2,
+        workbook={"renamed market matrix": frame},
+    )
+
+    with mock.patch(
+        "app.services.competition_import_service.openpyxl_load_workbook",
+        side_effect=AssertionError("prepared workbook must be reused"),
+    ):
+        service.load_workbook(service.file_path)
+
+    sheet = service._workbook["renamed market matrix"]
+    assert sheet.max_row == 2
+    assert sheet.max_column == 4
+    assert list(sheet.iter_rows(min_row=2, max_row=2, values_only=True)) == [
+        ("101", "KADIKOY", 12, 0),
+    ]
+
+
+def test_competition_direct_bulk_mapping_matches_public_orm_mapping():
+    service = CompetitionImportService(upload_id=77, year=2026, month=2)
+    record = {
+        "sheet_name": "renamed market matrix",
+        "period_type": "MONTHLY",
+        "year": 2026,
+        "month": 2,
+        "week_number": 7,
+        "territory": "101 istanbul",
+        "subterritory": "kadikoy",
+        "product_group": "travazol group",
+        "product_name": "product a",
+        "metric_type": "UNIT",
+        "metric_value": 12.0,
+        "source_row": 2,
+    }
+    normalized = service.normalize_record(record)
+
+    direct = service._mapping_from_normalized_record(normalized, record["sheet_name"])
+    public = service._model_mapping(service.map_record_to_model(record, record["sheet_name"]))
+
+    assert direct == public
     assert service.invalid_cells == []
 
 
