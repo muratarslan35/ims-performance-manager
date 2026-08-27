@@ -1,11 +1,12 @@
 """One-shot production-host benchmark for the real background IMS queue path.
 
-This script is intentionally safe for the live host:
+Safety:
 - DATABASE_URL must point to an isolated /tmp SQLite copy.
 - The live database is never mutated.
 - A retained 7.Hafta workbook is copied to a temporary queue staging file.
 - IMSImportQueue.process() is exercised exactly as the production worker does.
-- The temporary staging file and isolated DB are removed by the caller/workflow.
+- An instrumented IMSImportService only emits stage timing/heartbeat evidence;
+  importer business semantics are unchanged.
 """
 from __future__ import annotations
 
@@ -13,7 +14,9 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -22,9 +25,18 @@ from app import create_app
 from app.extensions import db
 from app.models import CompetitionData, IMSFact, IMSImportJob, IMSRawData, IMSSummary, IMSUpload, Target
 from app.services.import_result_report import latest_import_report
+import app.services.ims_import_queue as ims_import_queue_module
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_import_service import IMSImportService
 from config import Config
+
+
+HEARTBEAT_SECONDS = 20
+_STATE_LOCK = threading.Lock()
+_STATE = {
+    "stage": "queue_setup",
+    "stage_started": time.monotonic(),
+}
 
 
 class QueueBenchmarkConfig(Config):
@@ -53,10 +65,53 @@ def _proc_memory() -> dict[str, int | None]:
     return result
 
 
+def _set_stage(stage: str) -> None:
+    with _STATE_LOCK:
+        _STATE["stage"] = str(stage)
+        _STATE["stage_started"] = time.monotonic()
+
+
+class InstrumentedIMSImportService(IMSImportService):
+    """Benchmark-only stage instrumentation around the production importer."""
+
+    @contextmanager
+    def _measure_stage(self, stage):
+        name = str(stage)
+        stage_started = time.monotonic()
+        _set_stage(name)
+        _emit("STAGE_START", stage=name, **_proc_memory())
+        try:
+            with super()._measure_stage(stage):
+                yield
+        finally:
+            telemetry = (self.statistics.get("stage_telemetry") or {}).get(stage) or {}
+            _emit(
+                "STAGE_END",
+                stage=name,
+                duration_seconds=round(time.monotonic() - stage_started, 4),
+                telemetry=telemetry,
+                **_proc_memory(),
+            )
+            _set_stage("between_stages")
+
+
+def _heartbeat(stop_event: threading.Event, wall_started: float) -> None:
+    while not stop_event.wait(HEARTBEAT_SECONDS):
+        with _STATE_LOCK:
+            stage = _STATE["stage"]
+            stage_started = float(_STATE["stage_started"])
+        proc_times = os.times()
+        _emit(
+            "HEARTBEAT",
+            wall_seconds=round(time.monotonic() - wall_started, 3),
+            stage=stage,
+            stage_seconds=round(time.monotonic() - stage_started, 3),
+            cpu_seconds=round(proc_times.user + proc_times.system, 3),
+            **_proc_memory(),
+        )
+
+
 def _source_candidate(upload_folder: Path) -> tuple[Path, str]:
-    # Prefer retained upload evidence whose human filename explicitly carries
-    # the week identity. This keeps the benchmark semantic and avoids relying
-    # on a hard-coded server path.
     uploads = IMSUpload.query.order_by(IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()).all()
     for upload in uploads:
         if IMSImportService.extract_week_number(upload.file_name) != 7:
@@ -65,9 +120,6 @@ def _source_candidate(upload_folder: Path) -> tuple[Path, str]:
         if direct.is_file():
             return direct, upload.file_name
 
-    # Historical synchronous imports can survive without a matching current DB
-    # row. Search only the IMS upload tree, excluding production-result and queue
-    # staging directories, and require the filename itself to resolve to week 7.
     candidates = []
     for path in upload_folder.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in {".xlsx", ".xls"}:
@@ -81,12 +133,6 @@ def _source_candidate(upload_folder: Path) -> tuple[Path, str]:
         candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
         return candidates[0], candidates[0].name
 
-    sample = sorted(
-        str(path.relative_to(upload_folder))
-        for path in upload_folder.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".xlsx", ".xls"}
-    )[:30]
-    _emit("SOURCE_MISSING", upload_folder=str(upload_folder), workbook_sample=sample)
     raise FileNotFoundError("Sunucuda 7.Hafta kimliği taşıyan retained IMS workbooku bulunamadı.")
 
 
@@ -147,8 +193,25 @@ def main() -> int:
             before_feb_raw=before_feb_raw,
             **_proc_memory(),
         )
+
+        previous_service = ims_import_queue_module.IMSImportService
+        ims_import_queue_module.IMSImportService = InstrumentedIMSImportService
         wall_started = time.monotonic()
-        IMSImportQueue.process(job)
+        stop_event = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat,
+            args=(stop_event, wall_started),
+            name="ims-queue-benchmark-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        _set_stage("queue_process")
+        try:
+            IMSImportQueue.process(job)
+        finally:
+            stop_event.set()
+            heartbeat_thread.join(timeout=2)
+            ims_import_queue_module.IMSImportService = previous_service
         wall_seconds = time.monotonic() - wall_started
 
         job = db.session.get(IMSImportJob, job_id)
@@ -210,8 +273,6 @@ def main() -> int:
             raise AssertionError(f"Import audit gate başarısız: report={report}")
         if counts != {"competition": 467320, "fact": 3426, "raw": 25104, "summary": 888, "target": 1211}:
             raise AssertionError(f"Golden counts değişti: {counts}")
-        # A UUID-staged weekly file must append its week evidence; destructive
-        # monthly clear would collapse this delta instead of preserving history.
         if after_feb_raw - before_feb_raw < 24000:
             raise AssertionError(
                 f"Haftalık import aylık clear davranışına düşmüş olabilir: before={before_feb_raw}, after={after_feb_raw}"

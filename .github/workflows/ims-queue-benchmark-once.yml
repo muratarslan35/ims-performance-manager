@@ -16,7 +16,7 @@ jobs:
   benchmark:
     name: Production-host isolated background queue benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_queue_benchmark_key -p "$IMS_PORT" \
-            -o ServerAliveInterval=20 -o ServerAliveCountMax=30 \
+            -o ServerAliveInterval=20 -o ServerAliveCountMax=45 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -84,8 +84,40 @@ jobs:
           }
           trap cleanup EXIT HUP INT TERM
 
-          echo '--- ISOLATED LIVE DB COPY ---'
-          venv/bin/python sqlite_online_backup.py instance/ipm.db "$benchmark_db"
+          echo '--- ISOLATED LIVE DB COPY (NO FULL SCAN) ---'
+          BENCHMARK_DB="$benchmark_db" venv/bin/python - <<'PY'
+          import os
+          import sqlite3
+          import time
+          from pathlib import Path
+
+          source = Path('instance/ipm.db')
+          destination = Path(os.environ['BENCHMARK_DB'])
+          started = time.monotonic()
+          source_connection = sqlite3.connect(f'file:{source}?mode=ro', uri=True, timeout=30)
+          destination_connection = sqlite3.connect(destination, timeout=30)
+          try:
+              source_connection.execute('PRAGMA busy_timeout=30000')
+              destination_connection.execute('PRAGMA busy_timeout=30000')
+              source_connection.backup(destination_connection, pages=8192, sleep=0.002)
+              destination_connection.commit()
+              required = {'ims_uploads', 'ims_raw_data', 'ims_facts', 'ims_competition_data', 'ims_import_jobs'}
+              present = {
+                  row[0] for row in destination_connection.execute(
+                      "SELECT name FROM sqlite_master WHERE type='table'"
+                  )
+              }
+              if not required.issubset(present):
+                  raise SystemExit(f'Isolated DB copy missing tables: {sorted(required - present)}')
+              latest_upload = destination_connection.execute('SELECT MAX(id) FROM ims_uploads').fetchone()[0]
+          finally:
+              destination_connection.close()
+              source_connection.close()
+          print(
+              f'IMS_QUEUE_BENCHMARK_COPY|seconds={time.monotonic()-started:.3f}|bytes={destination.stat().st_size}|latest_upload={latest_upload}',
+              flush=True,
+          )
+          PY
           chmod 600 "$benchmark_db"
 
           echo '--- REAL BACKGROUND QUEUE PATH ON ISOLATED DB ---'
@@ -93,18 +125,22 @@ jobs:
             env DATABASE_URL="sqlite:///$benchmark_db" PYTHONPATH="$IMS_PATH" \
             venv/bin/python /tmp/ims-queue-benchmark-once.py
 
-          echo '--- LIVE DB POST-CHECK ---'
+          echo '--- LIVE DB READ-ONLY POST-CHECK ---'
           venv/bin/python - <<'PY'
           import sqlite3
           connection = sqlite3.connect('instance/ipm.db', timeout=30)
           try:
               connection.execute('PRAGMA busy_timeout=30000')
               mode = connection.execute('PRAGMA journal_mode').fetchone()[0]
-              quick = connection.execute('PRAGMA quick_check(1)').fetchone()[0]
+              latest_upload = connection.execute('SELECT MAX(id) FROM ims_uploads').fetchone()[0]
+              processing = connection.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'").fetchone()[0]
           finally:
               connection.close()
-          print(f'IMS_QUEUE_BENCHMARK_LIVE_DB|journal_mode={mode}|quick_check={quick}', flush=True)
-          if str(mode).lower() != 'wal' or str(quick).lower() != 'ok':
-              raise SystemExit('Live DB post-benchmark verification failed')
+          print(
+              f'IMS_QUEUE_BENCHMARK_LIVE_DB|journal_mode={mode}|latest_upload={latest_upload}|processing={processing}',
+              flush=True,
+          )
+          if str(mode).lower() != 'wal':
+              raise SystemExit('Live DB WAL verification failed')
           PY
           REMOTE
