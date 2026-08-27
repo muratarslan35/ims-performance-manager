@@ -4,9 +4,12 @@ set -Eeuo pipefail
 ims_path=${1:?IMS application path is required}
 service_name=ims-performance-manager.service
 template_path="$ims_path/deploy/$service_name.in"
+worker_service_name=ims-import-worker.service
+worker_template_path="$ims_path/deploy/$worker_service_name.in"
 
 test -d "$ims_path"
 test -f "$template_path"
+test -f "$worker_template_path"
 test -x "$ims_path/venv/bin/gunicorn"
 mkdir -p \
   "$ims_path/instance" \
@@ -20,8 +23,9 @@ ims_user=$(id -un)
 ims_group=$(id -gn)
 escaped_path=${ims_path//|/\\|}
 unit_tmp=$(mktemp)
+worker_unit_tmp=$(mktemp)
 runtime_env_tmp=$(mktemp)
-trap 'rm -f "$unit_tmp" "$runtime_env_tmp"' EXIT
+trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$runtime_env_tmp"' EXIT
 
 # The legacy Flask process used the persistent instance secret when no
 # SECRET_KEY existed in .env. Preserve that same key for Gunicorn so existing
@@ -49,10 +53,17 @@ sed \
   -e "s|@IMS_USER@|$ims_user|g" \
   -e "s|@IMS_GROUP@|$ims_group|g" \
   "$template_path" > "$unit_tmp"
+sed \
+  -e "s|@IMS_PATH@|$escaped_path|g" \
+  -e "s|@IMS_USER@|$ims_user|g" \
+  -e "s|@IMS_GROUP@|$ims_group|g" \
+  "$worker_template_path" > "$worker_unit_tmp"
 
 sudo install -o root -g root -m 0644 "$unit_tmp" "/etc/systemd/system/$service_name"
+sudo install -o root -g root -m 0644 "$worker_unit_tmp" "/etc/systemd/system/$worker_service_name"
 sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
+sudo systemctl enable "$worker_service_name"
 
 # The first managed deployment may replace the legacy `python run.py`
 # process. Stop only the verified process owned by this application path.
@@ -80,3 +91,9 @@ else
 fi
 
 sudo systemctl --no-pager --full status "$service_name"
+if sudo systemctl is-active --quiet "$worker_service_name"; then
+  sudo systemctl restart "$worker_service_name"
+else
+  sudo systemctl start "$worker_service_name"
+fi
+sudo systemctl --no-pager --full status "$worker_service_name"

@@ -1,0 +1,30 @@
+[Unit]
+Description=IMS Background Import Worker
+After=network-online.target ims-performance-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@IMS_USER@
+Group=@IMS_GROUP@
+WorkingDirectory=@IMS_PATH@
+Environment=APP_ENV=production
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-@IMS_PATH@/.env
+EnvironmentFile=-/etc/ims-performance-manager.env
+ExecStart=@IMS_PATH@/venv/bin/python @IMS_PATH@/ims_import_worker.py
+Restart=always
+RestartSec=5
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryHigh=800M
+MemoryMax=900M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@IMS_PATH@/instance @IMS_PATH@/uploads @IMS_PATH@/logs @IMS_PATH@/reports @IMS_PATH@/backups @IMS_PATH@/temp
+
+[Install]
+WantedBy=multi-user.target

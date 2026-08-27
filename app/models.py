@@ -242,6 +242,40 @@ class IMSUpload(db.Model):
         return f"<IMSUpload {self.file_name} ({self.status})>"
 
 
+class IMSImportJob(db.Model):
+    """Persistent queue entry for an IMS workbook processed outside Gunicorn."""
+
+    __tablename__ = "ims_import_jobs"
+    __table_args__ = (
+        db.Index("ix_ims_import_jobs_claim", "status", "queued_at", "id"),
+        db.Index("ix_ims_import_jobs_user", "uploaded_by", "queued_at"),
+    )
+
+    STATUS_QUEUED = "QUEUED"
+    STATUS_PROCESSING = "PROCESSING"
+    STATUS_COMPLETED = "COMPLETED"
+    STATUS_FAILED = "FAILED"
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_QUEUED)
+    file_name = db.Column(db.String(255), nullable=False)
+    stored_file_name = db.Column(db.String(255), nullable=False, unique=True)
+    source_hash = db.Column(db.String(64), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    clear_before_import = db.Column(db.Boolean, nullable=False, default=False)
+    uploaded_by = db.Column(db.String(150), nullable=False)
+    ims_upload_id = db.Column(db.Integer, db.ForeignKey("ims_uploads.id"), nullable=True)
+    queued_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    heartbeat_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    result_summary = db.Column(db.Text, nullable=True)
+
+    ims_upload = db.relationship("IMSUpload")
+
+
 class ProductionResultUpload(db.Model):
     """A post-sales production workbook staged independently from IMS sales."""
 

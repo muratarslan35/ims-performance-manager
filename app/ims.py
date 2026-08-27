@@ -16,6 +16,7 @@ from sqlalchemy import tuple_
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
+from app.models import IMSImportJob
 from app.models import IMSUpload
 from app.models import IMSSummary
 from app.models import Product
@@ -26,14 +27,6 @@ from app.models import Target
 from app.services.dashboard_service import (
     DashboardService
 )
-from app.services.ims_import_service import (
-    IMSImportService
-)
-from app.services.import_coordinator import (
-    ImportBusyError,
-    ImportCoordinator,
-)
-from app.services.official_brick_spread_service import OfficialBrickSpreadService
 from app.services.period_service import PeriodService
 from app.services.production_result_import_service import (
     ProductionResultImportService,
@@ -200,7 +193,20 @@ def index():
     ).all()
 
     ims_period = PeriodService.get_active_period()
-    import_status = ImportCoordinator.status()
+    active_job = (
+        IMSImportJob.query
+        .filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING)))
+        .order_by(IMSImportJob.queued_at, IMSImportJob.id)
+        .first()
+    )
+    import_status = {
+        "active": active_job is not None,
+        "metadata": {
+            "file_name": active_job.file_name if active_job else None,
+            "uploaded_by": active_job.uploaded_by if active_job else None,
+            "status": active_job.status if active_job else None,
+        },
+    }
     manager_reports = _manager_reports(uploads)
 
     # TEMP DEBUG
@@ -371,127 +377,38 @@ def upload():
         return redirect(url_for("ims.index"))
 
     uploaded_by = current_user.full_name
-    upload_path = current_app.config["UPLOAD_FOLDER"] / filename
+    staging_folder = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue"
+    stored_file_name = f"{year}-{month:02d}-{uuid4().hex}{extension}"
+    upload_path = staging_folder / stored_file_name
 
     try:
-        with ImportCoordinator.acquire(
-            uploaded_by=uploaded_by,
+        staging_folder.mkdir(parents=True, exist_ok=True)
+        file.save(upload_path)
+        if not upload_path.is_file() or upload_path.stat().st_size == 0:
+            raise ValueError("IMS dosyası boş.")
+        digest = hashlib.sha256()
+        with upload_path.open("rb") as staged_file:
+            for chunk in iter(lambda: staged_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        job = IMSImportJob(
+            status=IMSImportJob.STATUS_QUEUED,
             file_name=filename,
-            wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
-        ):
-            # Save only after the cross-process lock is ours.  Two managers can
-            # therefore never overwrite/process the same upload path at once.
-            file.save(upload_path)
-
-            service = IMSImportService(
-                file_path=upload_path,
-                uploaded_by=uploaded_by,
-            )
-
-            result = service.run(
-                year=year,
-                month=month,
-                clear_before_import=False,
-            )
-
-            # Satış Brick Yayılımı is an official aggregate master source.  It
-            # intentionally lives outside sales FACT/SUMMARY calculations, but
-            # is persisted before the import lock is released so another
-            # manager can never observe a half-integrated workbook.
-            if result["success"]:
-                spread_result = OfficialBrickSpreadService.persist(
-                    file_path=upload_path,
-                    upload_id=result["upload_id"],
-                    year=year,
-                    month=month,
-                )
-                result["statistics"]["official_brick_spread_records"] = spread_result["records"]
-                result["statistics"]["official_brick_spread_representatives"] = spread_result["representatives"]
-
-                # The generic parser previously reported this specialized
-                # master sheet as skipped.  Once the dedicated parser succeeds,
-                # remove only that obsolete warning and persist the corrected
-                # audit state.
-                result["warnings"] = [
-                    warning
-                    for warning in result.get("warnings", [])
-                    if "SATIS BRICK YAYILIMI" not in OfficialBrickSpreadService._normalize(warning)
-                ]
-                upload_record = db.session.get(IMSUpload, result["upload_id"])
-                if upload_record is not None:
-                    upload_record.warning_message = "\n".join(result["warnings"]) or None
-                db.session.commit()
-
-        if result["success"]:
-
-            flash(
-
-                (
-                    f"{filename} başarıyla içe aktarıldı. Veri bütünlüğü doğrulandı: "
-                    f"{result['statistics'].get('stored_source_records', 0)}/"
-                    f"{result['statistics'].get('source_metric_records', 0)} kayıt; "
-                    f"{result['statistics'].get('zero_metric_records', 0)} sıfır satış kaydı korundu; "
-                    f"{result['statistics'].get('official_brick_spread_records', 0)} resmi brick yayılım kaydı saklandı."
-                ),
-
-                "success"
-
-            )
-
-            if result.get(
-
-                "warnings"
-
-            ):
-
-                flash(
-
-                    f"{len(result['warnings'])} uyarı oluştu.",
-
-                    "warning"
-
-                )
-
-        else:
-
-            current_app.logger.error(
-                "ims_upload_failed file=%s errors=%s",
-                filename,
-                result.get("errors", []),
-            )
-            flash(
-                "IMS dosyası doğrulama sırasında tamamlanamadı. Mevcut dönem verileri korunmuştur; sistem yöneticisi logları inceleyebilir.",
-                "danger",
-            )
-
-    except ImportBusyError as exc:
-        current = exc.metadata
-        owner = current.get("uploaded_by")
-        started_at = current.get("started_at")
-        current_app.logger.warning(
-            "ims_upload_rejected_busy requested_by=%s file=%s active=%s",
-            uploaded_by,
-            filename,
-            current,
+            stored_file_name=stored_file_name,
+            source_hash=digest.hexdigest(),
+            year=year,
+            month=month,
+            clear_before_import=False,
+            uploaded_by=uploaded_by,
         )
-        detail = ""
-        if owner:
-            detail = f" Aktif işlem: {owner}"
-            active_file = current.get("file_name")
-            if active_file:
-                detail += f" · {active_file}"
-            if started_at:
-                detail += f" · başlangıç {started_at}"
-            detail += ". Sayfayı yenileyerek durumu kontrol edin; dosyayı tekrar göndermeyin."
-        flash(
-            "Başka bir IMS dosyası şu anda güvenli biçimde işleniyor. Lütfen mevcut işlem tamamlandıktan sonra tekrar deneyin." + detail,
-            "warning",
-        )
+        db.session.add(job)
+        db.session.commit()
+        flash("Dosya alındı, IMS arka planda işleniyor. Sonuç bildirim alanında görünecek.", "success")
     except Exception:
         db.session.rollback()
+        upload_path.unlink(missing_ok=True)
         current_app.logger.exception("ims_upload_unexpected_failure file=%s", filename)
         flash(
-            "IMS yükleme sırasında beklenmeyen bir teknik sorun oluştu. Mevcut veriler korunmuştur; tekrar deneyebilirsiniz.",
+            "IMS dosyası güvenli kuyruğa alınamadı. Mevcut veriler korunmuştur; tekrar deneyebilirsiniz.",
             "danger",
         )
 
@@ -504,3 +421,31 @@ def upload():
         )
 
     )
+
+
+@ims_bp.route("/import-jobs", methods=["GET"])
+@login_required
+def import_jobs():
+    jobs = (
+        IMSImportJob.query
+        .filter_by(uploaded_by=current_user.full_name)
+        .order_by(IMSImportJob.queued_at.desc(), IMSImportJob.id.desc())
+        .limit(10)
+        .all()
+    )
+    return {
+        "jobs": [
+            {
+                "id": job.id,
+                "status": job.status,
+                "file_name": job.file_name,
+                "year": job.year,
+                "month": job.month,
+                "ims_upload_id": job.ims_upload_id,
+                "error_message": job.error_message,
+                "queued_at": job.queued_at.isoformat() if job.queued_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            }
+            for job in jobs
+        ]
+    }

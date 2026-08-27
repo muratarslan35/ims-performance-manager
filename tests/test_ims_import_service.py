@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 import json
-from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +14,7 @@ from app.extensions import db
 from app.models import (
     CompetitionData,
     IMSFact,
+    IMSImportJob,
     IMSRawData,
     IMSSummary,
     IMSUpload,
@@ -876,10 +876,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 )
                 self.assertIn(login_response.status_code, (301, 302))
 
-                with mock.patch(
-                    "app.ims.ImportCoordinator.acquire",
-                    return_value=nullcontext({"test_lock": True}),
-                ):
+                with mock.patch("app.services.ims_import_service.IMSImportService.run") as run:
                     with workbook_path.open("rb") as workbook_file:
                         response = client.post(
                             "/ims/upload",
@@ -892,6 +889,7 @@ class IMSImportServiceTestCase(unittest.TestCase):
                             follow_redirects=False,
                         )
                 self.assertIn(response.status_code, (301, 302))
+                run.assert_not_called()
 
             after_counts = {
                 "ims_uploads": IMSUpload.query.count(),
@@ -899,15 +897,16 @@ class IMSImportServiceTestCase(unittest.TestCase):
                 "ims_facts": IMSFact.query.count(),
                 "ims_summary": IMSSummary.query.count(),
             }
+            job = IMSImportJob.query.one()
 
         self.assertEqual(
             before_counts,
             {"ims_uploads": 0, "ims_raw_data": 0, "ims_facts": 0, "ims_summary": 0},
         )
-        self.assertEqual(
-            after_counts,
-            {"ims_uploads": 1, "ims_raw_data": 1, "ims_facts": 1, "ims_summary": 1},
-        )
+        self.assertEqual(after_counts, before_counts)
+        self.assertEqual(job.status, IMSImportJob.STATUS_QUEUED)
+        self.assertEqual(job.file_name, "upload-route.xlsx")
+        self.assertTrue(job.source_hash)
 
     def test_production_upload_is_staged_without_changing_ims_data(self):
         with tempfile.TemporaryDirectory() as directory:
