@@ -1,15 +1,74 @@
 """Independent and isolated enterprise-grade import service for competition extension sheets."""
 
 import logging
+import math
 import re
 import time
 from enum import Enum
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Iterable, Iterator, List, Dict, Any, Mapping, Optional, Tuple
 from openpyxl import load_workbook as openpyxl_load_workbook
 from app.extensions import db
 from app.models import CompetitionData
 
 logger = logging.getLogger(__name__)
+
+
+class _PreparedCell:
+    """Minimal openpyxl-compatible cell used by the prepared workbook adapter."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+
+class _PreparedWorksheet:
+    """Read-only worksheet view over the importer's already loaded dataframe."""
+
+    def __init__(self, title: str, frame: Any) -> None:
+        self.title = title
+        self._frame = frame
+        self.max_row = int(frame.shape[0])
+        self.max_column = int(frame.shape[1])
+
+    @staticmethod
+    def _clean_value(value: Any) -> Any:
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return None
+        return value
+
+    def iter_rows(
+        self,
+        min_row: int = 1,
+        max_row: Optional[int] = None,
+        values_only: bool = False,
+    ) -> Iterator[Tuple[Any, ...]]:
+        end = min(self.max_row, max_row or self.max_row)
+        frame = self._frame.iloc[max(1, min_row) - 1:end]
+        for source_row in frame.itertuples(index=False, name=None):
+            values = tuple(self._clean_value(value) for value in source_row)
+            if values_only:
+                yield values
+            else:
+                yield tuple(_PreparedCell(value) for value in values)
+
+
+class _PreparedWorkbook:
+    """Workbook facade that reuses sanitized dataframes without copying them."""
+
+    def __init__(self, frames: Mapping[str, Any]) -> None:
+        self._worksheets = {
+            str(name): _PreparedWorksheet(str(name), frame)
+            for name, frame in frames.items()
+        }
+        self.sheetnames = list(self._worksheets)
+
+    def __getitem__(self, name: str) -> _PreparedWorksheet:
+        return self._worksheets[name]
+
+    def close(self) -> None:
+        """Match openpyxl's lifecycle API; dataframe ownership stays external."""
+        return None
 
 
 class MetricType(str, Enum):
@@ -77,14 +136,16 @@ class CompetitionImportService:
         year: Optional[int] = None,
         month: Optional[int] = None,
         week_number: Optional[int] = None,
+        workbook: Optional[Mapping[str, Any]] = None,
     ) -> None:
         self.file_path = file_path
         self.upload_id = upload_id
         self.year = year
         self.month = month
         self.week_number = week_number
-        self._workbook = None
+        self._workbook = _PreparedWorkbook(workbook) if workbook is not None else None
         self._sheet_values: Dict[str, List[Tuple[Any, ...]]] = {}
+        self._normalized_text_cache: Dict[str, str] = {}
         self.errors: List[str] = []
         self.warnings: List[str] = []
         self.parse_statistics = {"numeric_cells": 0, "blank_cells": 0, "invalid_cells": 0}
@@ -97,6 +158,8 @@ class CompetitionImportService:
     def load_workbook(self, file_path: str) -> None:
         """Load Excel workbook in read-only and data-only mode to evaluate formula cached values."""
         self.file_path = file_path
+        if self._workbook is not None:
+            return
         try:
             self._workbook = openpyxl_load_workbook(self.file_path, data_only=True, read_only=True)
             logger.info("[CompetitionImportService] Workbook successfully loaded from %s", self.file_path)
@@ -183,7 +246,10 @@ class CompetitionImportService:
         title = sheet.title
         values = self._sheet_values.get(title)
         if values is None:
-            values = [tuple(c.value for c in cells) for cells in sheet.iter_rows()]
+            if isinstance(sheet, _PreparedWorksheet):
+                values = list(sheet.iter_rows(values_only=True))
+            else:
+                values = [tuple(c.value for c in cells) for cells in sheet.iter_rows()]
             self._sheet_values[title] = values
         if row < 1 or col < 1 or row > len(values):
             return None
@@ -397,8 +463,8 @@ class CompetitionImportService:
 
         return struct
 
-    def _parse_sheet_records(self, structure_info: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Parse raw records from worksheet data rows, supporting percentage/string number conversions and unique column mappings."""
+    def _iter_sheet_records(self, structure_info: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        """Yield source observations once without retaining an expanded sheet copy."""
         if not self._workbook:
             raise ValueError("Çalışma kitabı yüklenmemiş.")
 
@@ -421,7 +487,6 @@ class CompetitionImportService:
         month = structure_info["month"]
         week_number = self.week_number
 
-        records: List[Dict[str, Any]] = []
         last_valid_territory = ""
 
         data_rows = structure_info.get("data_rows")
@@ -521,22 +586,35 @@ class CompetitionImportService:
                     "metric_value": metric_value,
                     "source_row": r,
                 }
-                records.append(record)
+                yield record
 
-        return records
+    def _parse_sheet_records(self, structure_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Compatibility entrypoint for callers that require a materialized list."""
+        return list(self._iter_sheet_records(structure_info))
 
     def _normalize_turkish_text(self, text: Optional[str]) -> str:
         """Safely normalize Turkish and general textual whitespace and casing using explicit replacement to avoid locale issues."""
         if not text or not str(text).strip():
             return ""
-        
-        cleaned = " ".join(str(text).strip().split())
+
+        source = str(text)
+        cached = self._normalized_text_cache.get(source)
+        if cached is not None:
+            return cached
+
+        cleaned = " ".join(source.strip().split())
         
         mapping = {
             'i': 'İ', 'ı': 'I', 'ç': 'Ç', 'ğ': 'Ğ', 'ö': 'Ö', 'ş': 'Ş', 'ü': 'Ü'
         }
         chars = [mapping.get(c, c.upper()) for c in cleaned]
-        return "".join(chars)
+        normalized = "".join(chars)
+        # A workbook normally contains only hundreds of distinct labels. Keep
+        # the optimization bounded even for adversarial high-cardinality text.
+        if len(self._normalized_text_cache) >= 8192:
+            self._normalized_text_cache.clear()
+        self._normalized_text_cache[source] = normalized
+        return normalized
 
     def validate_record(self, record: Dict[str, Any]) -> Tuple[bool, List[str]]:
         """Validate a single record and collect detailed internal warning messages safely."""
@@ -589,12 +667,8 @@ class CompetitionImportService:
 
         return normalized
 
-    def map_record_to_model(self, record: Dict[str, Any], sheet_name: str) -> CompetitionData:
-        """Map normalized record to CompetitionData model with automated metric type and product group fallback."""
-        norm_rec = self.normalize_record(record)
-        
-        upload_id = self.upload_id
-
+    def _normalized_model_values(self, norm_rec: Dict[str, Any], sheet_name: str) -> Dict[str, Any]:
+        """Build persistence values from an already normalized observation."""
         metric_type = norm_rec.get("metric_type")
         if not metric_type:
             s_upper = sheet_name.upper()
@@ -618,23 +692,35 @@ class CompetitionImportService:
             or normalized_product.endswith(" TOPLAM")
         )
 
-        return CompetitionData(
-            upload_id=upload_id,
-            sheet_name=norm_rec.get("sheet_name", sheet_name),
-            period_type=norm_rec.get("period_type", PeriodType.MONTHLY.value),
-            year=norm_rec.get("year"),
-            month=norm_rec.get("month"),
-            week_number=norm_rec.get("week_number"),
-            territory=norm_rec.get("territory"),
-            subterritory=norm_rec.get("subterritory", ""),
-            product_group=product_group,
-            product_name=product_name,
-            metric_type=metric_type,
-            metric_value=norm_rec.get("metric_value", 0.0),
-            is_subtotal=is_subtotal,
-            is_grand_total=is_grand_total,
-            source_row=norm_rec.get("source_row")
-        )
+        return {
+            "upload_id": self.upload_id,
+            "sheet_name": norm_rec.get("sheet_name", sheet_name),
+            "period_type": norm_rec.get("period_type", PeriodType.MONTHLY.value),
+            "year": norm_rec.get("year"),
+            "month": norm_rec.get("month"),
+            "week_number": norm_rec.get("week_number"),
+            "territory": norm_rec.get("territory"),
+            "subterritory": norm_rec.get("subterritory", ""),
+            "product_group": product_group,
+            "product_name": product_name,
+            "metric_type": metric_type,
+            "metric_value": norm_rec.get("metric_value", 0.0),
+            "is_subtotal": is_subtotal,
+            "is_grand_total": is_grand_total,
+            "source_row": norm_rec.get("source_row"),
+        }
+
+    def map_record_to_model(self, record: Dict[str, Any], sheet_name: str) -> CompetitionData:
+        """Map one record to the public ORM representation."""
+        return CompetitionData(**self._normalized_model_values(self.normalize_record(record), sheet_name))
+
+    def _mapping_from_normalized_record(self, norm_rec: Dict[str, Any], sheet_name: str) -> Dict[str, Any]:
+        """Create a bulk mapping without a second normalization or ORM object."""
+        return {
+            key: value
+            for key, value in self._normalized_model_values(norm_rec, sheet_name).items()
+            if value is not None
+        }
 
     @staticmethod
     def _model_mapping(model: CompetitionData) -> Dict[str, Any]:
@@ -667,7 +753,7 @@ class CompetitionImportService:
             logger.exception("[CompetitionImportService] Failed to perform chunked bulk_save_objects for competition records: %s", exc)
             raise RuntimeError(f"Toplu veri kaydı sırasında bir hata oluştu.") from exc
 
-    def import_records(self, records: List[Dict[str, Any]], sheet_name: str) -> Dict[str, Any]:
+    def import_records(self, records: Iterable[Dict[str, Any]], sheet_name: str) -> Dict[str, Any]:
         """Process, validate, run deterministic case-insensitive normalized sheet duplicate check, chunked bulk insert and return statistics."""
         if self.upload_id is None:
             raise ValueError("Fail Fast: upload_id is required to import competition records.")
@@ -676,7 +762,7 @@ class CompetitionImportService:
         norm_sheet_name = self._normalize_turkish_text(sheet_name)
         logger.info("[CompetitionImportService] Sheet Started | Sheet: %s | Upload ID: %s", norm_sheet_name, self.upload_id)
 
-        total_input = len(records)
+        total_input = 0
         inserted_count = 0
         duplicate_count = 0
         invalid_count = 0
@@ -714,6 +800,7 @@ class CompetitionImportService:
             existing_values[tuple(row_list[:-1])] = float(row_list[-1] or 0.0)
 
         for rec in records:
+            total_input += 1
             is_valid, val_warnings = self.validate_record(rec)
             if not is_valid:
                 invalid_count += 1
@@ -759,8 +846,7 @@ class CompetitionImportService:
                 "column": norm.get("source_column"),
             }
 
-            model_obj = self.map_record_to_model(norm, sheet_name)
-            mapping_batch.append(self._model_mapping(model_obj))
+            mapping_batch.append(self._mapping_from_normalized_record(norm, sheet_name))
             if len(mapping_batch) >= self.BULK_CHUNK_SIZE:
                 inserted_count += self.bulk_insert(mapping_batch)
                 mapping_batch.clear()
@@ -815,19 +901,27 @@ class CompetitionImportService:
             # is unchanged: the outer IMS transaction still commits only after
             # the complete workbook reconciles successfully.
             for s_name in supported_sheets:
-                struct_info = self._parse_sheet_structure(s_name)
-                sheet_records = self._parse_sheet_records(struct_info)
-                if self.invalid_cells:
-                    raise ValueError(
-                        "Rekabet sayfalarında geçersiz metrik hücreleri bulundu: "
-                        f"count={len(self.invalid_cells)}, sample={self.invalid_cells[:10]}"
-                    )
-                stats = self.import_records(sheet_records, s_name)
-                sheet_statistics.append(stats)
-                total_inserted += stats["inserted"]
-                total_duplicates += stats["duplicates"]
-                total_invalid += stats["invalid"]
-                del sheet_records
+                try:
+                    struct_info = self._parse_sheet_structure(s_name)
+                    sheet_records = self._iter_sheet_records(struct_info)
+                    stats = self.import_records(sheet_records, s_name)
+                    # Parsing is intentionally lazy. Inspect invalid cells only
+                    # after the generator has been fully consumed so fail-closed
+                    # semantics remain identical to the materialized path.
+                    if self.invalid_cells:
+                        raise ValueError(
+                            "Rekabet sayfalarında geçersiz metrik hücreleri bulundu: "
+                            f"count={len(self.invalid_cells)}, sample={self.invalid_cells[:10]}"
+                        )
+                    sheet_statistics.append(stats)
+                    total_inserted += stats["inserted"]
+                    total_duplicates += stats["duplicates"]
+                    total_invalid += stats["invalid"]
+                    del sheet_records
+                finally:
+                    # Only one expanded worksheet is retained at a time. This
+                    # is the bounded-memory invariant required by the 1 GB host.
+                    self._sheet_values.pop(s_name, None)
 
             if total_invalid or total_inserted + total_duplicates != self.parse_statistics["numeric_cells"]:
                 raise ValueError(
