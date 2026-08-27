@@ -76,3 +76,15 @@ def test_managed_service_requires_persistent_secret_environment():
     assert "EnvironmentFile=-/etc/ims-performance-manager.env" in service
     assert "instance/.secret_key" in installer
     assert "install -o root -g root -m 0600" in installer
+
+
+def test_import_worker_is_a_separate_bounded_systemd_service():
+    root = Path(__file__).resolve().parents[1]
+    worker = (root / "deploy" / "ims-import-worker.service.in").read_text(encoding="utf-8")
+    installer = (root / "deploy" / "install_systemd_service.sh").read_text(encoding="utf-8")
+    assert "ims_import_worker.py" in worker
+    assert "MemoryHigh=" in worker and "MemoryMax=" in worker
+    assert "Nice=10" in worker
+    assert "ims-import-worker.service" in installer
+    assert 'systemctl enable "$worker_service_name"' in installer
+    assert 'systemctl --no-pager --full status "$worker_service_name"' in installer
