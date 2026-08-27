@@ -1,8 +1,72 @@
 # IMS Performance Manager — Kanonik Çalışma / Devir Kaydı
 
-> Son güncelleme: **26 Ağustos 2026 (Europe/Istanbul)**  
+> Son güncelleme: **27 Ağustos 2026 05:50 (Europe/Istanbul)**  
 > Repo: `muratarslan35/ims-performance-manager`  
 > Bu dosya PC Codex, mobil ChatGPT ve sonraki çalışma oturumları için **tek güncel checkpoint** olarak kullanılmalıdır.
+
+---
+
+# 0. 27 AĞUSTOS 2026 — AKTİF KANONİK CHECKPOINT
+
+Bu bölüm aşağıdaki tüm tarihsel kayıtların üzerindedir; kredi/oturum yenilendiğinde **önce bu bölümden devam edilir**.
+
+## Tamamlanan kök neden ve performans düzeltmesi
+
+- Başlangıç production SHA: `6b2fea4640cc6a36d995e1e7c9028c04a1cdc50d`.
+- Çalışma branch'i: `perf/bounded-competition-import`.
+- Uygulama commit'i: `c603d2937101e524b609c243239076f99fde6d39` (`Optimize bounded competition import pipeline`).
+- PR **#229** full CI PASS sonrasında merge edildi.
+- Güncel main/production merge SHA: **`70433993eaba0a761bd5fe1b805e4aed00cf8f76`**.
+- Competition importer artık ana importer'ın zaten açıp sanitize ettiği DataFrame workbook'unu yeniden kullanır; Excel ikinci kez openpyxl ile açılmaz.
+- Rekabet kayıtları tek sheet / bounded bellek yaklaşımıyla stream edilir; 1.000 satırlık chunked mappings kullanılır.
+- Satır başına ORM nesnesi ve ikinci normalization kaldırıldı; public model mapping sözleşmesi korunmuştur.
+- Atomic transaction, exact duplicate/conflict semantiği, invalid-cell fail-closed davranışı ve mevcut business kuralları değiştirilmemiştir.
+
+## Yerel doğruluk ve performans kanıtı
+
+- Gerçek `Tayfun_7.Hafta_Subat_Brick_Analizi_.xlsx` importu PASS.
+- Source/stored: `24.816 / 24.816`; RAW `25.104`; FACT `3.426`; SUMMARY `888`; TARGET `1.211`; COMPETITION `467.320`.
+- Tüm blocking sayıları `0`; reconciliation `PASSED`.
+- Eski ve optimize DB arasında business-row SHA-256 birebir eşit:
+  - `ims_raw_data`: `f0e34cfe3d0f3b21e57199504bced426437b905cac01d23282bfbfff5c10e66e`
+  - `ims_facts`: `30d7f3ae555f6690da0b76da6907caf5eb3210837d40677904a40310ecd3e5a7`
+  - `ims_competition_data`: `0da7c2a4db4870b42d7726648776989a123d8c1159c8e49c277bf23f1fee8df1`
+- `ims_summary`, `targets` ve `representative_brick_assignments` satır sayıları/hashleri de birebir eşittir.
+- Gerçek dosya wall time: `193.796s -> 154.391s`.
+- Competition stage: `78.859s -> 36.781s`.
+- Yerel gözlenen peak working set yaklaşık `402 MB`.
+- Final full suite: **`340 passed, 5 skipped`** (`371.05s`).
+- Final explicit 50-upload SQLite scale guard: **PASS** (`7.04s`).
+- PR CI run `33042877607`: **SUCCESS**.
+
+## Production ve şu an çalışan işlem
+
+- Main deploy run **`33043049691`**: full suite + production deploy/acceptance **SUCCESS**.
+- Production host HEAD: `70433993eaba0a761bd5fe1b805e4aed00cf8f76`.
+- `ims-performance-manager.service`: active; `/login`: HTTP 200.
+- Acceptance gerçek dosya üzerinde 15 dakikalık değişmeyen gate içinde tamamlandı; canlı DB yerine izole `/tmp/ims-acceptance-*.db` kullanıldı.
+- Acceptance sırasında gözlenen importer RSS yaklaşık `570 MB` tepe yaptı ve sonra düştü; timeout yükseltilmedi.
+- Otomatik kalıcı production benchmark run **`33043899893`** şu anda **IN PROGRESS**:
+  `https://github.com/muratarslan35/ims-performance-manager/actions/runs/33043899893`
+- Önceki timeout/cancel kaydı Issue **#228** halen açıktır; yeni benchmark PASS olmadan kapatılmayacaktır.
+
+## Kredi yenilenince kesin devam sırası
+
+1. Benchmark run `33043899893` sonucunu kontrol et; 20 dakikalık workflow timeout'unu yükseltme.
+2. PASS ise logdan `IMS_SERVER_BENCHMARK|...` kanıtını çıkar: wall/processing/stage/peak RSS, source/stored, RAW/FACT/SUMMARY/TARGET/COMPETITION, blockers ve reconciliation.
+3. Production hostta HEAD, service active, `/login` HTTP 200, SQLite `journal_mode=WAL`, `busy_timeout=30000`, `integrity_check=ok`, CPU/RAM/swap/disk ve orphan/temp cleanup durumunu doğrula.
+4. Başarılı benchmark kanıtını Issue #228'e ekle ve eski FAILED issue'yu açıklamayla kapat.
+5. Bu checkpoint ve `CODEX_HANDOFF_CURRENT.md` dosyasını final kanıtla tekrar güncelle; docs-only commit/push yap.
+6. Benchmark FAIL/timeout olursa güvenlik/acceptance eşiklerini gevşetme; logdaki stage ve peak RSS kanıtından yeni bounded kök neden çalışması aç.
+
+## Değiştirilmeyecek kurallar
+
+- P2 > P1 > IMS; gerçek `0` blank değildir.
+- NATIONAL/region official aggregates kişi toplamlarıyla değiştirilmez.
+- Official Brick Spread side-channel masterdır; FACT değildir.
+- BOS != BOŞ; BOSTANCI vacancy değildir; ambiguity fail-closed kalır.
+- SQLite WAL, `busy_timeout=30000`, single-writer, user vault ve acceptance fail durumunda canlı snapshot koruması devam eder.
+- Prime/hedef/dashboard iş mantığı değişmemiştir.
 
 ---
 
