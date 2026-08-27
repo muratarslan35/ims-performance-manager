@@ -9,8 +9,19 @@ from __future__ import annotations
 import json
 import time
 
+from sqlalchemy import func
+
 from app import create_app
-from app.models import CompetitionData, IMSFact, IMSRawData, IMSSummary, IMSUpload, Target
+from app.extensions import db
+from app.models import (
+    CompetitionData,
+    IMSFact,
+    IMSImportJob,
+    IMSRawData,
+    IMSSummary,
+    IMSUpload,
+    Target,
+)
 from app.services.import_result_report import latest_import_report
 from config import Config
 
@@ -22,6 +33,60 @@ class GateConfig(Config):
 def _require(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def _latest_job_telemetry(upload):
+    """Return bounded read-only timing evidence for the latest completed import.
+
+    The background queue already persists the importer's stage telemetry in
+    ``result_summary``. Surface it in deployment evidence so a slow production
+    import can be diagnosed without restarting the worker, re-reading the
+    workbook, or mutating live data.
+    """
+    job = (
+        IMSImportJob.query.filter_by(ims_upload_id=upload.id)
+        .order_by(IMSImportJob.completed_at.desc(), IMSImportJob.id.desc())
+        .first()
+    )
+    result_summary = {}
+    if job is not None and job.result_summary:
+        try:
+            result_summary = json.loads(job.result_summary)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            result_summary = {}
+
+    period_filter = (
+        CompetitionData.year == upload.year,
+        CompetitionData.month == upload.month,
+    )
+    period_rows = db.session.query(func.count(CompetitionData.id)).filter(*period_filter).scalar() or 0
+    period_partitions = (
+        db.session.query(func.count(func.distinct(CompetitionData.upload_id)))
+        .filter(*period_filter)
+        .scalar()
+        or 0
+    )
+
+    queue_wait_seconds = None
+    job_seconds = result_summary.get("background_job_seconds")
+    if job is not None and job.queued_at is not None and job.started_at is not None:
+        queue_wait_seconds = round((job.started_at - job.queued_at).total_seconds(), 3)
+    if job_seconds is None and job is not None and job.started_at is not None and job.completed_at is not None:
+        job_seconds = round((job.completed_at - job.started_at).total_seconds(), 3)
+
+    return {
+        "job_id": job.id if job is not None else None,
+        "job_status": job.status if job is not None else None,
+        "queue_wait_seconds": queue_wait_seconds,
+        "background_job_seconds": job_seconds,
+        "importer_processing_seconds": float(upload.processing_time or 0.0),
+        "stage_telemetry": result_summary.get("stage_telemetry") or {},
+        "competition_compiled_fast_path": result_summary.get("competition_compiled_fast_path"),
+        "competition_bulk_chunk_size": result_summary.get("competition_bulk_chunk_size"),
+        "competition_period_rows": int(period_rows),
+        "competition_period_upload_partitions": int(period_partitions),
+        "latest_upload_competition_rows": CompetitionData.query.filter_by(upload_id=upload.id).count(),
+    }
 
 
 def main():
@@ -119,6 +184,8 @@ def main():
             "counts": actual_counts,
         }
         print("IMS_LIVE_GATE|" + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+        telemetry = _latest_job_telemetry(upload)
+        print("IMS_IMPORT_TELEMETRY|" + json.dumps(telemetry, ensure_ascii=False, sort_keys=True, default=str))
         return 0
 
 
