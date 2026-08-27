@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ims_path=${1:?IMS application path is required}
+release_mode=${2:-heavy}
 service_name=ims-performance-manager.service
 template_path="$ims_path/deploy/$service_name.in"
 worker_service_name=ims-import-worker.service
@@ -11,6 +12,11 @@ test -d "$ims_path"
 test -f "$template_path"
 test -f "$worker_template_path"
 test -x "$ims_path/venv/bin/gunicorn"
+case "$release_mode" in
+  ui|backend|import|heavy) ;;
+  *) echo "Unsupported release mode: $release_mode" >&2; exit 1 ;;
+esac
+
 mkdir -p \
   "$ims_path/instance" \
   "$ims_path/uploads" \
@@ -27,9 +33,7 @@ worker_unit_tmp=$(mktemp)
 runtime_env_tmp=$(mktemp)
 trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$runtime_env_tmp"' EXIT
 
-# The legacy Flask process used the persistent instance secret when no
-# SECRET_KEY existed in .env. Preserve that same key for Gunicorn so existing
-# sessions remain valid and production never falls back to an ephemeral key.
+# Preserve the same stable production secret across reloads/restarts.
 if ! grep -Eq '^[[:space:]]*SECRET_KEY[[:space:]]*=' "$ims_path/.env" 2>/dev/null; then
   secret_path="$ims_path/instance/.secret_key"
   if [ ! -s "$secret_path" ]; then
@@ -81,19 +85,39 @@ if ! sudo systemctl is-active --quiet "$service_name"; then
   fi
 fi
 
-# Production acceptance and representative performance gates run before this
-# script. Once they pass, restart every managed worker so no process continues
-# serving code or in-memory caches from the previous release.
+# Code-only releases use Gunicorn's HUP reload: new workers boot with the new
+# code while old workers finish current requests. Full stop/start is reserved
+# for DB/service-level changes. This avoids the graceful-stop timeout on every
+# normal deployment.
 if sudo systemctl is-active --quiet "$service_name"; then
-  sudo systemctl restart "$service_name"
+  if [ "$release_mode" = "heavy" ]; then
+    sudo systemctl restart "$service_name"
+    echo "SERVICE_ACTIVATION|web=restart|mode=$release_mode"
+  else
+    sudo systemctl reload "$service_name"
+    echo "SERVICE_ACTIVATION|web=reload|mode=$release_mode"
+  fi
 else
   sudo systemctl start "$service_name"
+  echo "SERVICE_ACTIVATION|web=start|mode=$release_mode"
 fi
-
 sudo systemctl --no-pager --full status "$service_name"
-if sudo systemctl is-active --quiet "$worker_service_name"; then
-  sudo systemctl restart "$worker_service_name"
-else
+
+# The background importer only needs replacement when importer/DB code changed.
+# Deploy workflow verifies there is no PROCESSING job before those modes reach
+# this script, so no live import can be interrupted by the restart.
+if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+  if sudo systemctl is-active --quiet "$worker_service_name"; then
+    sudo systemctl restart "$worker_service_name"
+    echo "SERVICE_ACTIVATION|worker=restart|mode=$release_mode"
+  else
+    sudo systemctl start "$worker_service_name"
+    echo "SERVICE_ACTIVATION|worker=start|mode=$release_mode"
+  fi
+elif ! sudo systemctl is-active --quiet "$worker_service_name"; then
   sudo systemctl start "$worker_service_name"
+  echo "SERVICE_ACTIVATION|worker=start|mode=$release_mode"
+else
+  echo "SERVICE_ACTIVATION|worker=preserved|mode=$release_mode"
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
