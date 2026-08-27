@@ -11,6 +11,18 @@ def test_server_benchmark_is_fail_closed_and_never_targets_live_db():
     assert "BLOCKING_STATS" in text
 
 
+def test_server_benchmark_exposes_bounded_progress_without_relaxing_timeout():
+    benchmark = Path("benchmark_ims_import.py").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/ims-server-benchmark.yml").read_text(encoding="utf-8")
+    assert "HEARTBEAT_SECONDS = 30" in benchmark
+    assert "IMS_SERVER_BENCHMARK_" in benchmark
+    assert '"STAGE_START"' in benchmark
+    assert '"STAGE_END"' in benchmark
+    assert '"HEARTBEAT"' in benchmark
+    assert "benchmark_current_stage" in benchmark
+    assert "timeout-minutes: 20" in workflow
+
+
 def test_server_benchmark_workflow_uses_isolated_online_backup_after_successful_deploy():
     text = Path(".github/workflows/ims-server-benchmark.yml").read_text(encoding="utf-8")
     assert "workflow_run:" in text
