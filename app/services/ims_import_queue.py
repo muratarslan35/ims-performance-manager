@@ -57,20 +57,20 @@ class IMSImportQueue:
     @classmethod
     def process(cls, job):
         staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
+        previous_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
         try:
             with ImportCoordinator.acquire(
                 uploaded_by=job.uploaded_by,
                 file_name=job.file_name,
                 wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
             ):
-                # The competition extension is the dominant write volume (hundreds
-                # of thousands of rows for week 7).  The historical 1,000-row
-                # batch caused hundreds of SQLAlchemy executemany calls on the
-                # production SQLite host.  Keep the outer atomic transaction and
-                # duplicate/reconciliation rules unchanged, but use a bounded,
-                # production-safe larger batch for background imports.
+                # Competition is the dominant write volume. Use a larger bounded
+                # batch only for this isolated single-consumer background job,
+                # then restore the process-wide default in finally so tests and
+                # any other importer path keep their established behavior.
                 configured_chunk = int(current_app.config.get("IMS_COMPETITION_BULK_CHUNK_SIZE", 10000) or 10000)
                 CompetitionImportService.BULK_CHUNK_SIZE = max(1000, min(configured_chunk, 25000))
+                effective_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
 
                 job.heartbeat_at = datetime.utcnow()
                 db.session.commit()
@@ -96,7 +96,7 @@ class IMSImportQueue:
                 if upload is not None:
                     upload.warning_message = "\n".join(warnings) or None
                 stats = dict(result.get("statistics") or {})
-                stats["competition_bulk_chunk_size"] = CompetitionImportService.BULK_CHUNK_SIZE
+                stats["competition_bulk_chunk_size"] = effective_chunk_size
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
                 job.ims_upload_id = result["upload_id"]
@@ -116,4 +116,5 @@ class IMSImportQueue:
             failed.heartbeat_at = failed.completed_at
             db.session.commit()
         finally:
+            CompetitionImportService.BULK_CHUNK_SIZE = previous_chunk_size
             staging_path.unlink(missing_ok=True)
