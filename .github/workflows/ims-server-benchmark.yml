@@ -1,10 +1,9 @@
 name: IMS Server Import Benchmark
 
+# Heavy production-host benchmark is intentionally manual.
+# Normal deploys are already protected by the isolated production acceptance gate.
+# Run this workflow only for importer/performance changes or explicit investigation.
 on:
-  workflow_run:
-    workflows: ["Validate and Deploy IMS Performance Manager"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -18,9 +17,6 @@ concurrency:
 jobs:
   benchmark:
     name: Benchmark latest failed IMS on production host
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -106,7 +102,7 @@ jobs:
           if [ "${BENCHMARK_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-benchmark.log"
           if [ -f "$evidence_file" ]; then
-            evidence=$(grep -E 'IMS_SERVER_BENCHMARK\||IMS_SERVER_BENCHMARK_RESOURCE\||IMS_SERVER_BENCHMARK_LIVE_DB\|' "$evidence_file" | tail -n 80 || true)
+            evidence=$(grep -E 'IMS_SERVER_BENCHMARK' "$evidence_file" | tail -n 120 || true)
           else
             evidence="Benchmark SSH log was not created."
           fi
