@@ -104,17 +104,24 @@ class IMSImportQueue:
                 upload = db.session.get(IMSUpload, result["upload_id"])
                 if upload is not None:
                     upload.warning_message = "\n".join(warnings) or None
+
+                completed_at = datetime.utcnow()
                 stats = dict(result.get("statistics") or {})
                 stats["competition_bulk_chunk_size"] = effective_chunk_size
                 stats["competition_compiled_fast_path"] = True
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
+                stats["background_job_seconds"] = (
+                    round((completed_at - job.started_at).total_seconds(), 3)
+                    if job.started_at is not None
+                    else None
+                )
                 job.ims_upload_id = result["upload_id"]
                 job.status = IMSImportJob.STATUS_COMPLETED
                 job.result_summary = json.dumps(stats, ensure_ascii=False, default=str)
                 job.error_message = None
-                job.completed_at = datetime.utcnow()
-                job.heartbeat_at = job.completed_at
+                job.completed_at = completed_at
+                job.heartbeat_at = completed_at
                 db.session.commit()
         except Exception as exc:
             db.session.rollback()
