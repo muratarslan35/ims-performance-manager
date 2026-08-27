@@ -1,0 +1,88 @@
+name: IMS Production Maintenance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-production-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    name: Weekly SQLite and backup maintenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run non-blocking weekly maintenance
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+
+          processing=$(venv/bin/python - <<'PY'
+          import sqlite3
+          connection = sqlite3.connect("instance/ipm.db", timeout=30)
+          try:
+              exists = connection.execute(
+                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'"
+              ).fetchone()
+              value = 0 if not exists else int(connection.execute(
+                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
+              ).fetchone()[0])
+          finally:
+              connection.close()
+          print(value)
+          PY
+          )
+          if [ "$processing" != "0" ]; then
+            echo "MAINTENANCE_SKIPPED|reason=active_import|processing=$processing"
+            exit 0
+          fi
+
+          echo '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---'
+          venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize
+
+          latest_stamp=$(ls -1 instance/backups/ipm-predeploy-*.db 2>/dev/null \
+            | sed -E 's/.*ipm-predeploy-([0-9]{8}-[0-9]{6})\.db/\1/' \
+            | sort | tail -1)
+          if [ -n "$latest_stamp" ]; then
+            echo "MAINTENANCE_BACKUP_SET|keep_stamp=$latest_stamp"
+            venv/bin/python cleanup_old_backups.py \
+              --backup-dir instance/backups \
+              --keep-stamp "$latest_stamp" \
+              --purge-unmanaged-db
+          else
+            echo 'MAINTENANCE_BACKUP_SET|status=none'
+          fi
+
+          venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
+          echo 'MAINTENANCE_RESULT|PASS'
+          REMOTE
