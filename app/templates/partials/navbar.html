@@ -78,12 +78,13 @@
                      aria-labelledby="notificationsDropdown">
                     <div class="notifications-header">
                         <span class="fw-bold">Bildirimler</span>
-                        <span class="badge bg-primary-lt">0 Yeni</span>
+                        <span class="badge bg-primary-lt" id="notificationCount">0 Yeni</span>
                     </div>
-                    <div class="notifications-empty">
+                    <div class="notifications-empty" id="notificationsEmpty">
                         <i class="bi bi-bell-slash" aria-hidden="true"></i>
                         <p>Henüz yeni bildirim bulunmuyor.</p>
                     </div>
+                    <div id="imsImportNotifications" class="list-group list-group-flush"></div>
                 </div>
             </div>
 
