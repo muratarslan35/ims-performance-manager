@@ -13,8 +13,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_heavy_gates_bounded():
 
     assert "if [ \"$RELEASE_MODE\" = \"heavy\" ]; then" in text
     heavy_index = text.index("if [ \"$RELEASE_MODE\" = \"heavy\" ]; then")
-    acceptance_index = text.index('verify_ims_acceptance.py')
-    assert heavy_index < acceptance_index
+    acceptance_index = text.index('venv/bin/python verify_ims_acceptance.py')
+    service_index = text.index('deploy/install_systemd_service.sh')
+    assert heavy_index < acceptance_index < service_index
     assert 'timeout --signal=TERM --kill-after=30s 900s' in text
     assert 'sqlite_online_backup.py instance/ipm.db "$acceptance_db"' in text
 
