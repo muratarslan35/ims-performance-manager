@@ -69,7 +69,13 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     deploy = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
     maintenance = Path('.github/workflows/ims-production-maintenance.yml').read_text(encoding='utf-8')
 
-    assert 'cleanup_old_backups.py' not in deploy
+    # The filename can legitimately appear in the classifier, but the deploy
+    # execution path itself must never run backup retention synchronously.
+    execution_start = deploy.index('--- HEAVY DB/MIGRATION RELEASE GATES ---')
+    execution_end = deploy.index('- name: Publish compact deployment evidence')
+    deploy_execution = deploy[execution_start:execution_end]
+    assert 'cleanup_old_backups.py' not in deploy_execution
+
     assert 'schedule:' in maintenance
     assert 'database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize' in maintenance
     assert 'cleanup_old_backups.py' in maintenance
