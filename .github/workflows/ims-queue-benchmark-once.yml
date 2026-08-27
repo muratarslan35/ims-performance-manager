@@ -10,13 +10,13 @@ permissions:
 
 concurrency:
   group: ims-queue-benchmark-once
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   benchmark:
     name: Production-host isolated background queue benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -44,6 +44,9 @@ jobs:
           scp -i ~/.ssh/ims_queue_benchmark_key -P "$IMS_PORT" \
             scripts/benchmark_background_queue_once.py \
             "$IMS_USER@$IMS_HOST:/tmp/ims-queue-benchmark-once.py"
+          scp -i ~/.ssh/ims_queue_benchmark_key -P "$IMS_PORT" \
+            scripts/benchmark_queue_stack_probe.py \
+            "$IMS_USER@$IMS_HOST:/tmp/ims-queue-stack-probe.py"
 
       - name: Run isolated queue benchmark
         shell: bash
@@ -79,7 +82,8 @@ jobs:
           stamp=$(date +%Y%m%d-%H%M%S)
           benchmark_db="/tmp/ims-queue-benchmark-${stamp}.db"
           cleanup() {
-            rm -f -- "$benchmark_db" "$benchmark_db-wal" "$benchmark_db-shm" /tmp/ims-queue-benchmark-once.py
+            rm -f -- "$benchmark_db" "$benchmark_db-wal" "$benchmark_db-shm" \
+              /tmp/ims-queue-benchmark-once.py /tmp/ims-queue-stack-probe.py
             find uploads/ims_queue -maxdepth 1 -type f -name 'queue-benchmark-*' -delete 2>/dev/null || true
           }
           trap cleanup EXIT HUP INT TERM
@@ -120,10 +124,10 @@ jobs:
           PY
           chmod 600 "$benchmark_db"
 
-          echo '--- REAL BACKGROUND QUEUE PATH ON ISOLATED DB ---'
+          echo '--- REAL BACKGROUND QUEUE PATH ON ISOLATED DB + STACK PROBE ---'
           /usr/bin/time -f 'IMS_QUEUE_BENCHMARK_RESOURCE|elapsed_seconds=%e|max_rss_kb=%M|cpu_percent=%P' \
             env DATABASE_URL="sqlite:///$benchmark_db" PYTHONPATH="$IMS_PATH" \
-            venv/bin/python /tmp/ims-queue-benchmark-once.py
+            venv/bin/python /tmp/ims-queue-stack-probe.py
 
           echo '--- LIVE DB READ-ONLY POST-CHECK ---'
           venv/bin/python - <<'PY'
