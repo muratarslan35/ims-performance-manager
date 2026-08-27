@@ -1,7 +1,7 @@
 """Resource-aware Gunicorn settings for the single-server production host.
 
 The application is read-heavy, while an IMS workbook import is a deliberately
-serialized and potentially long request.  A small number of threaded workers
+serialized and potentially long request. A small number of threaded workers
 keeps normal dashboards responsive without multiplying pandas/openpyxl memory
 usage or creating unnecessary SQLite write contention.
 """
@@ -42,36 +42,23 @@ def recommended_workers(cpu_count: int | None = None, memory_mb: int | None = No
     return max(2, min(cpus + 1, memory_cap, 4))
 
 
-def post_request(worker, req, environ, resp):
-    """Recycle only the worker that handled a heavy IMS workbook upload.
-
-    pandas/openpyxl imports can temporarily grow a worker by hundreds of MiB.
-    CPython/glibc may retain those arenas after the request, which is especially
-    costly on the current ~1 GiB host and can force the whole service into swap.
-    Gunicorn calls this hook after the response has been sent, so marking the
-    worker as no longer alive lets the master replace it cleanly while the other
-    worker continues serving requests.  No database or import semantics change.
-    """
-    path = str((environ or {}).get("PATH_INFO") or "")
-    method = str((environ or {}).get("REQUEST_METHOD") or "").upper()
-    if path == "/ims/upload" and method == "POST":
-        worker.log.info("Recycling worker after IMS workbook upload to release import memory")
-        worker.alive = False
-
-
 bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8000")
 workers = _positive_int("GUNICORN_WORKERS", recommended_workers())
 worker_class = "gthread"
 threads = _positive_int("GUNICORN_THREADS", 3)
 
-# A real workbook currently needs several minutes.  Other threads/workers keep
+# A real workbook currently needs several minutes. Other threads/workers keep
 # serving reads while the single import lock protects SQLite write semantics.
 timeout = _positive_int("GUNICORN_TIMEOUT", 600)
 graceful_timeout = _positive_int("GUNICORN_GRACEFUL_TIMEOUT", 60)
 keepalive = _positive_int("GUNICORN_KEEPALIVE", 5)
 
-# Periodic recycling bounds memory fragmentation from ordinary traffic. Heavy
-# IMS imports are recycled immediately by post_request above.
+# Do not force-recycle the worker in post_request for /ims/upload. Although
+# post_request is invoked after the response iterator finishes, terminating the
+# worker there can still tear down the client socket before the browser receives
+# the final redirect/body, producing ERR_CONNECTION_ABORTED. Periodic Gunicorn
+# recycling remains enabled below and bounds long-term fragmentation without
+# sacrificing upload response delivery.
 max_requests = _positive_int("GUNICORN_MAX_REQUESTS", 1000)
 max_requests_jitter = _positive_int("GUNICORN_MAX_REQUESTS_JITTER", 100)
 
