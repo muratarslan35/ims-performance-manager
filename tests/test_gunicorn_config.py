@@ -44,20 +44,19 @@ def test_periodic_worker_recycling_remains_enabled():
     assert config.max_requests_jitter >= 0
 
 
-def test_heavy_deploy_restarts_only_after_isolated_acceptance():
+def test_heavy_deploy_restarts_only_after_live_integrity_gate():
     workflow = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.yml"
     ).read_text(encoding="utf-8")
 
-    acceptance = workflow.index("venv/bin/python verify_ims_acceptance.py")
+    live_gate = workflow.index("venv/bin/python verify_live_ims_gate.py")
     service_start = workflow.index("deploy/install_systemd_service.sh")
     heavy_gate = workflow.index('if [ "$RELEASE_MODE" = "heavy" ]; then')
-    assert heavy_gate < acceptance < service_start
+    assert heavy_gate < live_gate < service_start
+    assert "venv/bin/python verify_ims_acceptance.py" not in workflow
     assert "nohup venv/bin/python run.py" not in workflow
     assert "ServerAliveInterval=30" in workflow
     assert "ServerAliveCountMax=20" in workflow
-    assert "timeout --signal=TERM --kill-after=30s 900s" in workflow
-    assert 'sqlite_online_backup.py instance/ipm.db "$acceptance_db"' in workflow
     assert "FAST BACKEND RELEASE GATES" in workflow
     assert "FAST UI RELEASE: DB/IMS GATES SKIPPED" in workflow
     assert "Production health check passed." in workflow

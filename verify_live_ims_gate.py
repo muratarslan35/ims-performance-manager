@@ -1,0 +1,97 @@
+"""Fast read-only production IMS integrity gate.
+
+This gate validates the latest completed IMS upload without re-importing the
+workbook. The expensive full workbook acceptance remains available separately
+for explicit/manual importer qualification.
+"""
+from __future__ import annotations
+
+import json
+import time
+
+from app import create_app
+from app.models import CompetitionData, IMSFact, IMSRawData, IMSSummary, IMSUpload, Target
+from app.services.import_result_report import latest_import_report
+from config import Config
+
+
+class GateConfig(Config):
+    TESTING = True
+
+
+def _require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def main():
+    started = time.monotonic()
+    app = create_app(GateConfig)
+    with app.app_context():
+        upload = (
+            IMSUpload.query.filter_by(status="COMPLETED")
+            .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc())
+            .first()
+        )
+        _require(upload is not None, "COMPLETED IMS upload bulunamadı.")
+        _require(upload.reconciliation_status == "PASSED", f"reconciliation={upload.reconciliation_status}")
+        _require(int(upload.source_record_count or 0) > 0, "source_record_count sıfır.")
+        _require(
+            int(upload.source_record_count or 0) == int(upload.stored_source_record_count or 0),
+            f"source/stored uyuşmuyor: {upload.source_record_count}/{upload.stored_source_record_count}",
+        )
+        _require(int(upload.invalid_metric_count or 0) == 0, f"invalid_metric={upload.invalid_metric_count}")
+
+        report = latest_import_report(upload_id=upload.id)
+        _require(report is not None, f"Import audit raporu yok: upload={upload.id}")
+        _require(report.get("final_result") == "PASS", f"import report FAIL: {report.get('final_result')}")
+        critical = report.get("critical") or {}
+        _require(not any(int(value or 0) for value in critical.values()), f"blocking counters={critical}")
+        sheets = report.get("sheets") or {}
+        _require(int(sheets.get("verified", 0)) == int(sheets.get("total", 0)), f"sheet coverage={sheets}")
+        source = report.get("source") or {}
+        _require(
+            int(source.get("records", 0)) == int(source.get("stored", 0)) == int(upload.source_record_count or 0),
+            f"audit source/stored={source}, upload={upload.source_record_count}/{upload.stored_source_record_count}",
+        )
+
+        actual_counts = {
+            "facts": IMSFact.query.filter_by(upload_id=upload.id).count(),
+            "summary": IMSSummary.query.filter_by(year=upload.year, month=upload.month).count(),
+            "targets": Target.query.filter_by(year=upload.year, month=upload.month).count(),
+            "competition": CompetitionData.query.filter_by(upload_id=upload.id).count(),
+            "raw": IMSRawData.query.filter_by(upload_id=upload.id).count(),
+        }
+        expected_counts = report.get("counts") or {}
+        for key in ("facts", "summary", "targets", "competition"):
+            expected = int(expected_counts.get(key, 0) or 0)
+            _require(expected > 0, f"audit {key}=0")
+            _require(actual_counts[key] == expected, f"{key} count mismatch: db={actual_counts[key]} audit={expected}")
+
+        _require(actual_counts["raw"] == int(upload.raw_record_count or 0), f"raw mismatch: db={actual_counts['raw']} upload={upload.raw_record_count}")
+        _require(actual_counts["facts"] == int(upload.fact_record_count or 0), f"fact mismatch: db={actual_counts['facts']} upload={upload.fact_record_count}")
+
+        national = report.get("national_region")
+        if national:
+            _require(bool(national.get("passed")), f"national_region failed: {national}")
+            _require(not national.get("conflicts"), f"national_region conflicts: {national.get('conflicts')}")
+
+        payload = {
+            "result": "PASS",
+            "seconds": round(time.monotonic() - started, 4),
+            "upload_id": upload.id,
+            "file_name": upload.file_name,
+            "period": [upload.year, upload.month, upload.week_number],
+            "source": int(upload.source_record_count or 0),
+            "stored": int(upload.stored_source_record_count or 0),
+            "reconciliation": upload.reconciliation_status,
+            "critical": critical,
+            "sheets": sheets,
+            "counts": actual_counts,
+        }
+        print("IMS_LIVE_GATE|" + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
