@@ -1,0 +1,203 @@
+name: Competition Native Clone Probe
+
+on:
+  push:
+    branches:
+      - test/competition-native-clone
+
+permissions:
+  contents: read
+
+concurrency:
+  group: competition-native-clone-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Isolated competition SQLite write floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/competition_probe_key
+          chmod 600 ~/.ssh/competition_probe_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run isolated native clone probe
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/competition_probe_key -p "$IMS_PORT" \
+            -o ServerAliveInterval=20 -o ServerAliveCountMax=20 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          git pull --ff-only origin main
+
+          stamp=$(date +%Y%m%d-%H%M%S)
+          probe_db="/tmp/competition-native-clone-${stamp}.db"
+          cleanup() {
+            rm -f -- "$probe_db" "$probe_db-wal" "$probe_db-shm"
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          PROBE_DB="$probe_db" venv/bin/python - <<'PY'
+          import json
+          import os
+          import sqlite3
+          import time
+          from pathlib import Path
+
+          live = Path('instance/ipm.db')
+          probe = Path(os.environ['PROBE_DB'])
+
+          live_conn = sqlite3.connect(live, timeout=30)
+          try:
+              live_conn.execute('PRAGMA busy_timeout=30000')
+              processing = int(live_conn.execute(
+                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
+              ).fetchone()[0])
+              latest_live_upload = live_conn.execute('SELECT MAX(id) FROM ims_uploads').fetchone()[0]
+              live_mode = live_conn.execute('PRAGMA journal_mode').fetchone()[0]
+              if processing:
+                  raise SystemExit(f'Active IMS import detected; probe refused: processing={processing}')
+
+              copy_started = time.monotonic()
+              probe_conn = sqlite3.connect(probe, timeout=30)
+              try:
+                  probe_conn.execute('PRAGMA busy_timeout=30000')
+                  live_conn.backup(probe_conn, pages=8192, sleep=0.002)
+                  probe_conn.commit()
+              finally:
+                  probe_conn.close()
+              copy_seconds = time.monotonic() - copy_started
+          finally:
+              live_conn.close()
+
+          conn = sqlite3.connect(probe, timeout=30)
+          try:
+              conn.execute('PRAGMA busy_timeout=30000')
+              conn.execute('PRAGMA foreign_keys=ON')
+              mode = conn.execute('PRAGMA journal_mode=WAL').fetchone()[0]
+              conn.execute('PRAGMA synchronous=NORMAL')
+
+              source_upload_id = 10
+              source_count = int(conn.execute(
+                  'SELECT COUNT(*) FROM ims_competition_data WHERE upload_id=?',
+                  (source_upload_id,),
+              ).fetchone()[0])
+              if source_count != 467320:
+                  raise SystemExit(f'Unexpected source competition count: {source_count}')
+
+              upload_columns = [
+                  row[1] for row in conn.execute('PRAGMA table_info(ims_uploads)')
+                  if row[1] != 'id'
+              ]
+              quoted_upload_cols = ', '.join('"' + col.replace('"', '""') + '"' for col in upload_columns)
+              cursor = conn.execute(
+                  f'INSERT INTO ims_uploads ({quoted_upload_cols}) '
+                  f'SELECT {quoted_upload_cols} FROM ims_uploads WHERE id=?',
+                  (source_upload_id,),
+              )
+              new_upload_id = int(cursor.lastrowid)
+
+              comp_columns = [
+                  row[1] for row in conn.execute('PRAGMA table_info(ims_competition_data)')
+                  if row[1] != 'id'
+              ]
+              quoted_comp_cols = ', '.join('"' + col.replace('"', '""') + '"' for col in comp_columns)
+              select_exprs = []
+              params = []
+              for col in comp_columns:
+                  if col == 'upload_id':
+                      select_exprs.append('?')
+                      params.append(new_upload_id)
+                  else:
+                      select_exprs.append('"' + col.replace('"', '""') + '"')
+              params.append(source_upload_id)
+
+              indexes = [
+                  {"name": row[1], "unique": bool(row[2])}
+                  for row in conn.execute("PRAGMA index_list('ims_competition_data')")
+              ]
+
+              execute_started = time.monotonic()
+              conn.execute(
+                  f'INSERT INTO ims_competition_data ({quoted_comp_cols}) '
+                  f'SELECT {", ".join(select_exprs)} '
+                  f'FROM ims_competition_data WHERE upload_id=?',
+                  tuple(params),
+              )
+              execute_seconds = time.monotonic() - execute_started
+
+              commit_started = time.monotonic()
+              conn.commit()
+              commit_seconds = time.monotonic() - commit_started
+
+              inserted = int(conn.execute(
+                  'SELECT COUNT(*) FROM ims_competition_data WHERE upload_id=?',
+                  (new_upload_id,),
+              ).fetchone()[0])
+              if inserted != source_count:
+                  raise SystemExit(f'Native clone count mismatch: {inserted}/{source_count}')
+
+              payload = {
+                  'rows': inserted,
+                  'copy_seconds': round(copy_seconds, 3),
+                  'execute_seconds': round(execute_seconds, 3),
+                  'commit_seconds': round(commit_seconds, 3),
+                  'total_write_seconds': round(execute_seconds + commit_seconds, 3),
+                  'index_count': len(indexes),
+                  'indexes': indexes,
+                  'probe_db_bytes': probe.stat().st_size,
+                  'probe_wal_bytes': Path(str(probe) + '-wal').stat().st_size if Path(str(probe) + '-wal').exists() else 0,
+                  'journal_mode': mode,
+                  'new_upload_id': new_upload_id,
+              }
+              print('COMP_NATIVE_CLONE|' + json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+          finally:
+              conn.close()
+
+          live_conn = sqlite3.connect(live, timeout=30)
+          try:
+              live_conn.execute('PRAGMA busy_timeout=30000')
+              latest_after = live_conn.execute('SELECT MAX(id) FROM ims_uploads').fetchone()[0]
+              processing_after = int(live_conn.execute(
+                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
+              ).fetchone()[0])
+              mode_after = live_conn.execute('PRAGMA journal_mode').fetchone()[0]
+          finally:
+              live_conn.close()
+
+          print(
+              'COMP_NATIVE_LIVE_POST|' + json.dumps({
+                  'latest_upload_before': latest_live_upload,
+                  'latest_upload_after': latest_after,
+                  'processing': processing_after,
+                  'journal_mode_before': live_mode,
+                  'journal_mode_after': mode_after,
+              }, sort_keys=True),
+              flush=True,
+          )
+          if latest_after != latest_live_upload or processing_after != 0 or str(mode_after).lower() != 'wal':
+              raise SystemExit('Live DB changed during isolated native clone probe')
+          PY
+          REMOTE
