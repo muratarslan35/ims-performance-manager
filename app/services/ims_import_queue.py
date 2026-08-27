@@ -10,6 +10,8 @@ from sqlalchemy import update
 
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
+from app.services import ims_import_service as ims_import_service_module
+from app.services.compiled_competition_import_service import CompiledCompetitionImportService
 from app.services.competition_import_service import CompetitionImportService
 from app.services.import_coordinator import ImportCoordinator
 from app.services.ims_import_service import IMSImportService
@@ -58,17 +60,24 @@ class IMSImportQueue:
     def process(cls, job):
         staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         previous_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
+        previous_competition_service = ims_import_service_module.CompetitionImportService
         try:
             with ImportCoordinator.acquire(
                 uploaded_by=job.uploaded_by,
                 file_name=job.file_name,
                 wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
             ):
-                # Competition is the dominant write volume. Use a larger bounded
-                # batch only for this isolated single-consumer background job,
-                # then restore the process-wide default in finally so tests and
-                # any other importer path keep their established behavior.
-                configured_chunk = int(current_app.config.get("IMS_COMPETITION_BULK_CHUNK_SIZE", 10000) or 10000)
+                # The worker is the only production writer. Semantic discovery
+                # remains in the established importer, while the already-
+                # resolved competition plan is executed by the compiled hot
+                # loop to avoid per-cell re-normalization/allocation overhead.
+                ims_import_service_module.CompetitionImportService = CompiledCompetitionImportService
+
+                # Competition is the dominant write volume. 25k remains bounded
+                # on the 1 GB host but reduces a 467k-row workbook to ~19 DB
+                # executemany batches. Restore the process-wide default after
+                # every job so non-worker call sites keep legacy behavior.
+                configured_chunk = int(current_app.config.get("IMS_COMPETITION_BULK_CHUNK_SIZE", 25000) or 25000)
                 CompetitionImportService.BULK_CHUNK_SIZE = max(1000, min(configured_chunk, 25000))
                 effective_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
 
@@ -97,6 +106,7 @@ class IMSImportQueue:
                     upload.warning_message = "\n".join(warnings) or None
                 stats = dict(result.get("statistics") or {})
                 stats["competition_bulk_chunk_size"] = effective_chunk_size
+                stats["competition_compiled_fast_path"] = True
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
                 job.ims_upload_id = result["upload_id"]
@@ -116,5 +126,6 @@ class IMSImportQueue:
             failed.heartbeat_at = failed.completed_at
             db.session.commit()
         finally:
+            ims_import_service_module.CompetitionImportService = previous_competition_service
             CompetitionImportService.BULK_CHUNK_SIZE = previous_chunk_size
             staging_path.unlink(missing_ok=True)
