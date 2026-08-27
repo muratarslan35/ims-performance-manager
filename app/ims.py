@@ -397,7 +397,7 @@ def upload():
             source_hash=digest.hexdigest(),
             year=year,
             month=month,
-            clear_before_import=False,
+            clear_before_import=request.form.get("replace") == "1",
             uploaded_by=uploaded_by,
         )
         db.session.add(job)
