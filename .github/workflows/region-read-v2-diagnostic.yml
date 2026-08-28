@@ -52,10 +52,17 @@ jobs:
               except Exception:
                   traceback.print_exc()
           PY
-          echo '=== MURAT TARGET VS SUMMARY ==='
+          echo '=== LIVE SOURCE TOTALS ==='
           venv/bin/python - <<'PY'
           import sqlite3
           con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30); con.row_factory=sqlite3.Row
+          uid=con.execute("select id from ims_uploads where year=2026 and month=2 and status='COMPLETED' order by week_number desc,completed_at desc,id desc limit 1").fetchone()[0]
+          repids=[r[0] for r in con.execute("select id from representatives where region='901' or city='901' or territory='901'").fetchall()]
+          ph=','.join('?'*len(repids))
+          print('REGION_REP_COUNT',len(repids))
+          print('TARGET_SUMS',dict(con.execute(f"select sum(tl_target) target_tl,sum(tl_realization) actual_tl,sum(unit_realization) actual_unit from targets where year=2026 and month=2 and representative_id in ({ph})",repids).fetchone()))
+          print('OFFICIAL_BALANCE',[dict(r) for r in con.execute("select product_id,territory,unit,tl from ims_raw_data where upload_id=? and sheet_type='dashboard_balance_region' and territory like '901%' order by product_id",(uid,)).fetchall()])
+          print('OFFICIAL_WEEKLY',[dict(r) for r in con.execute("select product_id,territory,unit,tl from ims_raw_data where upload_id=? and sheet_type='dashboard_weekly_region' and territory like '901%' order by product_id",(uid,)).fetchall()])
           rep=con.execute("select id,rep_name from representatives where upper(rep_name)='MURAT ARSLAN' limit 1").fetchone(); print('REP',dict(rep) if rep else None)
           if rep:
               rows=con.execute("select p.product_name,t.tl_target,t.unit_target,t.tl_realization,t.unit_realization,s.tl summary_tl,s.unit summary_unit from targets t join products p on p.id=t.product_id left join ims_summary s on s.representative_id=t.representative_id and s.product_id=t.product_id and s.year=t.year and s.month=t.month where t.representative_id=? and t.year=2026 and t.month=2 order by p.display_order,p.id",(rep['id'],)).fetchall()
