@@ -33,16 +33,25 @@ jobs:
           import sqlite3, json
           con=sqlite3.connect('instance/ipm.db', timeout=30)
           con.row_factory=sqlite3.Row
-          def q(sql): return [dict(r) for r in con.execute(sql).fetchall()]
-          print('JOBS='+json.dumps(q("SELECT id,status,original_file_name,file_sha256,year,month,clear_before_import,queued_at,started_at,completed_at,upload_id,error_message,processing_time,result_json FROM ims_import_jobs ORDER BY id DESC LIMIT 6"), ensure_ascii=False, default=str))
-          print('UPLOADS='+json.dumps(q("SELECT id,status,file_name,year,month,week_number,sheet_count,raw_record_count,fact_record_count,summary_record_count,source_record_count,stored_source_record_count,reconciliation_status,error_message,warning_message,uploaded_at,completed_at FROM ims_uploads ORDER BY id DESC LIMIT 10"), ensure_ascii=False, default=str))
-          print('WEEK_COUNTS='+json.dumps(q("SELECT week_number,status,COUNT(*) n,GROUP_CONCAT(id) ids FROM ims_uploads WHERE year=2026 AND month=2 GROUP BY week_number,status ORDER BY week_number,status"), ensure_ascii=False))
-          print('PROCESSING='+json.dumps(q("SELECT id,status,original_file_name,started_at FROM ims_import_jobs WHERE status='PROCESSING'"), ensure_ascii=False))
+          def cols(table): return [r['name'] for r in con.execute(f'PRAGMA table_info({table})')]
+          def latest(table, wanted, limit):
+              available=set(cols(table)); chosen=[c for c in wanted if c in available]
+              sql='SELECT '+','.join(chosen)+f' FROM {table} ORDER BY id DESC LIMIT {limit}'
+              return chosen,[dict(r) for r in con.execute(sql).fetchall()]
+          jc,j=latest('ims_import_jobs',['id','status','file_name','original_file_name','file_sha256','year','month','clear_before_import','queued_at','started_at','completed_at','upload_id','error_message','processing_time','result_json'],6)
+          uc,u=latest('ims_uploads',['id','status','file_name','year','month','week_number','sheet_count','raw_record_count','fact_record_count','summary_record_count','source_record_count','stored_source_record_count','reconciliation_status','error_message','warning_message','uploaded_at','completed_at'],10)
+          print('JOB_COLUMNS='+json.dumps(jc)); print('JOBS='+json.dumps(j,ensure_ascii=False,default=str))
+          print('UPLOAD_COLUMNS='+json.dumps(uc)); print('UPLOADS='+json.dumps(u,ensure_ascii=False,default=str))
+          print('WEEK_COUNTS='+json.dumps([dict(r) for r in con.execute("SELECT week_number,status,COUNT(*) n,GROUP_CONCAT(id) ids FROM ims_uploads WHERE year=2026 AND month=2 GROUP BY week_number,status ORDER BY week_number,status")],ensure_ascii=False))
+          processing=[]
+          if 'status' in cols('ims_import_jobs'):
+              processing=[dict(r) for r in con.execute("SELECT id,status,file_name,started_at FROM ims_import_jobs WHERE status='PROCESSING'")]
+          print('PROCESSING='+json.dumps(processing,ensure_ascii=False,default=str))
           con.close()
           PY
           echo 'ERROR_LINES_BEGIN'
           sudo journalctl -u ims-import-worker.service --since '2026-08-28 20:20:00 UTC' --no-pager \
             | grep -E 'IMS Import Pipeline Failed|IntegrityError|UNIQUE constraint|OperationalError|Traceback|FAILED|ERROR|ims_import_stage_timing.*FAIL' \
-            | tail -n 120 || true
+            | tail -n 160 || true
           echo 'ERROR_LINES_END'
           REMOTE
