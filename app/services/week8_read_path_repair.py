@@ -11,9 +11,10 @@ import re
 from decimal import Decimal
 
 from flask import g, has_request_context
+from sqlalchemy import exists
 
 from app.extensions import db
-from app.models import IMSUpload, Target
+from app.models import CompetitionData, IMSUpload, Target
 
 
 _MONTH_DIMENSION = re.compile(
@@ -65,6 +66,7 @@ def install_week8_read_path_repair() -> None:
     """Install narrowly-scoped read repairs once per process."""
     from app.services.dashboard_service import DashboardService
     from app.services.production_result_service import ProductionResultService
+    from app.services.region_market_service import RegionMarketService
     from app.services.representative_market_service import RepresentativeMarketService
 
     if getattr(ProductionResultService, "_week8_read_repair_installed", False):
@@ -170,6 +172,27 @@ def install_week8_read_path_repair() -> None:
         return payload
 
     RepresentativeMarketService.build = repaired_market_build
+
+    # Keep the safe PR-285 region-period optimization, but not its broad field
+    # monkeypatches. This query is upload-centered and avoids DISTINCT scans
+    # across the multi-million-row competition table.
+    def bounded_available_periods(self):
+        prefix = f"{self.region_key}%"
+        has_scope = exists().where(
+            CompetitionData.upload_id == IMSUpload.id,
+            CompetitionData.metric_type == "UNIT",
+            CompetitionData.territory.like(prefix),
+        )
+        rows = db.session.query(IMSUpload.year, IMSUpload.month).filter(
+            IMSUpload.status == "COMPLETED",
+            has_scope,
+        ).distinct().order_by(IMSUpload.year.desc(), IMSUpload.month.desc()).all()
+        return [
+            {"year": int(year), "month": int(month), "label": f"{int(month):02d}/{int(year)}"}
+            for year, month in rows
+        ]
+
+    RegionMarketService._available_periods = bounded_available_periods
 
     original_competitor_ai = DashboardService._competitor_ai
 
