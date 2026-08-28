@@ -5,11 +5,13 @@ Independent pivots remain explicit masters when no upstream equivalent exists.
 Once a high-confidence relationship is discovered, any value mismatch or small
 missing-cell gap fails closed before publication.
 """
-from app.services.workbook_semantic_reconciliation import WorkbookSemanticReconciler
+from app.services.compiled_import_semantic_reconciliation import (
+    CompiledWorkbookSemanticReconciler,
+)
 
 
 def apply_derived_verification_gate(importer):
-    return WorkbookSemanticReconciler(importer).reconcile()
+    return CompiledWorkbookSemanticReconciler(importer).reconcile()
 
 
 def install_derived_verification_gate():

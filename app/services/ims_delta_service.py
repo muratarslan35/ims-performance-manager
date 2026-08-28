@@ -12,6 +12,9 @@ from sqlalchemy import desc, or_
 from app.models import CompetitionData, IMSFact, IMSRawData, IMSUpload, Target
 
 
+DELTA_COMPETITION_STREAM_BATCH_SIZE = 5000
+
+
 def _previous_upload(upload):
     filters = [IMSUpload.status == "COMPLETED", IMSUpload.id != upload.id]
     if upload.week_number is None:
@@ -80,22 +83,60 @@ def _representative_context_map(upload_id):
     return {key: tuple(sorted(values)) for key, values in result.items()}
 
 
-def _competition_map(upload_id):
-    """Compare competition values by business grain, not sheet title/position."""
+def _competition_map_from_rows(rows):
+    """Aggregate scalar competition rows with the established delta business grain."""
     result = defaultdict(float)
-    for row in CompetitionData.query.filter_by(upload_id=upload_id).all():
+    for (
+        period_type,
+        territory,
+        subterritory,
+        product_group,
+        product_name,
+        metric_type,
+        is_subtotal,
+        is_grand_total,
+        metric_value,
+    ) in rows:
         key = (
-            row.period_type,
-            row.territory,
-            row.subterritory,
-            row.product_group,
-            row.product_name,
-            row.metric_type,
-            bool(row.is_subtotal),
-            bool(row.is_grand_total),
+            period_type,
+            territory,
+            subterritory,
+            product_group,
+            product_name,
+            metric_type,
+            bool(is_subtotal),
+            bool(is_grand_total),
         )
-        result[key] += float(row.metric_value or 0)
+        result[key] += float(metric_value or 0)
     return {key: (value,) for key, value in result.items()}
+
+
+def _competition_map(upload_id):
+    """Compare competition values without materializing hundreds of thousands of ORM objects.
+
+    The previous implementation loaded every ``CompetitionData`` model with ``.all()``.
+    A normal Week-7 workbook carries roughly 467k competition observations, so comparing
+    current and previous uploads could instantiate close to one million SQLAlchemy objects
+    immediately before commit.  Keep the exact same business key and Python accumulation,
+    but project only the nine scalar values the audit needs and consume them in bounded
+    batches.  This audit remains informational and transaction-local.
+    """
+    rows = (
+        CompetitionData.query.with_entities(
+            CompetitionData.period_type,
+            CompetitionData.territory,
+            CompetitionData.subterritory,
+            CompetitionData.product_group,
+            CompetitionData.product_name,
+            CompetitionData.metric_type,
+            CompetitionData.is_subtotal,
+            CompetitionData.is_grand_total,
+            CompetitionData.metric_value,
+        )
+        .filter(CompetitionData.upload_id == upload_id)
+        .yield_per(DELTA_COMPETITION_STREAM_BATCH_SIZE)
+    )
+    return _competition_map_from_rows(rows)
 
 
 def _brick_map(upload_id):
