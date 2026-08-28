@@ -83,10 +83,8 @@ def _representative_context_map(upload_id):
     return {key: tuple(sorted(values)) for key, values in result.items()}
 
 
-def _competition_map_from_rows(rows):
-    """Aggregate scalar competition rows with the established delta business grain."""
-    result = defaultdict(float)
-    for (
+def _competition_business_key(row):
+    (
         period_type,
         territory,
         subterritory,
@@ -95,33 +93,31 @@ def _competition_map_from_rows(rows):
         metric_type,
         is_subtotal,
         is_grand_total,
-        metric_value,
-    ) in rows:
-        key = (
-            period_type,
-            territory,
-            subterritory,
-            product_group,
-            product_name,
-            metric_type,
-            bool(is_subtotal),
-            bool(is_grand_total),
-        )
-        result[key] += float(metric_value or 0)
+        _metric_value,
+    ) = row
+    return (
+        period_type,
+        territory,
+        subterritory,
+        product_group,
+        product_name,
+        metric_type,
+        bool(is_subtotal),
+        bool(is_grand_total),
+    )
+
+
+def _competition_map_from_rows(rows):
+    """Aggregate scalar competition rows with the established delta business grain."""
+    result = defaultdict(float)
+    for row in rows:
+        result[_competition_business_key(row)] += float(row[8] or 0)
     return {key: (value,) for key, value in result.items()}
 
 
-def _competition_map(upload_id):
-    """Compare competition values without materializing hundreds of thousands of ORM objects.
-
-    The previous implementation loaded every ``CompetitionData`` model with ``.all()``.
-    A normal Week-7 workbook carries roughly 467k competition observations, so comparing
-    current and previous uploads could instantiate close to one million SQLAlchemy objects
-    immediately before commit.  Keep the exact same business key and Python accumulation,
-    but project only the nine scalar values the audit needs and consume them in bounded
-    batches.  This audit remains informational and transaction-local.
-    """
-    rows = (
+def _competition_rows(upload_id):
+    """Yield only scalar fields required by the competition delta audit."""
+    return (
         CompetitionData.query.with_entities(
             CompetitionData.period_type,
             CompetitionData.territory,
@@ -136,7 +132,67 @@ def _competition_map(upload_id):
         .filter(CompetitionData.upload_id == upload_id)
         .yield_per(DELTA_COMPETITION_STREAM_BATCH_SIZE)
     )
-    return _competition_map_from_rows(rows)
+
+
+def _competition_map(upload_id):
+    """Preserve the established map helper without materializing ORM model objects."""
+    return _competition_map_from_rows(_competition_rows(upload_id))
+
+
+def _competition_delta_from_rows(old_rows, new_rows, tolerance=0.000001):
+    """Compare two competition streams with one shared key table.
+
+    Each side keeps its own floating-point accumulator, so duplicate-grain summation
+    semantics stay identical to the historical two-map implementation.  A shared
+    entry stores the business key once instead of building current-map, previous-map
+    and their set union at the same time.
+    """
+    values = {}
+    before = 0
+    after = 0
+
+    for row in old_rows:
+        key = _competition_business_key(row)
+        state = values.get(key)
+        if state is None:
+            # old_sum, new_sum, old_seen, new_seen
+            state = [0.0, 0.0, True, False]
+            values[key] = state
+            before += 1
+        elif not state[2]:
+            state[2] = True
+            before += 1
+        state[0] += float(row[8] or 0)
+
+    for row in new_rows:
+        key = _competition_business_key(row)
+        state = values.get(key)
+        if state is None:
+            state = [0.0, 0.0, False, True]
+            values[key] = state
+            after += 1
+        elif not state[3]:
+            state[3] = True
+            after += 1
+        state[1] += float(row[8] or 0)
+
+    changed = 0
+    for old_value, new_value, old_seen, new_seen in values.values():
+        if not old_seen or not new_seen or abs(float(old_value) - float(new_value)) > tolerance:
+            changed += 1
+
+    return {
+        "competition_changed": changed,
+        "competition_count_before": before,
+        "competition_count_after": after,
+        "competition_count_changed": before != after,
+    }
+
+
+def _competition_delta(old_upload_id, new_upload_id):
+    old_rows = () if old_upload_id is None else _competition_rows(old_upload_id)
+    new_rows = () if new_upload_id is None else _competition_rows(new_upload_id)
+    return _competition_delta_from_rows(old_rows, new_rows)
 
 
 def _brick_map(upload_id):
@@ -177,8 +233,8 @@ def build_previous_ims_delta(importer):
     """Build a complete non-blocking delta before the transaction is published."""
     current = importer.upload
     previous = _previous_upload(current)
-    current_competition_map = _competition_map(current.id)
     current_targets = target_snapshot(current.year, current.month)
+    competition_delta = _competition_delta(previous.id if previous is not None else None, current.id)
 
     if previous is None:
         report = {
@@ -193,9 +249,9 @@ def build_previous_ims_delta(importer):
             "targets_changed": 0,
             "brick_spread_changed": 0,
             "competition_changed": 0,
-            "competition_count_before": 0,
-            "competition_count_after": len(current_competition_map),
-            "competition_count_changed": bool(current_competition_map),
+            "competition_count_before": competition_delta["competition_count_before"],
+            "competition_count_after": competition_delta["competition_count_after"],
+            "competition_count_changed": competition_delta["competition_count_changed"],
             "target_delta_basis": "FIRST_BASELINE",
         }
     else:
@@ -214,7 +270,6 @@ def build_previous_ims_delta(importer):
             old_targets = target_snapshot(previous.year, previous.month)
             target_basis = "PREVIOUS_PERIOD"
 
-        old_competition_map = _competition_map(previous.id)
         old_context = _representative_context_map(previous.id)
         new_context = _representative_context_map(current.id)
 
@@ -231,12 +286,7 @@ def build_previous_ims_delta(importer):
             "brick_spread_changed": len(
                 _changed_numeric(_brick_map(previous.id), _brick_map(current.id))
             ),
-            "competition_changed": len(
-                _changed_numeric(old_competition_map, current_competition_map)
-            ),
-            "competition_count_before": len(old_competition_map),
-            "competition_count_after": len(current_competition_map),
-            "competition_count_changed": len(old_competition_map) != len(current_competition_map),
+            **competition_delta,
             "target_delta_basis": target_basis,
         }
 
