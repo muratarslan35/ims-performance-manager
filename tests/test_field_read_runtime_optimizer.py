@@ -79,11 +79,15 @@ def test_region_period_discovery_is_upload_centered_exists_query():
             ))
             db.session.commit()
             statements = []
-            event.listen(db.engine, "before_cursor_execute", lambda c, cur, stmt, p, ctx, many: statements.append(stmt))
+
+            def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+                statements.append(statement)
+
+            event.listen(db.engine, "before_cursor_execute", capture)
             try:
                 periods = RegionMarketService("901", [], 2026, 2)._available_periods()
             finally:
-                event.remove(db.engine, "before_cursor_execute", event.listeners if False else None)
+                event.remove(db.engine, "before_cursor_execute", capture)
             assert periods == [{"year": 2026, "month": 2, "label": "02/2026"}]
             sql = " ".join(statements[-1].upper().split())
             assert "EXISTS" in sql
