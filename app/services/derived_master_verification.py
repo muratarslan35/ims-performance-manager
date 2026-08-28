@@ -5,7 +5,7 @@ Independent pivots remain explicit masters when no upstream equivalent exists.
 Once a high-confidence relationship is discovered, any value mismatch or small
 missing-cell gap fails closed before publication.
 """
-from app.services.compiled_workbook_semantic_reconciliation import (
+from app.services.compiled_import_semantic_reconciliation import (
     CompiledWorkbookSemanticReconciler,
 )
 
