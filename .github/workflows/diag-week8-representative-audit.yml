@@ -1,0 +1,78 @@
+name: Temporary Week 8 Representative Audit
+
+on:
+  push:
+    branches: [diag/week8-representative-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read-only Week 8 representative audit
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "HEAD|$(git rev-parse HEAD)"
+          venv/bin/python - <<'PY'
+          import sqlite3, json
+          db='instance/ipm.db'
+          con=sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=30)
+          con.row_factory=sqlite3.Row
+          def rows(sql,args=()): return [dict(r) for r in con.execute(sql,args).fetchall()]
+          def one(sql,args=()):
+              r=con.execute(sql,args).fetchone(); return dict(r) if r else None
+          def cols(table): return [r['name'] for r in con.execute(f'PRAGMA table_info({table})')]
+          def table_exists(t): return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(t,)).fetchone() is not None
+          print('PRAGMA|journal_mode='+str(con.execute('PRAGMA journal_mode').fetchone()[0]))
+          print('PRAGMA|quick_check='+str(con.execute('PRAGMA quick_check').fetchone()[0]))
+          print('PROCESSING|'+str(con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'").fetchone()[0]))
+          print('LATEST_JOB|'+json.dumps(one("SELECT id,status,file_name,source_hash,year,month,clear_before_import,ims_upload_id,queued_at,started_at,completed_at,error_message,result_summary FROM ims_import_jobs ORDER BY id DESC LIMIT 1"),ensure_ascii=False,default=str))
+          print('LATEST_UPLOAD|'+json.dumps(one("SELECT * FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1"),ensure_ascii=False,default=str))
+          rep=one("SELECT * FROM representatives WHERE upper(rep_name)=upper(?) ORDER BY id LIMIT 1",('MURAT ARSLAN',))
+          print('REP|'+json.dumps(rep,ensure_ascii=False,default=str))
+          if not rep:
+              raise SystemExit('MURAT ARSLAN not found')
+          rid=rep['id']
+          print('TARGETS|'+json.dumps(rows("""SELECT t.id,p.product_name,p.product_code,t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,t.realization_percent,t.prime_percent,t.bonus_amount FROM targets t JOIN products p ON p.id=t.product_id WHERE t.year=2026 AND t.month=2 AND t.representative_id=? ORDER BY p.display_order,p.product_name""",(rid,)),ensure_ascii=False,default=str))
+          print('BRICKS|'+json.dumps(rows("SELECT brick,territory,city,source,active FROM representative_brick_assignments WHERE year=2026 AND month=2 AND representative_id=? ORDER BY brick",(rid,)),ensure_ascii=False,default=str))
+          for t in ['ims_summary','ims_facts','ims_fact','ims_raw_data','ims_raw','ims_competition_data','competition_data']:
+              if not table_exists(t): continue
+              c=cols(t); print('SCHEMA|'+t+'|'+','.join(c))
+              where=[]; args=[]
+              if 'representative_id' in c: where.append('representative_id=?'); args.append(rid)
+              if 'year' in c: where.append('year=?'); args.append(2026)
+              if 'month' in c: where.append('month=?'); args.append(2)
+              if 'week_number' in c and t not in ('ims_summary',): where.append('week_number=?'); args.append(8)
+              if not where: continue
+              order=' ORDER BY id DESC' if 'id' in c else ''
+              limit=' LIMIT 500'
+              q=f"SELECT * FROM {t} WHERE {' AND '.join(where)}{order}{limit}"
+              try:
+                  data=rows(q,args)
+                  print('DATA|'+t+'|count='+str(len(data))+'|'+json.dumps(data,ensure_ascii=False,default=str))
+              except Exception as e:
+                  print('DATAERR|'+t+'|'+repr(e))
+          con.close()
+          PY
+          REMOTE
