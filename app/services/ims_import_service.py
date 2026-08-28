@@ -2301,6 +2301,20 @@ class IMSImportService:
         IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
 
+    def clear_week_snapshot(self, year, month, week_number):
+        """Replace one weekly snapshot while rebuilding current period-derived state.
+
+        Weekly raw/fact history for other weeks is retained. Period-scoped target,
+        summary and brick-assignment rows are rebuilt from the incoming cumulative
+        workbook so representatives who moved to another team do not remain in the
+        active month simply because they existed in an earlier workbook.
+        """
+        self.clear_week(year, week_number)
+        IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+        Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+        RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+        db.session.flush()
+
     def _upsert_auto_brick_assignment(self, representative_id, year, month, brick, territory=None, city=None):
         """Add one membership without replacing a manually maintained member row."""
         assignment = RepresentativeBrickAssignment.query.filter_by(
@@ -2552,8 +2566,11 @@ class IMSImportService:
                 self.create_upload(year, month, week_number=week_number)
                 workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
             self._log_stage_metrics("workbook_rows_read", workbook_rows_read=workbook_rows_read)
-            if clear_before_import and week_number is None:
-                self.clear_month(year, month)
+            if clear_before_import:
+                if week_number is None:
+                    self.clear_month(year, month)
+                else:
+                    self.clear_week_snapshot(year, month, week_number)
             self.process_workbook(year, month, week_number=week_number)
             skipped_rows = dict(Counter(item.get("reason", "unknown") for item in self.skipped_logs))
             self._log_stage_metrics("parsed_rows", parsed_rows=self.statistics.get("processed_rows", 0))
