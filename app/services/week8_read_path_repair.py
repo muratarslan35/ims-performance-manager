@@ -1,16 +1,16 @@
 """Targeted read-path repair for the Week-8 field regressions.
 
 This module intentionally changes no import, target, prime or dashboard formula.
-It only makes field-facing reads use the already persisted IMS realization values
-on ``Target`` when the period has a completed IMS upload. Production precedence
-remains P2 > P1 > IMS and numeric zero remains a valid realization.
+Only representative and region detail requests may use the already persisted IMS
+realization values on ``Target`` when the summary read is missing/corrupt.
+Production precedence remains P2 > P1 > IMS and numeric zero remains valid.
 """
 from __future__ import annotations
 
 import re
 from decimal import Decimal
 
-from flask import g, has_request_context
+from flask import g, has_request_context, request
 from sqlalchemy import exists
 
 from app.extensions import db
@@ -23,6 +23,17 @@ _MONTH_DIMENSION = re.compile(
 )
 
 
+def _is_field_detail_request() -> bool:
+    if not has_request_context():
+        return False
+    path = str(request.path or "")
+    return path.startswith("/representatives/view/") or path.startswith("/regions/")
+
+
+def _is_representative_detail_request() -> bool:
+    return has_request_context() and str(request.path or "").startswith("/representatives/view/")
+
+
 def _has_completed_ims(year: int, month: int) -> bool:
     return db.session.query(IMSUpload.id).filter(
         IMSUpload.year == int(year),
@@ -32,7 +43,14 @@ def _has_completed_ims(year: int, month: int) -> bool:
 
 
 def _apply_target_ims_actuals(rows, targets, *, has_completed_ims: bool):
-    """Replace only IMS fallback values with the import-populated target actuals."""
+    """Repair only IMS rows where target realization is the safer persisted source.
+
+    Older fixtures/data can have a valid summary while target realization fields
+    are still zero. Those rows remain untouched. A non-zero target realization,
+    or a missing/zero summary for a completed IMS period, is safe to resolve from
+    Target. This keeps genuine zero while avoiding Week-8's zero-TL/million-unit
+    corrupted summaries.
+    """
     if not has_completed_ims:
         return rows
     target_by_product = {int(item.product_id): item for item in targets}
@@ -42,15 +60,27 @@ def _apply_target_ims_actuals(rows, targets, *, has_completed_ims: bool):
         target = target_by_product.get(int(product_id))
         if target is None:
             continue
-        actual_tl = Decimal(str(target.tl_realization or 0))
-        actual_unit = Decimal(str(target.unit_realization or 0))
+
+        target_actual_tl = Decimal(str(target.tl_realization or 0))
+        target_actual_unit = Decimal(str(target.unit_realization or 0))
+        current_tl = Decimal(str(values.get("actual_tl") or 0))
+        current_unit = Decimal(str(values.get("actual_unit") or 0))
+        target_has_actual = target_actual_tl != 0 or target_actual_unit != 0
+        current_has_actual = current_tl != 0 or current_unit != 0
+
+        # Legacy/fixture summaries with real values and untouched target actuals
+        # remain authoritative. Week-8 has populated target actuals, so it enters
+        # the repair path even though its summary contains bad values.
+        if current_has_actual and not target_has_actual and values.get("complete"):
+            continue
+
         target_tl = Decimal(str(values.get("target_tl") or target.tl_target or 0))
         repaired = dict(values)
         repaired.update(
             complete=True,
-            actual_tl=actual_tl,
-            actual_unit=actual_unit,
-            realization_percent=(actual_tl * Decimal("100") / target_tl) if target_tl else Decimal("0"),
+            actual_tl=target_actual_tl,
+            actual_unit=target_actual_unit,
+            realization_percent=(target_actual_tl * Decimal("100") / target_tl) if target_tl else Decimal("0"),
         )
         rows[int(product_id)] = repaired
     return rows
@@ -77,7 +107,7 @@ def install_week8_read_path_repair() -> None:
 
     def effective_products(cls, year, month, representative_id, product_ids=None):
         rows = original_effective_products(cls, year, month, representative_id, product_ids)
-        if not rows:
+        if not rows or not _is_field_detail_request():
             return rows
         product_ids_set = {int(item) for item in (product_ids or rows.keys())}
         targets = Target.query.filter(
@@ -93,36 +123,19 @@ def install_week8_read_path_repair() -> None:
         )
 
     def effective_product(cls, year, month, representative_id, product_id):
-        if has_request_context():
-            cache = getattr(g, "_week8_effective_product_batches", None)
-            if cache is None:
-                cache = {}
-                g._week8_effective_product_batches = cache
-            key = (int(year), int(month), int(representative_id))
-            if key not in cache:
-                cache[key] = cls.effective_products(year, month, representative_id)
-            if int(product_id) in cache[key]:
-                return cache[key][int(product_id)]
+        if not _is_field_detail_request():
+            return original_effective_product(cls, year, month, representative_id, product_id)
 
-        row = original_effective_product(cls, year, month, representative_id, product_id)
-        if row.get("source") != "IMS" or not _has_completed_ims(year, month):
-            return row
-        target = Target.query.filter_by(
-            year=int(year), month=int(month), representative_id=int(representative_id), product_id=int(product_id)
-        ).first()
-        if target is None:
-            return row
-        actual_tl = Decimal(str(target.tl_realization or 0))
-        actual_unit = Decimal(str(target.unit_realization or 0))
-        target_tl = Decimal(str(row.get("target_tl") or target.tl_target or 0))
-        repaired = dict(row)
-        repaired.update(
-            complete=True,
-            actual_tl=actual_tl,
-            actual_unit=actual_unit,
-            realization_percent=(actual_tl * Decimal("100") / target_tl) if target_tl else Decimal("0"),
-        )
-        return repaired
+        cache = getattr(g, "_week8_effective_product_batches", None)
+        if cache is None:
+            cache = {}
+            g._week8_effective_product_batches = cache
+        key = (int(year), int(month), int(representative_id))
+        if key not in cache:
+            cache[key] = cls.effective_products(year, month, representative_id)
+        if int(product_id) in cache[key]:
+            return cache[key][int(product_id)]
+        return original_effective_product(cls, year, month, representative_id, product_id)
 
     ProductionResultService.effective_products = classmethod(effective_products)
     ProductionResultService.effective_product = classmethod(effective_product)
@@ -131,6 +144,9 @@ def install_week8_read_path_repair() -> None:
 
     def repaired_market_build(self):
         payload = original_market_build(self)
+        if not _is_representative_detail_request():
+            return payload
+
         resolved = ProductionResultService.effective_products(self.year, self.month, self.representative.id)
         for item in payload.get("rows", []):
             product = item.get("product")
@@ -173,9 +189,7 @@ def install_week8_read_path_repair() -> None:
 
     RepresentativeMarketService.build = repaired_market_build
 
-    # Keep the safe PR-285 region-period optimization, but not its broad field
-    # monkeypatches. This query is upload-centered and avoids DISTINCT scans
-    # across the multi-million-row competition table.
+    # Preserve only the proven safe region-period optimization from PR #285.
     def bounded_available_periods(self):
         prefix = f"{self.region_key}%"
         has_scope = exists().where(
