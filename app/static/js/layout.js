@@ -1,14 +1,12 @@
 /**
  * IMS Performance Manager – Enterprise Application Shell
- * PR #2 | layout.js
- * Manages: sidebar drawer, mobile toggle, theme switching, notifications
- * Does NOT change any backend behavior or business logic.
+ * Manages: sidebar drawer, mobile toggle, theme switching, notifications,
+ * and persistent IMS background-import progress.
  */
 
 (function () {
     'use strict';
 
-    /* ─── ELEMENTS ─────────────────────────────────────────── */
     const sidebar        = document.getElementById('appSidebar');
     const overlay        = document.getElementById('sidebarOverlay');
     const toggleBtn      = document.getElementById('sidebarToggleBtn');
@@ -18,12 +16,10 @@
     const userMenuButton = document.getElementById('userDropdown');
     const userMenu       = userMenuButton ? userMenuButton.nextElementSibling : null;
 
-    /* ─── HELPERS ──────────────────────────────────────────── */
     function isMobile() {
         return window.innerWidth < 992;
     }
 
-    /* ─── SIDEBAR DRAWER (mobile) ──────────────────────────── */
     function openDrawer() {
         if (!sidebar || !overlay) return;
         sidebar.classList.add('drawer-open');
@@ -40,7 +36,6 @@
         if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
     }
 
-    /* ─── SIDEBAR COLLAPSE (desktop) ──────────────────────── */
     function toggleDesktopSidebar() {
         document.body.classList.toggle('sidebar-collapsed');
         const collapsed = document.body.classList.contains('sidebar-collapsed');
@@ -54,29 +49,22 @@
         }
     }
 
-    /* ─── UNIFIED TOGGLE ───────────────────────────────────── */
     function handleToggle() {
         if (isMobile()) {
-            if (sidebar && sidebar.classList.contains('drawer-open')) {
-                closeDrawer();
-            } else {
-                openDrawer();
-            }
+            if (sidebar && sidebar.classList.contains('drawer-open')) closeDrawer();
+            else openDrawer();
         } else {
             toggleDesktopSidebar();
         }
     }
 
-    /* ─── THEME SWITCHING ──────────────────────────────────── */
     const THEME_KEY = 'ims-theme';
 
     function applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         document.body.setAttribute('data-theme', theme);
         if (themeIcon) {
-            themeIcon.className = theme === 'dark'
-                ? 'bi bi-sun-fill'
-                : 'bi bi-moon-stars-fill';
+            themeIcon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
         }
         if (themeBtn) {
             themeBtn.title = theme === 'dark' ? 'Açık Temaya Geç' : 'Koyu Temaya Geç';
@@ -86,28 +74,22 @@
 
     function toggleTheme() {
         const current = document.documentElement.getAttribute('data-theme') || 'light';
-        const next    = current === 'dark' ? 'light' : 'dark';
+        const next = current === 'dark' ? 'light' : 'dark';
         applyTheme(next);
         localStorage.setItem(THEME_KEY, next);
     }
 
     function restoreTheme() {
         const saved = localStorage.getItem(THEME_KEY);
-        if (saved) {
-            applyTheme(saved);
-        }
+        if (saved) applyTheme(saved);
     }
 
-    /* ─── NOTIFICATIONS ─────────────────────────────────────── */
     function updateNotificationBadge() {
         const badge = document.querySelector('.notification-badge');
         if (!badge) return;
         const count = parseInt(badge.textContent, 10) || 0;
-        if (count === 0) {
-            badge.classList.add('hidden');
-        } else {
-            badge.classList.remove('hidden');
-        }
+        if (count === 0) badge.classList.add('hidden');
+        else badge.classList.remove('hidden');
     }
 
     function renderImportNotifications(jobs) {
@@ -158,27 +140,105 @@
             .catch(function () {});
     }
 
-    /* ─── ACTIVE NAV LINK HIGHLIGHT ────────────────────────── */
+    function setupImsProgressBar() {
+        if (!window.location.pathname.startsWith('/ims')) return;
+        const hero = document.querySelector('.ims-hero');
+        if (!hero || document.getElementById('imsRealProgress')) return;
+
+        const style = document.createElement('style');
+        style.textContent = [
+            '#imsRealProgress{display:none;margin:0 0 16px;border:1px solid rgba(25,135,84,.28);border-radius:14px;background:rgba(25,135,84,.08);overflow:hidden;color:var(--bs-body-color,#1c3558)}',
+            '#imsRealProgress.visible{display:block}',
+            '#imsRealProgress.failed{border-color:rgba(220,53,69,.32);background:rgba(220,53,69,.08)}',
+            '.ims-real-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px 8px}',
+            '.ims-real-progress-copy{min-width:0;display:flex;align-items:center;gap:10px}',
+            '.ims-real-progress-icon{font-size:20px;color:#198754;flex:0 0 auto}',
+            '#imsRealProgress.failed .ims-real-progress-icon{color:#dc3545}',
+            '.ims-real-progress-message{font-size:14px;font-weight:800;line-height:1.25}',
+            '.ims-real-progress-detail{font-size:11px;opacity:.72;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.ims-real-progress-percent{font-size:20px;font-weight:900;color:#198754;flex:0 0 auto}',
+            '#imsRealProgress.failed .ims-real-progress-percent{color:#dc3545}',
+            '.ims-real-progress-track{height:8px;background:rgba(25,135,84,.13)}',
+            '.ims-real-progress-fill{height:100%;width:0;background:#198754;transition:width .35s ease}',
+            '#imsRealProgress.failed .ims-real-progress-track{background:rgba(220,53,69,.13)}',
+            '#imsRealProgress.failed .ims-real-progress-fill{background:#dc3545}',
+            '@media(max-width:575.98px){.ims-real-progress-head{align-items:flex-start}.ims-real-progress-percent{font-size:18px}.ims-real-progress-detail{white-space:normal}}'
+        ].join('');
+        document.head.appendChild(style);
+
+        const bar = document.createElement('div');
+        bar.id = 'imsRealProgress';
+        bar.setAttribute('role', 'status');
+        bar.setAttribute('aria-live', 'polite');
+        bar.innerHTML = '<div class="ims-real-progress-head">' +
+            '<div class="ims-real-progress-copy"><i class="bi bi-arrow-repeat ims-real-progress-icon"></i>' +
+            '<div><div class="ims-real-progress-message" id="imsRealProgressMessage">IMS yükleme durumu kontrol ediliyor</div>' +
+            '<div class="ims-real-progress-detail" id="imsRealProgressDetail"></div></div></div>' +
+            '<div class="ims-real-progress-percent" id="imsRealProgressPercent">0%</div></div>' +
+            '<div class="ims-real-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
+            '<div class="ims-real-progress-fill" id="imsRealProgressFill"></div></div>';
+        hero.parentNode.insertBefore(bar, hero);
+
+        const message = document.getElementById('imsRealProgressMessage');
+        const detail = document.getElementById('imsRealProgressDetail');
+        const percent = document.getElementById('imsRealProgressPercent');
+        const fill = document.getElementById('imsRealProgressFill');
+        const track = bar.querySelector('[role="progressbar"]');
+        const icon = bar.querySelector('.ims-real-progress-icon');
+        let timer = null;
+
+        function render(payload) {
+            if (!payload || !payload.progress) {
+                bar.classList.remove('visible');
+                return false;
+            }
+            const item = payload.progress;
+            const value = Math.max(0, Math.min(parseInt(item.percent, 10) || 0, 100));
+            const failed = item.status === 'FAILED';
+            const completed = item.status === 'COMPLETED';
+            bar.classList.add('visible');
+            bar.classList.toggle('failed', failed);
+            message.textContent = item.message || 'IMS yüklemesi işleniyor';
+            detail.textContent = [item.detail, item.file_name].filter(Boolean).join(' · ');
+            percent.textContent = value + '%';
+            fill.style.width = value + '%';
+            track.setAttribute('aria-valuenow', String(value));
+            icon.className = 'bi ' + (failed ? 'bi-exclamation-triangle-fill' : completed ? 'bi-check-circle-fill' : 'bi-arrow-repeat') + ' ims-real-progress-icon';
+            return Boolean(payload.active);
+        }
+
+        function refresh() {
+            fetch('/ims/progress', {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+                .then(function (response) { return response.ok ? response.json() : Promise.reject(); })
+                .then(function (payload) {
+                    const active = render(payload);
+                    if (timer) window.clearTimeout(timer);
+                    timer = window.setTimeout(refresh, active ? 2500 : 10000);
+                })
+                .catch(function () {
+                    if (timer) window.clearTimeout(timer);
+                    timer = window.setTimeout(refresh, 10000);
+                });
+        }
+
+        refresh();
+    }
+
     function highlightActiveNav() {
         const currentPath = window.location.pathname;
         const links = document.querySelectorAll('.sidebar-nav-link');
         links.forEach(function (link) {
             const href = link.getAttribute('href');
             if (!href || href === '#') return;
-            // Exact match or starts-with for nested routes
             if (currentPath === href || (href !== '/' && currentPath.startsWith(href))) {
                 link.classList.add('active');
             }
         });
     }
 
-    /* ─── DROPDOWN ACCESSIBLE CLOSE ────────────────────────── */
     function setupDropdownKeyClose() {
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') {
-                closeDrawer();
-                // Bootstrap dropdowns handle their own Escape
-            }
+            if (e.key === 'Escape') closeDrawer();
         });
     }
 
@@ -198,63 +258,39 @@
         });
     }
 
-    /* ─── RESIZE HANDLER ────────────────────────────────────── */
     let resizeTimer;
     function onResize() {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(function () {
-            if (!isMobile()) {
-                // Close drawer when viewport widens past mobile breakpoint
-                closeDrawer();
-            }
+            if (!isMobile()) closeDrawer();
         }, 100);
     }
 
-    /* ─── SMOOTH FOCUS FLASH ON PAGE LOAD ─────────────────── */
     function markPageReady() {
         document.body.classList.add('page-ready');
     }
 
-    /* ─── INIT ──────────────────────────────────────────────── */
     function init() {
-        // Restore state before first paint
         restoreTheme();
-        if (!isMobile()) {
-            restoreDesktopState();
-        }
+        if (!isMobile()) restoreDesktopState();
 
-        // Event listeners
-        if (toggleBtn) {
-            toggleBtn.addEventListener('click', handleToggle);
-        }
-        if (closeBtn) {
-            closeBtn.addEventListener('click', closeDrawer);
-        }
-        if (overlay) {
-            overlay.addEventListener('click', closeDrawer);
-        }
-        if (themeBtn) {
-            themeBtn.addEventListener('click', toggleTheme);
-        }
+        if (toggleBtn) toggleBtn.addEventListener('click', handleToggle);
+        if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+        if (overlay) overlay.addEventListener('click', closeDrawer);
+        if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 
         window.addEventListener('resize', onResize);
-
-        // Runtime setup
         updateNotificationBadge();
         refreshImportNotifications();
         window.setInterval(refreshImportNotifications, 15000);
+        setupImsProgressBar();
         highlightActiveNav();
         setupDropdownKeyClose();
         setupUserMenu();
-
-        // Slight delay so CSS transitions play smoothly on load
         requestAnimationFrame(markPageReady);
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
 
 }());
