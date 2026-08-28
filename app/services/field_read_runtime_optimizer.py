@@ -8,7 +8,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from flask import g, has_request_context, request
-from sqlalchemy import desc, exists, func, or_
+from sqlalchemy import desc, exists, func
 
 from app.extensions import db
 from app.models import (
@@ -133,40 +133,67 @@ def install_field_read_runtime_optimizer() -> None:
     ProductionResultService.effective_product = classmethod(effective_product)
     ProductionResultService._field_read_optimizer_installed = True
 
+    def market_upload_id(self, year, month):
+        cache = getattr(self, "_bounded_upload_ids", None)
+        if cache is None:
+            cache = {}
+            self._bounded_upload_ids = cache
+        key = (int(year), int(month))
+        if key not in cache:
+            cache[key] = self._latest_upload_id(*key)
+        return cache[key]
+
+    def market_bricks(self, year, month):
+        cache = getattr(self, "_bounded_brick_names", None)
+        if cache is None:
+            cache = {}
+            self._bounded_brick_names = cache
+        key = (int(year), int(month))
+        if key not in cache:
+            cache[key] = _assigned_brick_names(self.representative.id, *key)
+        return cache[key]
+
     def scoped_competition_rows(self, brick_keys, fallback_keys, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
-        upload_id = self._latest_upload_id(year, month)
+        upload_id = market_upload_id(self, year, month)
         if upload_id is None:
             return None, []
-        bricks = _assigned_brick_names(self.representative.id, self.year, self.month)
-        scope_filters = [CompetitionData.subterritory == self.representative.rep_name]
-        if bricks:
-            scope_filters.append(CompetitionData.subterritory.in_(bricks))
-        elif fallback_keys:
-            raw_fallback = [
-                value for value in (
-                    self.representative.territory,
-                    self.representative.city,
-                    self.representative.region,
-                ) if value
-            ]
-            if raw_fallback:
-                scope_filters.append(CompetitionData.territory.in_(raw_fallback))
-        rows = CompetitionData.query.filter(
+
+        base = CompetitionData.query.filter(
             CompetitionData.upload_id == upload_id,
             CompetitionData.is_subtotal.is_(False),
             CompetitionData.is_grand_total.is_(False),
             CompetitionData.metric_type.in_(("TL", "UNIT", "MARKET_SHARE")),
-            or_(*scope_filters),
+        )
+        representative_rows = base.filter(
+            CompetitionData.subterritory.in_([self.representative.rep_name])
         ).all()
-        return upload_id, rows
+        if representative_rows:
+            return upload_id, representative_rows
+
+        bricks = market_bricks(self, year, month)
+        if bricks:
+            return upload_id, base.filter(CompetitionData.subterritory.in_(bricks)).all()
+
+        raw_fallback = [
+            value
+            for value in (
+                self.representative.territory,
+                self.representative.city,
+                self.representative.region,
+            )
+            if value
+        ]
+        if raw_fallback:
+            return upload_id, base.filter(CompetitionData.territory.in_(raw_fallback)).all()
+        return upload_id, []
 
     def scoped_brick_raw_rows(self, year=None, month=None):
         year = self.year if year is None else int(year)
         month = self.month if month is None else int(month)
-        upload_id = self._latest_upload_id(year, month)
-        bricks = _assigned_brick_names(self.representative.id, year, month)
+        upload_id = market_upload_id(self, year, month)
+        bricks = market_bricks(self, year, month)
         if upload_id is None or not bricks:
             return None, []
         rows = IMSRawData.query.filter(
@@ -182,8 +209,8 @@ def install_field_read_runtime_optimizer() -> None:
     original_workbook_fallback = RepresentativeMarketService._brick_competition_rows_from_workbook
 
     def scoped_brick_competition_rows(self, brick_keys):
-        upload_id = self._latest_upload_id(self.year, self.month)
-        bricks = _assigned_brick_names(self.representative.id, self.year, self.month)
+        upload_id = market_upload_id(self, self.year, self.month)
+        bricks = market_bricks(self, self.year, self.month)
         if upload_id is None or not bricks:
             return None, []
         exact = CompetitionData.query.filter(
