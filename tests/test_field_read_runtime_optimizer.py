@@ -1,6 +1,7 @@
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import event
 
@@ -27,35 +28,70 @@ def _app():
     return create_app(TestConfig), tmp
 
 
-def test_representative_request_uses_assigned_brick_source_even_if_summary_is_zero():
+def test_completed_ims_uses_target_realization_not_corrupted_summary():
     app, tmp = _app()
     try:
         with app.app_context():
             from app.extensions import db
-            from app.models import IMSRawData, IMSSummary, IMSUpload, Product, Representative, RepresentativeBrickAssignment, Target
+            from app.models import IMSSummary, IMSUpload, Product, Representative, Target
             from app.services.production_result_service import ProductionResultService
 
             db.create_all()
-            rep = Representative(rep_name="ERHAN CENGIZ", region="901", city="MARDIN", active=True)
+            rep = Representative(rep_name="MURAT ARSLAN", region="901", city="DIYARBAKIR", active=True)
             product = Product(product_code="TRV", product_name="Travazol", display_order=1, is_active=True)
             db.session.add_all([rep, product]); db.session.flush()
-            upload = IMSUpload(file_name="week8.xlsx", year=2026, month=2, week_number=8, status="COMPLETED", completed_at=datetime(2026, 2, 28))
+            upload = IMSUpload(
+                file_name="week8.xlsx", year=2026, month=2, week_number=8,
+                status="COMPLETED", completed_at=datetime(2026, 2, 28),
+            )
             db.session.add(upload); db.session.flush()
-            db.session.add_all([
-                Target(year=2026, month=2, representative_id=rep.id, product_id=product.id, unit_target=100, tl_target=1000),
-                IMSSummary(upload_id=upload.id, year=2026, month=2, representative_id=rep.id, product_id=product.id, unit=0, tl=0, bonus_amount=0),
-                RepresentativeBrickAssignment(representative_id=rep.id, year=2026, month=2, brick="MARDIN MERKEZ+CEVRE ILC", active=True, source="AUTO"),
-                IMSRawData(upload_id=upload.id, year=2026, month=2, week_number=8, sheet_name="Brick", sheet_type="brick_sales", source_row=2, representative_id=rep.id, product_id=product.id, brick="MARDIN MERKEZ+CEVRE ILC", unit=42, tl=420, raw_json="{}"),
-            ])
+            target = Target(
+                year=2026, month=2, representative_id=rep.id, product_id=product.id,
+                unit_target=8991, tl_target=1003918,
+                unit_realization=859, tl_realization=73689,
+            )
+            corrupted = IMSSummary(
+                upload_id=upload.id, year=2026, month=2,
+                representative_id=rep.id, product_id=product.id,
+                unit=4298766.48, tl=0, bonus_amount=0,
+            )
+            db.session.add_all([target, corrupted]); db.session.commit()
+
+            rows = ProductionResultService.effective_products(2026, 2, rep.id)
+            row = rows[product.id]
+            assert row["source"] == "IMS"
+            assert row["complete"] is True
+            assert float(row["actual_unit"]) == 859.0
+            assert float(row["actual_tl"]) == 73689.0
+            assert round(float(row["realization_percent"]), 4) == round(73689 * 100 / 1003918, 4)
+    finally:
+        tmp.cleanup()
+
+
+def test_completed_ims_preserves_real_zero_target_realization():
+    app, tmp = _app()
+    try:
+        with app.app_context():
+            from app.extensions import db
+            from app.models import IMSUpload, Product, Representative, Target
+            from app.services.production_result_service import ProductionResultService
+
+            db.create_all()
+            rep = Representative(rep_name="ZERO REP", active=True)
+            product = Product(product_code="ZERO", product_name="Zero Product", is_active=True)
+            db.session.add_all([rep, product]); db.session.flush()
+            db.session.add(IMSUpload(file_name="zero.xlsx", year=2026, month=3, week_number=1, status="COMPLETED"))
+            db.session.add(Target(
+                year=2026, month=3, representative_id=rep.id, product_id=product.id,
+                unit_target=10, tl_target=1000, unit_realization=0, tl_realization=0,
+            ))
             db.session.commit()
 
-            with app.test_request_context(f"/representatives/view/{rep.id}?year=2026&month=2"):
-                rows = ProductionResultService.effective_products(2026, 2, rep.id)
-                row = rows[product.id]
-                assert row["source"] == "IMS_BRICK"
-                assert float(row["actual_unit"]) == 42.0
-                assert float(row["actual_tl"]) == 420.0
-                assert float(row["realization_percent"]) == 42.0
+            row = ProductionResultService.effective_products(2026, 3, rep.id)[product.id]
+            assert row["source"] == "IMS"
+            assert row["complete"] is True
+            assert float(row["actual_unit"]) == 0.0
+            assert float(row["actual_tl"]) == 0.0
     finally:
         tmp.cleanup()
 
@@ -92,5 +128,22 @@ def test_region_period_discovery_is_upload_centered_exists_query():
             sql = " ".join(statements[-1].upper().split())
             assert "EXISTS" in sql
             assert "DISTINCT IMS_UPLOADS.YEAR" in sql
+    finally:
+        tmp.cleanup()
+
+
+def test_competitor_ai_hides_period_dimension_without_changing_real_products():
+    app, tmp = _app()
+    try:
+        with app.app_context():
+            from app.services.dashboard_service import DashboardService
+
+            rows = [
+                SimpleNamespace(product_name="FEB 2026", product_group="MONTH", territory="101 ISTANBUL", sales_tl=999999),
+                SimpleNamespace(product_name="UROCARE", product_group="MONUROL GRUBU", territory="901 DIYARBAKIR", sales_tl=1250),
+            ]
+            result = DashboardService._competitor_ai(rows, [])
+            assert [item["product_name"] for item in result["top_products"]] == ["UROCARE"]
+            assert [item["product_name"] for item in result["hot_regions"]] == ["UROCARE"]
     finally:
         tmp.cleanup()
