@@ -3,9 +3,10 @@ on:
   push:
     branches: [diag/week7-import-failure]
 permissions:
-  contents: read
+  contents: write
 jobs:
   diagnose:
+    if: github.event.head_commit.message == 'Persist Week 7 diagnostic output'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -14,6 +15,9 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diag/week7-import-failure
       - name: Configure SSH
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
@@ -25,7 +29,8 @@ jobs:
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
       - name: Read-only production diagnosis
         run: |
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          mkdir -p diagnostics
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > diagnostics/week7_import.txt <<'REMOTE'
           set -euo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
@@ -33,14 +38,10 @@ jobs:
           con = sqlite3.connect('instance/ipm.db', timeout=30)
           con.row_factory = sqlite3.Row
           try:
-              cols=[r['name'] for r in con.execute('pragma table_info(ims_import_jobs)')]
-              print('JOB_COLUMNS|'+json.dumps(cols, ensure_ascii=False))
               rows=con.execute('select * from ims_import_jobs order by id desc limit 5').fetchall()
               for r in rows:
                   print('JOB|'+json.dumps({k:r[k] for k in r.keys()}, ensure_ascii=False, default=str))
               print('PROCESSING_COUNT|'+str(con.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]))
-              upload_cols=[r['name'] for r in con.execute('pragma table_info(ims_uploads)')]
-              print('UPLOAD_COLUMNS|'+json.dumps(upload_cols, ensure_ascii=False))
               rows=con.execute('select * from ims_uploads order by id desc limit 5').fetchall()
               for r in rows:
                   print('UPLOAD|'+json.dumps({k:r[k] for k in r.keys()}, ensure_ascii=False, default=str))
@@ -50,3 +51,10 @@ jobs:
           echo '--- WORKER JOURNAL ---'
           sudo journalctl -u ims-import-worker.service -n 220 --no-pager | tail -n 220
           REMOTE
+      - name: Commit diagnostic
+        run: |
+          git config user.name 'Murat arslan'
+          git config user.email '102037882+muratarslan35@users.noreply.github.com'
+          git add diagnostics/week7_import.txt
+          git commit -m 'Record Week 7 import diagnostic'
+          git push origin HEAD:diag/week7-import-failure
