@@ -27,10 +27,26 @@ def _report_matches_upload(upload, report):
     return not report_file or report_file == upload_file
 
 
+def _canonical_candidates(uploads):
+    """Return only uploads that can have a canonical publication audit.
+
+    Historical/pre-audit rows commonly have neither reconciliation evidence nor
+    persisted source counters. Skipping an audit-table SELECT for those rows
+    preserves the existing bounded-query history path.
+    """
+    return [
+        item
+        for item in uploads
+        if getattr(item, "id", None) is not None
+        and getattr(item, "status", None) == "COMPLETED"
+        and getattr(item, "reconciliation_status", None) == "PASSED"
+        and int(getattr(item, "source_record_count", 0) or 0) > 0
+    ]
+
+
 def _latest_reports_for_uploads(uploads):
-    uploads_by_id = {
-        item.id: item for item in uploads if getattr(item, "id", None) is not None
-    }
+    candidates = _canonical_candidates(uploads)
+    uploads_by_id = {item.id: item for item in candidates}
     ids = list(uploads_by_id)
     if not ids:
         return {}
