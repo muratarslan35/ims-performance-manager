@@ -203,6 +203,7 @@ class IMSImportService:
         self._product_match_cache = {}
         self._pending_raw_records = 0
         self._raw_batch = []
+        self._brick_assignment_cache = {}
 
     @staticmethod
     def extract_week_number(file_name):
@@ -2316,17 +2317,29 @@ class IMSImportService:
         db.session.flush()
 
     def _upsert_auto_brick_assignment(self, representative_id, year, month, brick, territory=None, city=None):
-        """Add one membership without replacing a manually maintained member row."""
-        assignment = RepresentativeBrickAssignment.query.filter_by(
-            representative_id=representative_id, year=year, month=month, brick=brick
-        ).first()
+        """Add one membership without replacing a manually maintained member row.
+
+        A brick can be encountered first from staged RAW rows and again from
+        the multi-TTS workbook pass.  After a replace import the period table
+        can be empty, so a database query alone cannot reliably see a pending
+        unflushed INSERT.  Cache the ORM object by the database unique key so
+        repeated evidence in the same import updates the same row instead of
+        scheduling a duplicate INSERT.
+        """
+        key = (int(representative_id), int(year), int(month), str(brick))
+        assignment = self._brick_assignment_cache.get(key)
         if assignment is None:
-            db.session.add(RepresentativeBrickAssignment(
-                representative_id=representative_id, year=year, month=month,
-                quarter=self.quarter_for(month), brick=brick, territory=territory,
-                city=city, source="AUTO",
-            ))
-            return
+            assignment = RepresentativeBrickAssignment.query.filter_by(
+                representative_id=representative_id, year=year, month=month, brick=brick
+            ).first()
+            if assignment is None:
+                assignment = RepresentativeBrickAssignment(
+                    representative_id=representative_id, year=year, month=month,
+                    quarter=self.quarter_for(month), brick=brick, territory=territory,
+                    city=city, source="AUTO",
+                )
+                db.session.add(assignment)
+            self._brick_assignment_cache[key] = assignment
         if assignment.source != "MANUAL":
             if territory and not assignment.territory:
                 assignment.territory = territory
