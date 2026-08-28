@@ -42,9 +42,10 @@ jobs:
 
           db_path = Path('instance/ipm.db')
           uri = f'file:{db_path.resolve()}?mode=ro'
-          conn = sqlite3.connect(uri, uri=True, timeout=30)
+          conn = sqlite3.connect(uri, uri=True, timeout=5)
           conn.row_factory = sqlite3.Row
           try:
+              conn.execute('PRAGMA query_only=ON')
               cols = {r['name'] for r in conn.execute('PRAGMA table_info(ims_import_jobs)')}
               wanted = ['id','status','file_name','year','month','ims_upload_id','queued_at','started_at','completed_at','error_message','result_summary']
               select_cols = [c for c in wanted if c in cols]
@@ -54,10 +55,7 @@ jobs:
                   "ORDER BY id DESC LIMIT 6"
               ).fetchall()
               print('WEEK8_JOB_DIAGNOSTIC|' + json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str))
-              print('WEEK8_DB_CHECK|' + json.dumps({
-                  'journal_mode': conn.execute('PRAGMA journal_mode').fetchone()[0],
-                  'integrity': conn.execute('PRAGMA integrity_check').fetchone()[0],
-              }, ensure_ascii=False))
+              print('WEEK8_DB_MODE|' + str(conn.execute('PRAGMA journal_mode').fetchone()[0]))
           finally:
               conn.close()
           PY
