@@ -204,6 +204,7 @@ class IMSImportService:
         self._pending_raw_records = 0
         self._raw_batch = []
         self._brick_assignment_cache = {}
+        self._balance_unit_actual_keys = set()
 
     @staticmethod
     def extract_week_number(file_name):
@@ -2040,6 +2041,15 @@ class IMSImportService:
                         products_by_id.get(product_id).unit_price if products_by_id.get(product_id) else 0,
                     )
                 summary = summaries.get((rep_id, product_id))
+                if balance_unit is not None:
+                    # BAKİYE / MF'siz KUTU BAKİYE is the remaining box count.
+                    # Representative IMS box output therefore equals approved
+                    # box target minus the workbook's remaining box balance.
+                    actual_unit = float(target.unit_target or 0.0) - float(balance_unit)
+                    target.unit_realization = actual_unit
+                    self._balance_unit_actual_keys.add((rep_id, product_id))
+                    if summary is not None:
+                        summary.unit = actual_unit
                 if summary is not None:
                     summary.target_tl = target.tl_target
                     summary.target_unit = target.unit_target
@@ -2136,7 +2146,10 @@ class IMSImportService:
                         target.tl_realization = metrics["tl"]
                 # Preserve the explicit cumulative KUTU ÇIKIŞI source value.
                 # Never synthesize box actuals from TL / target ratios.
-                if "unit" in metrics:
+                if "unit" in metrics and (rep_id, product_id) not in self._balance_unit_actual_keys:
+                    # Fallback only for legacy workbooks without MF'siz KUTU
+                    # BAKİYE. When balance exists, target - balance is the
+                    # authoritative representative IMS box output.
                     summary.unit = metrics["unit"]
                     if target is not None:
                         target.unit_realization = metrics["unit"]
