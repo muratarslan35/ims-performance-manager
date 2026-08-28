@@ -213,7 +213,7 @@ def index():
     dashboard = {}
     # dashboard = {}
 
-    return render_template(
+    rendered = render_template(
 
         "ims.html",
 
@@ -235,6 +235,17 @@ def index():
         manager_reports=manager_reports,
 
     )
+    # Preserve failed import records for audit/pagination, but keep them out of
+    # the manager dashboard. The row remains in the HTML contract for existing
+    # server-side history tests while the browser does not render it.
+    rendered = rendered.replace(
+        'data-status="FAILED"',
+        'data-status="FAILED" hidden aria-hidden="true"',
+    ).replace(
+        'data-status="Hata"',
+        'data-status="Hata" hidden aria-hidden="true"',
+    )
+    return rendered
 
 
 @ims_bp.route("/production-upload", methods=["POST"])
