@@ -36,6 +36,7 @@ from app.services.import_result_report import (
     latest_import_report,
 )
 from app.services.manager_import_report_alignment import install_manager_import_report_alignment
+from app.services.dashboard_runtime_optimizer import install_dashboard_runtime_optimizer
 from app.access_control import register_access_control
 
 from app.routes import main_bp
@@ -183,6 +184,7 @@ def create_app(config_object=Config):
     install_import_result_reporting()
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
+    install_dashboard_runtime_optimizer()
 
     register_template_context(app)
     register_blueprints(app)
