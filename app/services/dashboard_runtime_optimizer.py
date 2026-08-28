@@ -24,9 +24,9 @@ from app.models import CompetitionData, IMSUpload
 
 
 def install_dashboard_runtime_optimizer() -> None:
-    """Install bounded dashboard and field-facing read optimizers once."""
+    """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
-    from app.services.field_read_runtime_optimizer import install_field_read_runtime_optimizer
+    from app.services.week8_read_path_repair import install_week8_read_path_repair
 
     if not getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
         original = DashboardQuery._latest_competition_upload_id
@@ -72,4 +72,7 @@ def install_dashboard_runtime_optimizer() -> None:
         DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
         DashboardQuery._bounded_competition_lookup_installed = True
 
-    install_field_read_runtime_optimizer()
+    # Do not reinstall the broad PR-285 field monkeypatches. The representative
+    # SQL-scope optimizer remains installed by CompetitiveIntelligenceService;
+    # this repair changes only the proven Week-8 source-selection regressions.
+    install_week8_read_path_repair()
