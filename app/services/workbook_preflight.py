@@ -37,7 +37,17 @@ class WorkbookPreflight:
             if value!=value:return False
         except Exception:pass
         return not(isinstance(value,str) and not value.strip())
-    def _meaningful_cells(self,frame):return sum(1 for value in frame.to_numpy().ravel() if self._is_meaningful(value))
+    def _iter_meaningful_cells(self,frame):
+        # ``DataFrame.iloc[row, col]`` performs pandas indexing machinery for every
+        # cell.  Preflight only needs scalar values plus physical coordinates, so a
+        # zero-copy object-array view preserves exactly the same cell semantics with
+        # dramatically less per-cell overhead. Numeric zero remains meaningful.
+        values=frame.to_numpy(dtype=object,copy=False)
+        for row_index,row in enumerate(values):
+            for column_index,value in enumerate(row):
+                if self._is_meaningful(value):
+                    yield row_index,column_index,value
+    def _meaningful_cells(self,frame):return sum(1 for _row,_column,_value in self._iter_meaningful_cells(frame))
     def _header_signature(self,frame):
         values=[]
         for row in range(min(30,len(frame))):
@@ -95,10 +105,7 @@ class WorkbookPreflight:
             elif item["sheet_type"] in{"master_pivot_derived","brick_realization"} or item["sheet_type"].startswith("monthly_master"):default_class="VERIFIED_DERIVED"
             elif item["coverage"]=="specialized_parser":default_class="IMPORTED_MASTER"
             else:default_class="UNCLASSIFIED_MASTER_CELL"
-            for row in range(frame.shape[0]):
-                for col in range(frame.shape[1]):
-                    value=frame.iloc[row,col]
-                    if self._is_meaningful(value):ledger.append({"sheet_name":str(sheet_name),"row":row+1,"column":col+1,"classification":default_class,"sheet_type":item["sheet_type"]})
+            ledger.extend({"sheet_name":str(sheet_name),"row":row+1,"column":col+1,"classification":default_class,"sheet_type":item["sheet_type"]} for row,col,_value in self._iter_meaningful_cells(frame))
         return ledger
     def validate(self):
         manifest=self.build();unclassified=[item for item in manifest if item["coverage"]=="unclassified" or item["sheet_type"]=="unknown"];ledger=self.build_cell_ledger(manifest);unclassified_cells=[cell for cell in ledger if cell["classification"] not in self.TERMINAL_CELL_CLASSES]
