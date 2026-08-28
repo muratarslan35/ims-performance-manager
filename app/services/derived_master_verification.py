@@ -5,6 +5,8 @@ Independent pivots remain explicit masters when no upstream equivalent exists.
 Once a high-confidence relationship is discovered, any value mismatch or small
 missing-cell gap fails closed before publication.
 """
+import time
+
 from app.services.compiled_import_semantic_reconciliation import (
     CompiledWorkbookSemanticReconciler,
 )
@@ -24,7 +26,11 @@ def install_derived_verification_gate():
 
     def process_with_derived_gate(self, year, month, week_number=None):
         result = original_process(self, year, month, week_number=week_number)
-        self.semantic_reconciliation = apply_derived_verification_gate(self)
+        started = time.monotonic()
+        try:
+            self.semantic_reconciliation = apply_derived_verification_gate(self)
+        finally:
+            self.statistics["semantic_reconciliation_seconds"] = round(time.monotonic() - started, 4)
         return result
 
     def report_with_semantic_reconciliation(self):
