@@ -1,7 +1,7 @@
 """Align manager-facing IMS completeness checks with the canonical import gate.
 
 Persisted import audits are the production source of truth for whether an IMS
-upload was publishable.  Legacy/test uploads that predate that audit evidence
+upload was publishable. Legacy/test uploads that predate that audit evidence
 retain the established manager-report fallback.
 """
 from __future__ import annotations
@@ -13,8 +13,25 @@ from app.services.import_result_report import decode_report
 _legacy_manager_reports = None
 
 
+def _report_matches_upload(upload, report):
+    """Reject stale audit rows that only happen to share a reused upload id."""
+    if int(report.get("upload_id") or 0) != int(upload.id or 0):
+        return False
+    period = report.get("period") or {}
+    if int(period.get("year") or 0) != int(upload.year or 0):
+        return False
+    if int(period.get("month") or 0) != int(upload.month or 0):
+        return False
+    report_file = str(report.get("file_name") or "").strip()
+    upload_file = str(upload.file_name or "").strip()
+    return not report_file or report_file == upload_file
+
+
 def _latest_reports_for_uploads(uploads):
-    ids = [item.id for item in uploads if getattr(item, "id", None) is not None]
+    uploads_by_id = {
+        item.id: item for item in uploads if getattr(item, "id", None) is not None
+    }
+    ids = list(uploads_by_id)
     if not ids:
         return {}
     rows = (
@@ -28,7 +45,8 @@ def _latest_reports_for_uploads(uploads):
         if audit.upload_id in reports:
             continue
         parsed = decode_report(audit.notes)
-        if parsed:
+        upload = uploads_by_id.get(audit.upload_id)
+        if parsed and upload is not None and _report_matches_upload(upload, parsed):
             reports[audit.upload_id] = parsed
     return reports
 
@@ -64,7 +82,7 @@ def _canonical_report(upload, report):
     products_ok = base_ok and products > 0
 
     # A target may legitimately have no IMS exit in the current snapshot, so
-    # target and summary row counts are not expected to be identical.  The
+    # target and summary row counts are not expected to be identical. The
     # canonical import/reconciliation gate validates the published data.
     calculations_ok = base_ok and targets > 0 and summaries > 0
 
