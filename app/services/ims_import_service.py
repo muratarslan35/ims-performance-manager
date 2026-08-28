@@ -2311,9 +2311,12 @@ class IMSImportService:
         active month simply because they existed in an earlier workbook.
         """
         self.clear_week(year, week_number)
-        IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+        # Replaying an older historical week must not erase the current
+        # month-to-date snapshot published by a later completed week.
+        if self._is_current_week_snapshot(year, month, week_number):
+            IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+            Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+            RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
 
     def _upsert_auto_brick_assignment(self, representative_id, year, month, brick, territory=None, city=None):
@@ -2416,8 +2419,8 @@ class IMSImportService:
 
         publish_period_snapshot = self._is_current_week_snapshot(year, month, week_number)
         with self._measure_stage("assignments_and_targets"):
-            self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
             if publish_period_snapshot:
+                self.sync_brick_assignments(year, month, prepared_sheets=wide_sheets)
                 TargetImportService(
                     file_path=self.file_path,
                     upload_id=self.upload.id,
@@ -2428,7 +2431,7 @@ class IMSImportService:
                 )
             else:
                 self.warnings.append(
-                    f"{week_number}. hafta yeniden işlendi; daha yeni haftanın dönem hedef/realizasyon özeti korundu."
+                    f"{week_number}. hafta yeniden işlendi; daha yeni haftanın dönem hedef/realizasyon/kadro özeti korundu."
                 )
 
         with self._measure_stage("facts_summary_and_official_aggregates"):
