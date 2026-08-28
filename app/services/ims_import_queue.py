@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -15,7 +16,20 @@ from app.services.compiled_competition_import_service import CompiledCompetition
 from app.services.competition_import_service import CompetitionImportService
 from app.services.import_coordinator import ImportCoordinator
 from app.services.ims_import_service import IMSImportService
+from app.services.ims_progress_store import IMSProgressStore
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
+
+
+_PROGRESS_STAGES = {
+    "validate_and_load_workbook": (5, 15, "Dosya kontrol ediliyor", "Dosya kontrol edildi"),
+    "discover_and_prepare_sheets": (15, 25, "Sayfalar okunuyor", "Sayfalar okundu"),
+    "stage_raw_rows": (25, 35, "Temsilciler ve bölgeler eşleştiriliyor", "Temsilciler ve bölgeler alındı"),
+    "assignments_and_targets": (35, 45, "Hedefler okunuyor", "Hedefler okundu"),
+    "facts_summary_and_official_aggregates": (45, 60, "Ürün çıkışları okunuyor", "Ürün çıkışları okundu"),
+    "competition_import": (60, 90, "Rekabet verileri okunuyor", "Rekabet verileri okundu"),
+    "source_reconciliation": (90, 96, "Veriler karşılaştırılıyor ve doğrulanıyor", "Veriler karşılaştırıldı ve doğrulandı"),
+    "commit_upload": (97, 99, "Son kayıtlar tamamlanıyor", "Son kayıtlar tamamlandı"),
+}
 
 
 class IMSImportQueue:
@@ -41,7 +55,16 @@ class IMSImportQueue:
         db.session.commit()
         if claimed.rowcount != 1:
             return None
-        return db.session.get(IMSImportJob, candidate.id)
+        job = db.session.get(IMSImportJob, candidate.id)
+        IMSProgressStore.write(
+            job.id,
+            percent=5,
+            stage="processing",
+            message="Dosya kontrol ediliyor",
+            detail=job.file_name,
+            status=IMSImportJob.STATUS_PROCESSING,
+        )
+        return job
 
     @classmethod
     def recover_stale(cls):
@@ -52,6 +75,14 @@ class IMSImportQueue:
             job.status = IMSImportJob.STATUS_FAILED
             job.completed_at = datetime.utcnow()
             job.error_message = "IMS worker beklenmedik biçimde durdu; canlı veriler korunmuştur."
+            IMSProgressStore.write(
+                job.id,
+                percent=100,
+                stage="failed",
+                message="IMS yüklemesi tamamlanamadı",
+                detail="Mevcut veriler korunmuştur",
+                status=IMSImportJob.STATUS_FAILED,
+            )
         if jobs:
             db.session.commit()
         return len(jobs)
@@ -61,38 +92,84 @@ class IMSImportQueue:
         staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         previous_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
         previous_competition_service = ims_import_service_module.CompetitionImportService
+        previous_compiled_sheet_import = CompiledCompetitionImportService._import_compiled_sheet
+
+        def set_progress(percent, stage, message, detail=None, status=IMSImportJob.STATUS_PROCESSING):
+            IMSProgressStore.write(
+                job.id,
+                percent=percent,
+                stage=stage,
+                message=message,
+                detail=detail,
+                status=status,
+            )
+
         try:
             with ImportCoordinator.acquire(
                 uploaded_by=job.uploaded_by,
                 file_name=job.file_name,
                 wait_seconds=current_app.config.get("IMS_IMPORT_LOCK_WAIT_SECONDS", 2),
             ):
-                # The queue stages files under a UUID name so simultaneous
-                # browser uploads can never collide. The business period,
-                # however, belongs to the original IMS filename. Preserve that
-                # identity explicitly: otherwise ``7.Hafta`` becomes invisible
-                # to IMSImportService and a weekly snapshot is misclassified as
-                # a destructive monthly replacement.
                 detected_week_number = IMSImportService.extract_week_number(job.file_name)
-
-                # The worker is the only production writer. Semantic discovery
-                # remains in the established importer, while the already-
-                # resolved competition plan is executed by the compiled hot
-                # loop to avoid per-cell re-normalization/allocation overhead.
                 ims_import_service_module.CompetitionImportService = CompiledCompetitionImportService
 
-                # Competition is the dominant write volume. 25k remains bounded
-                # on the 1 GB host but reduces a 467k-row workbook to ~19 DB
-                # executemany batches. Restore the process-wide default after
-                # every job so non-worker call sites keep legacy behavior.
                 configured_chunk = int(current_app.config.get("IMS_COMPETITION_BULK_CHUNK_SIZE", 25000) or 25000)
                 CompetitionImportService.BULK_CHUNK_SIZE = max(1000, min(configured_chunk, 25000))
                 effective_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
 
+                # Competition is the longest stage.  Advance the visible bar
+                # after each real competition sheet finishes; no timer or random
+                # percentage is used.
+                def progress_compiled_sheet(service, structure_info, sheet_name):
+                    total = max(len(service.get_supported_sheets()), 1)
+                    completed = int(getattr(service, "_ui_completed_competition_sheets", 0))
+                    start_percent = 60 + round(30 * completed / total)
+                    set_progress(
+                        start_percent,
+                        "competition",
+                        "Rekabet verileri okunuyor",
+                        f"{completed + 1}/{total} rekabet sayfası",
+                    )
+                    result = previous_compiled_sheet_import(service, structure_info, sheet_name)
+                    completed += 1
+                    service._ui_completed_competition_sheets = completed
+                    end_percent = 60 + round(30 * completed / total)
+                    set_progress(
+                        min(end_percent, 90),
+                        "competition",
+                        "Rekabet verileri okundu" if completed == total else "Rekabet verileri okunuyor",
+                        f"{completed}/{total} rekabet sayfası tamamlandı",
+                    )
+                    return result
+
+                CompiledCompetitionImportService._import_compiled_sheet = progress_compiled_sheet
+
                 job.heartbeat_at = datetime.utcnow()
                 db.session.commit()
+
+                service = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by)
+                original_measure_stage = service._measure_stage
+
+                @contextmanager
+                def progress_measure_stage(stage):
+                    progress = _PROGRESS_STAGES.get(stage)
+                    if progress:
+                        start_percent, _, start_message, _ = progress
+                        set_progress(start_percent, stage, start_message, job.file_name if stage == "validate_and_load_workbook" else None)
+                    succeeded = False
+                    try:
+                        with original_measure_stage(stage):
+                            yield
+                        succeeded = True
+                    finally:
+                        if succeeded and progress:
+                            _, end_percent, _, end_message = progress
+                            set_progress(end_percent, stage, end_message)
+
+                service._measure_stage = progress_measure_stage
+
                 with db.session.no_autoflush:
-                    result = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by).run(
+                    result = service.run(
                         year=job.year,
                         month=job.month,
                         clear_before_import=job.clear_before_import,
@@ -100,6 +177,8 @@ class IMSImportQueue:
                     )
                 if not result.get("success"):
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
+
+                set_progress(99, "final_checks", "Son kontroller tamamlanıyor")
                 spread = OfficialBrickSpreadService.persist(
                     file_path=staging_path,
                     upload_id=result["upload_id"],
@@ -112,8 +191,6 @@ class IMSImportQueue:
                 ]
                 upload = db.session.get(IMSUpload, result["upload_id"])
                 if upload is not None:
-                    # Keep the human/source filename in history even though the
-                    # physical staging file is collision-safe and UUID-named.
                     upload.file_name = job.file_name
                     upload.warning_message = "\n".join(warnings) or None
 
@@ -136,6 +213,13 @@ class IMSImportQueue:
                 job.completed_at = completed_at
                 job.heartbeat_at = completed_at
                 db.session.commit()
+                set_progress(
+                    100,
+                    "completed",
+                    "IMS yüklemesi başarıyla tamamlandı",
+                    f"{detected_week_number}. hafta" if detected_week_number else None,
+                    status=IMSImportJob.STATUS_COMPLETED,
+                )
         except Exception as exc:
             db.session.rollback()
             current_app.logger.exception("ims_background_import_failed job_id=%s", job.id)
@@ -145,7 +229,15 @@ class IMSImportQueue:
             failed.completed_at = datetime.utcnow()
             failed.heartbeat_at = failed.completed_at
             db.session.commit()
+            set_progress(
+                100,
+                "failed",
+                "IMS yüklemesi tamamlanamadı",
+                "Mevcut veriler korunmuştur",
+                status=IMSImportJob.STATUS_FAILED,
+            )
         finally:
+            CompiledCompetitionImportService._import_compiled_sheet = previous_compiled_sheet_import
             ims_import_service_module.CompetitionImportService = previous_competition_service
             CompetitionImportService.BULK_CHUNK_SIZE = previous_chunk_size
             staging_path.unlink(missing_ok=True)
