@@ -12,6 +12,7 @@ from sqlalchemy import update
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
 from app.services import ims_import_service as ims_import_service_module
+from app.services.alias_service import AliasService
 from app.services.compiled_competition_import_service import CompiledCompetitionImportService
 from app.services.competition_import_service import CompetitionImportService
 from app.services.import_coordinator import ImportCoordinator
@@ -147,6 +148,12 @@ class IMSImportQueue:
                 job.heartbeat_at = datetime.utcnow()
                 db.session.commit()
 
+                # AliasService intentionally uses process-wide lookup caches for
+                # performance. Those caches contain ORM objects, however, so a
+                # successful job leaves objects associated with the previous
+                # SQLAlchemy session. The next queued workbook must never reuse
+                # those detached Product/Representative instances.
+                AliasService.clear_cache()
                 service = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by)
                 original_measure_stage = service._measure_stage
 
@@ -237,6 +244,10 @@ class IMSImportQueue:
                 status=IMSImportJob.STATUS_FAILED,
             )
         finally:
+            # Drop ORM-backed lookup caches after every success/failure so the
+            # long-lived worker never carries session-bound objects into the
+            # next queued import.
+            AliasService.clear_cache()
             CompiledCompetitionImportService._import_compiled_sheet = previous_compiled_sheet_import
             ims_import_service_module.CompetitionImportService = previous_competition_service
             CompetitionImportService.BULK_CHUNK_SIZE = previous_chunk_size
