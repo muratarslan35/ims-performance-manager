@@ -1,0 +1,83 @@
+name: Week8 Read Path Diagnostic
+
+on:
+  push:
+    branches: [fix/week8-read-path-regression]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          chmod 600 ~/.ssh/ims_diag_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only production diagnostics
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo '=== RECENT REGION ERRORS ==='
+          sudo journalctl -u ims-performance-manager.service --since '45 minutes ago' --no-pager | grep -E -A12 -B4 'regions/901|Traceback|ERROR|Worker timeout' | tail -n 180 || true
+          echo '=== LIVE DB SOURCE DIAGNOSTIC ==='
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+          db = Path('instance/ipm.db').resolve()
+          con = sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=30)
+          con.row_factory = sqlite3.Row
+          q = con.execute
+          latest = q("SELECT id,year,month,week_number,file_name,status FROM ims_uploads WHERE year=2026 AND month=2 AND status='COMPLETED' ORDER BY week_number DESC, completed_at DESC, id DESC LIMIT 1").fetchone()
+          print('LATEST', dict(latest) if latest else None)
+          reps = q("SELECT id,rep_code,rep_name,region,city,territory FROM representatives WHERE upper(rep_name) LIKE '%MURAT%ARSLAN%' OR upper(rep_name) LIKE '%ERHAN%CENGIZ%' ORDER BY rep_name").fetchall()
+          for rep in reps:
+              print('REP', dict(rep))
+              rid=rep['id']; uid=latest['id'] if latest else -1
+              print('TARGETS', [dict(r) for r in q("SELECT product_id,tl_target,unit_target,tl_realization,unit_realization FROM targets WHERE year=2026 AND month=2 AND representative_id=? ORDER BY product_id",(rid,)).fetchall()])
+              print('SUMMARY', [dict(r) for r in q("SELECT product_id,tl,unit FROM ims_summary WHERE year=2026 AND month=2 AND representative_id=? ORDER BY product_id",(rid,)).fetchall()])
+              bricks=[r[0] for r in q("SELECT brick FROM representative_brick_assignments WHERE representative_id=? AND year=2026 AND month=2 AND active=1 ORDER BY brick",(rid,)).fetchall()]
+              print('BRICKS', bricks)
+              if bricks:
+                  ph=','.join('?'*len(bricks))
+                  rows=q(f"SELECT product_id,sheet_name,sheet_type,brick,unit,tl,raw_json FROM ims_raw_data WHERE upload_id=? AND brick IN ({ph}) AND sheet_type IN ('brick_sales','competition_box') ORDER BY product_id,brick LIMIT 35",(uid,*bricks)).fetchall()
+                  print('RAW_SAMPLE', [dict(r) for r in rows])
+                  sums=q(f"SELECT product_id,sheet_type,COUNT(*) n,SUM(unit) sum_unit,SUM(tl) sum_tl FROM ims_raw_data WHERE upload_id=? AND brick IN ({ph}) AND sheet_type IN ('brick_sales','competition_box') GROUP BY product_id,sheet_type ORDER BY product_id,sheet_type",(uid,*bricks)).fetchall()
+                  print('RAW_SUMS', [dict(r) for r in sums])
+          print('=== COMPETITION DIMENSION LABELS ===')
+          uid=latest['id'] if latest else -1
+          bad=q("SELECT product_name,product_group,territory,subterritory,metric_type,metric_value,sheet_name FROM ims_competition_data WHERE upload_id=? AND (upper(product_name) LIKE '%FEB%2026%' OR upper(product_group)='MONTH' OR upper(product_name)='MONTH') LIMIT 30",(uid,)).fetchall()
+          print('BAD_DIMENSIONS', [dict(r) for r in bad])
+          con.close()
+          PY
+          echo '=== REGION SERVICE DIRECT ==='
+          timeout 35s venv/bin/python - <<'PY' || true
+          import time, traceback
+          from app import create_app
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          app=create_app()
+          with app.app_context():
+              try:
+                  t=time.perf_counter(); svc=RegionPerformanceService('901',2026,2); report=svc.report(); print('REGION_PERF_OK',round(time.perf_counter()-t,3), report.get('region_name'), {k:(v.get('target_tl'),v.get('actual_tl'),v.get('complete')) for k,v in report.get('periods',{}).items()})
+                  t=time.perf_counter(); market=RegionMarketService('901',svc.rep_ids,2026,2).build(); print('REGION_MARKET_OK',round(time.perf_counter()-t,3), market.get('totals'), market.get('upload_id'))
+              except Exception:
+                  traceback.print_exc()
+          PY
+          REMOTE
