@@ -28,7 +28,7 @@ def _app():
     return create_app(TestConfig), tmp
 
 
-def test_completed_ims_uses_target_realization_not_corrupted_summary():
+def test_completed_ims_uses_target_realization_not_corrupted_summary_on_representative_detail():
     app, tmp = _app()
     try:
         with app.app_context():
@@ -57,18 +57,19 @@ def test_completed_ims_uses_target_realization_not_corrupted_summary():
             )
             db.session.add_all([target, corrupted]); db.session.commit()
 
-            rows = ProductionResultService.effective_products(2026, 2, rep.id)
-            row = rows[product.id]
-            assert row["source"] == "IMS"
-            assert row["complete"] is True
-            assert float(row["actual_unit"]) == 859.0
-            assert float(row["actual_tl"]) == 73689.0
-            assert round(float(row["realization_percent"]), 4) == round(73689 * 100 / 1003918, 4)
+            with app.test_request_context(f"/representatives/view/{rep.id}?year=2026&month=2"):
+                rows = ProductionResultService.effective_products(2026, 2, rep.id)
+                row = rows[product.id]
+                assert row["source"] == "IMS"
+                assert row["complete"] is True
+                assert float(row["actual_unit"]) == 859.0
+                assert float(row["actual_tl"]) == 73689.0
+                assert round(float(row["realization_percent"]), 4) == round(73689 * 100 / 1003918, 4)
     finally:
         tmp.cleanup()
 
 
-def test_completed_ims_preserves_real_zero_target_realization():
+def test_completed_ims_preserves_real_zero_target_realization_on_region_detail():
     app, tmp = _app()
     try:
         with app.app_context():
@@ -87,11 +88,38 @@ def test_completed_ims_preserves_real_zero_target_realization():
             ))
             db.session.commit()
 
-            row = ProductionResultService.effective_products(2026, 3, rep.id)[product.id]
-            assert row["source"] == "IMS"
-            assert row["complete"] is True
-            assert float(row["actual_unit"]) == 0.0
-            assert float(row["actual_tl"]) == 0.0
+            with app.test_request_context("/regions/901?year=2026&month=3"):
+                row = ProductionResultService.effective_products(2026, 3, rep.id)[product.id]
+                assert row["source"] == "IMS"
+                assert row["complete"] is True
+                assert float(row["actual_unit"]) == 0.0
+                assert float(row["actual_tl"]) == 0.0
+    finally:
+        tmp.cleanup()
+
+
+def test_non_field_services_keep_existing_summary_source():
+    app, tmp = _app()
+    try:
+        with app.app_context():
+            from app.extensions import db
+            from app.models import IMSSummary, IMSUpload, Product, Representative, Target
+            from app.services.production_result_service import ProductionResultService
+
+            db.create_all()
+            rep = Representative(rep_name="LEGACY REP", active=True)
+            product = Product(product_code="LEG", product_name="Legacy Product", is_active=True)
+            db.session.add_all([rep, product]); db.session.flush()
+            upload = IMSUpload(file_name="legacy.xlsx", year=2025, month=6, status="COMPLETED")
+            db.session.add(upload); db.session.flush()
+            db.session.add_all([
+                Target(year=2025, month=6, representative_id=rep.id, product_id=product.id, tl_target=1000, unit_target=10),
+                IMSSummary(upload_id=upload.id, year=2025, month=6, representative_id=rep.id, product_id=product.id, tl=950, unit=9),
+            ])
+            db.session.commit()
+            row = ProductionResultService.effective_products(2025, 6, rep.id)[product.id]
+            assert float(row["actual_tl"]) == 950.0
+            assert float(row["actual_unit"]) == 9.0
     finally:
         tmp.cleanup()
 
