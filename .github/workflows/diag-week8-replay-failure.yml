@@ -23,26 +23,26 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read latest import state
+      - name: Read concise replay failure evidence
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo '=== GIT ==='
-          git rev-parse HEAD
-          echo '=== IMPORT DB STATE ==='
+          echo "HEAD=$(git rev-parse HEAD)"
           venv/bin/python - <<'PY'
           import sqlite3, json
           con=sqlite3.connect('instance/ipm.db', timeout=30)
           con.row_factory=sqlite3.Row
-          def rows(sql):
-              return [dict(r) for r in con.execute(sql).fetchall()]
-          for table in ('ims_import_jobs','ims_uploads'):
-              print(table+'_COLUMNS', [r['name'] for r in rows(f'PRAGMA table_info({table})')])
-              print(table+'_LATEST', json.dumps(rows(f'SELECT * FROM {table} ORDER BY id DESC LIMIT 16'), ensure_ascii=False, default=str))
-          print('UPLOAD_WEEK_COUNTS', json.dumps(rows("SELECT year,month,week_number,status,COUNT(*) AS n,GROUP_CONCAT(id) AS ids FROM ims_uploads WHERE year=2026 AND month=2 GROUP BY year,month,week_number,status ORDER BY week_number,status"), ensure_ascii=False))
+          def q(sql): return [dict(r) for r in con.execute(sql).fetchall()]
+          print('JOBS='+json.dumps(q("SELECT id,status,original_file_name,file_sha256,year,month,clear_before_import,queued_at,started_at,completed_at,upload_id,error_message,processing_time,result_json FROM ims_import_jobs ORDER BY id DESC LIMIT 6"), ensure_ascii=False, default=str))
+          print('UPLOADS='+json.dumps(q("SELECT id,status,file_name,year,month,week_number,sheet_count,raw_record_count,fact_record_count,summary_record_count,source_record_count,stored_source_record_count,reconciliation_status,error_message,warning_message,uploaded_at,completed_at FROM ims_uploads ORDER BY id DESC LIMIT 10"), ensure_ascii=False, default=str))
+          print('WEEK_COUNTS='+json.dumps(q("SELECT week_number,status,COUNT(*) n,GROUP_CONCAT(id) ids FROM ims_uploads WHERE year=2026 AND month=2 GROUP BY week_number,status ORDER BY week_number,status"), ensure_ascii=False))
+          print('PROCESSING='+json.dumps(q("SELECT id,status,original_file_name,started_at FROM ims_import_jobs WHERE status='PROCESSING'"), ensure_ascii=False))
           con.close()
           PY
-          echo '=== WORKER JOURNAL RECENT ==='
-          sudo journalctl -u ims-import-worker.service --since '2026-08-28 20:20:00 UTC' --no-pager | tail -n 700
+          echo 'ERROR_LINES_BEGIN'
+          sudo journalctl -u ims-import-worker.service --since '2026-08-28 20:20:00 UTC' --no-pager \
+            | grep -E 'IMS Import Pipeline Failed|IntegrityError|UNIQUE constraint|OperationalError|Traceback|FAILED|ERROR|ims_import_stage_timing.*FAIL' \
+            | tail -n 120 || true
+          echo 'ERROR_LINES_END'
           REMOTE
