@@ -1,0 +1,52 @@
+name: Week7 import diagnostic
+on:
+  push:
+    branches: [diag/week7-import-failure]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+          IMS_HOST: ${{ secrets.IMS_HOST }}
+          IMS_PORT: ${{ secrets.IMS_PORT }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "${IMS_PORT:-22}" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only production diagnosis
+        env:
+          IMS_HOST: ${{ secrets.IMS_HOST }}
+          IMS_PORT: ${{ secrets.IMS_PORT }}
+          IMS_USER: ${{ secrets.IMS_USER }}
+          IMS_PATH: ${{ secrets.IMS_PATH }}
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "${IMS_PORT:-22}" "${IMS_USER:-ubuntu}@$IMS_HOST" "IMS_PATH='${IMS_PATH:-/home/ubuntu/ims_system}' bash -se" <<'REMOTE'
+          set -euo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import sqlite3, json
+          con = sqlite3.connect('instance/ipm.db', timeout=30)
+          con.row_factory = sqlite3.Row
+          try:
+              cols=[r['name'] for r in con.execute('pragma table_info(ims_import_jobs)')]
+              print('JOB_COLUMNS|'+json.dumps(cols, ensure_ascii=False))
+              rows=con.execute('select * from ims_import_jobs order by id desc limit 5').fetchall()
+              for r in rows:
+                  d={k:r[k] for k in r.keys()}
+                  print('JOB|'+json.dumps(d, ensure_ascii=False, default=str))
+              print('PROCESSING_COUNT|'+str(con.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]))
+              ups=con.execute('select id, file_name, year, month, week_number, status, created_at from ims_uploads order by id desc limit 5').fetchall()
+              for r in ups:
+                  print('UPLOAD|'+json.dumps(dict(r), ensure_ascii=False, default=str))
+          finally:
+              con.close()
+          PY
+          echo '--- WORKER JOURNAL ---'
+          sudo journalctl -u ims-import-worker.service -n 180 --no-pager | tail -n 180
+          REMOTE
