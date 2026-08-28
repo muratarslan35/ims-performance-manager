@@ -7,6 +7,7 @@ def test_weekly_replace_rebuilds_period_derived_state_and_keeps_other_weeks():
     end = source.index("def clear_month", start) if "def clear_month" in source[start + 1:] else source.index("def run", start)
     block = source[start:end]
     assert "self.clear_week(year, week_number)" in block
+    assert "if self._is_current_week_snapshot(year, month, week_number):" in block
     assert "Target.query.filter_by(year=year, month=month).delete" in block
     assert "IMSSummary.query.filter_by(year=year, month=month).delete" in block
     assert "RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete" in block
@@ -30,3 +31,16 @@ def test_region_detail_uses_current_period_target_roster_when_available():
     assert "Target.year == self.year" in block
     assert "Target.month == self.month" in block
     assert "if period_rep_ids else master_representatives" in block
+
+
+def test_historical_week_does_not_publish_period_roster_or_targets():
+    source = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")
+    start = source.index('with self._measure_stage("assignments_and_targets")')
+    end = source.index('with self._measure_stage("facts_summary_and_official_aggregates")', start)
+    block = source[start:end]
+    guard = block.index("if publish_period_snapshot:")
+    sync = block.index("self.sync_brick_assignments")
+    target = block.index("TargetImportService(")
+    else_pos = block.index("else:")
+    assert guard < sync < target < else_pos
+    assert "dönem hedef/realizasyon/kadro özeti korundu" in block
