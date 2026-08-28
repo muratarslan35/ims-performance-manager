@@ -15,6 +15,8 @@ def _importer():
             ["TERRITORIES", "SUBTERRITORIES", "TRAVAZOL", "MONUROL"],
             ["101 ISTANBUL", "BRICK A", 10.0, 20.0],
             ["101 ISTANBUL", "BRICK B", 0.0, None],
+            ["101 ISTANBUL", "BRICK C", 30.0, 40.0],
+            ["101 ISTANBUL", "BRICK D", 50.0, 60.0],
         ]
     )
     return SimpleNamespace(
@@ -40,7 +42,7 @@ def test_compiled_observation_scan_matches_base_semantics_and_preserves_zero():
     assert any(item["value"] == 0.0 for item in fast_observations)
 
 
-def test_compiled_scan_builds_column_context_once_per_column(monkeypatch):
+def test_compiled_scan_column_context_cost_does_not_scale_with_data_rows(monkeypatch):
     importer = _importer()
     service = CompiledWorkbookSemanticReconciler(importer)
     calls = 0
@@ -54,7 +56,8 @@ def test_compiled_scan_builds_column_context_once_per_column(monkeypatch):
     monkeypatch.setattr(service, "_column_context", counted)
     observations, _ = service._observations()
 
-    # Four source columns exist, two are dimensions; the two metric columns
-    # are compiled once each rather than once per data row/cell.
+    # Dimension discovery reads each of the four columns once; the compiled
+    # observation plan then reads the two metric columns once.  Four data rows
+    # do not add any further column-context work.
     assert observations
-    assert calls == 2
+    assert calls == 6
