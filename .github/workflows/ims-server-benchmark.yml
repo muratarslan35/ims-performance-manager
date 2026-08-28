@@ -1,10 +1,12 @@
 name: IMS Server Import Benchmark
 
-# Heavy production-host benchmark is intentionally manual.
-# Normal deploys are already protected by the isolated production acceptance gate.
-# Run this workflow only for importer/performance changes or explicit investigation.
+# Heavy production-host benchmark is intentionally manual on main.
+# This diagnostic branch adds a one-shot push trigger only for post-#267 verification.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - test/week7-post267-isolated-benchmark
 
 permissions:
   contents: read
@@ -16,7 +18,7 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Benchmark latest failed IMS on production host
+    name: Benchmark retained Week-7 IMS on production host
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -37,7 +39,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Run isolated import benchmark
+      - name: Run isolated Week-7 import benchmark
         id: benchmark
         continue-on-error: true
         shell: bash
@@ -67,7 +69,7 @@ jobs:
 
           echo '--- IMS SERVER BENCHMARK: IMPORT ---'
           /usr/bin/time -f 'IMS_SERVER_BENCHMARK_RESOURCE|elapsed_seconds=%e|max_rss_kb=%M|cpu_percent=%P' \
-            env DATABASE_URL="sqlite:///$benchmark_db" \
+            env IMS_BENCHMARK_UPLOAD_ID=7 DATABASE_URL="sqlite:///$benchmark_db" \
             venv/bin/python benchmark_ims_import.py
 
           echo '--- IMS SERVER BENCHMARK: LIVE DB UNCHANGED CHECK ---'
@@ -102,7 +104,7 @@ jobs:
           if [ "${BENCHMARK_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-benchmark.log"
           if [ -f "$evidence_file" ]; then
-            evidence=$(grep -E 'IMS_SERVER_BENCHMARK' "$evidence_file" | tail -n 120 || true)
+            evidence=$(grep -E 'IMS_SERVER_BENCHMARK' "$evidence_file" | tail -n 160 || true)
           else
             evidence="Benchmark SSH log was not created."
           fi
