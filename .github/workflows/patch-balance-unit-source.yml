@@ -1,14 +1,15 @@
-name: Patch balance based IMS unit actual
+name: Patch balance unit source
 
 on:
   push:
-    branches: [fix/balance-unit-actual-source]
+    branches:
+      - fix/balance-unit-actual-source
 
 permissions:
   contents: write
 
 jobs:
-  patch-test:
+  patch_test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -17,89 +18,21 @@ jobs:
           ref: fix/balance-unit-actual-source
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           cache: pip
-      - name: Patch only IMS unit actual source
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('app/services/ims_import_service.py')
-          text = path.read_text(encoding='utf-8')
-
-          old = '        self._brick_assignment_cache = {}\n'
-          new = old + '        self._balance_unit_actual_keys = set()\n'
-          assert text.count(old) == 1, text.count(old)
-          text = text.replace(old, new, 1)
-
-          old = '''                summary = summaries.get((rep_id, product_id))
-                if summary is not None:
-                    summary.target_tl = target.tl_target
-                    summary.target_unit = target.unit_target
-'''
-          new = '''                summary = summaries.get((rep_id, product_id))
-                if balance_unit is not None:
-                    # BAKİYE / MF'siz KUTU BAKİYE is the remaining box count.
-                    # Representative IMS box output therefore equals approved
-                    # box target minus the workbook's remaining box balance.
-                    actual_unit = float(target.unit_target or 0.0) - float(balance_unit)
-                    target.unit_realization = actual_unit
-                    self._balance_unit_actual_keys.add((rep_id, product_id))
-                    if summary is not None:
-                        summary.unit = actual_unit
-                if summary is not None:
-                    summary.target_tl = target.tl_target
-                    summary.target_unit = target.unit_target
-'''
-          assert text.count(old) == 1, text.count(old)
-          text = text.replace(old, new, 1)
-
-          old = '''                if "unit" in metrics:
-                    summary.unit = metrics["unit"]
-                    if target is not None:
-                        target.unit_realization = metrics["unit"]
-'''
-          new = '''                if "unit" in metrics and (rep_id, product_id) not in self._balance_unit_actual_keys:
-                    # Fallback only for legacy workbooks without MF'siz KUTU
-                    # BAKİYE. When balance exists, target - balance is the
-                    # authoritative representative IMS box output.
-                    summary.unit = metrics["unit"]
-                    if target is not None:
-                        target.unit_realization = metrics["unit"]
-'''
-          assert text.count(old) == 1, text.count(old)
-          text = text.replace(old, new, 1)
-
-          text = text.replace(
-              '        ``TTS HAFTALIK ÇIKIŞLARI`` is the canonical representative-level\n'
-              '        actual-sales source.  BAKİYE can contain a different reconciliation\n'
-              '        scope, so allowing it to overwrite TTS creates product-level drift.\n'
-              '        Its target columns remain the authoritative target source; its actual\n'
-              '        columns are retained solely as a compatibility fallback for workbooks\n'
-              '        which do not include a TTS weekly sales report.\n',
-              '        BAKİYE remains the target source. For units, its MF\'siz KUTU BAKİYE\n'
-              '        block is the authoritative remaining-box source, so representative\n'
-              '        IMS unit output is unit target minus that balance. TTS remains the\n'
-              '        representative TL actual source and a unit fallback only when the\n'
-              '        balance-unit block is unavailable.\n',
-              1,
-          )
-          path.write_text(text, encoding='utf-8')
-
-          test = Path('tests/test_balance_unit_actual_source_contract.py')
-          test.write_text('''from pathlib import Path\n\n\ndef test_balance_unit_is_authoritative_unit_actual_source():\n    source = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")\n    assert "actual_unit = float(target.unit_target or 0.0) - float(balance_unit)" in source\n    assert "target.unit_realization = actual_unit" in source\n    assert "summary.unit = actual_unit" in source\n    assert "self._balance_unit_actual_keys.add((rep_id, product_id))" in source\n\n\ndef test_weekly_units_are_only_fallback_when_balance_units_are_missing():\n    source = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")\n    assert 'if "unit" in metrics and (rep_id, product_id) not in self._balance_unit_actual_keys:' in source\n''', encoding='utf-8')
-          PY
+      - name: Apply narrow patch
+        run: python .github/scripts/patch_balance_unit_source.py
+      - name: Install
+        run: python -m pip install -r requirements.txt
       - name: Targeted tests
-        run: |
-          python -m pip install -r requirements.txt
-          pytest -q tests/test_direct_weekly_unit_source.py tests/test_balance_unit_actual_source_contract.py
-      - name: Full test suite
+        run: pytest -q tests/test_direct_weekly_unit_source.py tests/test_balance_unit_actual_source_contract.py
+      - name: Full suite
         run: pytest -q
       - name: Commit tested patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/patch-balance-unit-source.yml
+          git rm .github/workflows/patch-balance-unit-source.yml .github/scripts/patch_balance_unit_source.py
           git add app/services/ims_import_service.py tests/test_balance_unit_actual_source_contract.py
-          git commit -m "Use balance remaining boxes for IMS unit actuals"
+          git commit -m "Use remaining balance for IMS unit actuals"
           git push origin HEAD:fix/balance-unit-actual-source
