@@ -1,3 +1,5 @@
+import inspect
+
 import pandas as pd
 import pytest
 
@@ -58,3 +60,14 @@ def test_specialized_and_derived_cells_receive_terminal_classes():
     service=FakeService({"Satış Brick Yayılımı":pd.DataFrame([["Master","Kutu"],["A",0]]),"PAZAR":pd.DataFrame([["Pivot","TL"],["A",10]]),"NATIONAL":pd.DataFrame([["Bölge","TL"],["TR",10]])});WorkbookPreflight(service).validate();classes={}
     for cell in service.workbook_cell_ledger:classes.setdefault(cell["sheet_name"],set()).add(cell["classification"])
     assert classes["Satış Brick Yayılımı"]=={"IMPORTED_MASTER"};assert classes["PAZAR"]=={"VERIFIED_DERIVED"};assert classes["NATIONAL"]=={"AGGREGATE_VERIFIED"};assert service.statistics["unclassified_master_cell"]==0
+
+
+def test_cell_ledger_hot_loop_avoids_scalar_dataframe_iloc():
+    source = inspect.getsource(WorkbookPreflight.build_cell_ledger)
+    assert ".iloc[" not in source
+
+
+def test_array_cell_scan_preserves_coordinates_blank_and_numeric_zero():
+    frame = pd.DataFrame([["Temsilci", None, "Kutu"], ["A B", "", 0], [None, float("nan"), 5]])
+    cells = list(WorkbookPreflight(FakeService({}))._iter_meaningful_cells(frame))
+    assert cells == [(0, 0, "Temsilci"), (0, 2, "Kutu"), (1, 0, "A B"), (1, 2, 0), (2, 2, 5)]

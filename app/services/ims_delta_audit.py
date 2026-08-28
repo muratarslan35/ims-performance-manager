@@ -5,6 +5,8 @@ wrapper captures the existing same-period target state before parsers mutate it,
 then calculates the complete previous-IMS delta after all validation succeeds but
 before the outer IMSImportService.run transaction commits.
 """
+import time
+
 from app.services.ims_delta_service import build_previous_ims_delta, target_snapshot
 
 
@@ -23,7 +25,11 @@ def install_previous_ims_delta_audit():
         # without adding a second target data model or altering prime/dashboard reads.
         self.pre_import_target_snapshot = target_snapshot(year, month)
         result = original_process(self, year, month, week_number=week_number)
-        build_previous_ims_delta(self)
+        started = time.monotonic()
+        try:
+            build_previous_ims_delta(self)
+        finally:
+            self.statistics["previous_ims_delta_seconds"] = round(time.monotonic() - started, 4)
         return result
 
     def report_with_delta(self):
