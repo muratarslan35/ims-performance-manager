@@ -1,0 +1,53 @@
+name: Temporary Week 8 Fast Audit
+on:
+  push:
+    branches: [diag/week8-representative-audit]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh; printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/k; chmod 600 ~/.ssh/k; ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Audit
+        run: |
+          ssh -i ~/.ssh/k -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail; cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import sqlite3,json
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=5); c.row_factory=sqlite3.Row
+          one=lambda q,a=(): dict(c.execute(q,a).fetchone()) if c.execute(q,a).fetchone() else None
+          def rr(q,a=()): return [dict(x) for x in c.execute(q,a).fetchall()]
+          def emit(k,v): print(k+'|'+json.dumps(v,ensure_ascii=False,default=str))
+          emit('STATE',{'wal':c.execute('pragma journal_mode').fetchone()[0],'quick':c.execute('pragma quick_check').fetchone()[0],'processing':c.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]})
+          job=dict(c.execute("select id,status,file_name,source_hash,ims_upload_id,completed_at,error_message,result_summary from ims_import_jobs order by id desc limit 1").fetchone()); emit('JOB',job)
+          up=dict(c.execute("select id,file_name,year,month,week_number,sheet_count,raw_record_count,fact_record_count,summary_record_count,source_record_count,stored_source_record_count,zero_metric_count,invalid_metric_count,reconciliation_status,status,completed_at from ims_uploads where id=?",(job['ims_upload_id'],)).fetchone()) if job['ims_upload_id'] else None; emit('UPLOAD',up)
+          rep=dict(c.execute("select id,rep_name,region,city,territory,team,active from representatives where upper(rep_name)='MURAT ARSLAN' limit 1").fetchone()); emit('REP',rep); rid=rep['id']
+          emit('TARGETS',rr("select p.product_name,t.unit_target,t.tl_target,t.unit_realization,t.tl_realization,t.realization_percent from targets t join products p on p.id=t.product_id where t.year=2026 and t.month=2 and t.representative_id=? order by p.display_order,p.product_name",(rid,)))
+          emit('BRICKS',rr("select brick,source,active from representative_brick_assignments where year=2026 and month=2 and representative_id=? order by brick",(rid,)))
+          tabs={x[0] for x in c.execute("select name from sqlite_master where type='table'")}
+          for t in ['ims_summary','ims_facts','ims_fact']:
+            if t not in tabs: continue
+            cols=[x[1] for x in c.execute(f'pragma table_info({t})')]; wh=['representative_id=?']; a=[rid]
+            if 'year' in cols: wh.append('year=2026')
+            if 'month' in cols: wh.append('month=2')
+            if 'week_number' in cols: wh.append('week_number=8')
+            emit('ROWS_'+t,rr(f"select * from {t} where {' and '.join(wh)} limit 30",a))
+          if 'ims_competition_data' in tabs:
+            comp=rr("select sheet_name,period_type,product_group,product_name,is_company_product,is_competitor,metric_type,metric_value,is_subtotal,is_grand_total,source_row from ims_competition_data where year=2026 and month=2 and week_number=8 and upper(subterritory)=upper(?) order by sheet_name,source_row,product_group,product_name limit 160",('MURAT ARSLAN',)); emit('COMP',comp)
+            emit('COMP_COUNT',dict(c.execute("select count(*) n,count(distinct product_name) products,count(distinct sheet_name) sheets from ims_competition_data where year=2026 and month=2 and week_number=8 and upper(subterritory)=upper(?)",('MURAT ARSLAN',)).fetchone()))
+          emit('ROSTER901',rr("select distinct r.rep_name from targets t join representatives r on r.id=t.representative_id where t.year=2026 and t.month=2 and (r.region='901' or r.city='901' or r.territory='901' or r.region like '901 %' or r.city like '901 %' or r.territory like '901 %') order by r.rep_name"))
+          c.close()
+          PY
+          REMOTE
