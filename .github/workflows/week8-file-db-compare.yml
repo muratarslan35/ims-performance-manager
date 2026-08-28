@@ -1,0 +1,88 @@
+name: Week 8 File DB Compare
+on:
+  push:
+    branches:
+      - diag/week8-file-db-compare
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure production SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+          IMS_HOST: ${{ secrets.IMS_HOST }}
+          IMS_PORT: ${{ secrets.IMS_PORT }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/diag_key
+          chmod 600 ~/.ssh/diag_key
+          ssh-keyscan -p "${IMS_PORT:-22}" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only compare
+        env:
+          IMS_HOST: ${{ secrets.IMS_HOST }}
+          IMS_PORT: ${{ secrets.IMS_PORT }}
+          IMS_USER: ${{ secrets.IMS_USER }}
+          IMS_PATH: ${{ secrets.IMS_PATH }}
+          EXPECTED_LOCAL_HASH: 715a772189c9b92c6fd66a2d40d63c97460d8ae590bbffcdc7950c47aafff475
+        run: |
+          ssh -i ~/.ssh/diag_key -p "${IMS_PORT:-22}" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' EXPECTED_LOCAL_HASH='$EXPECTED_LOCAL_HASH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import os, sqlite3, json
+          expected=os.environ['EXPECTED_LOCAL_HASH']
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
+          con.row_factory=sqlite3.Row
+          try:
+              upload=con.execute("""
+                select id,file_name,year,month,week_number,status,completed_at
+                from ims_uploads where year=2026 and month=2 and status='COMPLETED'
+                order by week_number desc, completed_at desc, id desc limit 1
+              """).fetchone()
+              print('LATEST_UPLOAD|'+json.dumps(dict(upload), ensure_ascii=False, default=str))
+              job=con.execute("""
+                select id,status,file_name,source_hash,ims_upload_id,queued_at,completed_at
+                from ims_import_jobs where ims_upload_id=? order by id desc limit 1
+              """,(upload['id'],)).fetchone()
+              print('IMPORT_JOB|'+json.dumps(dict(job) if job else {}, ensure_ascii=False, default=str))
+              if job:
+                  print(f"HASH_COMPARE|local={expected}|db={job['source_hash']}|match={str(job['source_hash']==expected).lower()}")
+              reps=con.execute("""
+                select id,rep_name,region,city,territory,active
+                from representatives
+                where region='901' or city='901' or territory='901'
+                order by rep_name
+              """).fetchall()
+              print(f'REGION_MASTER_COUNT|{len(reps)}')
+              for r in reps: print('REGION_MASTER|'+json.dumps(dict(r), ensure_ascii=False))
+              target_reps=con.execute("""
+                select r.id,r.rep_name,r.region,r.city,r.active,
+                       round(sum(t.tl_target),2) target_tl,
+                       round(sum(t.tl_realization),2) actual_tl
+                from targets t join representatives r on r.id=t.representative_id
+                where t.year=2026 and t.month=2
+                  and (r.region='901' or r.city='901' or r.territory='901')
+                group by r.id,r.rep_name,r.region,r.city,r.active
+                order by r.rep_name
+              """).fetchall()
+              print(f'DASH_TARGET_REP_COUNT|{len(target_reps)}')
+              for r in target_reps: print('DASH_TARGET_REP|'+json.dumps(dict(r), ensure_ascii=False))
+              upload_reps=con.execute("""
+                select distinct r.id,r.rep_name,r.region,r.city
+                from ims_raw_data d join representatives r on r.id=d.representative_id
+                where d.upload_id=? and d.year=2026 and d.month=2
+                  and d.representative_id is not null
+                  and (d.territory like '901%' or d.raw_json like '%901 DIYARBAKIR%')
+                order by r.rep_name
+              """,(upload['id'],)).fetchall()
+              print(f'UPLOAD_901_REP_COUNT|{len(upload_reps)}')
+              for r in upload_reps: print('UPLOAD_901_REP|'+json.dumps(dict(r), ensure_ascii=False))
+              print('SQLITE|journal_mode='+str(con.execute('pragma journal_mode').fetchone()[0])+'|quick_check='+str(con.execute('pragma quick_check').fetchone()[0]))
+          finally:
+              con.close()
+          PY
+          REMOTE
