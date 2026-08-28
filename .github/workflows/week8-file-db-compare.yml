@@ -5,9 +5,13 @@ on:
       - diag/week8-file-db-compare
 permissions:
   contents: read
+concurrency:
+  group: week8-file-db-compare
+  cancel-in-progress: true
 jobs:
   compare:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
@@ -33,7 +37,7 @@ jobs:
           venv/bin/python - <<'PY'
           import os, sqlite3, json
           expected=os.environ['EXPECTED_LOCAL_HASH']
-          con=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=10)
           con.row_factory=sqlite3.Row
           try:
               upload=con.execute("""
@@ -69,17 +73,7 @@ jobs:
               """).fetchall()
               print(f'DASH_TARGET_REP_COUNT|{len(target_reps)}')
               for r in target_reps: print('DASH_TARGET_REP|'+json.dumps(dict(r), ensure_ascii=False))
-              upload_reps=con.execute("""
-                select distinct r.id,r.rep_name,r.region,r.city
-                from ims_raw_data d join representatives r on r.id=d.representative_id
-                where d.upload_id=? and d.year=2026 and d.month=2
-                  and d.representative_id is not null
-                  and (d.territory like '901%' or d.raw_json like '%901 DIYARBAKIR%')
-                order by r.rep_name
-              """,(upload['id'],)).fetchall()
-              print(f'UPLOAD_901_REP_COUNT|{len(upload_reps)}')
-              for r in upload_reps: print('UPLOAD_901_REP|'+json.dumps(dict(r), ensure_ascii=False))
-              print('SQLITE|journal_mode='+str(con.execute('pragma journal_mode').fetchone()[0])+'|quick_check='+str(con.execute('pragma quick_check').fetchone()[0]))
+              print('SQLITE|journal_mode='+str(con.execute('pragma journal_mode').fetchone()[0]))
           finally:
               con.close()
           PY
