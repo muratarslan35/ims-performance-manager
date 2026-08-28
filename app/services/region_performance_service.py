@@ -19,15 +19,34 @@ class RegionPerformanceService:
         self.month = int(month)
         if not self.region_key or self.month < 1 or self.month > 12:
             raise ValueError("Geçersiz bölge veya dönem.")
-        self.representatives = Representative.query.filter(
+        master_representatives = Representative.query.filter(
             or_(
                 Representative.region == self.region_key,
                 Representative.city == self.region_key,
                 Representative.territory == self.region_key,
             ),
         ).order_by(Representative.rep_name.asc()).all()
-        if not self.representatives:
+        if not master_representatives:
             raise ValueError("Bölge bulunamadı.")
+
+        # Representative master history intentionally retains people who moved
+        # between teams. The current month's Target rows form the active IMS
+        # roster snapshot after a replace import. Use that scope for region
+        # detail/market calculations whenever it is available.
+        master_ids = [item.id for item in master_representatives]
+        period_rep_ids = {
+            int(row[0])
+            for row in db.session.query(Target.representative_id).filter(
+                Target.year == self.year,
+                Target.month == self.month,
+                Target.representative_id.in_(master_ids),
+            ).distinct().all()
+            if row[0] is not None
+        }
+        self.representatives = (
+            [item for item in master_representatives if item.id in period_rep_ids]
+            if period_rep_ids else master_representatives
+        )
         self.rep_ids = [item.id for item in self.representatives]
 
     @staticmethod
