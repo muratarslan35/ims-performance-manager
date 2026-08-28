@@ -126,9 +126,15 @@ def install_field_read_runtime_optimizer() -> None:
         representative_name = str(self.representative.rep_name or "")
         subterritory_values = [representative_name, representative_name.upper(), *bricks, *(str(v).upper() for v in bricks)]
         fallback_values = [v for v in (self.representative.territory, self.representative.city, self.representative.region) if v]
-        scope_clauses = [func.upper(CompetitionData.subterritory).in_([str(v).upper() for v in subterritory_values if v])]
+        scope_clauses = [
+            CompetitionData.subterritory.in_([v for v in subterritory_values if v]),
+            func.upper(CompetitionData.subterritory).in_([str(v).upper() for v in subterritory_values if v]),
+        ]
         if fallback_values:
-            scope_clauses.append(func.upper(CompetitionData.territory).in_([str(v).upper() for v in fallback_values]))
+            scope_clauses.extend([
+                CompetitionData.territory.in_(fallback_values),
+                func.upper(CompetitionData.territory).in_([str(v).upper() for v in fallback_values]),
+            ])
 
         rows = CompetitionData.query.filter(
             CompetitionData.upload_id == upload_id,
