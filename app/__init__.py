@@ -27,6 +27,7 @@ from app.services.semantic_import_discovery import install_semantic_import_disco
 from app.services.dynamic_import_contract import install_dynamic_import_contract
 from app.services.dynamic_import_refinement import install_dynamic_import_refinement
 from app.services.aggregate_identity_refinement import install_aggregate_identity_refinement
+from app.services.ims_summary_integrity import install_ims_summary_integrity
 from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.derived_master_verification import install_derived_verification_gate
@@ -177,6 +178,7 @@ def create_app(config_object=Config):
     install_dynamic_import_contract()
     install_dynamic_import_refinement()
     install_aggregate_identity_refinement()
+    install_ims_summary_integrity()
     install_workbook_preflight()
     install_official_brick_spread_atomic()
     install_derived_verification_gate()
