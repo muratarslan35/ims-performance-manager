@@ -1,13 +1,12 @@
 name: Weekly snapshot replace patch
 on:
   push:
-    branches:
-      - fix/weekly-snapshot-replace
+    branches: [fix/weekly-snapshot-replace]
 permissions:
   contents: write
 jobs:
   patch:
-    if: github.event.head_commit.message == 'Prepare weekly snapshot replacement fix'
+    if: github.event.head_commit.message == 'Simplify weekly snapshot patch workflow'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,116 +17,22 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Apply narrow snapshot fix
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path('app/services/ims_import_service.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''    def clear_month(self, year, month):
-              """Remove all IMS data for a calendar month (destructive; kept for backward compat)."""
-              IMSFact.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-              IMSRawData.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-              IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-              db.session.flush()
-          '''
-          old = old.replace('          ', '')
-          new = old + '''\n    def clear_week_snapshot(self, year, month, week_number):
-        """Replace one weekly snapshot while rebuilding current period-derived state.
-
-        Weekly raw/fact history for other weeks is retained. Period-scoped target,
-        summary and brick-assignment rows are rebuilt from the incoming cumulative
-        workbook so representatives who moved to another team do not remain in the
-        active month simply because they existed in an earlier workbook.
-        """
-        self.clear_week(year, week_number)
-        IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        db.session.flush()
-'''
-          if old not in s:
-              raise SystemExit('clear_month anchor not found')
-          s = s.replace(old, new, 1)
-          old_run = '''            if clear_before_import and week_number is None:
-                self.clear_month(year, month)
-            self.process_workbook(year, month, week_number=week_number)
-'''
-          new_run = '''            if clear_before_import:
-                if week_number is None:
-                    self.clear_month(year, month)
-                else:
-                    self.clear_week_snapshot(year, month, week_number)
-            self.process_workbook(year, month, week_number=week_number)
-'''
-          if old_run not in s:
-              raise SystemExit('run replace anchor not found')
-          s = s.replace(old_run, new_run, 1)
-          p.write_text(s, encoding='utf-8')
-
-          p = Path('app/services/region_performance_service.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''        self.representatives = Representative.query.filter(
-            or_(
-                Representative.region == self.region_key,
-                Representative.city == self.region_key,
-                Representative.territory == self.region_key,
-            ),
-        ).order_by(Representative.rep_name.asc()).all()
-        if not self.representatives:
-            raise ValueError("Bölge bulunamadı.")
-        self.rep_ids = [item.id for item in self.representatives]
-'''
-          new = '''        master_representatives = Representative.query.filter(
-            or_(
-                Representative.region == self.region_key,
-                Representative.city == self.region_key,
-                Representative.territory == self.region_key,
-            ),
-        ).order_by(Representative.rep_name.asc()).all()
-        if not master_representatives:
-            raise ValueError("Bölge bulunamadı.")
-
-        # The representative master is historical and intentionally retains people
-        # who moved between teams. The selected month's Target rows are the current
-        # IMS roster snapshot after a replace import, so use them for this region
-        # whenever available. This affects only region detail scope; master history
-        # remains untouched.
-        master_ids = [item.id for item in master_representatives]
-        period_rep_ids = {
-            int(row[0])
-            for row in db.session.query(Target.representative_id).filter(
-                Target.year == self.year,
-                Target.month == self.month,
-                Target.representative_id.in_(master_ids),
-            ).distinct().all()
-            if row[0] is not None
-        }
-        self.representatives = (
-            [item for item in master_representatives if item.id in period_rep_ids]
-            if period_rep_ids else master_representatives
-        )
-        self.rep_ids = [item.id for item in self.representatives]
-'''
-          if old not in s:
-              raise SystemExit('region roster anchor not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
-
-          test = Path('tests/test_weekly_snapshot_replace_contract.py')
-          test.write_text('''from pathlib import Path\n\n\ndef test_weekly_replace_rebuilds_only_period_derived_state():\n    source = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")\n    assert "def clear_week_snapshot(self, year, month, week_number):" in source\n    block = source[source.index("def clear_week_snapshot"):source.index("def clear_month", source.index("def clear_week_snapshot")) if "def clear_month" in source[source.index("def clear_week_snapshot")+1:] else source.index("def run", source.index("def clear_week_snapshot"))]\n    assert "self.clear_week(year, week_number)" in block\n    assert "Target.query.filter_by(year=year, month=month).delete" in block\n    assert "IMSSummary.query.filter_by(year=year, month=month).delete" in block\n    assert "RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete" in block\n\n\ndef test_replace_flag_is_honored_for_numbered_week():\n    source = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")\n    run = source[source.index("def run(self, year, month, clear_before_import=False, week_number=None):"):]\n    assert "if clear_before_import:" in run\n    assert "self.clear_week_snapshot(year, month, week_number)" in run\n    assert "if clear_before_import and week_number is None" not in run\n\n\ndef test_region_detail_uses_current_period_roster_when_targets_exist():\n    source = Path("app/services/region_performance_service.py").read_text(encoding="utf-8")\n    init = source[source.index("def __init__"):source.index("@staticmethod", source.index("def __init__"))]\n    assert "period_rep_ids" in init\n    assert "Target.year == self.year" in init\n    assert "Target.month == self.month" in init\n    assert "if period_rep_ids else master_representatives" in init\n''', encoding='utf-8')
-          PY
-      - name: Install test dependencies
+      - name: Apply patch
+        run: python scripts/apply_weekly_snapshot_patch.py
+      - name: Install dependencies
         run: python -m pip install -q -r requirements.txt pytest
-      - name: Run targeted and full tests
+      - name: Targeted tests
         env:
           APP_ENV: testing
           SECRET_KEY: patch-test-secret
           DATABASE_URL: sqlite:////tmp/ims-weekly-replace.db
-        run: |
-          python -m pytest -q tests/test_weekly_snapshot_replace_contract.py tests/test_ims_replace_flag_contract.py tests/test_region_read_v2.py
-          python -m pytest -q tests/
+        run: python -m pytest -q tests/test_weekly_snapshot_replace_contract.py tests/test_ims_replace_flag_contract.py tests/test_region_read_v2.py
+      - name: Full test suite
+        env:
+          APP_ENV: testing
+          SECRET_KEY: patch-test-secret
+          DATABASE_URL: sqlite:////tmp/ims-weekly-replace-full.db
+        run: python -m pytest -q tests/
       - name: Commit patch
         run: |
           git config user.name 'Murat arslan'
