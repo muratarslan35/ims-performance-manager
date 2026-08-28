@@ -44,6 +44,7 @@ from app.products import products_bp
 from app.routes.settings import settings_bp
 from app.routes.targets import targets_bp
 from app.routes.matching import matching_bp
+from app.routes.ims_progress import ims_progress_bp
 from app.competition.api import competition_bp
 from app.ims import ims_bp
 from app.dashboard import dashboard_bp
@@ -102,6 +103,7 @@ def register_blueprints(app):
     app.register_blueprint(matching_bp)
     app.register_blueprint(competition_bp)
     app.register_blueprint(ims_bp)
+    app.register_blueprint(ims_progress_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(representatives_bp)
     app.register_blueprint(simulation_bp)
