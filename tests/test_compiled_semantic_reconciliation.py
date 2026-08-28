@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from app.services.compiled_workbook_semantic_reconciliation import (
+from app.services.compiled_import_semantic_reconciliation import (
     CompiledWorkbookSemanticReconciler,
 )
 from app.services.workbook_semantic_reconciliation import WorkbookSemanticReconciler
@@ -57,7 +57,7 @@ def test_compiled_scan_column_context_cost_does_not_scale_with_data_rows(monkeyp
     observations, _ = service._observations()
 
     # Dimension discovery reads each of the four columns once; the compiled
-    # observation plan then reads the two metric columns once.  Four data rows
+    # observation plan then reads the two metric columns once. Four data rows
     # do not add any further column-context work.
     assert observations
     assert calls == 6
