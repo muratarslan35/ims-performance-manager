@@ -24,51 +24,52 @@ from app.models import CompetitionData, IMSUpload
 
 
 def install_dashboard_runtime_optimizer() -> None:
-    """Install the bounded latest-competition-upload resolver once per process."""
+    """Install bounded dashboard and field-facing read optimizers once."""
     from app.query.dashboard_query import DashboardQuery
+    from app.services.field_read_runtime_optimizer import install_field_read_runtime_optimizer
 
-    if getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
-        return
+    if not getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
+        original = DashboardQuery._latest_competition_upload_id
 
-    original = DashboardQuery._latest_competition_upload_id
+        def bounded_latest_competition_upload_id(self, filters):
+            if not filters or filters.year is None or filters.month is None:
+                return None
 
-    def bounded_latest_competition_upload_id(self, filters):
-        if not filters or filters.year is None or filters.month is None:
-            return None
+            cache = getattr(self, "_latest_competition_upload_cache", None)
+            if cache is None:
+                cache = {}
+                self._latest_competition_upload_cache = cache
 
-        cache = getattr(self, "_latest_competition_upload_cache", None)
-        if cache is None:
-            cache = {}
-            self._latest_competition_upload_cache = cache
+            key = (int(filters.year), int(filters.month))
+            if key in cache:
+                return cache[key]
 
-        key = (int(filters.year), int(filters.month))
-        if key in cache:
-            return cache[key]
-
-        has_real_tl = exists().where(
-            CompetitionData.upload_id == IMSUpload.id,
-            CompetitionData.metric_type == "TL",
-            CompetitionData.metric_value != 0,
-        )
-        upload_id = (
-            self.session.query(IMSUpload.id)
-            .filter(
-                IMSUpload.year == key[0],
-                IMSUpload.month == key[1],
-                IMSUpload.status == "COMPLETED",
-                has_real_tl,
+            has_real_tl = exists().where(
+                CompetitionData.upload_id == IMSUpload.id,
+                CompetitionData.metric_type == "TL",
+                CompetitionData.metric_value != 0,
             )
-            .order_by(
-                desc(IMSUpload.week_number),
-                desc(IMSUpload.completed_at),
-                desc(IMSUpload.id),
+            upload_id = (
+                self.session.query(IMSUpload.id)
+                .filter(
+                    IMSUpload.year == key[0],
+                    IMSUpload.month == key[1],
+                    IMSUpload.status == "COMPLETED",
+                    has_real_tl,
+                )
+                .order_by(
+                    desc(IMSUpload.week_number),
+                    desc(IMSUpload.completed_at),
+                    desc(IMSUpload.id),
+                )
+                .limit(1)
+                .scalar()
             )
-            .limit(1)
-            .scalar()
-        )
-        cache[key] = upload_id
-        return upload_id
+            cache[key] = upload_id
+            return upload_id
 
-    DashboardQuery._original_latest_competition_upload_id = original
-    DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
-    DashboardQuery._bounded_competition_lookup_installed = True
+        DashboardQuery._original_latest_competition_upload_id = original
+        DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
+        DashboardQuery._bounded_competition_lookup_installed = True
+
+    install_field_read_runtime_optimizer()
