@@ -1,8 +1,10 @@
 name: Patch Excel PP display semantics
 on:
   push:
-    branches: [fix/excel-pp-display-rounding]
-    paths: [.github/workflows/patch-pp-display.yml]
+    branches:
+      - fix/excel-pp-display-rounding
+    paths:
+      - .github/workflows/patch-pp-display.yml
 permissions:
   contents: write
 jobs:
@@ -14,76 +16,10 @@ jobs:
           ref: fix/excel-pp-display-rounding
       - name: Patch service and tests
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('app/services/region_market_service.py')
-          s = path.read_text(encoding='utf-8')
-          start = s.index('    @staticmethod\n    def _display_integer')
-          end = s.index('    def _latest_upload_id', start)
-          replacement = '''    @staticmethod
-    def _display_integer(value):
-        """Mirror the workbook's visible no-decimal PP cell value.
-
-        The exact PP from ``TTS Rekabet PP`` remains authoritative and is kept
-        separately for comparisons. Display rounding is applied independently
-        to each cell; individual visible cells are never redistributed merely
-        to force their rounded sum to 100. The workbook subtotal is a separate
-        100-percent cell.
-        """
-        number = max(Decimal(str(value or 0)), Decimal("0"))
-        floor_value = int(number.to_integral_value(rounding=ROUND_FLOOR))
-        fraction = number - Decimal(floor_value)
-        return floor_value + (1 if fraction > Decimal("0.5") else 0)
-
-    @classmethod
-    def _allocate_tenth_shares(cls, components):
-        """Return each PP cell's workbook-style integer display independently."""
-        return {key: cls._display_integer(value) for key, value in components}
-
-'''
-          s = s[:start] + replacement + s[end:]
-          s = s.replace('"display_share_total": sum(allocations.values()) if market else 0,',
-                        '"display_share_total": 100 if market else 0,')
-          path.write_text(s, encoding='utf-8')
-
-          tpath = Path('tests/test_region_market_share_authority.py')
-          t = tpath.read_text(encoding='utf-8')
-          t = t.replace('def test_integer_pp_display_thresholds_and_closure():',
-                        'def test_integer_pp_display_matches_workbook_cells_without_redistribution():')
-          old = '''    # User-facing IMS rule: if the first four displayed items total 96 and the
-    # fifth exact PP is 3.51, it is shown as 4 and the displayed subtotal is 100.
-    allocated = RegionMarketService._allocate_tenth_shares([
-        ("A", 24.0), ("B", 24.0), ("C", 24.0), ("D", 24.0), ("E", 3.51)
-    ])
-    assert allocated["E"] == 4
-    assert sum(allocated.values()) == 100
-'''
-          new = '''    # Real January/Diyarbakir workbook examples: every visible cell is rounded
-    # from its own exact PP. Do not steal/add a point to force the visible
-    # components to 100; the workbook subtotal is a separate 100 cell.
-    allocated = RegionMarketService._allocate_tenth_shares([
-        ("MONUROL", 22.500530029984553),
-        ("UROCARE", 28.645849108035254),
-        ("UROMISIN", 48.85362086198019),
-    ])
-    assert allocated == {"MONUROL": 23, "UROCARE": 29, "UROMISIN": 49}
-    assert sum(allocated.values()) == 101
-    assert RegionMarketService._display_integer(33.57540382788109) == 34
-    assert RegionMarketService._display_integer(16.41132653600296) == 16
-'''
-          if old not in t:
-              raise SystemExit('expected threshold test block not found')
-          t = t.replace(old, new)
-          t = t.replace('def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):',
-                        'def test_region_market_uses_authoritative_tts_pp_and_keeps_separate_subtotal(tmp_path):')
-          t = t.replace('        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 100\n',
-                        '        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 101\n')
-          tpath.write_text(t, encoding='utf-8')
-          PY
+          echo 'CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKcGF0aCA9IFBhdGgoImFwcC9zZXJ2aWNlcy9yZWdpb25fbWFya2V0X3NlcnZpY2UucHkiKQpzID0gcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikKc3RhcnQgPSBzLmluZGV4KCIgICAgQHN0YXRpY21ldGhvZFxuICAgIGRlZiBfZGlzcGxheV9pbnRlZ2VyIikKZW5kID0gcy5pbmRleCgiICAgIGRlZiBfbGF0ZXN0X3VwbG9hZF9pZCIsIHN0YXJ0KQpyZXBsYWNlbWVudCA9ICIiIiAgICBAc3RhdGljbWV0aG9kCiAgICBkZWYgX2Rpc3BsYXlfaW50ZWdlcih2YWx1ZSk6CiAgICAgICAgIiIiTWlycm9yIHRoZSB3b3JrYm9vaydzIHZpc2libGUgbm8tZGVjaW1hbCBQUCBjZWxsIHZhbHVlLgoKICAgICAgICBUaGUgZXhhY3QgUFAgZnJvbSBgYFRUUyBSZWthYmV0IFBQYGAgcmVtYWlucyBhdXRob3JpdGF0aXZlIGFuZCBpcyBrZXB0CiAgICAgICAgc2VwYXJhdGVseSBmb3IgY29tcGFyaXNvbnMuIERpc3BsYXkgcm91bmRpbmcgaXMgYXBwbGllZCBpbmRlcGVuZGVudGx5CiAgICAgICAgdG8gZWFjaCBjZWxsOyBpbmRpdmlkdWFsIHZpc2libGUgY2VsbHMgYXJlIG5ldmVyIHJlZGlzdHJpYnV0ZWQgbWVyZWx5CiAgICAgICAgdG8gZm9yY2UgdGhlaXIgcm91bmRlZCBzdW0gdG8gMTAwLiBUaGUgd29ya2Jvb2sgc3VidG90YWwgaXMgYSBzZXBhcmF0ZQogICAgICAgIDEwMC1wZXJjZW50IGNlbGwuCiAgICAgICAgIiIiCiAgICAgICAgbnVtYmVyID0gbWF4KERlY2ltYWwoc3RyKHZhbHVlIG9yIDApKSwgRGVjaW1hbCgiMCIpKQogICAgICAgIGZsb29yX3ZhbHVlID0gaW50KG51bWJlci50b19pbnRlZ3JhbF92YWx1ZShyb3VuZGluZz1ST1VORF9GTE9PUikpCiAgICAgICAgZnJhY3Rpb24gPSBudW1iZXIgLSBEZWNpbWFsKGZsb29yX3ZhbHVlKQogICAgICAgIHJldHVybiBmbG9vcl92YWx1ZSArICgxIGlmIGZyYWN0aW9uID4gRGVjaW1hbCgiMC41IikgZWxzZSAwKQoKICAgIEBjbGFzc21ldGhvZAogICAgZGVmIF9hbGxvY2F0ZV90ZW50aF9zaGFyZXMoY2xzLCBjb21wb25lbnRzKToKICAgICAgICAiIiJSZXR1cm4gZWFjaCBQUCBjZWxsJ3Mgd29ya2Jvb2stc3R5bGUgaW50ZWdlciBkaXNwbGF5IGluZGVwZW5kZW50bHkuIiIiCiAgICAgICAgcmV0dXJuIHtrZXk6IGNscy5fZGlzcGxheV9pbnRlZ2VyKHZhbHVlKSBmb3Iga2V5LCB2YWx1ZSBpbiBjb21wb25lbnRzfQoKIiIiCnMgPSBzWzpzdGFydF0gKyByZXBsYWNlbWVudCArIHNbZW5kOl0KcyA9IHMucmVwbGFjZSgnImRpc3BsYXlfc2hhcmVfdG90YWwiOiBzdW0oYWxsb2NhdGlvbnMudmFsdWVzKCkpIGlmIG1hcmtldCBlbHNlIDAsJywKICAgICAgICAgICAgICAnImRpc3BsYXlfc2hhcmVfdG90YWwiOiAxMDAgaWYgbWFya2V0IGVsc2UgMCwnKQpwYXRoLndyaXRlX3RleHQocywgZW5jb2Rpbmc9InV0Zi04IikKCnRwYXRoID0gUGF0aCgidGVzdHMvdGVzdF9yZWdpb25fbWFya2V0X3NoYXJlX2F1dGhvcml0eS5weSIpCnQgPSB0cGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikKdCA9IHQucmVwbGFjZSgiZGVmIHRlc3RfaW50ZWdlcl9wcF9kaXNwbGF5X3RocmVzaG9sZHNfYW5kX2Nsb3N1cmUoKToiLAogICAgICAgICAgICAgICJkZWYgdGVzdF9pbnRlZ2VyX3BwX2Rpc3BsYXlfbWF0Y2hlc193b3JrYm9va19jZWxsc193aXRob3V0X3JlZGlzdHJpYnV0aW9uKCk6IikKb2xkID0gIiIiICAgICMgVXNlci1mYWNpbmcgSU1TIHJ1bGU6IGlmIHRoZSBmaXJzdCBmb3VyIGRpc3BsYXllZCBpdGVtcyB0b3RhbCA5NiBhbmQgdGhlCiAgICAjIGZpZnRoIGV4YWN0IFBQIGlzIDMuNTEsIGl0IGlzIHNob3duIGFzIDQgYW5kIHRoZSBkaXNwbGF5ZWQgc3VidG90YWwgaXMgMTAwLgogICAgYWxsb2NhdGVkID0gUmVnaW9uTWFya2V0U2VydmljZS5fYWxsb2NhdGVfdGVudGhfc2hhcmVzKFsKICAgICAgICAoIkEiLCAyNC4wKSwgKCJCIiwgMjQuMCksICgiQyIsIDI0LjApLCAoIkQiLCAyNC4wKSwgKCJFIiwgMy41MSkKICAgIF0pCiAgICBhc3NlcnQgYWxsb2NhdGVkWyJFIl0gPT0gNAogICAgYXNzZXJ0IHN1bShhbGxvY2F0ZWQudmFsdWVzKCkpID09IDEwMAoiIiIKbmV3ID0gIiIiICAgICMgUmVhbCBKYW51YXJ5L0RpeWFyYmFraXIgd29ya2Jvb2sgZXhhbXBsZXM6IGV2ZXJ5IHZpc2libGUgY2VsbCBpcyByb3VuZGVkCiAgICAjIGZyb20gaXRzIG93biBleGFjdCBQUC4gRG8gbm90IHN0ZWFsL2FkZCBhIHBvaW50IHRvIGZvcmNlIHRoZSB2aXNpYmxlCiAgICAjIGNvbXBvbmVudHMgdG8gMTAwOyB0aGUgd29ya2Jvb2sgc3VidG90YWwgaXMgYSBzZXBhcmF0ZSAxMDAgY2VsbC4KICAgIGFsbG9jYXRlZCA9IFJlZ2lvbk1hcmtldFNlcnZpY2UuX2FsbG9jYXRlX3RlbnRoX3NoYXJlcyhbCiAgICAgICAgKCJNT05VUk9MIiwgMjIuNTAwNTMwMDI5OTg0NTUzKSwKICAgICAgICAoIlVST0NBUkUiLCAyOC42NDU4NDkxMDgwMzUyNTQpLAogICAgICAgICgiVVJPTUlTSU4iLCA0OC44NTM2MjA4NjE5ODAxOSksCiAgICBdKQogICAgYXNzZXJ0IGFsbG9jYXRlZCA9PSB7Ik1PTlVST0wiOiAyMywgIlVST0NBUkUiOiAyOSwgIlVST01JU0lOIjogNDl9CiAgICBhc3NlcnQgc3VtKGFsbG9jYXRlZC52YWx1ZXMoKSkgPT0gMTAxCiAgICBhc3NlcnQgUmVnaW9uTWFya2V0U2VydmljZS5fZGlzcGxheV9pbnRlZ2VyKDMzLjU3NTQwMzgyNzg4MTA5KSA9PSAzNAogICAgYXNzZXJ0IFJlZ2lvbk1hcmtldFNlcnZpY2UuX2Rpc3BsYXlfaW50ZWdlcigxNi40MTEzMjY1MzYwMDI5NikgPT0gMTYKIiIiCmlmIG9sZCBub3QgaW4gdDoKICAgIHJhaXNlIFN5c3RlbUV4aXQoImV4cGVjdGVkIHRocmVzaG9sZCB0ZXN0IGJsb2NrIG5vdCBmb3VuZCIpCnQgPSB0LnJlcGxhY2Uob2xkLCBuZXcpCnQgPSB0LnJlcGxhY2UoImRlZiB0ZXN0X3JlZ2lvbl9tYXJrZXRfdXNlc19hdXRob3JpdGF0aXZlX3R0c19wcF9hbmRfY2xvc2VzX3RvXzEwMCh0bXBfcGF0aCk6IiwKICAgICAgICAgICAgICAiZGVmIHRlc3RfcmVnaW9uX21hcmtldF91c2VzX2F1dGhvcml0YXRpdmVfdHRzX3BwX2FuZF9rZWVwc19zZXBhcmF0ZV9zdWJ0b3RhbCh0bXBfcGF0aCk6IikKdCA9IHQucmVwbGFjZSgnICAgICAgICBhc3NlcnQgcm93WyJzaGFyZV9wZXJjZW50Il0gKyBzdW0oaXRlbVsibWFya2V0X3NoYXJlX3BlcmNlbnQiXSBmb3IgaXRlbSBpbiByb3dbInJpdmFscyJdKSA9PSAxMDBcbicsCiAgICAgICAgICAgICAgJyAgICAgICAgYXNzZXJ0IHJvd1sic2hhcmVfcGVyY2VudCJdICsgc3VtKGl0ZW1bIm1hcmtldF9zaGFyZV9wZXJjZW50Il0gZm9yIGl0ZW0gaW4gcm93WyJyaXZhbHMiXSkgPT0gMTAxXG4nKQp0cGF0aC53cml0ZV90ZXh0KHQsIGVuY29kaW5nPSJ1dGYtOCIpCg==' | base64 -d | python
           rm .github/workflows/patch-pp-display.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/services/region_market_service.py tests/test_region_market_share_authority.py .github/workflows/patch-pp-display.yml
-          git commit -m "Match regional PP display to Excel cells"
+          git add -A
+          git commit -m 'Match regional PP display to Excel cells'
           git push origin HEAD:fix/excel-pp-display-rounding
