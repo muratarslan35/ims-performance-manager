@@ -278,6 +278,42 @@ class RegionPerformanceService:
             "source_by_month": source_by_month,
         }
 
+    def _annual_region_realization(self):
+        """Build the 12-month chart from the same region authority as monthly KPI.
+
+        Each month first uses the official region subtotal selected by
+        ``_official_ims_region_month`` (including P2/P1 precedence). Only months
+        without an official region source fall back to the legacy representative
+        annual series, preserving historical compatibility without allowing a
+        representative aggregate to override an available official subtotal.
+        """
+        legacy_rows = {
+            int(row["month"]): row
+            for row in AnnualRealizationService.build(self.year, self.rep_ids)
+        }
+        rows = []
+        for month, label in enumerate(AnnualRealizationService.MONTHS, start=1):
+            official = self._official_ims_region_month(self.year, month)
+            if official:
+                target = sum((values[0] for values in official.values()), Decimal("0"))
+                complete = all(values[2] for values in official.values())
+                actual = sum((values[1] for values in official.values()), Decimal("0")) if complete else None
+                percent = self.percent(actual, target) if complete and target else None
+                rows.append({
+                    "month": month,
+                    "label": label,
+                    "target_tl": round(float(target), 2),
+                    "actual_tl": round(float(actual), 2) if actual is not None else 0.0,
+                    "percent": round(float(percent), 1) if percent is not None else None,
+                    "has_data": bool(target),
+                    "source": "OFFICIAL_REGION_SUBTOTAL",
+                })
+                continue
+
+            legacy = legacy_rows[month]
+            rows.append({**legacy, "source": "REPRESENTATIVE_AGGREGATE"})
+        return rows
+
     def report(self):
         periods = {}
         for key, label, length in self.PERIODS:
@@ -304,5 +340,5 @@ class RegionPerformanceService:
             "vacant_count": vacant_count,
             "manager": primary.manager or "-",
             "periods": periods,
-            "annual_realization": AnnualRealizationService.build(self.year, self.rep_ids),
+            "annual_realization": self._annual_region_realization(),
         }
