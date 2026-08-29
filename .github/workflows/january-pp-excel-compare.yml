@@ -1,0 +1,59 @@
+name: January PP Excel compare
+
+on:
+  push:
+    branches: [audit/january-pp-readonly]
+    paths: [.github/workflows/january-pp-excel-compare.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Compare Excel row with DB
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+          from openpyxl import load_workbook
+          p=Path('uploads/ims_archive/upload-21.xlsx')
+          if not p.exists():
+            p=Path('instance/uploads/ims_archive/upload-21.xlsx')
+          print('ARCHIVE_PATH|'+str(p)+'|exists='+str(p.exists()))
+          wbv=load_workbook(p,read_only=True,data_only=True)
+          try:
+            ws=wbv['TTS REKABET PP']
+            rows=[]
+            for r in range(110,126):
+              vals=[ws.cell(r,c).value for c in range(1,ws.max_column+1)]
+              if any(v is not None for v in vals): rows.append({'row':r,'values':vals})
+            print('EXCEL_ROWS|'+json.dumps(rows,ensure_ascii=False,default=str))
+          finally: wbv.close()
+          db=sqlite3.connect('instance/ipm.db'); db.row_factory=sqlite3.Row
+          try:
+            rows=[dict(r) for r in db.execute("SELECT product_group,product_name,metric_value,source_row,is_subtotal FROM ims_competition_data WHERE upload_id=21 AND metric_type='MARKET_SHARE' AND territory='901 DIYARBAKIR' AND subterritory='901 DIYARBAKIR' ORDER BY product_group,product_name")]
+            print('DB_ROWS|'+json.dumps(rows,ensure_ascii=False))
+          finally: db.close()
+          PY
+          REMOTE
