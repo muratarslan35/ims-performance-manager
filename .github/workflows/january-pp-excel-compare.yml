@@ -38,17 +38,28 @@ jobs:
           from pathlib import Path
           from openpyxl import load_workbook
           p=Path('uploads/ims_archive/upload-21.xlsx')
-          if not p.exists():
-            p=Path('instance/uploads/ims_archive/upload-21.xlsx')
-          print('ARCHIVE_PATH|'+str(p)+'|exists='+str(p.exists()))
           wbv=load_workbook(p,read_only=True,data_only=True)
           try:
-            ws=wbv['TTS REKABET PP']
-            rows=[]
-            for r in range(110,126):
-              vals=[ws.cell(r,c).value for c in range(1,ws.max_column+1)]
-              if any(v is not None for v in vals): rows.append({'row':r,'values':vals})
-            print('EXCEL_ROWS|'+json.dumps(rows,ensure_ascii=False,default=str))
+            print('SHEETS|'+json.dumps(wbv.sheetnames,ensure_ascii=False))
+            candidates=[]
+            for ws in wbv.worksheets:
+              sample=[]
+              for row in ws.iter_rows(min_row=1,max_row=min(ws.max_row,8),values_only=True):
+                sample.extend([str(v).upper() for v in row if v is not None])
+              text=' '.join(sample)
+              if 'PP' in ws.title.upper() or ('REKABET' in text and '%' in text):
+                candidates.append(ws.title)
+            print('CANDIDATES|'+json.dumps(candidates,ensure_ascii=False))
+            for title in candidates:
+              ws=wbv[title]
+              hits=[]
+              for r in range(1,ws.max_row+1):
+                vals=[ws.cell(r,c).value for c in range(1,ws.max_column+1)]
+                txt=' | '.join(str(v) for v in vals if v is not None).upper()
+                if '901 DIYARBAKIR' in txt:
+                  hits.append({'row':r,'values':vals})
+              if hits:
+                print('EXCEL_HITS|'+json.dumps({'sheet':title,'rows':hits[:8]},ensure_ascii=False,default=str))
           finally: wbv.close()
           db=sqlite3.connect('instance/ipm.db'); db.row_factory=sqlite3.Row
           try:
