@@ -220,21 +220,30 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def _restore_period_snapshot(cls, upload: IMSUpload) -> None:
-        path = cls.upload_snapshot_path(upload.id)
+        upload_id = int(upload.id)
+        year = int(upload.year)
+        month = int(upload.month)
+        path = cls.upload_snapshot_path(upload_id)
         if not path.exists():
             raise RuntimeError("Silme için gerekli geri dönüş snapshot'ı bulunamadı.")
         payload = json.loads(path.read_text(encoding="utf-8"))
         if int(payload.get("version", 0)) != cls.SNAPSHOT_VERSION:
             raise RuntimeError("Geri dönüş snapshot sürümü desteklenmiyor.")
-        if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (upload.year, upload.month):
+        if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (year, month):
             raise RuntimeError("Geri dönüş snapshot dönemi IMS dönemiyle eşleşmiyor.")
 
-        Target.query.filter_by(year=upload.year, month=upload.month).delete(synchronize_session=False)
-        IMSSummary.query.filter_by(year=upload.year, month=upload.month).delete(synchronize_session=False)
+        Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
+        IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         RepresentativeBrickAssignment.query.filter_by(
-            year=upload.year, month=upload.month
+            year=year, month=month
         ).delete(synchronize_session=False)
         db.session.flush()
+
+        # A period rollback replaces current-state rows wholesale. Clear loaded
+        # ORM identities before recreating them so the same request cannot keep
+        # serving the just-deleted current-week Target/Summary objects. This also
+        # prevents PK reuse from colliding with stale identities during flush.
+        db.session.expunge_all()
 
         cls._restore_rows(Target, payload.get("targets") or [])
         cls._restore_rows(IMSSummary, payload.get("summaries") or [])
@@ -287,7 +296,6 @@ class IMSUploadLifecycleService:
 
         deleted_upload_id = int(upload.id)
         hidden_key = cls.hidden_setting_key(deleted_upload_id)
-        hidden = Setting.query.filter_by(setting_key=hidden_key).first()
         latest = cls._latest_completed_for_period(upload) if upload.status == "COMPLETED" else None
         restored = bool(latest is not None and latest.id == deleted_upload_id)
         try:
@@ -300,6 +308,7 @@ class IMSUploadLifecycleService:
             # current identity map. The explicit SQL order is deterministic and
             # remains inside the same transaction.
             cls._delete_direct_upload_children(deleted_upload_id)
+            hidden = Setting.query.filter_by(setting_key=hidden_key).first()
             if hidden is not None:
                 db.session.delete(hidden)
             db.session.execute(
