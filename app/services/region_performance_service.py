@@ -185,14 +185,14 @@ class RegionPerformanceService:
         }
 
     def _official_region_unit_month(self, year, month):
-        """Return DB-backed region/product box targets and actuals.
+        """Return authoritative region/product box target and actual values.
 
         P2/P1 region-product unit rows remain authoritative when present. For
-        IMS periods, the box target comes from the representative Target rows
-        for the same region/month, exactly like the region market analysis.
-        The actual box count comes from the workbook-authoritative region ACTUAL
-        aggregate. TL is never converted to boxes and balance values are never
-        treated as box targets.
+        IMS periods the unit target comes from the period's representative
+        Target rows, while the actual unit is derived from the workbook's
+        ``MF SIZ KUTU BAKIYE`` regional balance row: target - remaining balance.
+        This mirrors the TL balance logic and never substitutes TTS competition
+        units, percentage estimates, or TL-to-unit conversions.
         """
         production_upload = ProductionResultService.final_upload(year, month)
         if production_upload is not None:
@@ -222,22 +222,29 @@ class RegionPerformanceService:
         if not target_units:
             return {}
 
-        actual_rows = {
-            row.product_id: row
-            for row in OfficialAggregateService.rows(year, month, self.region_key, ACTUAL_TYPE)
+        upload_id = OfficialAggregateService.latest_upload_id(year, month, TARGET_TYPE)
+        if not upload_id:
+            return {}
+        balances = {
+            product_id: Decimal(str(balance_unit or 0))
+            for product_id, balance_unit in db.session.query(
+                IMSRawData.product_id, IMSRawData.unit
+            ).filter(
+                IMSRawData.upload_id == upload_id,
+                IMSRawData.sheet_type == "dashboard_balance_region",
+                IMSRawData.territory == self.region_key,
+            ).all()
         }
-        if not actual_rows:
-            # If there is no official regional box actual, aggregate() falls
-            # back to representative DB actuals instead of manufacturing units.
+        if not balances:
             return {}
 
         return {
             product_id: [
                 target_unit,
-                Decimal(str(actual_rows[product_id].unit or 0)),
+                target_unit - balances[product_id],
                 True,
             ]
-            if product_id in actual_rows
+            if product_id in balances
             else [target_unit, Decimal("0"), False]
             for product_id, target_unit in target_units.items()
         }

@@ -8,11 +8,20 @@ def test_passive_representative_has_red_status_label():
     assert "PASİF KULLANICI" in html
 
 
-def test_ims_region_unit_gap_uses_db_target_units_and_official_actual_units():
+def test_ims_region_unit_gap_uses_target_minus_mf_siz_kutu_balance():
     source = Path("app/services/region_performance_service.py").read_text()
     segment = source.split("def _official_region_unit_month", 1)[1].split("def aggregate", 1)[0]
     assert "func.sum(Target.unit_target)" in segment
-    assert "ACTUAL_TYPE" in segment
-    assert "actual_rows[product_id].unit" in segment
-    assert "target.unit" not in segment
-    assert "dashboard_balance_region" not in segment
+    assert "dashboard_balance_region" in segment
+    assert "IMSRawData.unit" in segment
+    assert "target_unit - balances[product_id]" in segment
+    assert "actual_rows" not in segment
+    assert "ACTUAL_TYPE" not in segment
+
+
+def test_unit_balance_example_matches_workbook_semantics():
+    target_unit = 74907
+    remaining_balance = 213
+    actual_unit = target_unit - remaining_balance
+    assert actual_unit == 74694
+    assert actual_unit - target_unit == -213
