@@ -1,0 +1,47 @@
+name: Read-only Diyarbakir PP detail audit
+
+on:
+  push:
+    branches: [fix/region-market-share-authority]
+    paths: [.github/workflows/region-market-audit-detail.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: SSH setup
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read PP rows
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          db=sqlite3.connect('instance/ipm.db', timeout=30); db.row_factory=sqlite3.Row
+          upload=db.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,COALESCE(week_number,0) DESC,COALESCE(completed_at,uploaded_at) DESC,id DESC LIMIT 1").fetchone()[0]
+          sheets=[dict(r) for r in db.execute("SELECT sheet_name,metric_type,COUNT(*) n FROM ims_competition_data WHERE upload_id=? GROUP BY sheet_name,metric_type ORDER BY sheet_name,metric_type",(upload,))]
+          pp=[dict(r) for r in db.execute("SELECT sheet_name,territory,subterritory,product_group,product_name,metric_value,source_row FROM ims_competition_data WHERE upload_id=? AND metric_type='MARKET_SHARE' AND (territory LIKE '901%' OR UPPER(territory) LIKE '%DIYARBAKIR%') ORDER BY sheet_name,source_row,product_group,product_name LIMIT 120",(upload,))]
+          pp_any=[dict(r) for r in db.execute("SELECT sheet_name,territory,subterritory,product_group,product_name,metric_value,source_row FROM ims_competition_data WHERE upload_id=? AND metric_type='MARKET_SHARE' ORDER BY sheet_name,source_row,product_group,product_name LIMIT 40",(upload,))]
+          unit=[dict(r) for r in db.execute("SELECT sheet_name,territory,subterritory,product_group,product_name,metric_value,source_row FROM ims_competition_data WHERE upload_id=? AND metric_type='UNIT' AND territory LIKE '901%' AND UPPER(product_group) LIKE '%TRAVAZOL%' ORDER BY source_row,product_name LIMIT 80",(upload,))]
+          db.close()
+          print('DIYARBAKIR_PP_DETAIL|'+json.dumps({'sheets':sheets,'pp_901':pp,'pp_any':pp_any,'unit_901_travazol':unit},ensure_ascii=False))
+          PY
+          REMOTE
