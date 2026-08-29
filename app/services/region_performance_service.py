@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, desc
 
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, Product, ProductionRegionProductResult, Representative, Target
+from app.models import IMSSummary, IMSRawData, IMSUpload, Product, ProductionRegionProductResult, Representative, Target
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
 from app.services.production_result_service import ProductionResultService
@@ -82,6 +82,7 @@ class RegionPerformanceService:
         return db.session.query(
             Target.year, Target.month, Target.representative_id, Target.product_id,
             func.coalesce(func.sum(Target.tl_target), 0.0),
+            func.coalesce(func.sum(Target.unit_target), 0.0),
         ).filter(Target.representative_id.in_(self.rep_ids), or_(*conditions)).group_by(
             Target.year, Target.month, Target.representative_id, Target.product_id
         ).all()
@@ -183,21 +184,95 @@ class RegionPerformanceService:
             for product_id, target_tl in balance
         }
 
+    def _official_region_unit_month(self, year, month):
+        """Return authoritative region/product box targets and actuals.
+
+        This deliberately uses stored unit fields only. It never derives boxes
+        from TL or realization percentages. P2/P1 region product rows have
+        priority; IMS official region aggregates are the fallback.
+        """
+        production_upload = ProductionResultService.final_upload(year, month)
+        if production_upload is not None:
+            rows = ProductionRegionProductResult.query.filter_by(
+                upload_id=production_upload.id, region_code=self.region_key
+            ).all()
+            if rows:
+                return {
+                    row.product_id: [
+                        Decimal(str(row.target_unit or 0)),
+                        Decimal(str(row.actual_unit or 0)),
+                        True,
+                    ]
+                    for row in rows
+                }
+
+        targets = OfficialAggregateService.rows(year, month, self.region_key, TARGET_TYPE)
+        if not targets:
+            return {}
+        actuals = {
+            row.product_id: row
+            for row in OfficialAggregateService.rows(year, month, self.region_key, ACTUAL_TYPE)
+        }
+        upload_id = OfficialAggregateService.latest_upload_id(year, month, TARGET_TYPE)
+        balances = {}
+        if upload_id:
+            balances = {
+                product_id: Decimal(str(balance_unit or 0))
+                for product_id, balance_unit in db.session.query(
+                    IMSRawData.product_id, IMSRawData.unit
+                ).filter(
+                    IMSRawData.upload_id == upload_id,
+                    IMSRawData.sheet_type == "dashboard_balance_region",
+                    IMSRawData.territory == self.region_key,
+                ).all()
+            }
+        result = {}
+        for target in targets:
+            target_unit = Decimal(str(target.unit or 0))
+            actual = actuals.get(target.product_id)
+            if actual is not None:
+                result[target.product_id] = [
+                    target_unit, Decimal(str(actual.unit or 0)), True
+                ]
+            elif target.product_id in balances:
+                result[target.product_id] = [
+                    target_unit, target_unit - balances[target.product_id], True
+                ]
+            else:
+                result[target.product_id] = [target_unit, Decimal("0"), False]
+        return result
+
     def aggregate(self, months):
-        cells = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
-        for year, month, rep_id, product_id, target in self._target_rows(months):
+        cells = defaultdict(lambda: {
+            "target": Decimal("0"), "actual": Decimal("0"), "complete": True,
+            "target_unit": Decimal("0"), "actual_unit": Decimal("0"), "unit_complete": True,
+        })
+        for year, month, rep_id, product_id, target, target_unit in self._target_rows(months):
             key = (year, month, rep_id, product_id)
             exact_target = Decimal(str(target or 0))
             cells[key]["target"] += exact_target
+            cells[key]["target_unit"] += Decimal(str(target_unit or 0))
             effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
             if not effective["complete"] or effective["actual_tl"] is None:
                 cells[key]["complete"] = False
             else:
                 cells[key]["actual"] += Decimal(str(effective["actual_tl"]))
 
+            if str(effective.get("source") or "").startswith("PRODUCTION_"):
+                production_row = ProductionResultService.final_product_result(year, month, rep_id, product_id)
+                if production_row is None or production_row.actual_unit is None:
+                    cells[key]["unit_complete"] = False
+                else:
+                    cells[key]["actual_unit"] += Decimal(str(production_row.actual_unit))
+            elif not effective["complete"] or effective.get("actual_unit") is None:
+                cells[key]["unit_complete"] = False
+            else:
+                cells[key]["actual_unit"] += Decimal(str(effective["actual_unit"]))
+
         reps = {item.id: item for item in self.representatives}
         rep_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         person_month_product = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        person_month_product_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         for (year, month, rep_id, product_id), values in cells.items():
             target, actual, row_complete = values["target"], values["actual"], values["complete"]
             rep_bucket = rep_totals[rep_id]
@@ -208,8 +283,13 @@ class RegionPerformanceService:
             bucket[0] += target
             bucket[1] += actual
             bucket[2] = bucket[2] and row_complete
+            unit_bucket = person_month_product_units[(year, month, product_id)]
+            unit_bucket[0] += values["target_unit"]
+            unit_bucket[1] += values["actual_unit"]
+            unit_bucket[2] = unit_bucket[2] and values["unit_complete"]
 
         product_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        product_unit_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         month_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         source_by_month = {}
         all_product_ids = set()
@@ -232,6 +312,21 @@ class RegionPerformanceService:
                     bucket[1] += actual
                     bucket[2] = bucket[2] and row_complete
 
+            official_units = self._official_region_unit_month(year, month)
+            if official_units:
+                month_unit_source = official_units
+            else:
+                month_unit_source = {
+                    key[2]: vals for key, vals in person_month_product_units.items()
+                    if key[0] == year and key[1] == month
+                }
+            for product_id, vals in month_unit_source.items():
+                target_unit, actual_unit, unit_complete = vals
+                unit_bucket = product_unit_totals[product_id]
+                unit_bucket[0] += target_unit
+                unit_bucket[1] += actual_unit
+                unit_bucket[2] = unit_bucket[2] and unit_complete
+
         products = {
             item.id: item
             for item in Product.query.filter(Product.id.in_(all_product_ids)).all()
@@ -250,14 +345,19 @@ class RegionPerformanceService:
                 "complete": row_complete,
             }
 
-        product_rows = [
-            {
+        product_rows = []
+        for pid, vals in product_totals.items():
+            unit_vals = product_unit_totals.get(pid, [Decimal("0"), Decimal("0"), False])
+            unit_target, unit_actual, unit_complete = unit_vals
+            product_rows.append({
                 "product_id": pid,
                 "product_name": products[pid].product_name if pid in products else f"Ürün {pid}",
+                "target_unit": unit_target,
+                "actual_unit": unit_actual if unit_complete else None,
+                "unit_difference": (unit_actual - unit_target) if unit_complete else None,
+                "unit_complete": unit_complete,
                 **result_row(vals),
-            }
-            for pid, vals in product_totals.items()
-        ]
+            })
         product_rows.sort(key=lambda row: (-(row["actual_tl"] or Decimal("0")), row["product_name"]))
         representative_rows = [
             {
