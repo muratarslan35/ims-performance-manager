@@ -40,7 +40,7 @@ def _competition_row(upload_id, product, name, value, *, metric_type="UNIT", she
     )
 
 
-def test_integer_pp_display_thresholds_and_closure():
+def test_integer_pp_display_matches_workbook_cells_without_redistribution():
     from app.services.region_market_service import RegionMarketService
 
     assert RegionMarketService._display_integer(3.49) == 3
@@ -48,16 +48,21 @@ def test_integer_pp_display_thresholds_and_closure():
     assert RegionMarketService._display_integer(3.51) == 4
     assert RegionMarketService._display_integer(5.526297) == 6
 
-    # User-facing IMS rule: if the first four displayed items total 96 and the
-    # fifth exact PP is 3.51, it is shown as 4 and the displayed subtotal is 100.
+    # Real January/Diyarbakir workbook examples: every visible cell is rounded
+    # from its own exact PP. Do not steal/add a point to force the visible
+    # components to 100; the workbook subtotal is a separate 100 cell.
     allocated = RegionMarketService._allocate_tenth_shares([
-        ("A", 24.0), ("B", 24.0), ("C", 24.0), ("D", 24.0), ("E", 3.51)
+        ("MONUROL", 22.500530029984553),
+        ("UROCARE", 28.645849108035254),
+        ("UROMISIN", 48.85362086198019),
     ])
-    assert allocated["E"] == 4
-    assert sum(allocated.values()) == 100
+    assert allocated == {"MONUROL": 23, "UROCARE": 29, "UROMISIN": 49}
+    assert sum(allocated.values()) == 101
+    assert RegionMarketService._display_integer(33.57540382788109) == 34
+    assert RegionMarketService._display_integer(16.41132653600296) == 16
 
 
-def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):
+def test_region_market_uses_authoritative_tts_pp_and_keeps_separate_subtotal(tmp_path):
     app = _app(tmp_path)
     from app.extensions import db
     from app.models import IMSUpload, Product, Representative, Target
@@ -103,7 +108,7 @@ def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):
         assert tracovol["precise_market_share_percent"] == 5.526297
         assert tracovol["market_share_percent"] == 6
         assert row["display_share_total"] == 100
-        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 100
+        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 101
         assert result["market_share_source"] == "IMS_TTS_REKABET_PP_WITH_UNIT_FALLBACK"
 
 

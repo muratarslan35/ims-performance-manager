@@ -40,11 +40,13 @@ class RegionMarketService:
 
     @staticmethod
     def _display_integer(value):
-        """Mirror the IMS workbook's no-decimal PP presentation.
+        """Mirror the workbook's visible no-decimal PP cell value.
 
-        The workbook view used by the field team keeps an exact .50 boundary
-        on the lower integer and moves to the next integer only when the
-        fractional part is greater than .50. The precise PP is kept separately.
+        The exact PP from ``TTS Rekabet PP`` remains authoritative and is kept
+        separately for comparisons. Display rounding is applied independently
+        to each cell; individual visible cells are never redistributed merely
+        to force their rounded sum to 100. The workbook subtotal is a separate
+        100-percent cell.
         """
         number = max(Decimal(str(value or 0)), Decimal("0"))
         floor_value = int(number.to_integral_value(rounding=ROUND_FLOOR))
@@ -53,50 +55,8 @@ class RegionMarketService:
 
     @classmethod
     def _allocate_tenth_shares(cls, components):
-        """Return whole-number PP display values and close the group to 100.
-
-        First apply the workbook's integer presentation rule to every exact IMS
-        PP. Independent integer presentation can sum to 99/101/102, so a final
-        one-point reconciliation is applied to the least-impact component(s).
-        Precise IMS PP values are never changed and remain authoritative for
-        comparisons.
-        """
-        normalized = [(key, max(Decimal(str(value or 0)), Decimal("0"))) for key, value in components]
-        total = sum((value for _, value in normalized), Decimal("0"))
-        if total <= 0:
-            return {key: 0 for key, _ in normalized}
-        scaled = [(key, value * Decimal("100") / total) for key, value in normalized]
-        allocated = {key: cls._display_integer(value) for key, value in scaled}
-        delta = 100 - sum(allocated.values())
-
-        if delta > 0:
-            # Prefer values just below .50; exact .50 stays down unless no other
-            # component can absorb the unavoidable reconciliation point.
-            candidates = []
-            exact_half = []
-            for index, (key, value) in enumerate(scaled):
-                floor_value = int(value.to_integral_value(rounding=ROUND_FLOOR))
-                fraction = value - Decimal(floor_value)
-                if allocated[key] == floor_value:
-                    item = (fraction, -index, key)
-                    (exact_half if fraction == Decimal("0.5") else candidates).append(item)
-            candidates.sort(reverse=True)
-            exact_half.sort(reverse=True)
-            ordered = candidates + exact_half
-            for _, _, key in ordered[:delta]:
-                allocated[key] += 1
-        elif delta < 0:
-            # Remove points first from values that only barely crossed .50.
-            candidates = []
-            for index, (key, value) in enumerate(scaled):
-                floor_value = int(value.to_integral_value(rounding=ROUND_FLOOR))
-                fraction = value - Decimal(floor_value)
-                if allocated[key] > floor_value:
-                    candidates.append((fraction, index, key))
-            candidates.sort()
-            for _, _, key in candidates[:abs(delta)]:
-                allocated[key] -= 1
-        return allocated
+        """Return each PP cell's workbook-style integer display independently."""
+        return {key: cls._display_integer(value) for key, value in components}
 
     def _latest_upload_id(self):
         return db.session.query(IMSUpload.id).filter(
@@ -352,7 +312,7 @@ class RegionMarketService:
                 "competitor_unit": round(competitor, 2), "market_unit": round(market, 2),
                 "share_percent": allocations.get("__company__", self._display_integer(precise_company_share)),
                 "precise_share_percent": round(precise_company_share, 6),
-                "display_share_total": sum(allocations.values()) if market else 0,
+                "display_share_total": 100 if market else 0,
                 "market_share_source": "IMS_TTS_REKABET_PP" if pp_complete else "IMS_COMPETITION_UNITS",
                 "realization_percent": round(realization, 1),
                 "attention": "strong" if precise_company_share >= 50 else "warning" if precise_company_share >= 30 else "critical",
