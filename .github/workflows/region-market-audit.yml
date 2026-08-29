@@ -38,7 +38,6 @@ jobs:
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
           import json
-          import math
           import sqlite3
           from collections import defaultdict
           from decimal import Decimal, ROUND_HALF_UP
@@ -59,7 +58,7 @@ jobs:
               upload_id = int(upload['id'])
 
               monthly_count = db.execute('''
-                  SELECT COUNT(*) FROM competition_data
+                  SELECT COUNT(*) FROM ims_competition_data
                   WHERE upload_id=? AND metric_type='UNIT'
                     AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
                     AND UPPER(sheet_name) LIKE '%AYLIK%'
@@ -72,7 +71,7 @@ jobs:
                          COALESCE(is_company_product,0) AS is_company_product,
                          COALESCE(is_competitor,0) AS is_competitor,
                          SUM(metric_value) AS value
-                  FROM competition_data
+                  FROM ims_competition_data
                   WHERE upload_id=? AND metric_type='UNIT'
                     AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
                     {monthly_filter}
@@ -82,7 +81,7 @@ jobs:
               pp_rows = db.execute('''
                   SELECT territory, subterritory, product_group, product_name,
                          AVG(metric_value) AS value, COUNT(*) AS n
-                  FROM competition_data
+                  FROM ims_competition_data
                   WHERE upload_id=? AND metric_type='MARKET_SHARE'
                     AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
                   GROUP BY territory, subterritory, product_group, product_name
