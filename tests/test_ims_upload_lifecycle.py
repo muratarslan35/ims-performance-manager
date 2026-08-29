@@ -154,13 +154,15 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         )
         db.session.add(current)
         db.session.flush()
+        current_id = int(current.id)
+        previous_id = int(previous.id)
         target.unit_realization = 850.0
         target.tl_realization = 8500.0
-        summary.upload_id = current.id
+        summary.upload_id = current_id
         summary.unit = 850.0
         summary.tl = 8500.0
         raw = IMSRawData(
-            upload_id=current.id,
+            upload_id=current_id,
             year=2033,
             month=2,
             quarter="Q1",
@@ -178,7 +180,7 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         db.session.add(raw)
         db.session.flush()
         fact = IMSFact(
-            upload_id=current.id,
+            upload_id=current_id,
             raw_data_id=raw.id,
             representative_id=rep.id,
             product_id=product.id,
@@ -193,24 +195,24 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         )
         db.session.add(fact)
         job.status = IMSImportJob.STATUS_COMPLETED
-        job.ims_upload_id = current.id
+        job.ims_upload_id = current_id
         db.session.commit()
-        IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=current.id)
+        IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=current_id)
 
-        result = IMSUploadLifecycleService.delete_upload(current.id)
+        result = IMSUploadLifecycleService.delete_upload(current_id)
         assert result["restored_previous_period_state"] is True
-        assert db.session.get(IMSUpload, current.id) is None
-        assert db.session.get(IMSUpload, previous.id) is not None
+        assert db.session.get(IMSUpload, current_id) is None
+        assert db.session.get(IMSUpload, previous_id) is not None
         restored_target = Target.query.filter_by(year=2033, month=2, representative_id=rep.id, product_id=product.id).one()
         restored_summary = IMSSummary.query.filter_by(year=2033, month=2, representative_id=rep.id, product_id=product.id).one()
         assert restored_target.unit_realization == 700.0
         assert restored_target.tl_realization == 7000.0
         assert restored_summary.unit == 700.0
         assert restored_summary.tl == 7000.0
-        assert restored_summary.upload_id == previous.id
-        assert IMSRawData.query.filter_by(upload_id=current.id).count() == 0
-        assert IMSFact.query.filter_by(upload_id=current.id).count() == 0
-        assert IMSImportJob.query.filter_by(ims_upload_id=current.id).count() == 0
+        assert restored_summary.upload_id == previous_id
+        assert IMSRawData.query.filter_by(upload_id=current_id).count() == 0
+        assert IMSFact.query.filter_by(upload_id=current_id).count() == 0
+        assert IMSImportJob.query.filter_by(ims_upload_id=current_id).count() == 0
     finally:
         db.session.remove()
         db.drop_all()
