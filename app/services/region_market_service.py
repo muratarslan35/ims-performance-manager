@@ -1,7 +1,7 @@
 """Read-only, upload-scoped competitor analysis for a complete sales region."""
 
 from collections import defaultdict
-from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
+from decimal import Decimal, ROUND_FLOOR
 
 from sqlalchemy import desc, func
 
@@ -39,27 +39,26 @@ class RegionMarketService:
         return "".join(char for char in AliasService.normalize(value) if char.isalnum())
 
     @staticmethod
-    def _whole_percent(value):
-        """Excel-style whole-percent presentation without Python banker's rounding."""
-        return int(Decimal(str(value or 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    def _allocate_tenth_shares(components):
+        """Return 0.1-point display shares that close to exactly 100.0.
 
-    @staticmethod
-    def _allocate_whole_shares(components):
-        """Allocate integer percentage points that always close to exactly 100."""
-        normalized = [(key, Decimal(str(unit or 0))) for key, unit in components]
-        total = sum((unit for _, unit in normalized), Decimal("0"))
+        The precise IMS PP remains in ``precise_*`` fields. This presentation
+        allocation only resolves the unavoidable decimal rounding remainder.
+        """
+        normalized = [(key, max(Decimal(str(value or 0)), Decimal("0"))) for key, value in components]
+        total = sum((value for _, value in normalized), Decimal("0"))
         if total <= 0:
-            return {key: 0 for key, _ in normalized}
-        exact = [(key, unit * Decimal("100") / total) for key, unit in normalized]
-        allocated = {key: int(value.to_integral_value(rounding=ROUND_FLOOR)) for key, value in exact}
-        remaining = 100 - sum(allocated.values())
+            return {key: 0.0 for key, _ in normalized}
+        exact_tenths = [(key, value * Decimal("1000") / total) for key, value in normalized]
+        allocated = {key: int(value.to_integral_value(rounding=ROUND_FLOOR)) for key, value in exact_tenths}
+        remaining = 1000 - sum(allocated.values())
         ranked = sorted(
-            enumerate(exact),
+            enumerate(exact_tenths),
             key=lambda item: (-(item[1][1] - Decimal(allocated[item[1][0]])), item[0]),
         )
         for _, (key, _) in ranked[:remaining]:
             allocated[key] += 1
-        return allocated
+        return {key: points / 10.0 for key, points in allocated.items()}
 
     def _latest_upload_id(self):
         return db.session.query(IMSUpload.id).filter(
@@ -126,6 +125,11 @@ class RegionMarketService:
         } - {""}
         return any(key in name_key or name_key in key for key in own_keys)
 
+    @staticmethod
+    def _is_total_name(name):
+        key = AliasService.normalize(name)
+        return "SUBTOTAL" in key or "GRAND TOTAL" in key or key.endswith(" TOTAL")
+
     def _competition_rows(self, upload_id):
         if not upload_id:
             return []
@@ -161,6 +165,44 @@ class RegionMarketService:
             CompetitionData.is_competitor,
         ).all()
 
+    def _region_market_share_rows(self, upload_id, products):
+        """Read workbook-authoritative region PP from TTS REKABET PP.
+
+        Region subtotal rows use ``territory == subterritory`` and are already
+        persisted as exact percentage-point values. They are preferable to a
+        second dashboard-side percentage calculation.
+        """
+        if not upload_id:
+            return {}
+        prefix = f"{self.region_key}%"
+        rows = db.session.query(
+            CompetitionData.product_group,
+            CompetitionData.product_name,
+            CompetitionData.is_company_product,
+            CompetitionData.is_competitor,
+            CompetitionData.metric_value,
+        ).filter(
+            CompetitionData.upload_id == upload_id,
+            CompetitionData.metric_type == "MARKET_SHARE",
+            CompetitionData.territory.like(prefix),
+            CompetitionData.subterritory == CompetitionData.territory,
+            func.upper(CompetitionData.sheet_name).like("%REKABET%"),
+            func.upper(CompetitionData.sheet_name).like("%PP%"),
+        ).all()
+        buckets = defaultdict(lambda: {"company": None, "rivals": {}})
+        for group, name, stored_company, stored_competitor, value in rows:
+            if self._is_total_name(name):
+                continue
+            product = self._product_for(group, name, products)
+            if product is None:
+                continue
+            percent = float(value or 0)
+            if self._is_company(name, product, stored_company, stored_competitor):
+                buckets[product.id]["company"] = percent
+            else:
+                buckets[product.id]["rivals"][self._key(name)] = percent
+        return buckets
+
     def _target_units(self):
         if not self.representative_ids:
             return {}
@@ -188,6 +230,7 @@ class RegionMarketService:
         products = self._products()
         targets = self._target_units()
         official = self._official_products(production_upload_id)
+        pp_buckets = self._region_market_share_rows(upload_id, products)
         product_buckets = defaultdict(lambda: {
             "company": 0.0, "company_seen": False,
             "competitor": 0.0, "rivals": defaultdict(float),
@@ -199,7 +242,7 @@ class RegionMarketService:
 
         for group, name, brick, stored_company, stored_competitor, value in self._competition_rows(upload_id):
             product = self._product_for(group, name, products)
-            if product is None:
+            if product is None or self._is_total_name(name):
                 continue
             amount = float(value or 0)
             is_company = self._is_company(name, product, stored_company, stored_competitor)
@@ -227,41 +270,54 @@ class RegionMarketService:
             target = float(official_row.target_unit) if official_row else float(targets.get(product.id, 0))
             competitor = bucket["competitor"]
 
-            # Realization keeps P2 > P1 > IMS. Market share is intentionally
-            # isolated to one coherent IMS competition market, so production
-            # company units are never mixed with IMS rival units in its denominator.
+            # Realization keeps P2 > P1 > IMS. Market denominator remains one
+            # coherent IMS competition source and never mixes P1/P2 with rivals.
             market_company = bucket["company"] if bucket["company_seen"] else company
             market = market_company + competitor
-            precise_share = market_company * 100.0 / market if market else 0.0
+            derived_company_share = market_company * 100.0 / market if market else 0.0
             realization = company * 100.0 / target if target else 0.0
 
+            pp_bucket = pp_buckets.get(product.id, {})
+            precise_company_share = (
+                float(pp_bucket.get("company"))
+                if pp_bucket.get("company") is not None
+                else derived_company_share
+            )
             ordered_rivals = sorted(bucket["rivals"].items(), key=lambda item: (-item[1], item[0]))
-            allocations = self._allocate_whole_shares(
-                [("__company__", market_company)] + [(name, unit) for name, unit in ordered_rivals]
+            precise_rivals = []
+            for name, unit in ordered_rivals:
+                derived = unit * 100.0 / market if market else 0.0
+                source_pp = (pp_bucket.get("rivals") or {}).get(self._key(name))
+                precise_rivals.append((name, unit, float(source_pp) if source_pp is not None else derived))
+
+            allocations = self._allocate_tenth_shares(
+                [("__company__", precise_company_share)] + [(name, pp) for name, _, pp in precise_rivals]
             )
             rivals = []
-            for name, unit in ordered_rivals:
-                display_share = allocations.get(name, 0)
+            for name, unit, precise_rival_share in precise_rivals:
+                display_share = allocations.get(name, round(precise_rival_share, 1))
                 display_shares_by_rival[(product.id, name)] = display_share
-                precise_rival_share = unit * 100.0 / market if market else 0.0
                 rivals.append({
                     "name": name,
                     "unit": round(unit, 2),
-                    # Existing template reads this field; use the IMS-style whole
-                    # percentage, while retaining precise value for comparisons.
                     "market_share_percent": display_share,
-                    "precise_market_share_percent": round(precise_rival_share, 4),
+                    "precise_market_share_percent": round(precise_rival_share, 6),
                 })
+            pp_complete = pp_bucket.get("company") is not None and all(
+                (pp_bucket.get("rivals") or {}).get(self._key(name)) is not None
+                for name, _ in ordered_rivals
+            )
             rows.append({
                 "product_id": product.id, "product_name": product.product_name,
                 "target_unit": round(target, 2), "company_unit": round(company, 2),
                 "market_company_unit": round(market_company, 2),
                 "competitor_unit": round(competitor, 2), "market_unit": round(market, 2),
-                "share_percent": allocations.get("__company__", self._whole_percent(precise_share)),
-                "precise_share_percent": round(precise_share, 4),
-                "display_share_total": sum(allocations.values()) if market else 0,
+                "share_percent": allocations.get("__company__", round(precise_company_share, 1)),
+                "precise_share_percent": round(precise_company_share, 6),
+                "display_share_total": round(sum(allocations.values()), 1) if market else 0.0,
+                "market_share_source": "IMS_TTS_REKABET_PP" if pp_complete else "IMS_COMPETITION_UNITS",
                 "realization_percent": round(realization, 1),
-                "attention": "strong" if precise_share >= 50 else "warning" if precise_share >= 30 else "critical",
+                "attention": "strong" if precise_company_share >= 50 else "warning" if precise_company_share >= 30 else "critical",
                 "rivals": rivals,
             })
 
@@ -285,7 +341,15 @@ class RegionMarketService:
             product = rival_product[rival_name]
             region_market = row_by_product.get(product.id, {}).get("market_unit", 0.0)
             total_unit = sum(cities.values())
-            precise_rival_share = total_unit * 100.0 / region_market if region_market else 0.0
+            derived_rival_share = total_unit * 100.0 / region_market if region_market else 0.0
+            precise_rival_share = next(
+                (
+                    rival["precise_market_share_percent"]
+                    for rival in row_by_product.get(product.id, {}).get("rivals", [])
+                    if rival["name"] == rival_name
+                ),
+                derived_rival_share,
+            )
             city_rows = [
                 {
                     "city": city, "unit": round(unit, 2),
@@ -298,10 +362,8 @@ class RegionMarketService:
             rival_rows.append({
                 "name": rival_name, "product_id": product.id, "product_name": product.product_name,
                 "unit": round(total_unit, 2),
-                "share_percent": display_shares_by_rival.get(
-                    (product.id, rival_name), self._whole_percent(precise_rival_share)
-                ),
-                "precise_share_percent": round(precise_rival_share, 4),
+                "share_percent": display_shares_by_rival.get((product.id, rival_name), round(precise_rival_share, 1)),
+                "precise_share_percent": round(float(precise_rival_share), 6),
                 "cities": city_rows,
             })
         rival_rows.sort(key=lambda item: (-item["unit"], item["name"]))
@@ -328,15 +390,15 @@ class RegionMarketService:
             "default_rival_key": default_rival_key,
             "available_periods": self._available_periods(), "upload_id": upload_id,
             "source": "PRODUCTION_AND_IMS_COMPETITION" if official else "IMS_COMPETITION",
-            "market_share_source": "IMS_COMPETITION_UNITS",
+            "market_share_source": "IMS_TTS_REKABET_PP_WITH_UNIT_FALLBACK" if pp_buckets else "IMS_COMPETITION_UNITS",
             "has_data": any(item["market_unit"] > 0 for item in rows),
             "totals": {
                 "company_unit": round(total_company, 2),
                 "effective_company_unit": round(total_effective_company, 2),
                 "competitor_unit": round(total_competitor, 2),
                 "market_unit": round(total_market, 2),
-                "share_percent": self._whole_percent(precise_total_share),
-                "precise_share_percent": round(precise_total_share, 4),
+                "share_percent": round(precise_total_share, 1),
+                "precise_share_percent": round(precise_total_share, 6),
             },
         }
 
@@ -344,7 +406,7 @@ class RegionMarketService:
         upload_id = self._latest_upload_id()
         production_upload = ProductionResultService.final_upload(self.year, self.month)
         production_upload_id = production_upload.id if production_upload else None
-        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:share-v3"
+        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:pp-v1"
         return RepresentativeAnalysisCache.get_or_compute(
             key, lambda: self._build(upload_id, production_upload_id), ttl_seconds=60
         )
