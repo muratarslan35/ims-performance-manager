@@ -64,11 +64,11 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert travazol["market_company_unit"] == 120
             assert travazol["competitor_unit"] == 240
             assert travazol["market_unit"] == 360
-            assert travazol["share_percent"] == 33
-            assert travazol["precise_share_percent"] == 33.3333
-            assert travazol["display_share_total"] == 100
+            assert travazol["share_percent"] == 33.3
+            assert travazol["precise_share_percent"] == 33.333333
+            assert travazol["display_share_total"] == 100.0
             assert [item["name"] for item in travazol["rivals"]] == ["RAKIP A", "RAKIP B"]
-            assert sum([travazol["share_percent"], *[item["market_share_percent"] for item in travazol["rivals"]]]) == 100
+            assert round(sum([travazol["share_percent"], *[item["market_share_percent"] for item in travazol["rivals"]]]), 1) == 100.0
             assert [item["brick"] for item in result["top_bricks"]] == ["MARDIN BRICK A", "SIRNAK BRICK B"]
             assert result["totals"]["competitor_unit"] == 240
             assert result["available_periods"] == [{"year": 2042, "month": 1, "label": "01/2042"}]
