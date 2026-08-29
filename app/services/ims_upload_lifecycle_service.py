@@ -9,9 +9,9 @@ The service deliberately separates three concerns:
 
 Weekly raw/fact/competition history is upload-scoped, while Target, IMSSummary and
 RepresentativeBrickAssignment are period-scoped current-state tables. Before a
-new import is published we therefore persist a compact rollback snapshot of only
-those three period-scoped tables. Deleting the latest upload restores that
-snapshot and then removes rows directly owned by the deleted IMSUpload.
+new import is published we persist an exact rollback snapshot of those three
+period-scoped tables. Deleting the latest upload restores that snapshot and then
+removes rows directly owned by the deleted IMSUpload.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from app.models import (
 
 class IMSUploadLifecycleService:
     HIDDEN_KEY_PREFIX = "IMS_UPLOAD_HIDDEN_"
-    SNAPSHOT_VERSION = 1
+    SNAPSHOT_VERSION = 2
 
     @classmethod
     def _archive_root(cls) -> Path:
@@ -149,14 +149,11 @@ class IMSUploadLifecycleService:
         return new_hash == old_hash
 
     @staticmethod
-    def _serialize_rows(rows: Iterable[object], excluded: set[str] | None = None) -> list[dict]:
-        excluded = excluded or set()
+    def _serialize_rows(rows: Iterable[object]) -> list[dict]:
         result = []
         for row in rows:
             values = {}
             for column in row.__table__.columns:
-                if column.name in excluded:
-                    continue
                 value = getattr(row, column.name)
                 if hasattr(value, "isoformat"):
                     value = value.isoformat()
@@ -166,21 +163,19 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def capture_period_snapshot(cls, *, job_id: int, year: int, month: int) -> Path:
+        """Persist the exact current-state rows before a new IMS replaces them."""
         payload = {
             "version": cls.SNAPSHOT_VERSION,
             "year": int(year),
             "month": int(month),
             "targets": cls._serialize_rows(
-                Target.query.filter_by(year=int(year), month=int(month)).all(),
-                excluded={"id", "created_at"},
+                Target.query.filter_by(year=int(year), month=int(month)).all()
             ),
             "summaries": cls._serialize_rows(
-                IMSSummary.query.filter_by(year=int(year), month=int(month)).all(),
-                excluded={"id", "created_at"},
+                IMSSummary.query.filter_by(year=int(year), month=int(month)).all()
             ),
             "brick_assignments": cls._serialize_rows(
-                RepresentativeBrickAssignment.query.filter_by(year=int(year), month=int(month)).all(),
-                excluded={"id", "created_at", "updated_at"},
+                RepresentativeBrickAssignment.query.filter_by(year=int(year), month=int(month)).all()
             ),
         }
         path = cls.pending_snapshot_path(job_id)
@@ -290,8 +285,9 @@ class IMSUploadLifecycleService:
         return False, "Bu eski IMS için geri dönüş snapshot'ı yok; aktif dönem güvenle geri alınamaz."
 
     @staticmethod
-    def _restore_rows(model, rows: list[dict]) -> None:
+    def _prepare_core_rows(model, rows: list[dict]) -> list[dict]:
         columns = {column.name: column for column in model.__table__.columns}
+        prepared = []
         for values in rows:
             clean = {}
             for key, value in values.items():
@@ -301,19 +297,17 @@ class IMSUploadLifecycleService:
                 if value is not None and isinstance(column.type, DateTime) and isinstance(value, str):
                     value = datetime.fromisoformat(value)
                 clean[key] = value
-            db.session.add(model(**clean))
+            prepared.append(clean)
+        return prepared
+
+    @classmethod
+    def _restore_rows_core(cls, model, rows: list[dict]) -> None:
+        prepared = cls._prepare_core_rows(model, rows)
+        if prepared:
+            db.session.execute(model.__table__.insert(), prepared)
 
     @classmethod
     def _expunge_current_state_models(cls) -> None:
-        """Evict only current-state models that are replaced by rollback.
-
-        Some instances are expired after an earlier commit and therefore do not
-        expose year/month in their in-memory state. Filtering by period can miss
-        them and leave stale values after the Core DELETE/restore. Evicting all
-        loaded instances of only these three small current-state model classes is
-        deterministic, while User, Representative, Product and IMSUpload objects
-        remain attached to the request/session.
-        """
         current_state_models = (Target, IMSSummary, RepresentativeBrickAssignment)
         for obj in list(db.session.identity_map.values()):
             if isinstance(obj, current_state_models):
@@ -333,18 +327,30 @@ class IMSUploadLifecycleService:
         if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (year, month):
             raise RuntimeError("Geri dönüş snapshot dönemi IMS dönemiyle eşleşmiyor.")
 
-        Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
-        RepresentativeBrickAssignment.query.filter_by(
-            year=year, month=month
-        ).delete(synchronize_session=False)
-        db.session.flush()
-
+        # The current-state rows are replaced underneath the ORM. Evict only
+        # these model classes before touching SQL; User/Representative/Product/
+        # IMSUpload objects remain attached to the request/session.
         cls._expunge_current_state_models()
 
-        cls._restore_rows(Target, payload.get("targets") or [])
-        cls._restore_rows(IMSSummary, payload.get("summaries") or [])
-        cls._restore_rows(RepresentativeBrickAssignment, payload.get("brick_assignments") or [])
+        target_table = Target.__table__
+        summary_table = IMSSummary.__table__
+        assignment_table = RepresentativeBrickAssignment.__table__
+        db.session.execute(
+            target_table.delete().where(target_table.c.year == year, target_table.c.month == month)
+        )
+        db.session.execute(
+            summary_table.delete().where(summary_table.c.year == year, summary_table.c.month == month)
+        )
+        db.session.execute(
+            assignment_table.delete().where(
+                assignment_table.c.year == year,
+                assignment_table.c.month == month,
+            )
+        )
+
+        cls._restore_rows_core(Target, payload.get("targets") or [])
+        cls._restore_rows_core(IMSSummary, payload.get("summaries") or [])
+        cls._restore_rows_core(RepresentativeBrickAssignment, payload.get("brick_assignments") or [])
         db.session.flush()
 
     @classmethod
