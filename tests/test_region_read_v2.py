@@ -122,3 +122,35 @@ def test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_sel
     assert service.period_months(3) == [(2025, 12), (2026, 1), (2026, 2)]
     assert service.period_months(6) == [(2025, 9), (2025, 10), (2025, 11), (2025, 12), (2026, 1), (2026, 2)]
     assert service.period_months(None) == [(2026, 1), (2026, 2)]
+
+
+def test_region_product_unit_gap_uses_official_stored_units(tmp_path):
+    app = _app(tmp_path)
+    from app.extensions import db
+    from app.models import IMSRawData, IMSUpload, Product, Representative, Target
+    from app.services.official_aggregate_service import TARGET_TYPE, ACTUAL_TYPE
+    from app.services.region_performance_service import RegionPerformanceService
+
+    with app.app_context():
+        db.create_all()
+        product = Product(product_code="UNITGAP", product_name="Unit Gap", is_active=True)
+        rep = Representative(rep_code="UNITR", rep_name="Unit Rep", region="901", city="Diyarbakır", active=True)
+        db.session.add_all([product, rep]); db.session.flush()
+        upload = IMSUpload(file_name="units.xlsx", year=2026, month=2, week_number=9, status="COMPLETED", completed_at=datetime(2026, 2, 28))
+        db.session.add(upload); db.session.flush()
+        db.session.add(Target(year=2026, month=2, representative_id=rep.id, product_id=product.id, tl_target=1000, unit_target=100))
+        db.session.add_all([
+            IMSRawData(upload_id=upload.id, year=2026, month=2, sheet_name="BAKIYE", sheet_type=TARGET_TYPE, source_row=0, product_id=product.id, territory="901", unit=100, tl=1000, raw_json="{}"),
+            IMSRawData(upload_id=upload.id, year=2026, month=2, sheet_name="CIKIS", sheet_type=ACTUAL_TYPE, source_row=0, product_id=product.id, territory="901", unit=112, tl=1100, raw_json="{}"),
+        ])
+        db.session.commit()
+        row = RegionPerformanceService("901", 2026, 2).report()["periods"]["monthly"]["products"][0]
+        assert row["target_unit"] == Decimal("100.0")
+        assert row["actual_unit"] == Decimal("112.0")
+        assert row["unit_difference"] == Decimal("12.0")
+
+
+def test_region_product_table_has_unit_gap_and_tl_gap_headers():
+    template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
+    assert "<th>Kutu Farkı</th><th>₺ Farkı</th>" in template
+    assert "item.unit_difference" in template
