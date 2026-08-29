@@ -285,22 +285,32 @@ class IMSUploadLifecycleService:
         if not allowed:
             raise RuntimeError(reason)
 
+        deleted_upload_id = int(upload.id)
+        hidden_key = cls.hidden_setting_key(deleted_upload_id)
+        hidden = Setting.query.filter_by(setting_key=hidden_key).first()
         latest = cls._latest_completed_for_period(upload) if upload.status == "COMPLETED" else None
-        restored = bool(latest is not None and latest.id == upload.id)
+        restored = bool(latest is not None and latest.id == deleted_upload_id)
         try:
             if restored:
                 cls._restore_period_snapshot(upload)
-            cls._delete_direct_upload_children(upload.id)
-            db.session.delete(upload)
-            hidden = Setting.query.filter_by(setting_key=cls.hidden_setting_key(upload.id)).first()
+
+            # Use Core deletes for upload-owned rows and the parent upload. ORM
+            # relationship synchronization can otherwise try to NULL non-nullable
+            # child FKs when a child object happens to already be present in the
+            # current identity map. The explicit SQL order is deterministic and
+            # remains inside the same transaction.
+            cls._delete_direct_upload_children(deleted_upload_id)
             if hidden is not None:
                 db.session.delete(hidden)
+            db.session.execute(
+                IMSUpload.__table__.delete().where(IMSUpload.id == deleted_upload_id)
+            )
             db.session.commit()
         except Exception:
             db.session.rollback()
             raise
 
         for suffix in (".xlsx", ".xls"):
-            cls.archived_source_path(upload_id, suffix).unlink(missing_ok=True)
-        cls.upload_snapshot_path(upload_id).unlink(missing_ok=True)
-        return {"deleted_upload_id": int(upload_id), "restored_previous_period_state": restored}
+            cls.archived_source_path(deleted_upload_id, suffix).unlink(missing_ok=True)
+        cls.upload_snapshot_path(deleted_upload_id).unlink(missing_ok=True)
+        return {"deleted_upload_id": deleted_upload_id, "restored_previous_period_state": restored}
