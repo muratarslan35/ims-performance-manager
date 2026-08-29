@@ -1,0 +1,69 @@
+name: Refined read-only January PP audit
+
+on:
+  push:
+    branches: [audit/january-pp-readonly]
+    paths: [.github/workflows/january-pp-audit-refined.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Refined audit
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          from collections import defaultdict
+          db=sqlite3.connect('instance/ipm.db',timeout=30); db.row_factory=sqlite3.Row
+          try:
+            u=db.execute("SELECT id,file_name,year,month,week_number,status,completed_at FROM ims_uploads WHERE year=2026 AND month=1 AND status='COMPLETED' ORDER BY COALESCE(week_number,0) DESC,COALESCE(completed_at,uploaded_at) DESC,id DESC LIMIT 1").fetchone()
+            uid=u['id']
+            pp=db.execute("SELECT territory,subterritory,product_group,product_name,metric_value,is_subtotal,is_grand_total FROM ims_competition_data WHERE upload_id=? AND metric_type='MARKET_SHARE' AND UPPER(sheet_name) LIKE '%REKABET%' AND UPPER(sheet_name) LIKE '%PP%'",(uid,)).fetchall()
+            unit=db.execute("SELECT territory,product_group,product_name,SUM(metric_value) v FROM ims_competition_data WHERE upload_id=? AND metric_type='UNIT' AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0 AND UPPER(sheet_name) LIKE '%AYLIK%' AND UPPER(sheet_name) LIKE '%REKABET%' AND UPPER(sheet_name) LIKE '%KUTU%' GROUP BY territory,product_group,product_name",(uid,)).fetchall()
+          finally: db.close()
+          norm=lambda v:' '.join(str(v or '').strip().upper().split())
+          def reg(v):
+            t=norm(v); return t.split()[0] if t else ''
+          def total_name(v):
+            k=norm(v); return 'SUBTOTAL' in k or 'GRAND TOTAL' in k or k.endswith(' TOTAL')
+          ppmap={}; groups=defaultdict(list); skipped=0
+          for r in pp:
+            if norm(r['territory'])!=norm(r['subterritory']): continue
+            if r['is_subtotal'] or r['is_grand_total'] or total_name(r['product_name']): skipped+=1; continue
+            k=(reg(r['territory']),norm(r['product_group']),norm(r['product_name']))
+            ppmap[k]=float(r['metric_value'] or 0); groups[k[:2]].append(k)
+          units=defaultdict(float); totals=defaultdict(float)
+          for r in unit:
+            k=(reg(r['territory']),norm(r['product_group']),norm(r['product_name'])); units[k]+=float(r['v'] or 0); totals[k[:2]]+=float(r['v'] or 0)
+          missing=[]
+          for k,v in units.items():
+            if k not in ppmap:
+              t=totals[k[:2]]; missing.append({'region':k[0],'group':k[1],'product':k[2],'fallback_pp':round(v*100/t,6) if t else 0})
+          sums=[]
+          for kg,keys in sorted(groups.items()):
+            s=sum(ppmap[k] for k in keys); sums.append({'region':kg[0],'group':kg[1],'products':len(keys),'raw_sum':round(s,6)})
+          print('JAN_PP_REFINED|'+json.dumps({'upload':dict(u),'pp_component_rows':len(ppmap),'skipped_total_rows':skipped,'unit_component_rows':len(units),'fallback_count':len(missing),'fallback_samples':missing[:30],'group_count':len(sums),'non100_groups':[x for x in sums if abs(x['raw_sum']-100)>0.01],'group_sums':sums},ensure_ascii=False,sort_keys=True))
+          PY
+          REMOTE
