@@ -114,7 +114,9 @@ def _inject_lifecycle_markup(rendered: str) -> str:
         </ul>
       </div>`;
 
-    td.querySelectorAll('button, form').forEach((node) => node.addEventListener('click', (event) => event.stopPropagation()));
+    // Do not stop the dropdown toggle click from bubbling: Bootstrap's data API
+    // handles data-bs-toggle="dropdown" at document level. Blocking propagation
+    // makes the mobile/desktop "Seçenekler" button look disabled.
     const deleteForm = td.querySelector('[data-ims-delete-form]');
     if (deleteForm && permission.allowed) {{
       deleteForm.addEventListener('submit', (event) => {{

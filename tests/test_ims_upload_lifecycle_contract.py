@@ -14,12 +14,27 @@ def test_lifecycle_ui_is_scoped_to_ims_history_and_replace_defaults_safe():
     assert "window.confirm" in source
 
 
+def test_options_dropdown_does_not_block_bootstrap_data_api_bubbling():
+    source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")
+    assert 'data-bs-toggle="dropdown"' in source
+    assert "querySelectorAll('button, form')" not in source
+    assert "event.stopPropagation()" not in source
+
+
 def test_upload_route_rejects_exact_duplicate_and_requires_explicit_changed_week_replace():
     source = Path("app/ims.py").read_text(encoding="utf-8")
     assert "exact_duplicate_job(source_hash)" in source
     assert "aynı içerikle zaten mevcut" in source
     assert "existing_week.source_hash != source_hash and not replace_requested" in source
     assert "mevcut haftayı değiştir" in source
+
+
+def test_explicit_replace_bypasses_duplicate_guards_for_parser_reprocessing():
+    source = Path("app/services/ims_upload_lifecycle_hooks.py").read_text(encoding="utf-8")
+    assert 'request.form.get("replace") == "1"' in source
+    assert "return None" in source
+    assert "not bool(job.clear_before_import)" in source
+    assert "same_semantic_workbook" in source
 
 
 def test_delete_gate_blocks_active_import_and_requires_snapshot_for_latest_completed():
