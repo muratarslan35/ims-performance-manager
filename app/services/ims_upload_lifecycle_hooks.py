@@ -1,7 +1,8 @@
-"""Install rollback-snapshot and source-archive hooks around queued IMS imports."""
+"""Install rollback, archive and semantic-duplicate hooks around queued IMS imports."""
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from flask import current_app
@@ -9,6 +10,8 @@ from flask import current_app
 from app.extensions import db
 from app.models import IMSImportJob
 from app.services.ims_import_queue import IMSImportQueue
+from app.services.ims_import_service import IMSImportService
+from app.services.ims_progress_store import IMSProgressStore
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 
 
@@ -28,6 +31,38 @@ def install_ims_upload_lifecycle() -> None:
         snapshot_captured = False
 
         try:
+            detected_week = IMSImportService.extract_week_number(job.file_name)
+            existing_week = IMSUploadLifecycleService.existing_week_job(
+                year=job.year,
+                month=job.month,
+                week_number=detected_week,
+            )
+            if existing_week is not None and existing_week.ims_upload_id:
+                same_semantic = IMSUploadLifecycleService.same_semantic_workbook(
+                    staging_path,
+                    existing_week.ims_upload_id,
+                )
+                if same_semantic is True:
+                    completed_at = datetime.utcnow()
+                    duplicate = db.session.get(IMSImportJob, int(job.id))
+                    duplicate.status = IMSImportJob.STATUS_FAILED
+                    duplicate.error_message = (
+                        "Bu IMS dosyasındaki tüm hücre verileri sistemdeki aynı hafta IMS ile aynıdır; "
+                        "dosya zaten yüklü olduğu için tekrar import edilmedi."
+                    )
+                    duplicate.completed_at = completed_at
+                    duplicate.heartbeat_at = completed_at
+                    db.session.commit()
+                    IMSProgressStore.write(
+                        duplicate.id,
+                        percent=100,
+                        stage="duplicate",
+                        message="Bu IMS zaten yüklü",
+                        detail=f"{detected_week}. hafta verileri birebir aynı" if detected_week else "Veriler birebir aynı",
+                        status=IMSImportJob.STATUS_FAILED,
+                    )
+                    return None
+
             try:
                 IMSUploadLifecycleService.capture_period_snapshot(
                     job_id=job.id,
@@ -72,8 +107,10 @@ def install_ims_upload_lifecycle() -> None:
             return result
         finally:
             pending_source.unlink(missing_ok=True)
-            # A failed/cancelled import must never leave a rollback marker that
-            # could later be mistaken for an authoritative previous state.
+            # The original queue deletes staging files after normal processing.
+            # Semantic duplicates return before that call, so remove their staged
+            # source here as well. No live/accepted IMS data is changed.
+            staging_path.unlink(missing_ok=True)
             refreshed = db.session.get(IMSImportJob, int(job.id))
             if refreshed is None or refreshed.status != IMSImportJob.STATUS_COMPLETED:
                 IMSUploadLifecycleService.discard_pending_snapshot(job.id)
