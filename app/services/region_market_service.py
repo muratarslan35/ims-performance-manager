@@ -39,26 +39,64 @@ class RegionMarketService:
         return "".join(char for char in AliasService.normalize(value) if char.isalnum())
 
     @staticmethod
-    def _allocate_tenth_shares(components):
-        """Return 0.1-point display shares that close to exactly 100.0.
+    def _display_integer(value):
+        """Mirror the IMS workbook's no-decimal PP presentation.
 
-        The precise IMS PP remains in ``precise_*`` fields. This presentation
-        allocation only resolves the unavoidable decimal rounding remainder.
+        The workbook view used by the field team keeps an exact .50 boundary
+        on the lower integer and moves to the next integer only when the
+        fractional part is greater than .50. The precise PP is kept separately.
+        """
+        number = max(Decimal(str(value or 0)), Decimal("0"))
+        floor_value = int(number.to_integral_value(rounding=ROUND_FLOOR))
+        fraction = number - Decimal(floor_value)
+        return floor_value + (1 if fraction > Decimal("0.5") else 0)
+
+    @classmethod
+    def _allocate_tenth_shares(cls, components):
+        """Return whole-number PP display values and close the group to 100.
+
+        First apply the workbook's integer presentation rule to every exact IMS
+        PP. Independent integer presentation can sum to 99/101/102, so a final
+        one-point reconciliation is applied to the least-impact component(s).
+        Precise IMS PP values are never changed and remain authoritative for
+        comparisons.
         """
         normalized = [(key, max(Decimal(str(value or 0)), Decimal("0"))) for key, value in components]
         total = sum((value for _, value in normalized), Decimal("0"))
         if total <= 0:
-            return {key: 0.0 for key, _ in normalized}
-        exact_tenths = [(key, value * Decimal("1000") / total) for key, value in normalized]
-        allocated = {key: int(value.to_integral_value(rounding=ROUND_FLOOR)) for key, value in exact_tenths}
-        remaining = 1000 - sum(allocated.values())
-        ranked = sorted(
-            enumerate(exact_tenths),
-            key=lambda item: (-(item[1][1] - Decimal(allocated[item[1][0]])), item[0]),
-        )
-        for _, (key, _) in ranked[:remaining]:
-            allocated[key] += 1
-        return {key: points / 10.0 for key, points in allocated.items()}
+            return {key: 0 for key, _ in normalized}
+        scaled = [(key, value * Decimal("100") / total) for key, value in normalized]
+        allocated = {key: cls._display_integer(value) for key, value in scaled}
+        delta = 100 - sum(allocated.values())
+
+        if delta > 0:
+            # Prefer values just below .50; exact .50 stays down unless no other
+            # component can absorb the unavoidable reconciliation point.
+            candidates = []
+            exact_half = []
+            for index, (key, value) in enumerate(scaled):
+                floor_value = int(value.to_integral_value(rounding=ROUND_FLOOR))
+                fraction = value - Decimal(floor_value)
+                if allocated[key] == floor_value:
+                    item = (fraction, -index, key)
+                    (exact_half if fraction == Decimal("0.5") else candidates).append(item)
+            candidates.sort(reverse=True)
+            exact_half.sort(reverse=True)
+            ordered = candidates + exact_half
+            for _, _, key in ordered[:delta]:
+                allocated[key] += 1
+        elif delta < 0:
+            # Remove points first from values that only barely crossed .50.
+            candidates = []
+            for index, (key, value) in enumerate(scaled):
+                floor_value = int(value.to_integral_value(rounding=ROUND_FLOOR))
+                fraction = value - Decimal(floor_value)
+                if allocated[key] > floor_value:
+                    candidates.append((fraction, index, key))
+            candidates.sort()
+            for _, _, key in candidates[:abs(delta)]:
+                allocated[key] -= 1
+        return allocated
 
     def _latest_upload_id(self):
         return db.session.query(IMSUpload.id).filter(
@@ -295,7 +333,7 @@ class RegionMarketService:
             )
             rivals = []
             for name, unit, precise_rival_share in precise_rivals:
-                display_share = allocations.get(name, round(precise_rival_share, 1))
+                display_share = allocations.get(name, self._display_integer(precise_rival_share))
                 display_shares_by_rival[(product.id, name)] = display_share
                 rivals.append({
                     "name": name,
@@ -312,9 +350,9 @@ class RegionMarketService:
                 "target_unit": round(target, 2), "company_unit": round(company, 2),
                 "market_company_unit": round(market_company, 2),
                 "competitor_unit": round(competitor, 2), "market_unit": round(market, 2),
-                "share_percent": allocations.get("__company__", round(precise_company_share, 1)),
+                "share_percent": allocations.get("__company__", self._display_integer(precise_company_share)),
                 "precise_share_percent": round(precise_company_share, 6),
-                "display_share_total": round(sum(allocations.values()), 1) if market else 0.0,
+                "display_share_total": sum(allocations.values()) if market else 0,
                 "market_share_source": "IMS_TTS_REKABET_PP" if pp_complete else "IMS_COMPETITION_UNITS",
                 "realization_percent": round(realization, 1),
                 "attention": "strong" if precise_company_share >= 50 else "warning" if precise_company_share >= 30 else "critical",
@@ -324,10 +362,12 @@ class RegionMarketService:
         bricks = []
         for brick, bucket in brick_buckets.items():
             market = bucket["company"] + bucket["competitor"]
+            precise_brick_share = bucket["company"] * 100.0 / market if market else 0.0
             bricks.append({
                 "brick": brick, "company_unit": round(bucket["company"], 2),
                 "competitor_unit": round(bucket["competitor"], 2), "market_unit": round(market, 2),
-                "share_percent": round(bucket["company"] * 100.0 / market, 1) if market else 0.0,
+                "share_percent": self._display_integer(precise_brick_share),
+                "precise_share_percent": round(precise_brick_share, 6),
             })
         bricks.sort(key=lambda item: (-item["competitor_unit"], item["brick"]))
 
@@ -354,15 +394,18 @@ class RegionMarketService:
                 {
                     "city": city, "unit": round(unit, 2),
                     "market_unit": round(city_group_market[(product.id, city)], 2),
-                    "share_percent": round(unit * 100.0 / city_group_market[(product.id, city)], 1)
-                    if city_group_market[(product.id, city)] else 0.0,
+                    "share_percent": self._display_integer(
+                        unit * 100.0 / city_group_market[(product.id, city)]
+                    ) if city_group_market[(product.id, city)] else 0,
                 }
                 for city, unit in sorted(cities.items(), key=lambda item: (-item[1], item[0]))
             ]
             rival_rows.append({
                 "name": rival_name, "product_id": product.id, "product_name": product.product_name,
                 "unit": round(total_unit, 2),
-                "share_percent": display_shares_by_rival.get((product.id, rival_name), round(precise_rival_share, 1)),
+                "share_percent": display_shares_by_rival.get(
+                    (product.id, rival_name), self._display_integer(precise_rival_share)
+                ),
                 "precise_share_percent": round(float(precise_rival_share), 6),
                 "cities": city_rows,
             })
@@ -397,7 +440,7 @@ class RegionMarketService:
                 "effective_company_unit": round(total_effective_company, 2),
                 "competitor_unit": round(total_competitor, 2),
                 "market_unit": round(total_market, 2),
-                "share_percent": round(precise_total_share, 1),
+                "share_percent": self._display_integer(precise_total_share),
                 "precise_share_percent": round(precise_total_share, 6),
             },
         }
@@ -406,7 +449,7 @@ class RegionMarketService:
         upload_id = self._latest_upload_id()
         production_upload = ProductionResultService.final_upload(self.year, self.month)
         production_upload_id = production_upload.id if production_upload else None
-        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:pp-v1"
+        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:pp-v2"
         return RepresentativeAnalysisCache.get_or_compute(
             key, lambda: self._build(upload_id, production_upload_id), ttl_seconds=60
         )
