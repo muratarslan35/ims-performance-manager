@@ -54,10 +54,23 @@ class RegionPerformanceService:
         ordinal = year * 12 + month - 1 + delta
         return ordinal // 12, ordinal % 12 + 1
 
+    def _latest_completed_period(self):
+        row = db.session.query(IMSUpload.year, IMSUpload.month).filter(
+            IMSUpload.status == "COMPLETED",
+            IMSUpload.year == self.year,
+        ).order_by(
+            IMSUpload.month.desc(), IMSUpload.week_number.desc(),
+            IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
+        ).first()
+        return (int(row[0]), int(row[1])) if row else (self.year, self.month)
+
     def period_months(self, length):
+        if length == 1:
+            return [(self.year, self.month)]
+        anchor_year, anchor_month = self._latest_completed_period()
         if length is None:
-            return [(self.year, month) for month in range(1, self.month + 1)]
-        return [self.shift_month(self.year, self.month, delta) for delta in range(-(length - 1), 1)]
+            return [(anchor_year, month) for month in range(1, anchor_month + 1)]
+        return [self.shift_month(anchor_year, anchor_month, delta) for delta in range(-(length - 1), 1)]
 
     @staticmethod
     def percent(actual, target):
