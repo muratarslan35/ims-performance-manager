@@ -1,0 +1,171 @@
+name: Guarded Week 8 Balance Unit Live Repair
+on:
+  push:
+    branches: [diag/week8-balance-unit-live-repair]
+permissions:
+  contents: read
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/k
+          chmod 600 ~/.ssh/k
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Copy repair source
+        run: scp -i ~/.ssh/k -P "$IMS_PORT" scripts/tmp_week8_balance_unit_repair_data.json "$IMS_USER@$IMS_HOST:/tmp/week8_balance_unit_repair_data.json"
+      - name: Guarded repair
+        run: |
+          ssh -i ~/.ssh/k -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import sqlite3, json, datetime, re, unicodedata, os
+          DB='instance/ipm.db'
+          DATA='/tmp/week8_balance_unit_repair_data.json'
+          EXPECTED=791
+
+          def norm(v):
+              s=str(v or '').strip().replace('ı','i').replace('İ','I')
+              s=''.join(ch for ch in unicodedata.normalize('NFKD',s) if not unicodedata.combining(ch))
+              return re.sub(r'\s+',' ',s).upper()
+
+          pre=sqlite3.connect(DB, timeout=30)
+          pre.row_factory=sqlite3.Row
+          processing=pre.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]
+          journal=pre.execute('pragma journal_mode').fetchone()[0]
+          quick=pre.execute('pragma quick_check').fetchone()[0]
+          print(f'PRE_GATE|processing={processing}|journal={journal}|quick={quick}')
+          if processing != 0 or str(quick).lower() != 'ok':
+              raise SystemExit('PRE_GATE_FAILED')
+          latest=pre.execute("select id,file_name,week_number,status from ims_uploads where year=2026 and month=2 and status='COMPLETED' order by week_number desc,completed_at desc,id desc limit 1").fetchone()
+          print('LATEST|'+json.dumps(dict(latest),ensure_ascii=False,default=str))
+          if latest is None or int(latest['week_number'] or 0) != 8:
+              raise SystemExit('LATEST_WEEK_IS_NOT_8')
+          ts=datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+          backup=f'/tmp/ipm-before-week8-balance-unit-repair-{ts}.db'
+          dst=sqlite3.connect(backup)
+          pre.backup(dst)
+          dst.close(); pre.close()
+          print('BACKUP|'+backup)
+
+          payload=json.load(open(DATA,encoding='utf-8'))
+          if (payload.get('year'),payload.get('month'),payload.get('week')) != (2026,2,8):
+              raise SystemExit('SOURCE_PERIOD_MISMATCH')
+
+          con=sqlite3.connect(DB, timeout=30)
+          con.row_factory=sqlite3.Row
+          con.execute('BEGIN IMMEDIATE')
+          try:
+              reps=[dict(r) for r in con.execute('select id,rep_name,region,city,territory from representatives')]
+              products=[dict(r) for r in con.execute('select id,product_name from products')]
+              prod_by_norm={norm(p['product_name']):p for p in products}
+              rep_exact={norm(r['rep_name']):r for r in reps}
+
+              target_rows=[dict(r) for r in con.execute('select id,representative_id,product_id,unit_target,unit_realization from targets where year=2026 and month=2')]
+              target_by_key={(int(r['representative_id']),int(r['product_id'])):r for r in target_rows}
+              summary_rows=[dict(r) for r in con.execute('select id,representative_id,product_id,unit from ims_summary where year=2026 and month=2')]
+              summary_by_key={}
+              for r in summary_rows:
+                  summary_by_key.setdefault((int(r['representative_id']),int(r['product_id'])),[]).append(r)
+
+              unmatched=[]; updates=[]
+              def match_rep(src):
+                  n=norm(src['representative'])
+                  exact=rep_exact.get(n)
+                  if exact: return exact
+                  if 'BOS' in n or 'KADRO' in n:
+                      region_code=norm(src['region']).split(' ',1)[0]
+                      candidates=[]
+                      for r in reps:
+                          rn=norm(r['rep_name'])
+                          scopes=' '.join(norm(r.get(k)) for k in ('region','city','territory'))
+                          if rn.endswith(n) and (region_code in rn or region_code in scopes):
+                              candidates.append(r)
+                      if len(candidates)==1: return candidates[0]
+                  return None
+
+              for src in payload['rows']:
+                  rep=match_rep(src)
+                  if not rep:
+                      unmatched.append({'row':src['source_row'],'rep':src['representative'],'reason':'rep'})
+                      continue
+                  for pname,balance in src['balance_units'].items():
+                      if balance is None: continue
+                      prod=prod_by_norm.get(norm(pname))
+                      if not prod:
+                          unmatched.append({'row':src['source_row'],'rep':src['representative'],'product':pname,'reason':'product'})
+                          continue
+                      key=(int(rep['id']),int(prod['id']))
+                      target=target_by_key.get(key)
+                      sums=summary_by_key.get(key,[])
+                      if not target:
+                          unmatched.append({'row':src['source_row'],'rep':src['representative'],'product':pname,'reason':'target'})
+                          continue
+                      if not sums:
+                          unmatched.append({'row':src['source_row'],'rep':src['representative'],'product':pname,'reason':'summary'})
+                          continue
+                      actual=float(target['unit_target'] or 0.0)-float(balance)
+                      updates.append((key,target,sums,float(balance),actual,src['representative'],pname))
+
+              print(f'PRECHECK|source_pairs={sum(len([v for v in r["balance_units"].values() if v is not None]) for r in payload["rows"])}|updates={len(updates)}|unmatched={len(unmatched)}|targets={len(target_rows)}|summaries={len(summary_rows)}')
+              if unmatched:
+                  print('UNMATCHED|'+json.dumps(unmatched[:20],ensure_ascii=False))
+              if len(updates) != EXPECTED or unmatched:
+                  raise RuntimeError('PAIR_COVERAGE_FAILED')
+
+              changed_targets=0; changed_summaries=0
+              murat=None
+              for key,target,sums,balance,actual,rep_name,pname in updates:
+                  before=float(target['unit_realization'] or 0.0)
+                  if abs(before-actual)>1e-9:
+                      con.execute('update targets set unit_realization=? where id=?',(actual,target['id']))
+                      changed_targets+=1
+                  for s in sums:
+                      sb=float(s['unit'] or 0.0)
+                      if abs(sb-actual)>1e-9:
+                          con.execute('update ims_summary set unit=? where id=?',(actual,s['id']))
+                          changed_summaries+=1
+                  if norm(rep_name)=='MURAT ARSLAN' and norm(pname)=='TRAVAZOL':
+                      murat={'unit_target':float(target['unit_target'] or 0.0),'balance':balance,'before':before,'after':actual,'summary_rows':len(sums)}
+
+              if murat is None:
+                  raise RuntimeError('MURAT_TRAVAZOL_NOT_FOUND')
+              print('MURAT_TRAVAZOL|'+json.dumps(murat,ensure_ascii=False))
+              if round(murat['unit_target']) != 8991 or round(murat['balance']) != 612 or round(murat['after']) != 8379:
+                  raise RuntimeError('MURAT_TRAVAZOL_EXPECTATION_FAILED')
+
+              con.commit()
+              print(f'REPAIR|changed_targets={changed_targets}|changed_summaries={changed_summaries}|commit=YES')
+          except Exception:
+              con.rollback()
+              print('REPAIR|commit=NO|rollback=YES')
+              raise
+          finally:
+              con.close()
+
+          check=sqlite3.connect(DB, timeout=30); check.row_factory=sqlite3.Row
+          processing2=check.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]
+          quick2=check.execute('pragma quick_check').fetchone()[0]
+          journal2=check.execute('pragma journal_mode').fetchone()[0]
+          mr=check.execute("""select t.unit_target,t.unit_realization,s.unit summary_unit from targets t join representatives r on r.id=t.representative_id join products p on p.id=t.product_id join ims_summary s on s.year=t.year and s.month=t.month and s.representative_id=t.representative_id and s.product_id=t.product_id where t.year=2026 and t.month=2 and upper(r.rep_name)='MURAT ARSLAN' and upper(p.product_name)='TRAVAZOL' order by s.id desc limit 1""").fetchone()
+          print(f'FINAL_GATE|processing={processing2}|journal={journal2}|quick={quick2}|murat_target={mr[0]}|murat_actual={mr[1]}|murat_summary={mr[2]}')
+          if processing2!=0 or str(quick2).lower()!='ok' or round(float(mr[1]))!=8379 or abs(float(mr[1])-float(mr[2]))>1e-9:
+              raise SystemExit('FINAL_GATE_FAILED')
+          check.close()
+          PY
+          rm -f /tmp/week8_balance_unit_repair_data.json
+          REMOTE
