@@ -8,6 +8,7 @@ from app import create_app
 from app.extensions import db
 from app.models import IMSSummary, IMSUpload, Product, Representative, Target
 from app.services.alias_service import AliasService
+from app.services.balance_unit_authority import _apply_authoritative_balance_units
 from app.services.ims_import_service import IMSImportService
 from app.services.ims_summary_integrity import synchronize_summary_from_targets
 from app.services.week8_read_path_repair import _apply_target_ims_actuals
@@ -74,16 +75,23 @@ def _setup(balance_value):
 def test_balance_unit_wins_over_conflicting_tts_and_tl_is_unchanged():
     app, ctx, service, upload, rep, product, target, summary = _setup(611.6306)
     try:
+        # Reproduce the real order: legacy BAKİYE parser, TTS, Target->Summary
+        # integrity, then the final balance-unit authority invariant.
         service.apply_balance_summary(2032, 2)
         service.apply_weekly_sales_summary(2032, 2)
+        synchronize_summary_from_targets(upload.id, 2032, 2)
+        changed = _apply_authoritative_balance_units(service, 2032, 2)
         db.session.flush()
+
         expected = 8991.0 - 611.6306
+        assert changed == 1
         assert abs(target.unit_realization - expected) < 1e-9
         assert abs(summary.unit - expected) < 1e-9
         assert target.tl_realization == 935627.0
         assert summary.tl == 935627.0
-        assert service.statistics["balance_unit_authority_rows"] == 1
 
+        # A later Target->Summary sync cannot regress the value because Target
+        # itself now holds the authoritative balance-derived unit actual.
         synchronize_summary_from_targets(upload.id, 2032, 2)
         assert abs(summary.unit - expected) < 1e-9
 
@@ -102,7 +110,9 @@ def test_numeric_zero_balance_is_authoritative_not_tts_fallback():
     try:
         service.apply_balance_summary(2032, 2)
         service.apply_weekly_sales_summary(2032, 2)
+        changed = _apply_authoritative_balance_units(service, 2032, 2)
         db.session.flush()
+        assert changed == 1
         assert target.unit_realization == 8991.0
         assert summary.unit == 8991.0
         assert target.tl_realization == 935627.0
@@ -117,11 +127,12 @@ def test_missing_balance_keeps_existing_tts_unit_fallback():
     try:
         service.apply_balance_summary(2032, 2)
         service.apply_weekly_sales_summary(2032, 2)
+        changed = _apply_authoritative_balance_units(service, 2032, 2)
         db.session.flush()
+        assert changed == 0
         assert target.unit_realization == 12146.0
         assert summary.unit == 12146.0
         assert target.tl_realization == 935627.0
-        assert service.statistics["balance_unit_authority_rows"] == 0
     finally:
         db.session.remove()
         db.drop_all()
