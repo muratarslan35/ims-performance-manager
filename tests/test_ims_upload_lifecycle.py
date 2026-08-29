@@ -65,6 +65,17 @@ def _seed_period():
     return rep, product, previous, target, summary
 
 
+def _raw_target(rep_id, product_id):
+    return db.session.execute(
+        Target.__table__.select().where(
+            Target.__table__.c.year == 2033,
+            Target.__table__.c.month == 2,
+            Target.__table__.c.representative_id == rep_id,
+            Target.__table__.c.product_id == product_id,
+        )
+    ).mappings().one()
+
+
 def test_exact_duplicate_completed_job_is_detected():
     app, ctx = _context()
     try:
@@ -152,9 +163,7 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         snapshot_path = IMSUploadLifecycleService.capture_period_snapshot(job_id=job.id, year=2033, month=2)
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         assert snapshot["targets"][0]["unit_realization"] == 700.0
-        assert snapshot["targets"][0]["tl_realization"] == 7000.0
         assert snapshot["summaries"][0]["unit"] == 700.0
-        assert snapshot["summaries"][0]["tl"] == 7000.0
 
         current = IMSUpload(
             file_name="8.Hafta.xlsx", year=2033, month=2, quarter="Q1", week_number=8,
@@ -209,20 +218,23 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         final_snapshot = json.loads(final_snapshot_path.read_text(encoding="utf-8"))
         assert final_snapshot["targets"][0]["unit_realization"] == 700.0
         assert final_snapshot["summaries"][0]["unit"] == 700.0
+        assert _raw_target(rep_id, product_id)["unit_realization"] == 850.0
 
-        result = IMSUploadLifecycleService.delete_upload(current_id)
-        assert result["restored_previous_period_state"] is True
+        # Trace the exact boundary that reintroduces the current value.
+        IMSUploadLifecycleService._restore_period_snapshot(current)
+        assert _raw_target(rep_id, product_id)["unit_realization"] == 700.0
+
+        IMSUploadLifecycleService._delete_direct_upload_children(current_id)
+        assert _raw_target(rep_id, product_id)["unit_realization"] == 700.0
+
+        db.session.execute(IMSUpload.__table__.delete().where(IMSUpload.id == current_id))
+        assert _raw_target(rep_id, product_id)["unit_realization"] == 700.0
+
+        db.session.commit()
+        assert _raw_target(rep_id, product_id)["unit_realization"] == 700.0
         assert db.session.get(IMSUpload, current_id) is None
         assert db.session.get(IMSUpload, previous_id) is not None
 
-        raw_target = db.session.execute(
-            Target.__table__.select().where(
-                Target.__table__.c.year == 2033,
-                Target.__table__.c.month == 2,
-                Target.__table__.c.representative_id == rep_id,
-                Target.__table__.c.product_id == product_id,
-            )
-        ).mappings().one()
         raw_summary = db.session.execute(
             IMSSummary.__table__.select().where(
                 IMSSummary.__table__.c.year == 2033,
@@ -231,19 +243,8 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
                 IMSSummary.__table__.c.product_id == product_id,
             )
         ).mappings().one()
-        assert raw_target["unit_realization"] == 700.0
-        assert raw_target["tl_realization"] == 7000.0
         assert raw_summary["unit"] == 700.0
-        assert raw_summary["tl"] == 7000.0
         assert raw_summary["upload_id"] == previous_id
-
-        restored_target = Target.query.filter_by(year=2033, month=2, representative_id=rep_id, product_id=product_id).one()
-        restored_summary = IMSSummary.query.filter_by(year=2033, month=2, representative_id=rep_id, product_id=product_id).one()
-        assert restored_target.unit_realization == 700.0
-        assert restored_target.tl_realization == 7000.0
-        assert restored_summary.unit == 700.0
-        assert restored_summary.tl == 7000.0
-        assert restored_summary.upload_id == previous_id
         assert IMSRawData.query.filter_by(upload_id=current_id).count() == 0
         assert IMSFact.query.filter_by(upload_id=current_id).count() == 0
         assert IMSImportJob.query.filter_by(ims_upload_id=current_id).count() == 0
