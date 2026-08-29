@@ -6,6 +6,7 @@ from app.extensions import db
 from app.models import (
     IMSFact,
     IMSImportJob,
+    IMSRawData,
     IMSSummary,
     IMSUpload,
     Product,
@@ -158,10 +159,37 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         summary.upload_id = current.id
         summary.unit = 850.0
         summary.tl = 8500.0
+        raw = IMSRawData(
+            upload_id=current.id,
+            year=2033,
+            month=2,
+            quarter="Q1",
+            week_number=8,
+            sheet_name="TTS HAFTALIK ÇIKIŞLARI",
+            sheet_type="weekly",
+            representative_id=rep.id,
+            product_id=product.id,
+            representative=rep.rep_name,
+            product=product.product_name,
+            unit=850.0,
+            tl=8500.0,
+            raw_json="{}",
+        )
+        db.session.add(raw)
+        db.session.flush()
         fact = IMSFact(
-            upload_id=current.id, representative_id=rep.id, product_id=product.id,
-            year=2033, month=2, quarter="Q1", week_number=8,
-            report_type="weekly_sales", unit=850.0, tl=8500.0,
+            upload_id=current.id,
+            raw_data_id=raw.id,
+            representative_id=rep.id,
+            product_id=product.id,
+            year=2033,
+            month=2,
+            quarter="Q1",
+            week_number=8,
+            report_type="weekly_sales",
+            unit=850.0,
+            tl=8500.0,
+            metrics_json="{}",
         )
         db.session.add(fact)
         job.status = IMSImportJob.STATUS_COMPLETED
@@ -180,6 +208,7 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         assert restored_summary.unit == 700.0
         assert restored_summary.tl == 7000.0
         assert restored_summary.upload_id == previous.id
+        assert IMSRawData.query.filter_by(upload_id=current.id).count() == 0
         assert IMSFact.query.filter_by(upload_id=current.id).count() == 0
         assert IMSImportJob.query.filter_by(ims_upload_id=current.id).count() == 0
     finally:
