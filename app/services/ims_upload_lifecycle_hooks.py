@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from flask import current_app
+from flask import current_app, has_request_context, request
 
 from app.extensions import db
 from app.models import IMSImportJob
@@ -23,6 +23,18 @@ def install_ims_upload_lifecycle() -> None:
         return
 
     original_process = IMSImportQueue.process
+    original_exact_duplicate_job = IMSUploadLifecycleService.exact_duplicate_job
+
+    @classmethod
+    def exact_duplicate_job_with_explicit_replace(cls, source_hash):
+        # An administrator may intentionally re-process an identical workbook
+        # after importer/parsing fixes. The explicit replace switch is the
+        # safety acknowledgement; without it, byte-identical files stay blocked.
+        if has_request_context() and request.form.get("replace") == "1":
+            return None
+        return original_exact_duplicate_job(source_hash)
+
+    IMSUploadLifecycleService.exact_duplicate_job = exact_duplicate_job_with_explicit_replace
 
     @classmethod
     def process_with_upload_lifecycle(cls, job):
@@ -37,7 +49,10 @@ def install_ims_upload_lifecycle() -> None:
                 month=job.month,
                 week_number=detected_week,
             )
-            if existing_week is not None and existing_week.ims_upload_id:
+            # Normal uploads still reject semantically identical workbooks.
+            # Explicit replacement intentionally bypasses this guard so a file
+            # can be reprocessed after an importer/parser correction.
+            if not bool(job.clear_before_import) and existing_week is not None and existing_week.ims_upload_id:
                 same_semantic = IMSUploadLifecycleService.same_semantic_workbook(
                     staging_path,
                     existing_week.ims_upload_id,
