@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Iterable
 
 from flask import current_app
-from sqlalchemy import DateTime, MetaData, Table, inspect
+from sqlalchemy import DateTime
 
 from app.extensions import db
 from app.models import (
@@ -327,8 +327,6 @@ class IMSUploadLifecycleService:
         if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (year, month):
             raise RuntimeError("Geri dönüş snapshot dönemi IMS dönemiyle eşleşmiyor.")
 
-        # Current-state ORM objects must never be allowed to flush an already
-        # superseded value after the exact snapshot rows have been restored.
         cls._expunge_current_state_models()
 
         target_table = Target.__table__
@@ -353,31 +351,36 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def _delete_direct_upload_children(cls, upload_id: int) -> None:
-        inspector = inspect(db.engine)
-        metadata = MetaData()
-        child_tables = []
-        for table_name in inspector.get_table_names():
-            if table_name == "ims_uploads":
-                continue
-            for foreign_key in inspector.get_foreign_keys(table_name):
-                if foreign_key.get("referred_table") != "ims_uploads":
-                    continue
-                constrained = foreign_key.get("constrained_columns") or []
-                referred = foreign_key.get("referred_columns") or []
-                if constrained == ["upload_id"] and referred == ["id"]:
-                    child_tables.append(table_name)
-                    break
-                if constrained == ["ims_upload_id"] and referred == ["id"]:
-                    child_tables.append(table_name)
-                    break
+        """Delete every declared direct child of IMSUpload in dependency order.
 
-        for table_name in child_tables:
-            table = Table(table_name, metadata, autoload_with=db.engine)
-            column = table.c.get("upload_id")
-            if column is None:
-                column = table.c.get("ims_upload_id")
-            if column is not None:
+        Runtime SQLite FK introspection can be incomplete depending on how an
+        existing database was migrated. SQLAlchemy model metadata is the source
+        contract used by the application itself, so use it to discover upload
+        ownership. Reversing ``sorted_tables`` guarantees dependent rows such as
+        IMSFact are deleted before IMSRawData.
+        """
+        deleted_tables = set()
+        for table in reversed(db.metadata.sorted_tables):
+            if table.name == IMSUpload.__tablename__:
+                continue
+            upload_columns = []
+            for foreign_key in table.foreign_keys:
+                if foreign_key.column.table.name != IMSUpload.__tablename__:
+                    continue
+                if foreign_key.column.name != "id":
+                    continue
+                upload_columns.append(foreign_key.parent)
+            for column in upload_columns:
                 db.session.execute(table.delete().where(column == int(upload_id)))
+                deleted_tables.add(table.name)
+
+        # Fail closed if core IMS ownership declarations unexpectedly disappear.
+        required = {"ims_raw_data", "ims_facts", "ims_summary", "ims_competition_data"}
+        missing = required.intersection(db.metadata.tables) - deleted_tables
+        if missing:
+            raise RuntimeError(
+                "IMS silme sahiplik sözleşmesi eksik: " + ", ".join(sorted(missing))
+            )
 
     @classmethod
     def delete_upload(cls, upload_id: int) -> dict:
@@ -400,11 +403,6 @@ class IMSUploadLifecycleService:
         restored = bool(latest is not None and latest.id == deleted_upload_id)
 
         try:
-            # IMPORTANT: upload-owned raw/fact/competition rows can participate
-            # in existing synchronization logic. Delete them before restoring the
-            # previous current-state values, and suppress ORM autoflush for the
-            # entire Core-SQL transaction. The rollback snapshot is deliberately
-            # the last data write before commit.
             with db.session.no_autoflush:
                 cls._delete_direct_upload_children(deleted_upload_id)
                 db.session.execute(
