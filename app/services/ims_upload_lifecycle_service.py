@@ -304,21 +304,19 @@ class IMSUploadLifecycleService:
             db.session.add(model(**clean))
 
     @classmethod
-    def _expunge_period_state(cls, *, year: int, month: int) -> None:
-        """Remove only stale period-state ORM objects from the identity map.
+    def _expunge_current_state_models(cls) -> None:
+        """Evict only current-state models that are replaced by rollback.
 
-        Never detach unrelated objects such as the logged-in User, Representative,
-        Product or IMSUpload. Core DELETE/restore changes the rows underneath these
-        three current-state models, so any already-loaded instances for the same
-        period must be discarded before restored rows are materialized.
+        Some instances are expired after an earlier commit and therefore do not
+        expose year/month in their in-memory state. Filtering by period can miss
+        them and leave stale values after the Core DELETE/restore. Evicting all
+        loaded instances of only these three small current-state model classes is
+        deterministic, while User, Representative, Product and IMSUpload objects
+        remain attached to the request/session.
         """
-        period_models = (Target, IMSSummary, RepresentativeBrickAssignment)
+        current_state_models = (Target, IMSSummary, RepresentativeBrickAssignment)
         for obj in list(db.session.identity_map.values()):
-            if not isinstance(obj, period_models):
-                continue
-            state = inspect(obj)
-            values = state.dict
-            if values.get("year") == int(year) and values.get("month") == int(month):
+            if isinstance(obj, current_state_models):
                 db.session.expunge(obj)
 
     @classmethod
@@ -342,7 +340,7 @@ class IMSUploadLifecycleService:
         ).delete(synchronize_session=False)
         db.session.flush()
 
-        cls._expunge_period_state(year=year, month=month)
+        cls._expunge_current_state_models()
 
         cls._restore_rows(Target, payload.get("targets") or [])
         cls._restore_rows(IMSSummary, payload.get("summaries") or [])
