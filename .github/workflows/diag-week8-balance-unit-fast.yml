@@ -1,0 +1,56 @@
+name: Fast Week 8 Balance Unit Audit
+on:
+  push:
+    branches: [diag/week8-balance-unit-fast-audit]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/k
+          chmod 600 ~/.ssh/k
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Fast read-only audit
+        run: |
+          ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -i ~/.ssh/k -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          printf 'SERVER_COMMIT|'; git rev-parse HEAD
+          venv/bin/python - <<'PY'
+          import sqlite3, json
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=5)
+          c.row_factory=sqlite3.Row
+          c.execute('pragma busy_timeout=5000')
+          def one(q,a=()):
+              r=c.execute(q,a).fetchone(); return dict(r) if r else None
+          def rows(q,a=()): return [dict(r) for r in c.execute(q,a).fetchall()]
+          print('STATE|'+json.dumps({'journal':c.execute('pragma journal_mode').fetchone()[0],'processing':c.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]}))
+          print('LATEST_JOB|'+json.dumps(one("select * from ims_import_jobs order by id desc limit 1"),ensure_ascii=False,default=str))
+          up=one("select * from ims_uploads where year=2026 and month=2 order by id desc limit 1")
+          print('UPLOAD|'+json.dumps(up,ensure_ascii=False,default=str))
+          rep=one("select id,rep_name from representatives where upper(rep_name)='MURAT ARSLAN' limit 1")
+          print('REP|'+json.dumps(rep,ensure_ascii=False))
+          rid=rep['id']
+          vals=rows("""select p.product_name,t.unit_target,t.unit_realization,t.tl_target,t.tl_realization,
+                    (select s.unit from ims_summary s where s.year=t.year and s.month=t.month and s.representative_id=t.representative_id and s.product_id=t.product_id order by s.id desc limit 1) summary_unit,
+                    (select s.tl from ims_summary s where s.year=t.year and s.month=t.month and s.representative_id=t.representative_id and s.product_id=t.product_id order by s.id desc limit 1) summary_tl
+                    from targets t join products p on p.id=t.product_id
+                    where t.year=2026 and t.month=2 and t.representative_id=? order by p.display_order,p.product_name""",(rid,))
+          print('MURAT_7|'+json.dumps(vals,ensure_ascii=False,default=str))
+          c.close()
+          PY
+          REMOTE
