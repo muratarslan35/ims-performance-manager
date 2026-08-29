@@ -97,12 +97,7 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def semantic_workbook_hash(cls, file_path: Path) -> str | None:
-        """Hash workbook sheet/cell values while ignoring workbook formatting.
-
-        The normal IMS format is XLSX, which can be streamed safely with
-        openpyxl. Legacy XLS files fall back to the existing byte hash/replacement
-        warning rather than adding a new dependency or weakening validation.
-        """
+        """Hash workbook sheet/cell values while ignoring workbook formatting."""
         path = Path(file_path)
         if path.suffix.lower() != ".xlsx" or not path.is_file():
             return None
@@ -171,7 +166,6 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def capture_period_snapshot(cls, *, job_id: int, year: int, month: int) -> Path:
-        """Persist the state that must be restored if the next import is removed."""
         payload = {
             "version": cls.SNAPSHOT_VERSION,
             "year": int(year),
@@ -310,6 +304,24 @@ class IMSUploadLifecycleService:
             db.session.add(model(**clean))
 
     @classmethod
+    def _expunge_period_state(cls, *, year: int, month: int) -> None:
+        """Remove only stale period-state ORM objects from the identity map.
+
+        Never detach unrelated objects such as the logged-in User, Representative,
+        Product or IMSUpload. Core DELETE/restore changes the rows underneath these
+        three current-state models, so any already-loaded instances for the same
+        period must be discarded before restored rows are materialized.
+        """
+        period_models = (Target, IMSSummary, RepresentativeBrickAssignment)
+        for obj in list(db.session.identity_map.values()):
+            if not isinstance(obj, period_models):
+                continue
+            state = inspect(obj)
+            values = state.dict
+            if values.get("year") == int(year) and values.get("month") == int(month):
+                db.session.expunge(obj)
+
+    @classmethod
     def _restore_period_snapshot(cls, upload: IMSUpload) -> None:
         upload_id = int(upload.id)
         year = int(upload.year)
@@ -330,7 +342,7 @@ class IMSUploadLifecycleService:
         ).delete(synchronize_session=False)
         db.session.flush()
 
-        db.session.expunge_all()
+        cls._expunge_period_state(year=year, month=month)
 
         cls._restore_rows(Target, payload.get("targets") or [])
         cls._restore_rows(IMSSummary, payload.get("summaries") or [])
@@ -339,7 +351,6 @@ class IMSUploadLifecycleService:
 
     @classmethod
     def _delete_direct_upload_children(cls, upload_id: int) -> None:
-        """Delete every table row whose FK points directly to ims_uploads.id."""
         inspector = inspect(db.engine)
         metadata = MetaData()
         child_tables = []
