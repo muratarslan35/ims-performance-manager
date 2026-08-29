@@ -1,0 +1,190 @@
+name: Read-only region market share audit
+
+on:
+  push:
+    branches:
+      - fix/region-market-share-authority
+    paths:
+      - .github/workflows/region-market-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Audit latest IMS UNIT vs PP for all regions
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json
+          import math
+          import sqlite3
+          from collections import defaultdict
+          from decimal import Decimal, ROUND_HALF_UP
+
+          db = sqlite3.connect('instance/ipm.db', timeout=30)
+          db.row_factory = sqlite3.Row
+          try:
+              upload = db.execute('''
+                  SELECT id, file_name, year, month, week_number
+                  FROM ims_uploads
+                  WHERE status='COMPLETED'
+                  ORDER BY year DESC, month DESC, COALESCE(week_number,0) DESC,
+                           COALESCE(completed_at, uploaded_at) DESC, id DESC
+                  LIMIT 1
+              ''').fetchone()
+              if upload is None:
+                  raise SystemExit('REGION_MARKET_AUDIT|no_completed_upload')
+              upload_id = int(upload['id'])
+
+              monthly_count = db.execute('''
+                  SELECT COUNT(*) FROM competition_data
+                  WHERE upload_id=? AND metric_type='UNIT'
+                    AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
+                    AND UPPER(sheet_name) LIKE '%AYLIK%'
+                    AND UPPER(sheet_name) LIKE '%REKABET%'
+                    AND UPPER(sheet_name) LIKE '%KUTU%'
+              ''', (upload_id,)).fetchone()[0]
+              monthly_filter = " AND UPPER(sheet_name) LIKE '%AYLIK%' AND UPPER(sheet_name) LIKE '%REKABET%' AND UPPER(sheet_name) LIKE '%KUTU%'" if monthly_count else ''
+              unit_rows = db.execute(f'''
+                  SELECT territory, subterritory, product_group, product_name,
+                         COALESCE(is_company_product,0) AS is_company_product,
+                         COALESCE(is_competitor,0) AS is_competitor,
+                         SUM(metric_value) AS value
+                  FROM competition_data
+                  WHERE upload_id=? AND metric_type='UNIT'
+                    AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
+                    {monthly_filter}
+                  GROUP BY territory, subterritory, product_group, product_name,
+                           is_company_product, is_competitor
+              ''', (upload_id,)).fetchall()
+              pp_rows = db.execute('''
+                  SELECT territory, subterritory, product_group, product_name,
+                         AVG(metric_value) AS value, COUNT(*) AS n
+                  FROM competition_data
+                  WHERE upload_id=? AND metric_type='MARKET_SHARE'
+                    AND COALESCE(is_subtotal,0)=0 AND COALESCE(is_grand_total,0)=0
+                  GROUP BY territory, subterritory, product_group, product_name
+              ''', (upload_id,)).fetchall()
+          finally:
+              db.close()
+
+          def norm(value):
+              return ' '.join(str(value or '').strip().upper().split())
+
+          def region_of(territory):
+              text = norm(territory)
+              return text.split()[0] if text else ''
+
+          def pp_percent(value):
+              value = float(value or 0)
+              return value * 100.0 if abs(value) <= 1.000001 else value
+
+          def whole(value):
+              return int(Decimal(str(value or 0)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+          units = defaultdict(float)
+          markets = defaultdict(float)
+          regional_units = defaultdict(float)
+          regional_markets = defaultdict(float)
+          company_flags = {}
+          for row in unit_rows:
+              key = (norm(row['territory']), norm(row['subterritory']), norm(row['product_group']), norm(row['product_name']))
+              market_key = key[:3]
+              value = float(row['value'] or 0)
+              units[key] += value
+              markets[market_key] += value
+              region = region_of(row['territory'])
+              rkey = (region, norm(row['product_group']), norm(row['product_name']))
+              rmkey = rkey[:2]
+              regional_units[rkey] += value
+              regional_markets[rmkey] += value
+              company_flags[rkey] = bool(row['is_company_product']) and not bool(row['is_competitor'])
+
+          pp = {}
+          for row in pp_rows:
+              key = (norm(row['territory']), norm(row['subterritory']), norm(row['product_group']), norm(row['product_name']))
+              pp[key] = pp_percent(row['value'])
+
+          matched = []
+          missing_pp = 0
+          for key, unit in units.items():
+              market = markets[key[:3]]
+              derived = unit * 100.0 / market if market else 0.0
+              if key in pp:
+                  delta = abs(derived - pp[key])
+                  matched.append((delta, derived, pp[key], key, unit, market))
+              else:
+                  missing_pp += 1
+
+          matched.sort(reverse=True, key=lambda x: x[0])
+          over_half = sum(1 for item in matched if item[0] > 0.55)
+          whole_mismatch = sum(1 for item in matched if whole(item[1]) != whole(item[2]))
+
+          region_groups = defaultdict(list)
+          for (region, group, product), unit in regional_units.items():
+              market = regional_markets[(region, group)]
+              share = unit * 100.0 / market if market else 0.0
+              region_groups[(region, group)].append((product, unit, share, company_flags.get((region, group, product), False)))
+
+          closure = defaultdict(int)
+          region_group_samples = []
+          for (region, group), items in region_groups.items():
+              rounded_sum = sum(whole(item[2]) for item in items)
+              closure[rounded_sum] += 1
+              if rounded_sum != 100:
+                  region_group_samples.append({
+                      'region': region, 'group': group, 'rounded_sum': rounded_sum,
+                      'shares': [{'product': p, 'unit': round(u,2), 'share': round(s,4), 'whole': whole(s), 'company': c} for p,u,s,c in items],
+                  })
+
+          diy = []
+          for (region, group, product), unit in regional_units.items():
+              if region == '901' and 'TRACOVOL' in product:
+                  market = regional_markets[(region, group)]
+                  share = unit * 100.0 / market if market else 0.0
+                  diy.append({'region':region,'group':group,'product':product,'unit':round(unit,2),'market':round(market,2),'derived_share':round(share,6),'whole':whole(share)})
+
+          summary = {
+              'upload': dict(upload),
+              'unit_rows': len(unit_rows),
+              'pp_rows': len(pp_rows),
+              'matched_unit_pp': len(matched),
+              'missing_pp': missing_pp,
+              'delta_gt_0_55pp': over_half,
+              'whole_percent_mismatch': whole_mismatch,
+              'max_delta_pp': round(matched[0][0], 6) if matched else None,
+              'region_group_count': len(region_groups),
+              'whole_sum_distribution': dict(sorted(closure.items())),
+              'non_100_region_groups': len(region_group_samples),
+              'diyarbakir_tracovol': diy,
+              'worst_pp_deltas': [
+                  {'delta':round(d,6),'derived':round(der,6),'ims_pp':round(src,6),'key':list(key),'unit':round(unit,2),'market':round(market,2)}
+                  for d,der,src,key,unit,market in matched[:15]
+              ],
+              'non_100_samples': region_group_samples[:10],
+          }
+          print('REGION_MARKET_AUDIT|' + json.dumps(summary, ensure_ascii=False, sort_keys=True))
+          PY
+          REMOTE
