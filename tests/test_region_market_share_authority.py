@@ -40,6 +40,23 @@ def _competition_row(upload_id, product, name, value, *, metric_type="UNIT", she
     )
 
 
+def test_integer_pp_display_thresholds_and_closure():
+    from app.services.region_market_service import RegionMarketService
+
+    assert RegionMarketService._display_integer(3.49) == 3
+    assert RegionMarketService._display_integer(3.50) == 3
+    assert RegionMarketService._display_integer(3.51) == 4
+    assert RegionMarketService._display_integer(5.526297) == 6
+
+    # User-facing IMS rule: if the first four displayed items total 96 and the
+    # fifth exact PP is 3.51, it is shown as 4 and the displayed subtotal is 100.
+    allocated = RegionMarketService._allocate_tenth_shares([
+        ("A", 24.0), ("B", 24.0), ("C", 24.0), ("D", 24.0), ("E", 3.51)
+    ])
+    assert allocated["E"] == 4
+    assert sum(allocated.values()) == 100
+
+
 def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):
     app = _app(tmp_path)
     from app.extensions import db
@@ -66,7 +83,6 @@ def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):
             _competition_row(upload.id, product, "MANTAZOL KREM", 1407, competitor=True),
             _competition_row(upload.id, product, "TRAVOCORT KREM", 1789, competitor=True),
             _competition_row(upload.id, product, "TROSYD KREM", 5715, competitor=True),
-            # Authoritative region-level PP rows from TTS REKABET PP.
             _competition_row(upload.id, product, "TRAVAZOL KREM", 71.69420998191853, metric_type="MARKET_SHARE", sheet="TTS REKABET PP", subterritory="901 DIYARBAKIR", company=True),
             _competition_row(upload.id, product, "ZALAIN", 14.1927689914646, metric_type="MARKET_SHARE", sheet="TTS REKABET PP", subterritory="901 DIYARBAKIR", competitor=True),
             _competition_row(upload.id, product, "TRACOVOL KREM", 5.526297088804491, metric_type="MARKET_SHARE", sheet="TTS REKABET PP", subterritory="901 DIYARBAKIR", competitor=True),
@@ -85,9 +101,9 @@ def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):
         assert row["market_share_source"] == "IMS_TTS_REKABET_PP"
         assert row["precise_share_percent"] == 71.69421
         assert tracovol["precise_market_share_percent"] == 5.526297
-        assert tracovol["market_share_percent"] == 5.5
-        assert row["display_share_total"] == 100.0
-        assert round(row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]), 1) == 100.0
+        assert tracovol["market_share_percent"] == 6
+        assert row["display_share_total"] == 100
+        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 100
         assert result["market_share_source"] == "IMS_TTS_REKABET_PP_WITH_UNIT_FALLBACK"
 
 
@@ -121,11 +137,10 @@ def test_region_market_does_not_mix_production_actual_into_ims_market_denominato
         result = service._build(upload.id, 999)
         row = next(item for item in result["rows"] if item["product_id"] == product.id)
 
-        # 200 is still the realization actual, but market share is 120/(120+80).
         assert row["company_unit"] == 200
         assert row["market_company_unit"] == 120
         assert row["market_unit"] == 200
-        assert row["share_percent"] == 60.0
+        assert row["share_percent"] == 60
         assert row["realization_percent"] == 80.0
 
 
@@ -161,4 +176,4 @@ def test_zero_ims_company_unit_does_not_fall_back_to_production(tmp_path, monkey
         assert row["company_unit"] == 75
         assert row["market_company_unit"] == 0
         assert row["market_unit"] == 50
-        assert row["share_percent"] == 0.0
+        assert row["share_percent"] == 0
