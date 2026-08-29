@@ -140,7 +140,7 @@ def register_error_handlers(app):
 def create_database(app):
     from app.services.startup_coordinator import StartupCoordinator
 
-    # Gunicorn boots workers concurrently.  Keep the existing initialization
+    # Gunicorn boots workers concurrently. Keep the existing initialization
     # contract, but serialize its small idempotent writes so two workers cannot
     # create the same seed user/setting at the same instant.
     with StartupCoordinator.acquire(app):
@@ -161,7 +161,7 @@ def create_app(config_object=Config):
         and database_uri != "sqlite:///"
     ):
         # Windows does not allow a TemporaryDirectory to remove a SQLite file
-        # while QueuePool retains an idle handle.  Test-only NullPool keeps each
+        # while QueuePool retains an idle handle. Test-only NullPool keeps each
         # file-backed database isolated and makes teardown deterministic; the
         # production WAL/single-writer connection policy is unchanged.
         engine_options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
@@ -179,7 +179,6 @@ def create_app(config_object=Config):
     install_dynamic_import_contract()
     install_dynamic_import_refinement()
     install_aggregate_identity_refinement()
-    install_balance_unit_authority()
     install_ims_summary_integrity()
     install_workbook_preflight()
     install_official_brick_spread_atomic()
@@ -189,6 +188,9 @@ def create_app(config_object=Config):
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
     install_dashboard_runtime_optimizer()
+    # This invariant must be the outermost import wrapper so BAKİYE unit actuals
+    # remain authoritative after every integrity/read-repair hook.
+    install_balance_unit_authority()
 
     register_template_context(app)
     register_blueprints(app)
