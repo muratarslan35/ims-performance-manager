@@ -1,8 +1,10 @@
 name: Patch region rolling periods
-on:
+"on":
   push:
-    branches: [fix/region-rolling-period-kpis]
-    paths: [.github/workflows/patch-region-periods.yml]
+    branches:
+      - fix/region-rolling-period-kpis
+    paths:
+      - .github/workflows/patch-region-periods.yml
 permissions:
   contents: write
 jobs:
@@ -14,49 +16,7 @@ jobs:
           ref: fix/region-rolling-period-kpis
       - name: Patch region period semantics
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('app/services/region_performance_service.py')
-          s = path.read_text(encoding='utf-8')
-          old = '''    def period_months(self, length):
-        if length is None:
-            return [(self.year, month) for month in range(1, self.month + 1)]
-        return [self.shift_month(self.year, self.month, delta) for delta in range(-(length - 1), 1)]
-'''
-          new = '''    def _latest_completed_period(self):
-        row = db.session.query(IMSUpload.year, IMSUpload.month).filter(
-            IMSUpload.status == "COMPLETED",
-            IMSUpload.year == self.year,
-        ).order_by(
-            IMSUpload.month.desc(), IMSUpload.week_number.desc(),
-            IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
-        ).first()
-        return (int(row[0]), int(row[1])) if row else (self.year, self.month)
-
-    def period_months(self, length):
-        # Monthly follows the month explicitly selected in the page. Rolling
-        # 3/6-month and YTD views follow the latest completed IMS period in the
-        # selected year so historical-month inspection does not freeze the
-        # cumulative KPI/product tables on that single month.
-        if length == 1:
-            return [(self.year, self.month)]
-        anchor_year, anchor_month = self._latest_completed_period()
-        if length is None:
-            return [(anchor_year, month) for month in range(1, anchor_month + 1)]
-        return [self.shift_month(anchor_year, anchor_month, delta) for delta in range(-(length - 1), 1)]
-'''
-          if old not in s:
-              raise SystemExit('period_months block not found')
-          path.write_text(s.replace(old, new), encoding='utf-8')
-
-          tpath = Path('tests/test_region_read_v2.py')
-          t = tpath.read_text(encoding='utf-8')
-          addition = '''\n\ndef test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_selection(monkeypatch):\n    from app.services.region_performance_service import RegionPerformanceService\n\n    service = object.__new__(RegionPerformanceService)\n    service.year = 2026\n    service.month = 1\n    monkeypatch.setattr(service, "_latest_completed_period", lambda: (2026, 2))\n\n    assert service.period_months(1) == [(2026, 1)]\n    assert service.period_months(3) == [(2025, 12), (2026, 1), (2026, 2)]\n    assert service.period_months(6) == [(2025, 9), (2025, 10), (2025, 11), (2025, 12), (2026, 1), (2026, 2)]\n    assert service.period_months(None) == [(2026, 1), (2026, 2)]\n'''
-          if 'test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_selection' not in t:
-              t += addition
-          tpath.write_text(t, encoding='utf-8')
-          PY
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpwYXRoID0gUGF0aCgiYXBwL3NlcnZpY2VzL3JlZ2lvbl9wZXJmb3JtYW5jZV9zZXJ2aWNlLnB5IikKcyA9IHBhdGgucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpCm9sZCA9ICIiIiAgICBkZWYgcGVyaW9kX21vbnRocyhzZWxmLCBsZW5ndGgpOgogICAgICAgIGlmIGxlbmd0aCBpcyBOb25lOgogICAgICAgICAgICByZXR1cm4gWyhzZWxmLnllYXIsIG1vbnRoKSBmb3IgbW9udGggaW4gcmFuZ2UoMSwgc2VsZi5tb250aCArIDEpXQogICAgICAgIHJldHVybiBbc2VsZi5zaGlmdF9tb250aChzZWxmLnllYXIsIHNlbGYubW9udGgsIGRlbHRhKSBmb3IgZGVsdGEgaW4gcmFuZ2UoLShsZW5ndGggLSAxKSwgMSldCiIiIgpuZXcgPSAiIiIgICAgZGVmIF9sYXRlc3RfY29tcGxldGVkX3BlcmlvZChzZWxmKToKICAgICAgICByb3cgPSBkYi5zZXNzaW9uLnF1ZXJ5KElNU1VwbG9hZC55ZWFyLCBJTVNVcGxvYWQubW9udGgpLmZpbHRlcigKICAgICAgICAgICAgSU1TVXBsb2FkLnN0YXR1cyA9PSAiQ09NUExFVEVEIiwKICAgICAgICAgICAgSU1TVXBsb2FkLnllYXIgPT0gc2VsZi55ZWFyLAogICAgICAgICkub3JkZXJfYnkoCiAgICAgICAgICAgIElNU1VwbG9hZC5tb250aC5kZXNjKCksIElNU1VwbG9hZC53ZWVrX251bWJlci5kZXNjKCksCiAgICAgICAgICAgIElNU1VwbG9hZC5jb21wbGV0ZWRfYXQuZGVzYygpLCBJTVNVcGxvYWQuaWQuZGVzYygpLAogICAgICAgICkuZmlyc3QoKQogICAgICAgIHJldHVybiAoaW50KHJvd1swXSksIGludChyb3dbMV0pKSBpZiByb3cgZWxzZSAoc2VsZi55ZWFyLCBzZWxmLm1vbnRoKQoKICAgIGRlZiBwZXJpb2RfbW9udGhzKHNlbGYsIGxlbmd0aCk6CiAgICAgICAgaWYgbGVuZ3RoID09IDE6CiAgICAgICAgICAgIHJldHVybiBbKHNlbGYueWVhciwgc2VsZi5tb250aCldCiAgICAgICAgYW5jaG9yX3llYXIsIGFuY2hvcl9tb250aCA9IHNlbGYuX2xhdGVzdF9jb21wbGV0ZWRfcGVyaW9kKCkKICAgICAgICBpZiBsZW5ndGggaXMgTm9uZToKICAgICAgICAgICAgcmV0dXJuIFsoYW5jaG9yX3llYXIsIG1vbnRoKSBmb3IgbW9udGggaW4gcmFuZ2UoMSwgYW5jaG9yX21vbnRoICsgMSldCiAgICAgICAgcmV0dXJuIFtzZWxmLnNoaWZ0X21vbnRoKGFuY2hvcl95ZWFyLCBhbmNob3JfbW9udGgsIGRlbHRhKSBmb3IgZGVsdGEgaW4gcmFuZ2UoLShsZW5ndGggLSAxKSwgMSldCiIiIgppZiBvbGQgbm90IGluIHM6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCJwZXJpb2RfbW9udGhzIGJsb2NrIG5vdCBmb3VuZCIpCnBhdGgud3JpdGVfdGV4dChzLnJlcGxhY2Uob2xkLCBuZXcpLCBlbmNvZGluZz0idXRmLTgiKQoKdHBhdGggPSBQYXRoKCJ0ZXN0cy90ZXN0X3JlZ2lvbl9yZWFkX3YyLnB5IikKdCA9IHRwYXRoLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKQphZGRpdGlvbiA9ICIiIgoKZGVmIHRlc3RfcmVnaW9uX3JvbGxpbmdfcGVyaW9kc191c2VfbGF0ZXN0X2NvbXBsZXRlZF9pbXNfd2hpbGVfbW9udGhseV9rZWVwc19zZWxlY3Rpb24obW9ua2V5cGF0Y2gpOgogICAgZnJvbSBhcHAuc2VydmljZXMucmVnaW9uX3BlcmZvcm1hbmNlX3NlcnZpY2UgaW1wb3J0IFJlZ2lvblBlcmZvcm1hbmNlU2VydmljZQogICAgc2VydmljZSA9IG9iamVjdC5fX25ld19fKFJlZ2lvblBlcmZvcm1hbmNlU2VydmljZSkKICAgIHNlcnZpY2UueWVhciA9IDIwMjYKICAgIHNlcnZpY2UubW9udGggPSAxCiAgICBtb25rZXlwYXRjaC5zZXRhdHRyKHNlcnZpY2UsICJfbGF0ZXN0X2NvbXBsZXRlZF9wZXJpb2QiLCBsYW1iZGE6ICgyMDI2LCAyKSkKICAgIGFzc2VydCBzZXJ2aWNlLnBlcmlvZF9tb250aHMoMSkgPT0gWygyMDI2LCAxKV0KICAgIGFzc2VydCBzZXJ2aWNlLnBlcmlvZF9tb250aHMoMykgPT0gWygyMDI1LCAxMiksICgyMDI2LCAxKSwgKDIwMjYsIDIpXQogICAgYXNzZXJ0IHNlcnZpY2UucGVyaW9kX21vbnRocyg2KSA9PSBbKDIwMjUsIDkpLCAoMjAyNSwgMTApLCAoMjAyNSwgMTEpLCAoMjAyNSwgMTIpLCAoMjAyNiwgMSksICgyMDI2LCAyKV0KICAgIGFzc2VydCBzZXJ2aWNlLnBlcmlvZF9tb250aHMoTm9uZSkgPT0gWygyMDI2LCAxKSwgKDIwMjYsIDIpXQoiIiIKaWYgInRlc3RfcmVnaW9uX3JvbGxpbmdfcGVyaW9kc191c2VfbGF0ZXN0X2NvbXBsZXRlZF9pbXNfd2hpbGVfbW9udGhseV9rZWVwc19zZWxlY3Rpb24iIG5vdCBpbiB0OgogICAgdCArPSBhZGRpdGlvbgp0cGF0aC53cml0ZV90ZXh0KHQsIGVuY29kaW5nPSJ1dGYtOCIpCg==' | base64 -d | python
           rm .github/workflows/patch-region-periods.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
