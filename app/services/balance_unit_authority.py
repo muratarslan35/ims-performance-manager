@@ -139,16 +139,19 @@ def _apply_authoritative_balance_units(service, year, month):
     changed = 0
     for _, row in frame.iloc[data_start:].iterrows():
         rep_name = service.clean_text(row.iloc[1]) if frame.shape[1] > 1 else ""
+        if not rep_name:
+            continue
         if service._is_vacancy_representative(rep_name):
             location = service.clean_text(row.iloc[0]) if frame.shape[1] > 0 else ""
             rep_id = service._ensure_vacancy_representative(location, vacancy_name=rep_name)
-        elif service._is_probable_representative_name(rep_name):
+        else:
+            # Do not reject valid BAKİYE names through the generic probable-name
+            # heuristic. The authoritative resolver is stricter and already
+            # returns unmatched for headers/subtotals/noise rows.
             match = service.resolve_representative_match(rep_name)
             if not match.get("matched"):
                 continue
             rep_id = int(match["object"].id)
-        else:
-            continue
 
         for column, product_id in balance_columns.items():
             balance_unit = _numeric_or_none(service, row.iloc[column])
