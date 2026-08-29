@@ -27,7 +27,6 @@ from app.services.semantic_import_discovery import install_semantic_import_disco
 from app.services.dynamic_import_contract import install_dynamic_import_contract
 from app.services.dynamic_import_refinement import install_dynamic_import_refinement
 from app.services.aggregate_identity_refinement import install_aggregate_identity_refinement
-from app.services.balance_unit_authority import install_balance_unit_authority
 from app.services.ims_summary_integrity import install_ims_summary_integrity
 from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
@@ -188,9 +187,6 @@ def create_app(config_object=Config):
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
     install_dashboard_runtime_optimizer()
-    # This invariant must be the outermost import wrapper so BAKİYE unit actuals
-    # remain authoritative after every integrity/read-repair hook.
-    install_balance_unit_authority()
 
     register_template_context(app)
     register_blueprints(app)
