@@ -1,0 +1,70 @@
+name: Verify live region unit balance authority
+
+on:
+  push:
+    branches: ["ops/audit-diyarbakir-travazol-units"]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only live verification
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          venv/bin/python - <<'PY'
+          from decimal import Decimal
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSRawData, Product
+          from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE
+          from app.services.region_performance_service import RegionPerformanceService
+
+          app = create_app()
+          with app.app_context():
+              product = Product.query.filter(db.func.upper(Product.product_name) == 'TRAVAZOL').first()
+              service = RegionPerformanceService('901', 2026, 2)
+              upload_id = OfficialAggregateService.latest_upload_id(2026, 2, TARGET_TYPE)
+              balance = db.session.query(IMSRawData.unit).filter(
+                  IMSRawData.upload_id == upload_id,
+                  IMSRawData.product_id == product.id,
+                  IMSRawData.sheet_type == 'dashboard_balance_region',
+                  IMSRawData.territory == '901',
+              ).scalar()
+              units = service._official_region_unit_month(2026, 2)[product.id]
+              tl = service._official_ims_region_month(2026, 2)[product.id]
+              row = next(item for item in service.aggregate([(2026, 2)])['products'] if item['product_id'] == product.id)
+              print(f"TRAVAZOL_BALANCE|upload_id={upload_id}|remaining={balance}")
+              print(f"TRAVAZOL_UNITS|target={units[0]}|actual={units[1]}|difference={units[1]-units[0]}|complete={units[2]}")
+              print(f"TRAVAZOL_TL|target={tl[0]}|actual={tl[1]}|gap={tl[0]-tl[1]}")
+              print(f"TRAVAZOL_ROW|target_unit={row['target_unit']}|actual_unit={row['actual_unit']}|unit_difference={row['unit_difference']}|gap_tl={row['gap_tl']}")
+              assert Decimal(str(balance)) == Decimal('213')
+              assert units[0] == Decimal('74907.0')
+              assert units[1] == Decimal('74694.0')
+              assert units[1] - units[0] == Decimal('-213.0')
+              assert row['unit_difference'] == Decimal('-213.0')
+              assert abs((tl[0] - tl[1]) - Decimal('23811.313999999')) < Decimal('0.01')
+          PY
+          REMOTE
