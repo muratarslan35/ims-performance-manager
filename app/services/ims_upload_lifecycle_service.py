@@ -10,8 +10,8 @@ The service deliberately separates three concerns:
 Weekly raw/fact/competition history is upload-scoped, while Target, IMSSummary and
 RepresentativeBrickAssignment are period-scoped current-state tables. Before a
 new import is published we persist an exact rollback snapshot of those three
-period-scoped tables. Deleting the latest upload restores that snapshot and then
-removes rows directly owned by the deleted IMSUpload.
+period-scoped tables. Deleting the latest upload removes the newer upload-owned
+rows first and restores the previous current-state snapshot as the final write.
 """
 from __future__ import annotations
 
@@ -327,9 +327,8 @@ class IMSUploadLifecycleService:
         if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (year, month):
             raise RuntimeError("Geri dönüş snapshot dönemi IMS dönemiyle eşleşmiyor.")
 
-        # The current-state rows are replaced underneath the ORM. Evict only
-        # these model classes before touching SQL; User/Representative/Product/
-        # IMSUpload objects remain attached to the request/session.
+        # Current-state ORM objects must never be allowed to flush an already
+        # superseded value after the exact snapshot rows have been restored.
         cls._expunge_current_state_models()
 
         target_table = Target.__table__
@@ -351,7 +350,6 @@ class IMSUploadLifecycleService:
         cls._restore_rows_core(Target, payload.get("targets") or [])
         cls._restore_rows_core(IMSSummary, payload.get("summaries") or [])
         cls._restore_rows_core(RepresentativeBrickAssignment, payload.get("brick_assignments") or [])
-        db.session.flush()
 
     @classmethod
     def _delete_direct_upload_children(cls, upload_id: int) -> None:
@@ -400,17 +398,23 @@ class IMSUploadLifecycleService:
         hidden_key = cls.hidden_setting_key(deleted_upload_id)
         latest = cls._latest_completed_for_period(upload) if upload.status == "COMPLETED" else None
         restored = bool(latest is not None and latest.id == deleted_upload_id)
-        try:
-            if restored:
-                cls._restore_period_snapshot(upload)
 
-            cls._delete_direct_upload_children(deleted_upload_id)
-            hidden = Setting.query.filter_by(setting_key=hidden_key).first()
-            if hidden is not None:
-                db.session.delete(hidden)
-            db.session.execute(
-                IMSUpload.__table__.delete().where(IMSUpload.id == deleted_upload_id)
-            )
+        try:
+            # IMPORTANT: upload-owned raw/fact/competition rows can participate
+            # in existing synchronization logic. Delete them before restoring the
+            # previous current-state values, and suppress ORM autoflush for the
+            # entire Core-SQL transaction. The rollback snapshot is deliberately
+            # the last data write before commit.
+            with db.session.no_autoflush:
+                cls._delete_direct_upload_children(deleted_upload_id)
+                db.session.execute(
+                    Setting.__table__.delete().where(Setting.setting_key == hidden_key)
+                )
+                db.session.execute(
+                    IMSUpload.__table__.delete().where(IMSUpload.id == deleted_upload_id)
+                )
+                if restored:
+                    cls._restore_period_snapshot(upload)
             db.session.commit()
         except Exception:
             db.session.rollback()
