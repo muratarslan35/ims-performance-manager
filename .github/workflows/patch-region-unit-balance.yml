@@ -1,0 +1,111 @@
+name: Patch region unit balance authority
+
+on:
+  push:
+    branches: ["fix/region-unit-balance-authority"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/region-unit-balance-authority
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Apply scoped unit-source fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('app/services/region_performance_service.py')
+          source = path.read_text()
+          replacement = '''    def _official_region_unit_month(self, year, month):
+        """Return authoritative region/product box target and actual values.
+
+        P2/P1 region-product unit rows remain authoritative when present. For
+        IMS periods the unit target comes from the period's representative
+        Target rows, while the actual unit is derived from the workbook's
+        ``MF SIZ KUTU BAKIYE`` regional balance row: target - remaining balance.
+        This mirrors the TL balance logic and never substitutes TTS competition
+        units, percentage estimates, or TL-to-unit conversions.
+        """
+        production_upload = ProductionResultService.final_upload(year, month)
+        if production_upload is not None:
+            rows = ProductionRegionProductResult.query.filter_by(
+                upload_id=production_upload.id, region_code=self.region_key
+            ).all()
+            if rows:
+                return {
+                    row.product_id: [
+                        Decimal(str(row.target_unit or 0)),
+                        Decimal(str(row.actual_unit or 0)),
+                        True,
+                    ]
+                    for row in rows
+                }
+
+        target_units = {
+            product_id: Decimal(str(value or 0))
+            for product_id, value in db.session.query(
+                Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
+            ).filter(
+                Target.year == year,
+                Target.month == month,
+                Target.representative_id.in_(self.rep_ids),
+            ).group_by(Target.product_id).all()
+        }
+        if not target_units:
+            return {}
+
+        upload_id = OfficialAggregateService.latest_upload_id(year, month, TARGET_TYPE)
+        if not upload_id:
+            return {}
+        balances = {
+            product_id: Decimal(str(balance_unit or 0))
+            for product_id, balance_unit in db.session.query(
+                IMSRawData.product_id, IMSRawData.unit
+            ).filter(
+                IMSRawData.upload_id == upload_id,
+                IMSRawData.sheet_type == "dashboard_balance_region",
+                IMSRawData.territory == self.region_key,
+            ).all()
+        }
+        if not balances:
+            return {}
+
+        return {
+            product_id: [
+                target_unit,
+                target_unit - balances[product_id],
+                True,
+            ]
+            if product_id in balances
+            else [target_unit, Decimal("0"), False]
+            for product_id, target_unit in target_units.items()
+        }
+
+    def aggregate'''
+          updated, count = re.subn(
+              r'    def _official_region_unit_month\(self, year, month\):.*?\n    def aggregate',
+              replacement,
+              source,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit(f'unit helper replacement count={count}')
+          path.write_text(updated)
+
+          test_path = Path('tests/test_passive_user_and_region_unit_gap_contract.py')
+          test_path.write_text('''from pathlib import Path\n\n\ndef test_passive_representative_has_red_status_label():\n    html = Path("app/templates/representative_detail.html").read_text()\n    assert "{% if not representative.active %}" in html\n    assert "text-danger fw-bold" in html\n    assert "PASİF KULLANICI" in html\n\n\ndef test_ims_region_unit_gap_uses_target_minus_mf_siz_kutu_balance():\n    source = Path("app/services/region_performance_service.py").read_text()\n    segment = source.split("def _official_region_unit_month", 1)[1].split("def aggregate", 1)[0]\n    assert "func.sum(Target.unit_target)" in segment\n    assert "dashboard_balance_region" in segment\n    assert "IMSRawData.unit" in segment\n    assert "target_unit - balances[product_id]" in segment\n    assert "actual_rows" not in segment\n    assert "ACTUAL_TYPE" not in segment\n\n\ndef test_unit_balance_example_matches_workbook_semantics():\n    target_unit = 74907\n    remaining_balance = 213\n    actual_unit = target_unit - remaining_balance\n    assert actual_unit == 74694\n    assert actual_unit - target_unit == -213\n''')
+
+          Path('.github/workflows/patch-region-unit-balance.yml').unlink()
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/services/region_performance_service.py tests/test_passive_user_and_region_unit_gap_contract.py .github/workflows/patch-region-unit-balance.yml
+          git commit -m "Use MF siz kutu bakiye for region box actuals"
+          git push origin HEAD:fix/region-unit-balance-authority
