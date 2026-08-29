@@ -1,0 +1,119 @@
+"""Install rollback, archive and semantic-duplicate hooks around queued IMS imports."""
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from pathlib import Path
+
+from flask import current_app
+
+from app.extensions import db
+from app.models import IMSImportJob
+from app.services.ims_import_queue import IMSImportQueue
+from app.services.ims_import_service import IMSImportService
+from app.services.ims_progress_store import IMSProgressStore
+from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+
+
+logger = logging.getLogger(__name__)
+
+
+def install_ims_upload_lifecycle() -> None:
+    if getattr(IMSImportQueue, "_upload_lifecycle_installed", False):
+        return
+
+    original_process = IMSImportQueue.process
+
+    @classmethod
+    def process_with_upload_lifecycle(cls, job):
+        staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
+        pending_source = IMSUploadLifecycleService._archive_root() / f"pending-job-{int(job.id)}{staging_path.suffix.lower()}"
+        snapshot_captured = False
+
+        try:
+            detected_week = IMSImportService.extract_week_number(job.file_name)
+            existing_week = IMSUploadLifecycleService.existing_week_job(
+                year=job.year,
+                month=job.month,
+                week_number=detected_week,
+            )
+            if existing_week is not None and existing_week.ims_upload_id:
+                same_semantic = IMSUploadLifecycleService.same_semantic_workbook(
+                    staging_path,
+                    existing_week.ims_upload_id,
+                )
+                if same_semantic is True:
+                    completed_at = datetime.utcnow()
+                    duplicate = db.session.get(IMSImportJob, int(job.id))
+                    duplicate.status = IMSImportJob.STATUS_FAILED
+                    duplicate.error_message = (
+                        "Bu IMS dosyasındaki tüm hücre verileri sistemdeki aynı hafta IMS ile aynıdır; "
+                        "dosya zaten yüklü olduğu için tekrar import edilmedi."
+                    )
+                    duplicate.completed_at = completed_at
+                    duplicate.heartbeat_at = completed_at
+                    db.session.commit()
+                    IMSProgressStore.write(
+                        duplicate.id,
+                        percent=100,
+                        stage="duplicate",
+                        message="Bu IMS zaten yüklü",
+                        detail=f"{detected_week}. hafta verileri birebir aynı" if detected_week else "Veriler birebir aynı",
+                        status=IMSImportJob.STATUS_FAILED,
+                    )
+                    return None
+
+            try:
+                IMSUploadLifecycleService.capture_period_snapshot(
+                    job_id=job.id,
+                    year=job.year,
+                    month=job.month,
+                )
+                snapshot_captured = True
+            except Exception:
+                logger.exception("ims_lifecycle_snapshot_capture_failed job_id=%s", job.id)
+
+            try:
+                if staging_path.is_file():
+                    pending_source.write_bytes(staging_path.read_bytes())
+            except Exception:
+                logger.exception("ims_lifecycle_source_staging_failed job_id=%s", job.id)
+                pending_source.unlink(missing_ok=True)
+
+            result = original_process(job)
+            db.session.expire_all()
+            refreshed = db.session.get(IMSImportJob, int(job.id))
+
+            if refreshed is not None and refreshed.status == IMSImportJob.STATUS_COMPLETED and refreshed.ims_upload_id:
+                if snapshot_captured:
+                    IMSUploadLifecycleService.finalize_snapshot(
+                        job_id=refreshed.id,
+                        upload_id=refreshed.ims_upload_id,
+                    )
+                if pending_source.is_file():
+                    try:
+                        IMSUploadLifecycleService.archive_successful_source(
+                            staging_path=pending_source,
+                            upload_id=refreshed.ims_upload_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "ims_lifecycle_source_archive_failed job_id=%s upload_id=%s",
+                            refreshed.id,
+                            refreshed.ims_upload_id,
+                        )
+            else:
+                IMSUploadLifecycleService.discard_pending_snapshot(job.id)
+            return result
+        finally:
+            pending_source.unlink(missing_ok=True)
+            # The original queue deletes staging files after normal processing.
+            # Semantic duplicates return before that call, so remove their staged
+            # source here as well. No live/accepted IMS data is changed.
+            staging_path.unlink(missing_ok=True)
+            refreshed = db.session.get(IMSImportJob, int(job.id))
+            if refreshed is None or refreshed.status != IMSImportJob.STATUS_COMPLETED:
+                IMSUploadLifecycleService.discard_pending_snapshot(job.id)
+
+    IMSImportQueue.process = process_with_upload_lifecycle
+    IMSImportQueue._upload_lifecycle_installed = True
