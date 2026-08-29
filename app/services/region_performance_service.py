@@ -185,11 +185,14 @@ class RegionPerformanceService:
         }
 
     def _official_region_unit_month(self, year, month):
-        """Return authoritative region/product box targets and actuals.
+        """Return DB-backed region/product box targets and actuals.
 
-        This deliberately uses stored unit fields only. It never derives boxes
-        from TL or realization percentages. P2/P1 region product rows have
-        priority; IMS official region aggregates are the fallback.
+        P2/P1 region-product unit rows remain authoritative when present. For
+        IMS periods, the box target comes from the representative Target rows
+        for the same region/month, exactly like the region market analysis.
+        The actual box count comes from the workbook-authoritative region ACTUAL
+        aggregate. TL is never converted to boxes and balance values are never
+        treated as box targets.
         """
         production_upload = ProductionResultService.final_upload(year, month)
         if production_upload is not None:
@@ -206,41 +209,38 @@ class RegionPerformanceService:
                     for row in rows
                 }
 
-        targets = OfficialAggregateService.rows(year, month, self.region_key, TARGET_TYPE)
-        if not targets:
+        target_units = {
+            product_id: Decimal(str(value or 0))
+            for product_id, value in db.session.query(
+                Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
+            ).filter(
+                Target.year == year,
+                Target.month == month,
+                Target.representative_id.in_(self.rep_ids),
+            ).group_by(Target.product_id).all()
+        }
+        if not target_units:
             return {}
-        actuals = {
+
+        actual_rows = {
             row.product_id: row
             for row in OfficialAggregateService.rows(year, month, self.region_key, ACTUAL_TYPE)
         }
-        upload_id = OfficialAggregateService.latest_upload_id(year, month, TARGET_TYPE)
-        balances = {}
-        if upload_id:
-            balances = {
-                product_id: Decimal(str(balance_unit or 0))
-                for product_id, balance_unit in db.session.query(
-                    IMSRawData.product_id, IMSRawData.unit
-                ).filter(
-                    IMSRawData.upload_id == upload_id,
-                    IMSRawData.sheet_type == "dashboard_balance_region",
-                    IMSRawData.territory == self.region_key,
-                ).all()
-            }
-        result = {}
-        for target in targets:
-            target_unit = Decimal(str(target.unit or 0))
-            actual = actuals.get(target.product_id)
-            if actual is not None:
-                result[target.product_id] = [
-                    target_unit, Decimal(str(actual.unit or 0)), True
-                ]
-            elif target.product_id in balances:
-                result[target.product_id] = [
-                    target_unit, target_unit - balances[target.product_id], True
-                ]
-            else:
-                result[target.product_id] = [target_unit, Decimal("0"), False]
-        return result
+        if not actual_rows:
+            # If there is no official regional box actual, aggregate() falls
+            # back to representative DB actuals instead of manufacturing units.
+            return {}
+
+        return {
+            product_id: [
+                target_unit,
+                Decimal(str(actual_rows[product_id].unit or 0)),
+                True,
+            ]
+            if product_id in actual_rows
+            else [target_unit, Decimal("0"), False]
+            for product_id, target_unit in target_units.items()
+        }
 
     def aggregate(self, months):
         cells = defaultdict(lambda: {
