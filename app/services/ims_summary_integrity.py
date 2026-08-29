@@ -1,19 +1,14 @@
 """Keep IMSSummary actuals aligned with the authoritative IMS period actuals.
 
-This guard is deliberately narrow: it changes only ``ims_summary`` rows produced
-by an IMS import. Targets, prime, dashboard formulas, production-result priority
-and all other read models are untouched.
+This guard is deliberately narrow: it changes only IMS representative/product
+actuals produced by an import. Targets, prime, dashboard formulas,
+production-result priority and all other read models are untouched.
 
-Weekly IMS workbooks are cumulative snapshots.  Their representative/product
-actuals are persisted on ``Target.tl_realization`` / ``Target.unit_realization``
-by the existing weekly-sales import contract.  ``rebuild_summary`` also creates
-summary rows from generic FACT rows, and those FACT rows can contain several
-report types for the same product.  If that generic aggregation survives, TL can
-be zero while unit values are inflated by unrelated balance/brick measures.
-
-After the normal workbook pipeline has finished, this guard copies the already
-accepted weekly IMS actuals back onto only the current upload's summary rows.
-Numeric zero is preserved as a real value.
+Weekly IMS workbooks are cumulative snapshots. Their TL actuals are accepted
+from the weekly-sales source. Unit actuals use the explicit BAKİYE remaining-box
+contract when available: ``unit_target - MF'siz KUTU BAKİYE``. Numeric zero is
+an authoritative balance value; a missing balance permits the existing TTS unit
+fallback.
 """
 from __future__ import annotations
 
@@ -22,12 +17,7 @@ from app.models import IMSSummary, Target
 
 
 def synchronize_summary_from_targets(upload_id: int, year: int, month: int) -> int:
-    """Synchronize current-upload summary actuals from persisted IMS target actuals.
-
-    The caller is responsible for invoking this only when the workbook contains
-    an authoritative cumulative weekly-sales source.  Limiting by ``upload_id``
-    prevents any historical upload or other period from being modified.
-    """
+    """Synchronize current-upload summary actuals from persisted IMS target actuals."""
     summaries = IMSSummary.query.filter_by(
         upload_id=int(upload_id),
         year=int(year),
@@ -95,7 +85,8 @@ def synchronize_summary_from_targets(upload_id: int, year: int, month: int) -> i
 
 
 def install_ims_summary_integrity() -> None:
-    """Install one post-import summary invariant without changing other services."""
+    """Install one post-import invariant without changing unrelated services."""
+    from app.services.balance_unit_authority import _apply_authoritative_balance_units
     from app.services.dynamic_import_contract import _profile_cache
     from app.services.ims_import_service import IMSImportService
 
@@ -119,6 +110,13 @@ def install_ims_summary_integrity() -> None:
 
         changed = synchronize_summary_from_targets(self.upload.id, year, month)
         self.statistics["summary_integrity_rows"] = changed
+
+        # Final source authority: BAKİYE unit balance must be applied AFTER the
+        # Target->Summary integrity copy. This guarantees that neither TTS nor
+        # this integrity hook can leave the old weekly unit value authoritative.
+        balance_changed = _apply_authoritative_balance_units(self, year, month)
+        self.statistics["balance_unit_authority_rows"] = balance_changed
+        self.statistics["balance_unit_authority_final_rows"] = balance_changed
         return result
 
     IMSImportService.process_workbook = process_workbook_with_summary_integrity
