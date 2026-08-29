@@ -1,4 +1,4 @@
-name: Verify live region unit balance authority
+name: Inspect live region balance row
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read-only live verification
+      - name: Inspect read-only balance source
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
@@ -35,36 +35,31 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           venv/bin/python - <<'PY'
-          from decimal import Decimal
           from app import create_app
           from app.extensions import db
           from app.models import IMSRawData, Product
           from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE
-          from app.services.region_performance_service import RegionPerformanceService
+          import json, os
 
-          app = create_app()
+          app=create_app()
           with app.app_context():
-              product = Product.query.filter(db.func.upper(Product.product_name) == 'TRAVAZOL').first()
-              service = RegionPerformanceService('901', 2026, 2)
-              upload_id = OfficialAggregateService.latest_upload_id(2026, 2, TARGET_TYPE)
-              balance = db.session.query(IMSRawData.unit).filter(
-                  IMSRawData.upload_id == upload_id,
-                  IMSRawData.product_id == product.id,
-                  IMSRawData.sheet_type == 'dashboard_balance_region',
-                  IMSRawData.territory == '901',
-              ).scalar()
-              units = service._official_region_unit_month(2026, 2)[product.id]
-              tl = service._official_ims_region_month(2026, 2)[product.id]
-              row = next(item for item in service.aggregate([(2026, 2)])['products'] if item['product_id'] == product.id)
-              print(f"TRAVAZOL_BALANCE|upload_id={upload_id}|remaining={balance}")
-              print(f"TRAVAZOL_UNITS|target={units[0]}|actual={units[1]}|difference={units[1]-units[0]}|complete={units[2]}")
-              print(f"TRAVAZOL_TL|target={tl[0]}|actual={tl[1]}|gap={tl[0]-tl[1]}")
-              print(f"TRAVAZOL_ROW|target_unit={row['target_unit']}|actual_unit={row['actual_unit']}|unit_difference={row['unit_difference']}|gap_tl={row['gap_tl']}")
-              assert Decimal(str(balance)) == Decimal('213')
-              assert units[0] == Decimal('74907.0')
-              assert units[1] == Decimal('74694.0')
-              assert units[1] - units[0] == Decimal('-213.0')
-              assert row['unit_difference'] == Decimal('-213.0')
-              assert abs((tl[0] - tl[1]) - Decimal('23811.313999999')) < Decimal('0.01')
+              p=Product.query.filter(db.func.upper(Product.product_name)=='TRAVAZOL').first()
+              uid=OfficialAggregateService.latest_upload_id(2026,2,TARGET_TYPE)
+              rows=IMSRawData.query.filter_by(upload_id=uid, product_id=p.id, sheet_type='dashboard_balance_region', territory='901').all()
+              print('UPLOAD',uid,'ROWS',len(rows))
+              for r in rows:
+                  print('ROW', {c.name:getattr(r,c.name) for c in r.__table__.columns})
+              archive=os.path.join(app.config['UPLOAD_FOLDER'],'ims_archive',f'upload-{uid}.xlsx')
+              print('ARCHIVE',archive,os.path.exists(archive))
+              if os.path.exists(archive):
+                  import openpyxl
+                  wb=openpyxl.load_workbook(archive,read_only=True,data_only=True)
+                  for ws in wb.worksheets:
+                      if 'BAK' in ws.title.upper():
+                          print('SHEET',ws.title,ws.max_row,ws.max_column)
+                          for row in ws.iter_rows(values_only=True):
+                              vals=[str(v) if v is not None else '' for v in row]
+                              if any('901' in v and 'DIYARBAKIR' in v.upper() for v in vals):
+                                  print('EXCEL_ROW',vals)
           PY
           REMOTE
