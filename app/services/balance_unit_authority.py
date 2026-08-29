@@ -5,11 +5,10 @@ MF'siz KUTU BAKİYE) and product names can live on different rows. The legacy
 ``apply_balance_summary`` path assumed both labels shared one cell, so the
 remaining-box columns were not resolved and TTS units later won by fallback.
 
-This adapter is deliberately narrow. It runs immediately after the existing
-balance summary logic and before weekly TTS application. It changes only
-``Target.unit_realization`` and ``IMSSummary.unit`` for representative/product
-pairs with an explicit numeric MF'siz KUTU BAKİYE cell. TL, targets, prime,
-competition and P2/P1 precedence are untouched. Numeric zero is authoritative.
+This adapter is deliberately narrow. It changes only ``Target.unit_realization``
+and ``IMSSummary.unit`` for representative/product pairs with an explicit
+numeric MF'siz KUTU BAKİYE cell. TL, targets, prime, competition and P2/P1
+precedence are untouched. Numeric zero is authoritative.
 """
 from __future__ import annotations
 
@@ -96,8 +95,6 @@ def _discover_balance_columns(service, frame):
             continue
         product_id = selected_products.get(column)
         if product_id is None:
-            # Merged/multi-row headers can place the product one row above or
-            # below the dominant product row. Search the same column only.
             for row_index in range(max_rows):
                 product_id = product_rows[row_index].get(column)
                 if product_id is not None:
@@ -145,9 +142,6 @@ def _apply_authoritative_balance_units(service, year, month):
             location = service.clean_text(row.iloc[0]) if frame.shape[1] > 0 else ""
             rep_id = service._ensure_vacancy_representative(location, vacancy_name=rep_name)
         else:
-            # Do not reject valid BAKİYE names through the generic probable-name
-            # heuristic. The authoritative resolver is stricter and already
-            # returns unmatched for headers/subtotals/noise rows.
             match = service.resolve_representative_match(rep_name)
             if not match.get("matched"):
                 continue
@@ -176,13 +170,19 @@ def _apply_authoritative_balance_units(service, year, month):
 
 
 def install_balance_unit_authority() -> None:
-    """Install the narrow post-balance/pre-TTS invariant once per process."""
+    """Install the invariant after all other import wrappers.
+
+    It is applied twice: immediately after the normal BAKİYE step so TTS sees
+    the guard keys, and once after the complete import hook chain so no later
+    integrity/repair hook can leave a conflicting unit actual behind.
+    """
     from app.services.ims_import_service import IMSImportService
 
     if getattr(IMSImportService, "_balance_unit_authority_installed", False):
         return
 
     original_apply_balance_summary = IMSImportService.apply_balance_summary
+    original_process_workbook = IMSImportService.process_workbook
 
     def apply_balance_summary_with_unit_authority(self, year, month):
         result = original_apply_balance_summary(self, year, month)
@@ -190,5 +190,13 @@ def install_balance_unit_authority() -> None:
         self.statistics["balance_unit_authority_rows"] = changed
         return result
 
+    def process_workbook_with_final_unit_authority(self, year, month, week_number=None):
+        result = original_process_workbook(self, year, month, week_number=week_number)
+        if self._is_current_week_snapshot(year, month, week_number):
+            changed = _apply_authoritative_balance_units(self, year, month)
+            self.statistics["balance_unit_authority_final_rows"] = changed
+        return result
+
     IMSImportService.apply_balance_summary = apply_balance_summary_with_unit_authority
+    IMSImportService.process_workbook = process_workbook_with_final_unit_authority
     IMSImportService._balance_unit_authority_installed = True
