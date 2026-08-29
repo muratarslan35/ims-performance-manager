@@ -139,7 +139,7 @@ def register_error_handlers(app):
 def create_database(app):
     from app.services.startup_coordinator import StartupCoordinator
 
-    # Gunicorn boots workers concurrently.  Keep the existing initialization
+    # Gunicorn boots workers concurrently. Keep the existing initialization
     # contract, but serialize its small idempotent writes so two workers cannot
     # create the same seed user/setting at the same instant.
     with StartupCoordinator.acquire(app):
@@ -160,7 +160,7 @@ def create_app(config_object=Config):
         and database_uri != "sqlite:///"
     ):
         # Windows does not allow a TemporaryDirectory to remove a SQLite file
-        # while QueuePool retains an idle handle.  Test-only NullPool keeps each
+        # while QueuePool retains an idle handle. Test-only NullPool keeps each
         # file-backed database isolated and makes teardown deterministic; the
         # production WAL/single-writer connection policy is unchanged.
         engine_options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
