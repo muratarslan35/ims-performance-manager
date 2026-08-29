@@ -12,6 +12,7 @@
     {% if manager_access %}<a class="btn btn-sm btn-outline-primary mt-3" href="{{ url_for('representatives.territory_management', year=year, month=month, representative_id=representative.id) }}"><i class="bi bi-geo-alt-fill"></i> {{ assignments|length }} aktif çalışma alanını yönet</a>{% else %}<div class="small text-secondary mt-3"><i class="bi bi-geo-alt-fill"></i> {{ assignments|length }} aktif çalışma alanı</div>{% endif %}
   </div>
   <div class="representative-switcher">
+    {% if not representative.active %}<div class="text-end text-danger fw-bold mb-2">PASİF KULLANICI</div>{% endif %}
     {% if manager_access %}<label for="representativeSwitcher" class="form-label small text-secondary mb-1">Temsilci değiştir</label>
     <select id="representativeSwitcher" class="form-select" data-year="{{ year }}" data-month="{{ month }}">
       {% for item in representatives %}<option value="{{ item.id }}" {% if item.id == representative.id %}selected{% endif %}>{{ item.rep_name|representative_display_name }}</option>{% endfor %}
