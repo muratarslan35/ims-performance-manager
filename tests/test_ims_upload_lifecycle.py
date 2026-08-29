@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 
 from app import create_app
@@ -134,6 +135,8 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
     app, ctx = _context()
     try:
         rep, product, previous, target, summary = _seed_period()
+        rep_id = int(rep.id)
+        product_id = int(product.id)
         job = IMSImportJob(
             status=IMSImportJob.STATUS_PROCESSING,
             file_name="8.Hafta.xlsx",
@@ -146,7 +149,12 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         )
         db.session.add(job)
         db.session.flush()
-        IMSUploadLifecycleService.capture_period_snapshot(job_id=job.id, year=2033, month=2)
+        snapshot_path = IMSUploadLifecycleService.capture_period_snapshot(job_id=job.id, year=2033, month=2)
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        assert snapshot["targets"][0]["unit_realization"] == 700.0
+        assert snapshot["targets"][0]["tl_realization"] == 7000.0
+        assert snapshot["summaries"][0]["unit"] == 700.0
+        assert snapshot["summaries"][0]["tl"] == 7000.0
 
         current = IMSUpload(
             file_name="8.Hafta.xlsx", year=2033, month=2, quarter="Q1", week_number=8,
@@ -169,8 +177,8 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
             week_number=8,
             sheet_name="TTS HAFTALIK ÇIKIŞLARI",
             sheet_type="weekly",
-            representative_id=rep.id,
-            product_id=product.id,
+            representative_id=rep_id,
+            product_id=product_id,
             representative=rep.rep_name,
             product=product.product_name,
             unit=850.0,
@@ -182,8 +190,8 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         fact = IMSFact(
             upload_id=current_id,
             raw_data_id=raw.id,
-            representative_id=rep.id,
-            product_id=product.id,
+            representative_id=rep_id,
+            product_id=product_id,
             year=2033,
             month=2,
             quarter="Q1",
@@ -197,14 +205,40 @@ def test_delete_latest_restores_previous_period_state_and_removes_owned_rows():
         job.status = IMSImportJob.STATUS_COMPLETED
         job.ims_upload_id = current_id
         db.session.commit()
-        IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=current_id)
+        final_snapshot_path = IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=current_id)
+        final_snapshot = json.loads(final_snapshot_path.read_text(encoding="utf-8"))
+        assert final_snapshot["targets"][0]["unit_realization"] == 700.0
+        assert final_snapshot["summaries"][0]["unit"] == 700.0
 
         result = IMSUploadLifecycleService.delete_upload(current_id)
         assert result["restored_previous_period_state"] is True
         assert db.session.get(IMSUpload, current_id) is None
         assert db.session.get(IMSUpload, previous_id) is not None
-        restored_target = Target.query.filter_by(year=2033, month=2, representative_id=rep.id, product_id=product.id).one()
-        restored_summary = IMSSummary.query.filter_by(year=2033, month=2, representative_id=rep.id, product_id=product.id).one()
+
+        raw_target = db.session.execute(
+            Target.__table__.select().where(
+                Target.__table__.c.year == 2033,
+                Target.__table__.c.month == 2,
+                Target.__table__.c.representative_id == rep_id,
+                Target.__table__.c.product_id == product_id,
+            )
+        ).mappings().one()
+        raw_summary = db.session.execute(
+            IMSSummary.__table__.select().where(
+                IMSSummary.__table__.c.year == 2033,
+                IMSSummary.__table__.c.month == 2,
+                IMSSummary.__table__.c.representative_id == rep_id,
+                IMSSummary.__table__.c.product_id == product_id,
+            )
+        ).mappings().one()
+        assert raw_target["unit_realization"] == 700.0
+        assert raw_target["tl_realization"] == 7000.0
+        assert raw_summary["unit"] == 700.0
+        assert raw_summary["tl"] == 7000.0
+        assert raw_summary["upload_id"] == previous_id
+
+        restored_target = Target.query.filter_by(year=2033, month=2, representative_id=rep_id, product_id=product_id).one()
+        restored_summary = IMSSummary.query.filter_by(year=2033, month=2, representative_id=rep_id, product_id=product_id).one()
         assert restored_target.unit_realization == 700.0
         assert restored_target.tl_realization == 7000.0
         assert restored_summary.unit == 700.0
