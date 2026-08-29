@@ -9,6 +9,7 @@ from flask import current_app, has_request_context, request
 
 from app.extensions import db
 from app.models import IMSImportJob
+from app.services.import_roster_sync import IMSRosterSyncService
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_import_service import IMSImportService
 from app.services.ims_progress_store import IMSProgressStore
@@ -117,6 +118,16 @@ def install_ims_upload_lifecycle() -> None:
                             refreshed.id,
                             refreshed.ims_upload_id,
                         )
+                try:
+                    roster_result = IMSRosterSyncService.sync_latest()
+                    logger.info("ims_roster_sync_success %s", roster_result)
+                except Exception:
+                    db.session.rollback()
+                    logger.exception(
+                        "ims_roster_sync_failed job_id=%s upload_id=%s",
+                        refreshed.id,
+                        refreshed.ims_upload_id,
+                    )
             else:
                 IMSUploadLifecycleService.discard_pending_snapshot(job.id)
             return result
