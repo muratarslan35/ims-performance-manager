@@ -124,7 +124,7 @@ def test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_sel
     assert service.period_months(None) == [(2026, 1), (2026, 2)]
 
 
-def test_region_product_unit_gap_uses_official_stored_units(tmp_path):
+def test_region_product_unit_gap_uses_mf_siz_kutu_balance_not_actual_aggregate(tmp_path):
     app = _app(tmp_path)
     from app.extensions import db
     from app.models import IMSRawData, IMSUpload, Product, Representative, Target
@@ -142,12 +142,13 @@ def test_region_product_unit_gap_uses_official_stored_units(tmp_path):
         db.session.add_all([
             IMSRawData(upload_id=upload.id, year=2026, month=2, sheet_name="BAKIYE", sheet_type=TARGET_TYPE, source_row=0, product_id=product.id, territory="901", unit=100, tl=1000, raw_json="{}"),
             IMSRawData(upload_id=upload.id, year=2026, month=2, sheet_name="CIKIS", sheet_type=ACTUAL_TYPE, source_row=0, product_id=product.id, territory="901", unit=112, tl=1100, raw_json="{}"),
+            IMSRawData(upload_id=upload.id, year=2026, month=2, sheet_name="BAKIYE", sheet_type="dashboard_balance_region", source_row=0, product_id=product.id, territory="901", unit=12, tl=100, raw_json="{}"),
         ])
         db.session.commit()
         row = RegionPerformanceService("901", 2026, 2).report()["periods"]["monthly"]["products"][0]
         assert row["target_unit"] == Decimal("100.0")
-        assert row["actual_unit"] == Decimal("112.0")
-        assert row["unit_difference"] == Decimal("12.0")
+        assert row["actual_unit"] == Decimal("88.0")
+        assert row["unit_difference"] == Decimal("-12.0")
 
 
 def test_region_product_table_has_unit_gap_and_tl_gap_headers():
