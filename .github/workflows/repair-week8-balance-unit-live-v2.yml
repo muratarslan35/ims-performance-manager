@@ -26,7 +26,7 @@ jobs:
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
       - name: Fetch repair source
         run: |
-          curl -fsSL 'https://raw.githubusercontent.com/muratarslan35/ims-performance-manager/diag/week8-balance-unit-live-repair/scripts/tmp_week8_balance_unit_repair_data.json' -o /tmp/week8_balance_unit_repair_data.json
+          curl -fsSL 'https://raw.githubusercontent.com/muratarslan35/ims-performance-manager/b0b24b905e173423f3a620cae1f3b2a2f68f27a2/scripts/tmp_week8_balance_unit_repair_data.json' -o /tmp/week8_balance_unit_repair_data.json
           python - <<'PY'
           import json
           p=json.load(open('/tmp/week8_balance_unit_repair_data.json',encoding='utf-8'))
@@ -43,7 +43,7 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python -u - <<'PY'
-          import sqlite3, json, datetime, re, unicodedata, sys
+          import sqlite3, json, datetime, re, unicodedata
           DB='instance/ipm.db'; DATA='/tmp/week8_balance_unit_repair_data.json'; EXPECTED=791
           def norm(v):
               s=str(v or '').strip().replace('ı','i').replace('İ','I')
@@ -63,11 +63,9 @@ jobs:
           if round(float(m[1] or 0))==8379 and abs(float(m[1] or 0)-float(m[2] or 0))<1e-9:
               print('ALREADY_REPAIRED|skip_write=YES',flush=True); pre.close(); raise SystemExit(0)
           ts=datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'); backup=f'/tmp/ipm-before-week8-balance-unit-repair-{ts}.db'
-          dst=sqlite3.connect(backup)
-          last=[-1]
+          dst=sqlite3.connect(backup); last=[-1]
           def progress(status,remaining,total):
-              done=total-remaining
-              pct=int(done*100/total) if total else 100
+              done=total-remaining; pct=int(done*100/total) if total else 100
               if pct//10!=last[0]:
                   last[0]=pct//10; print(f'BACKUP_PROGRESS|{pct}%|remaining={remaining}|total={total}',flush=True)
           pre.backup(dst,pages=8192,progress=progress,sleep=0.01)
