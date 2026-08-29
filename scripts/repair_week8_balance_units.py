@@ -1,0 +1,218 @@
+import datetime
+import json
+import re
+import sqlite3
+import sys
+import unicodedata
+
+DB = sys.argv[1] if len(sys.argv) > 1 else "instance/ipm.db"
+DATA = sys.argv[2] if len(sys.argv) > 2 else "/tmp/week8_balance_unit_repair_data.json"
+EXPECTED = 791
+
+
+def norm(value):
+    text = str(value or "").strip().replace("ı", "i").replace("İ", "I")
+    text = "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", text).upper()
+
+
+def murat_value(conn):
+    return conn.execute(
+        """
+        select t.unit_target,t.unit_realization,s.unit,
+               t.tl_target,t.tl_realization,s.tl
+        from targets t
+        join representatives r on r.id=t.representative_id
+        join products p on p.id=t.product_id
+        join ims_summary s on s.year=t.year and s.month=t.month
+             and s.representative_id=t.representative_id and s.product_id=t.product_id
+        where t.year=2026 and t.month=2
+          and upper(r.rep_name)='MURAT ARSLAN'
+          and upper(p.product_name)='TRAVAZOL'
+        order by s.id desc limit 1
+        """
+    ).fetchone()
+
+
+payload = json.load(open(DATA, encoding="utf-8"))
+pairs = sum(sum(value is not None for value in row["balance_units"].values()) for row in payload["rows"])
+if (payload.get("year"), payload.get("month"), payload.get("week")) != (2026, 2, 8):
+    raise SystemExit("SOURCE_PERIOD_FAILED")
+if len(payload["rows"]) != 113 or pairs != EXPECTED:
+    raise SystemExit(f"SOURCE_COUNT_FAILED rows={len(payload['rows'])} pairs={pairs}")
+
+pre = sqlite3.connect(DB, timeout=30)
+pre.row_factory = sqlite3.Row
+processing = pre.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]
+journal = pre.execute("pragma journal_mode").fetchone()[0]
+latest = pre.execute(
+    """
+    select id,file_name,week_number,status
+    from ims_uploads
+    where year=2026 and month=2 and status='COMPLETED'
+    order by week_number desc,completed_at desc,id desc limit 1
+    """
+).fetchone()
+m = murat_value(pre)
+print(
+    f"PRE_GATE|processing={processing}|journal={journal}|latest_week={latest['week_number'] if latest else None}"
+    f"|murat_target={m[0] if m else None}|murat_actual={m[1] if m else None}|murat_summary={m[2] if m else None}",
+    flush=True,
+)
+if processing != 0 or str(journal).lower() != "wal" or latest is None or int(latest["week_number"] or 0) != 8 or m is None:
+    raise SystemExit("PRE_GATE_FAILED")
+
+if round(float(m[1] or 0)) == 8379 and abs(float(m[1] or 0) - float(m[2] or 0)) < 1e-9:
+    print("ALREADY_REPAIRED|skip_write=YES", flush=True)
+    pre.close()
+    raise SystemExit(0)
+
+tl_before = (float(m[3] or 0), float(m[4] or 0), float(m[5] or 0))
+
+stamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+backup = f"/tmp/ipm-before-week8-balance-unit-repair-{stamp}.db"
+dst = sqlite3.connect(backup)
+bucket = [-1]
+
+
+def backup_progress(status, remaining, total):
+    done = total - remaining
+    pct = int(done * 100 / total) if total else 100
+    decade = pct // 10
+    if decade != bucket[0]:
+        bucket[0] = decade
+        print(f"BACKUP_PROGRESS|pct={pct}|remaining={remaining}|total={total}", flush=True)
+
+
+pre.backup(dst, pages=32768, progress=backup_progress, sleep=0.01)
+dst.close()
+pre.close()
+print("BACKUP|" + backup, flush=True)
+
+con = sqlite3.connect(DB, timeout=30)
+con.row_factory = sqlite3.Row
+con.execute("BEGIN IMMEDIATE")
+try:
+    if con.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0] != 0:
+        raise RuntimeError("PROCESSING_STARTED_AFTER_BACKUP")
+
+    reps = [dict(row) for row in con.execute("select id,rep_name,region,city,territory from representatives")]
+    products = [dict(row) for row in con.execute("select id,product_name from products")]
+    product_by_norm = {norm(item["product_name"]): item for item in products}
+    rep_exact = {norm(item["rep_name"]): item for item in reps}
+
+    targets = [
+        dict(row)
+        for row in con.execute(
+            "select id,representative_id,product_id,unit_target,unit_realization from targets where year=2026 and month=2"
+        )
+    ]
+    target_by_key = {(int(row["representative_id"]), int(row["product_id"])): row for row in targets}
+    summaries = [
+        dict(row)
+        for row in con.execute(
+            "select id,representative_id,product_id,unit from ims_summary where year=2026 and month=2"
+        )
+    ]
+    summary_by_key = {}
+    for row in summaries:
+        summary_by_key.setdefault((int(row["representative_id"]), int(row["product_id"])), []).append(row)
+
+    def match_rep(source):
+        key = norm(source["representative"])
+        exact = rep_exact.get(key)
+        if exact:
+            return exact
+        if "BOS" in key or "KADRO" in key:
+            region_code = norm(source["region"]).split(" ", 1)[0]
+            candidates = []
+            for rep in reps:
+                rep_name = norm(rep["rep_name"])
+                scopes = " ".join(norm(rep.get(field)) for field in ("region", "city", "territory"))
+                if rep_name.endswith(key) and (region_code in rep_name or region_code in scopes):
+                    candidates.append(rep)
+            if len(candidates) == 1:
+                return candidates[0]
+        return None
+
+    unmatched = []
+    updates = []
+    for source in payload["rows"]:
+        rep = match_rep(source)
+        if rep is None:
+            unmatched.append({"row": source["source_row"], "rep": source["representative"], "reason": "representative"})
+            continue
+        for product_name, balance in source["balance_units"].items():
+            if balance is None:
+                continue
+            product = product_by_norm.get(norm(product_name))
+            if product is None:
+                unmatched.append({"row": source["source_row"], "rep": source["representative"], "product": product_name, "reason": "product"})
+                continue
+            key = (int(rep["id"]), int(product["id"]))
+            target = target_by_key.get(key)
+            summary_rows = summary_by_key.get(key, [])
+            if target is None:
+                unmatched.append({"row": source["source_row"], "rep": source["representative"], "product": product_name, "reason": "target"})
+                continue
+            if not summary_rows:
+                unmatched.append({"row": source["source_row"], "rep": source["representative"], "product": product_name, "reason": "summary"})
+                continue
+            actual = float(target["unit_target"] or 0) - float(balance)
+            updates.append((target, summary_rows, float(balance), actual, source["representative"], product_name))
+
+    print(
+        f"PRECHECK|source_pairs={pairs}|updates={len(updates)}|unmatched={len(unmatched)}"
+        f"|targets={len(targets)}|summaries={len(summaries)}",
+        flush=True,
+    )
+    if unmatched:
+        print("UNMATCHED|" + json.dumps(unmatched[:20], ensure_ascii=False), flush=True)
+    if len(updates) != EXPECTED or unmatched:
+        raise RuntimeError("PAIR_COVERAGE_FAILED")
+
+    changed_targets = 0
+    changed_summaries = 0
+    murat = None
+    for target, summary_rows, balance, actual, rep_name, product_name in updates:
+        if abs(float(target["unit_realization"] or 0) - actual) > 1e-9:
+            con.execute("update targets set unit_realization=? where id=?", (actual, target["id"]))
+            changed_targets += 1
+        for summary in summary_rows:
+            if abs(float(summary["unit"] or 0) - actual) > 1e-9:
+                con.execute("update ims_summary set unit=? where id=?", (actual, summary["id"]))
+                changed_summaries += 1
+        if norm(rep_name) == "MURAT ARSLAN" and norm(product_name) == "TRAVAZOL":
+            murat = {"target": float(target["unit_target"] or 0), "balance": balance, "actual": actual}
+
+    print("MURAT_TRAVAZOL|" + json.dumps(murat, ensure_ascii=False), flush=True)
+    if murat is None or round(murat["target"]) != 8991 or round(murat["balance"]) != 612 or round(murat["actual"]) != 8379:
+        raise RuntimeError("MURAT_EXPECTATION_FAILED")
+
+    con.commit()
+    print(f"REPAIR|changed_targets={changed_targets}|changed_summaries={changed_summaries}|commit=YES", flush=True)
+except Exception:
+    con.rollback()
+    print("REPAIR|commit=NO|rollback=YES", flush=True)
+    raise
+finally:
+    con.close()
+
+check = sqlite3.connect(DB, timeout=30)
+check.row_factory = sqlite3.Row
+processing_after = check.execute("select count(*) from ims_import_jobs where status='PROCESSING'").fetchone()[0]
+journal_after = check.execute("pragma journal_mode").fetchone()[0]
+m_after = murat_value(check)
+tl_after = (float(m_after[3] or 0), float(m_after[4] or 0), float(m_after[5] or 0))
+quick = check.execute("pragma quick_check").fetchone()[0]
+print(
+    f"FINAL_GATE|processing={processing_after}|journal={journal_after}|quick={quick}"
+    f"|murat_target={m_after[0]}|murat_actual={m_after[1]}|murat_summary={m_after[2]}"
+    f"|tl_unchanged={tl_after == tl_before}",
+    flush=True,
+)
+if processing_after != 0 or str(journal_after).lower() != "wal" or str(quick).lower() != "ok":
+    raise SystemExit("FINAL_GATE_DB_FAILED")
+if round(float(m_after[1])) != 8379 or abs(float(m_after[1]) - float(m_after[2])) > 1e-9 or tl_after != tl_before:
+    raise SystemExit("FINAL_GATE_VALUE_FAILED")
+check.close()
