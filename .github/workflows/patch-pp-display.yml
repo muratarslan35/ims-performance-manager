@@ -1,0 +1,89 @@
+name: Patch Excel PP display semantics
+on:
+  push:
+    branches: [fix/excel-pp-display-rounding]
+    paths: [.github/workflows/patch-pp-display.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/excel-pp-display-rounding
+      - name: Patch service and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/services/region_market_service.py')
+          s = path.read_text(encoding='utf-8')
+          start = s.index('    @staticmethod\n    def _display_integer')
+          end = s.index('    def _latest_upload_id', start)
+          replacement = '''    @staticmethod
+    def _display_integer(value):
+        """Mirror the workbook's visible no-decimal PP cell value.
+
+        The exact PP from ``TTS Rekabet PP`` remains authoritative and is kept
+        separately for comparisons. Display rounding is applied independently
+        to each cell; individual visible cells are never redistributed merely
+        to force their rounded sum to 100. The workbook subtotal is a separate
+        100-percent cell.
+        """
+        number = max(Decimal(str(value or 0)), Decimal("0"))
+        floor_value = int(number.to_integral_value(rounding=ROUND_FLOOR))
+        fraction = number - Decimal(floor_value)
+        return floor_value + (1 if fraction > Decimal("0.5") else 0)
+
+    @classmethod
+    def _allocate_tenth_shares(cls, components):
+        """Return each PP cell's workbook-style integer display independently."""
+        return {key: cls._display_integer(value) for key, value in components}
+
+'''
+          s = s[:start] + replacement + s[end:]
+          s = s.replace('"display_share_total": sum(allocations.values()) if market else 0,',
+                        '"display_share_total": 100 if market else 0,')
+          path.write_text(s, encoding='utf-8')
+
+          tpath = Path('tests/test_region_market_share_authority.py')
+          t = tpath.read_text(encoding='utf-8')
+          t = t.replace('def test_integer_pp_display_thresholds_and_closure():',
+                        'def test_integer_pp_display_matches_workbook_cells_without_redistribution():')
+          old = '''    # User-facing IMS rule: if the first four displayed items total 96 and the
+    # fifth exact PP is 3.51, it is shown as 4 and the displayed subtotal is 100.
+    allocated = RegionMarketService._allocate_tenth_shares([
+        ("A", 24.0), ("B", 24.0), ("C", 24.0), ("D", 24.0), ("E", 3.51)
+    ])
+    assert allocated["E"] == 4
+    assert sum(allocated.values()) == 100
+'''
+          new = '''    # Real January/Diyarbakir workbook examples: every visible cell is rounded
+    # from its own exact PP. Do not steal/add a point to force the visible
+    # components to 100; the workbook subtotal is a separate 100 cell.
+    allocated = RegionMarketService._allocate_tenth_shares([
+        ("MONUROL", 22.500530029984553),
+        ("UROCARE", 28.645849108035254),
+        ("UROMISIN", 48.85362086198019),
+    ])
+    assert allocated == {"MONUROL": 23, "UROCARE": 29, "UROMISIN": 49}
+    assert sum(allocated.values()) == 101
+    assert RegionMarketService._display_integer(33.57540382788109) == 34
+    assert RegionMarketService._display_integer(16.41132653600296) == 16
+'''
+          if old not in t:
+              raise SystemExit('expected threshold test block not found')
+          t = t.replace(old, new)
+          t = t.replace('def test_region_market_uses_authoritative_tts_pp_and_closes_to_100(tmp_path):',
+                        'def test_region_market_uses_authoritative_tts_pp_and_keeps_separate_subtotal(tmp_path):')
+          t = t.replace('        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 100\n',
+                        '        assert row["share_percent"] + sum(item["market_share_percent"] for item in row["rivals"]) == 101\n')
+          tpath.write_text(t, encoding='utf-8')
+          PY
+          rm .github/workflows/patch-pp-display.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/services/region_market_service.py tests/test_region_market_share_authority.py .github/workflows/patch-pp-display.yml
+          git commit -m "Match regional PP display to Excel cells"
+          git push origin HEAD:fix/excel-pp-display-rounding
