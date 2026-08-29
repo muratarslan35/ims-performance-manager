@@ -3,7 +3,8 @@
 The service deliberately separates three concerns:
 
 * hide/show only controls the IMS history UI and never changes calculations;
-* exact duplicate detection uses the queue's SHA-256 source hash;
+* duplicate detection first uses source SHA-256 and, when an archived source is
+  available, also compares workbook cell data while ignoring formatting/metadata;
 * physical deletion is allowed only when the current period state can be restored.
 
 Weekly raw/fact/competition history is upload-scoped, while Target, IMSSummary and
@@ -14,8 +15,10 @@ snapshot and then removes rows directly owned by the deleted IMSUpload.
 """
 from __future__ import annotations
 
+import hashlib
 import json
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Iterable
 
@@ -61,6 +64,94 @@ class IMSUploadLifecycleService:
     def archived_source_path(cls, upload_id: int, suffix: str = ".xlsx") -> Path:
         safe_suffix = suffix.lower() if suffix.lower() in {".xlsx", ".xls"} else ".xlsx"
         return cls._archive_root() / f"upload-{int(upload_id)}{safe_suffix}"
+
+    @classmethod
+    def archived_source_for_upload(cls, upload_id: int) -> Path | None:
+        for suffix in (".xlsx", ".xls"):
+            candidate = cls.archived_source_path(upload_id, suffix)
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @staticmethod
+    def _semantic_cell(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            value = float(value)
+        if isinstance(value, float):
+            if value != value:
+                return None
+            if value == 0:
+                return 0
+            return format(value, ".15g")
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
+
+    @classmethod
+    def semantic_workbook_hash(cls, file_path: Path) -> str | None:
+        """Hash workbook sheet/cell values while ignoring workbook formatting.
+
+        The normal IMS format is XLSX, which can be streamed safely with
+        openpyxl. Legacy XLS files fall back to the existing byte hash/replacement
+        warning rather than adding a new dependency or weakening validation.
+        """
+        path = Path(file_path)
+        if path.suffix.lower() != ".xlsx" or not path.is_file():
+            return None
+        try:
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path, read_only=True, data_only=False)
+            digest = hashlib.sha256()
+            try:
+                for sheet in workbook.worksheets:
+                    digest.update(b"S\0")
+                    digest.update(str(sheet.title).strip().encode("utf-8"))
+                    digest.update(b"\0")
+                    last_nonempty_row = 0
+                    buffered_rows = []
+                    for row_index, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                        normalized = [cls._semantic_cell(value) for value in row]
+                        while normalized and normalized[-1] is None:
+                            normalized.pop()
+                        if normalized:
+                            last_nonempty_row = row_index
+                        buffered_rows.append((row_index, normalized))
+                    for row_index, normalized in buffered_rows:
+                        if row_index > last_nonempty_row:
+                            break
+                        digest.update(b"R\0")
+                        digest.update(str(row_index).encode("ascii"))
+                        digest.update(b"\0")
+                        digest.update(
+                            json.dumps(normalized, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                        )
+                        digest.update(b"\0")
+            finally:
+                workbook.close()
+            return digest.hexdigest()
+        except Exception:
+            current_app.logger.exception("ims_semantic_fingerprint_failed file=%s", path.name)
+            return None
+
+    @classmethod
+    def same_semantic_workbook(cls, new_path: Path, existing_upload_id: int) -> bool | None:
+        archived = cls.archived_source_for_upload(existing_upload_id)
+        if archived is None:
+            return None
+        new_hash = cls.semantic_workbook_hash(new_path)
+        old_hash = cls.semantic_workbook_hash(archived)
+        if new_hash is None or old_hash is None:
+            return None
+        return new_hash == old_hash
 
     @staticmethod
     def _serialize_rows(rows: Iterable[object], excluded: set[str] | None = None) -> list[dict]:
@@ -239,10 +330,6 @@ class IMSUploadLifecycleService:
         ).delete(synchronize_session=False)
         db.session.flush()
 
-        # A period rollback replaces current-state rows wholesale. Clear loaded
-        # ORM identities before recreating them so the same request cannot keep
-        # serving the just-deleted current-week Target/Summary objects. This also
-        # prevents PK reuse from colliding with stale identities during flush.
         db.session.expunge_all()
 
         cls._restore_rows(Target, payload.get("targets") or [])
@@ -302,11 +389,6 @@ class IMSUploadLifecycleService:
             if restored:
                 cls._restore_period_snapshot(upload)
 
-            # Use Core deletes for upload-owned rows and the parent upload. ORM
-            # relationship synchronization can otherwise try to NULL non-nullable
-            # child FKs when a child object happens to already be present in the
-            # current identity map. The explicit SQL order is deterministic and
-            # remains inside the same transaction.
             cls._delete_direct_upload_children(deleted_upload_id)
             hidden = Setting.query.filter_by(setting_key=hidden_key).first()
             if hidden is not None:
