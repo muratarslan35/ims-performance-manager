@@ -27,6 +27,8 @@ from app.models import Target
 from app.services.dashboard_service import (
     DashboardService
 )
+from app.services.ims_import_service import IMSImportService
+from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 from app.services.period_service import PeriodService
 from app.services.production_result_import_service import (
     ProductionResultImportService,
@@ -167,6 +169,7 @@ def index():
     history_page = max(request.args.get("history_page", 1, type=int) or 1, 1)
     history_query = (request.args.get("history_q") or "").strip()[:100]
     history_status = (request.args.get("history_status") or "").strip()
+    show_hidden = request.args.get("show_hidden") == "1"
 
     upload_query = IMSUpload.query
     if history_query:
@@ -187,6 +190,11 @@ def index():
         IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()
     ).first()
     total_uploads = IMSUpload.query.count()
+    hidden_upload_ids = IMSUploadLifecycleService.hidden_upload_ids()
+    delete_permissions = {
+        item.id: IMSUploadLifecycleService.can_delete(item)
+        for item in uploads
+    }
 
     production_uploads = ProductionResultUpload.query.order_by(
         ProductionResultUpload.uploaded_at.desc()
@@ -223,6 +231,9 @@ def index():
         upload_pagination=upload_pagination,
         history_query=history_query,
         history_status=history_status,
+        hidden_upload_ids=hidden_upload_ids,
+        show_hidden=show_hidden,
+        delete_permissions=delete_permissions,
 
         production_uploads=production_uploads,
 
@@ -401,19 +412,53 @@ def upload():
         with upload_path.open("rb") as staged_file:
             for chunk in iter(lambda: staged_file.read(1024 * 1024), b""):
                 digest.update(chunk)
+        source_hash = digest.hexdigest()
+
+        duplicate = IMSUploadLifecycleService.exact_duplicate_job(source_hash)
+        if duplicate is not None:
+            upload_path.unlink(missing_ok=True)
+            flash(
+                "Bu IMS dosyası sistemde aynı içerikle zaten mevcut; tekrar yüklemeye izin verilmedi.",
+                "warning",
+            )
+            return redirect(url_for("ims.index") + "#ims-history")
+
+        detected_week = IMSImportService.extract_week_number(filename)
+        existing_week = IMSUploadLifecycleService.existing_week_job(
+            year=year,
+            month=month,
+            week_number=detected_week,
+        )
+        replace_requested = request.form.get("replace") == "1"
+        if existing_week is not None and existing_week.source_hash != source_hash and not replace_requested:
+            upload_path.unlink(missing_ok=True)
+            flash(
+                f"{detected_week}. hafta için sistemde farklı bir IMS mevcut. "
+                "Yeni dosyada değişiklik algılandı; mevcut haftayı değiştirmek istiyorsanız "
+                "'farklı dosyaysa mevcut haftayı değiştir' seçeneğini işaretleyip tekrar yükleyin.",
+                "warning",
+            )
+            return redirect(url_for("ims.index") + "#ims-history")
+
         job = IMSImportJob(
             status=IMSImportJob.STATUS_QUEUED,
             file_name=filename,
             stored_file_name=stored_file_name,
-            source_hash=digest.hexdigest(),
+            source_hash=source_hash,
             year=year,
             month=month,
-            clear_before_import=request.form.get("replace") == "1",
+            clear_before_import=replace_requested,
             uploaded_by=uploaded_by,
         )
         db.session.add(job)
         db.session.commit()
-        flash("Dosya alındı, IMS arka planda işleniyor. Sonuç bildirim alanında görünecek.", "success")
+        if existing_week is not None and existing_week.source_hash != source_hash:
+            flash(
+                "Güncellenmiş IMS dosyası alındı. Önceki hafta snapshot'ı atomik olarak değiştirilmek üzere arka planda işleniyor.",
+                "success",
+            )
+        else:
+            flash("Dosya alındı, IMS arka planda işleniyor. Sonuç bildirim alanında görünecek.", "success")
     except Exception:
         db.session.rollback()
         upload_path.unlink(missing_ok=True)
@@ -432,6 +477,49 @@ def upload():
         )
 
     )
+
+
+@ims_bp.route("/uploads/<int:upload_id>/hide", methods=["POST"])
+@login_required
+def hide_upload(upload_id):
+    if db.session.get(IMSUpload, upload_id) is None:
+        flash("IMS yüklemesi bulunamadı.", "warning")
+    else:
+        IMSUploadLifecycleService.set_hidden(upload_id, True)
+        flash("IMS kaydı geçmiş listesinden gizlendi. Hesaplamalar değiştirilmedi.", "success")
+    return redirect(url_for("ims.index") + "#ims-history")
+
+
+@ims_bp.route("/uploads/<int:upload_id>/show", methods=["POST"])
+@login_required
+def show_upload(upload_id):
+    if db.session.get(IMSUpload, upload_id) is None:
+        flash("IMS yüklemesi bulunamadı.", "warning")
+    else:
+        IMSUploadLifecycleService.set_hidden(upload_id, False)
+        flash("IMS kaydı geçmiş listesinde tekrar gösteriliyor.", "success")
+    return redirect(url_for("ims.index", show_hidden=1) + "#ims-history")
+
+
+@ims_bp.route("/uploads/<int:upload_id>/delete", methods=["POST"])
+@login_required
+def delete_upload(upload_id):
+    try:
+        result = IMSUploadLifecycleService.delete_upload(upload_id)
+    except LookupError as exc:
+        flash(str(exc), "warning")
+    except RuntimeError as exc:
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("ims_upload_delete_failed upload_id=%s", upload_id)
+        flash("IMS silinemedi; mevcut dashboard verileri korunmuştur.", "danger")
+    else:
+        if result["restored_previous_period_state"]:
+            flash("IMS tamamen silindi ve dashboard bir önceki güvenli IMS durumuna döndürüldü.", "success")
+        else:
+            flash("IMS ve ona bağlı kayıtlar tamamen silindi.", "success")
+    return redirect(url_for("ims.index") + "#ims-history")
 
 
 @ims_bp.route("/import-jobs", methods=["GET"])
