@@ -7,19 +7,20 @@ The service deliberately separates three concerns:
 * physical deletion is allowed only when the current period state can be restored.
 
 Weekly raw/fact/competition history is upload-scoped, while Target, IMSSummary and
-RepresentativeBrickAssignment are period-scoped current-state tables.  Before a
+RepresentativeBrickAssignment are period-scoped current-state tables. Before a
 new import is published we therefore persist a compact rollback snapshot of only
-those three period-scoped tables.  Deleting the latest upload restores that
+those three period-scoped tables. Deleting the latest upload restores that
 snapshot and then removes rows directly owned by the deleted IMSUpload.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 from flask import current_app
-from sqlalchemy import MetaData, Table, inspect
+from sqlalchemy import DateTime, MetaData, Table, inspect
 
 from app.extensions import db
 from app.models import (
@@ -94,7 +95,7 @@ class IMSUploadLifecycleService:
             ),
             "brick_assignments": cls._serialize_rows(
                 RepresentativeBrickAssignment.query.filter_by(year=int(year), month=int(month)).all(),
-                excluded={"id", "created_at", "updated_at", "deactivated_at"},
+                excluded={"id", "created_at", "updated_at"},
             ),
         }
         path = cls.pending_snapshot_path(job_id)
@@ -205,9 +206,16 @@ class IMSUploadLifecycleService:
 
     @staticmethod
     def _restore_rows(model, rows: list[dict]) -> None:
-        valid_columns = {column.name for column in model.__table__.columns}
+        columns = {column.name: column for column in model.__table__.columns}
         for values in rows:
-            clean = {key: value for key, value in values.items() if key in valid_columns}
+            clean = {}
+            for key, value in values.items():
+                column = columns.get(key)
+                if column is None:
+                    continue
+                if value is not None and isinstance(column.type, DateTime) and isinstance(value, str):
+                    value = datetime.fromisoformat(value)
+                clean[key] = value
             db.session.add(model(**clean))
 
     @classmethod
@@ -256,7 +264,9 @@ class IMSUploadLifecycleService:
 
         for table_name in child_tables:
             table = Table(table_name, metadata, autoload_with=db.engine)
-            column = table.c.get("upload_id") or table.c.get("ims_upload_id")
+            column = table.c.get("upload_id")
+            if column is None:
+                column = table.c.get("ims_upload_id")
             if column is not None:
                 db.session.execute(table.delete().where(column == int(upload_id)))
 
