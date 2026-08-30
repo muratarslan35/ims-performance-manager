@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read production result failure evidence
+      - name: Audit February 2026 second production source against live DB
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -44,32 +44,5 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          venv/bin/python - <<'PY'
-          from app import create_app
-          from app.extensions import db
-          from app.models import ProductionResultUpload
-
-          app = create_app()
-          with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
-              )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
-                  print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
-                  )
-          PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
-          echo '--- DIAGNOSTIC_COMPLETE ---'
+          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/audit_production_result_sources.py --year 2026 --month 2 --stage 2
           REMOTE
