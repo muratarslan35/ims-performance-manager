@@ -27,26 +27,17 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Fast read-only audit
+      - name: Inspect instance storage
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo 'COMMIT'; git rev-parse HEAD
-          echo 'MEMORY'; free -h
-          echo 'DISK'; df -h /
-          echo 'DIRS'
-          for p in backups backup uploads logs instance reports temp .git; do [ -e "$p" ] && du -sh "$p"; done
-          echo 'DB'
-          find . -maxdepth 2 -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*-wal' -o -name '*-shm' \) -printf '%TY-%Tm-%Td %TH:%TM %12s %p\n' | sort
-          echo 'BACKUPS'
-          for d in backups backup; do
-            if [ -d "$d" ]; then
-              find "$d" -maxdepth 2 -type f -printf '%T@ %12s %p\n' | sort -nr | awk '{ts=$1; size=$2; $1=""; $2=""; sub(/^  */,""); cmd="date -d @" ts " +%Y-%m-%dT%H:%M:%S"; cmd | getline dt; close(cmd); print dt, size, $0}'
-            fi
-          done
-          echo 'IMS_ARCHIVE'; [ -d uploads/ims_archive ] && { du -sh uploads/ims_archive; find uploads/ims_archive -maxdepth 1 -type f | wc -l; }
+          echo 'INSTANCE_TOP'
+          du -ah instance 2>/dev/null | sort -h | tail -n 40
+          echo 'ROOT_LARGE_FILES'
+          find . -maxdepth 2 -type f -size +50M -printf '%12s %p\n' 2>/dev/null | sort -nr
           echo 'PROCESSING'
           venv/bin/python - <<'PY'
           from app import create_app
