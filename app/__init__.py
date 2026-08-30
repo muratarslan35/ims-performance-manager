@@ -40,6 +40,7 @@ from app.services.manager_import_report_alignment import install_manager_import_
 from app.services.dashboard_runtime_optimizer import install_dashboard_runtime_optimizer
 from app.services.ims_upload_lifecycle_hooks import install_ims_upload_lifecycle
 from app.services.ims_upload_lifecycle_ui import install_ims_upload_lifecycle_ui
+from app.services.production_result_retry_ui import install_production_result_retry_ui
 from app.access_control import register_access_control
 
 from app.routes import main_bp
@@ -194,6 +195,7 @@ def create_app(config_object=Config):
     register_template_context(app)
     register_blueprints(app)
     install_ims_upload_lifecycle_ui(app)
+    install_production_result_retry_ui(app)
     register_access_control(app)
     register_error_handlers(app)
 
