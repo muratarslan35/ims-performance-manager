@@ -151,7 +151,7 @@ jobs:
           ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
             "printf '%s\n' '--- MAINTENANCE EVIDENCE ---'; cat '$JOB_DIR/evidence.log' 2>/dev/null || true; printf '%s\n' '--- DETACHED LOG ---'; cat '$JOB_DIR/nohup.log' 2>/dev/null || true"
 
-      - name: Cleanup remote job files
+      - name: Cleanup completed remote job files
         if: always()
         shell: bash
         env:
@@ -162,4 +162,5 @@ jobs:
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
             -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=2 \
             -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes \
-            "$IMS_USER@$IMS_HOST" "rm -rf '$JOB_DIR'"
+            "$IMS_USER@$IMS_HOST" \
+            "status=\$(cat '$JOB_DIR/status' 2>/dev/null || echo RUNNING); case \"\$status\" in PASS|FAIL*) rm -rf '$JOB_DIR' ;; *) echo \"REMOTE_JOB_PRESERVED|status=\$status|job_dir=$JOB_DIR\" ;; esac"
