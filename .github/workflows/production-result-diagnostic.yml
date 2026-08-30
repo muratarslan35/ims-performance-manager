@@ -1,0 +1,75 @@
+name: Production Result Failure Diagnostic
+
+on:
+  push:
+    paths:
+      - '.github/workflows/production-result-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          chmod 600 ~/.ssh/ims_diag_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read production result failure evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
+          venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import ProductionResultUpload
+
+          app = create_app()
+          with app.app_context():
+              rows = (
+                  ProductionResultUpload.query
+                  .filter_by(year=2026, month=2, production_stage=2)
+                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
+                  .limit(5)
+                  .all()
+              )
+              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
+              for item in rows:
+                  print(
+                      "PRODUCTION_RESULT|"
+                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
+                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
+                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
+                  )
+          PY
+          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
+          sudo journalctl -u ims-performance-manager.service \
+            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
+            --no-pager | tail -n 200 || true
+          echo '--- DIAGNOSTIC_COMPLETE ---'
+          REMOTE
