@@ -10,6 +10,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'mode="heavy"' in text
     assert 'mode="backend"' in text
     assert 'mode="ui"' in text
+    assert 'mode="ops"' in text
     assert 'mode="docs"' in text
 
     # Import changes retain full regression coverage while the 50-upload probe
@@ -21,14 +22,17 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     heavy_marker = '--- HEAVY DB/MIGRATION RELEASE GATES ---'
     import_marker = '--- FAST IMPORT RELEASE GATES ---'
     backend_marker = '--- FAST BACKEND RELEASE GATES ---'
+    ops_marker = '--- OPS RELEASE: SYNC + ACCEPTANCE, NO SERVICE ACTIVATION ---'
     heavy_index = text.index(heavy_marker)
     import_index = text.index(import_marker)
     backend_index = text.index(backend_marker)
+    ops_index = text.index(ops_marker)
     service_index = text.index('deploy/install_systemd_service.sh')
-    assert heavy_index < import_index < backend_index < service_index
+    assert heavy_index < import_index < backend_index < ops_index < service_index
 
     heavy_block = text[heavy_index:import_index]
     import_block = text[import_index:backend_index]
+    ops_block = text[ops_index:service_index]
 
     assert 'sqlite_online_backup.py' in heavy_block
     assert 'database_capacity_audit.py' in heavy_block
@@ -43,16 +47,39 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'database_capacity_audit.py' not in import_block
     assert 'cleanup_old_backups.py' not in import_block
 
+    assert 'verify_runtime.py' in ops_block
+    assert 'sqlite_fast_check' in ops_block
+    assert 'sqlite_online_backup.py' not in ops_block
+    assert 'database_capacity_audit.py' not in ops_block
+
     assert 'IMS_WORKER_IDLE|processing=' in text
     assert 'Active IMS import detected; deploy refused' in text
     assert 'PRAGMA quick_check(1)' in text
     assert 'Production health check passed.' in text
     assert 'IMS worker health check passed.' in text
+    assert 'HTTP_HEALTH|PASS' in text
+    assert 'WEB_ACTIVE|' in text
+    assert 'WORKER_ACTIVE|' in text
 
     # Real-workbook acceptance remains manual qualification rather than an
     # automatic production re-import.
     assert 'venv/bin/python verify_ims_acceptance.py' not in text
     assert 'sqlite_online_backup.py instance/ipm.db "$acceptance_db"' not in text
+
+
+def test_ops_release_avoids_heavy_db_work_and_service_activation():
+    text = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
+
+    assert '.github/workflows/ims-production-maintenance.yml|scripts/run_production_maintenance.sh|tests/*' in text
+    assert 'if [ "$mode" = "docs" ]; then mode="ops"; fi' in text
+    assert 'Ops full suite' in text
+    assert 'Ops smoke' in text
+    assert 'timeout-minutes: 35' in text
+    assert 'SERVICE_ACTIVATION|skipped=ops' in text
+    assert 'if [ "$RELEASE_MODE" = "ops" ]; then' in text
+    assert 'ServerAliveInterval=15' in text
+    assert 'ServerAliveCountMax=40' in text
+    assert 'ConnectionAttempts=3' in text
 
 
 def test_service_activation_uses_reload_for_code_only_releases():
