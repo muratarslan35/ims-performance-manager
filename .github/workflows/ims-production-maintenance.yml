@@ -70,14 +70,12 @@ jobs:
           echo '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---'
           venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize
 
-          latest_stamp=$(ls -1 instance/backups/ipm-predeploy-*.db 2>/dev/null \
-            | sed -E 's/.*ipm-predeploy-([0-9]{8}-[0-9]{6})\.db/\1/' \
-            | sort | tail -1)
-          if [ -n "$latest_stamp" ]; then
-            echo "MAINTENANCE_BACKUP_SET|keep_stamp=$latest_stamp"
+          backup_count=$(ls -1 instance/backups/ipm-predeploy-*.db 2>/dev/null | wc -l)
+          if [ "$backup_count" -gt 0 ]; then
+            echo "MAINTENANCE_BACKUP_RETENTION|keep_latest=2|found=$backup_count"
             venv/bin/python cleanup_old_backups.py \
               --backup-dir instance/backups \
-              --keep-stamp "$latest_stamp" \
+              --keep-latest 2 \
               --purge-unmanaged-db
           else
             echo 'MAINTENANCE_BACKUP_SET|status=none'
