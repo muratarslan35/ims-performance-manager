@@ -279,6 +279,25 @@ jobs:
           PY
           }
 
+          sqlite_runtime_check() {
+            venv/bin/python - <<'PY'
+          import sqlite3
+          connection = sqlite3.connect("instance/ipm.db", timeout=30)
+          try:
+              connection.execute("PRAGMA busy_timeout=30000")
+              mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+              timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+          finally:
+              connection.close()
+          print(
+              f"SQLITE_RUNTIME|journal_mode={mode}|busy_timeout={timeout}|"
+              "quick_check=skipped_backend_no_db_change"
+          )
+          if str(mode).lower() != "wal" or int(timeout) != 30000:
+              raise SystemExit("SQLite backend runtime verification failed")
+          PY
+          }
+
           if [ "$RELEASE_MODE" = "import" ] || [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "ops" ]; then
             worker_idle_check
           fi
@@ -319,7 +338,7 @@ jobs:
           elif [ "$RELEASE_MODE" = "backend" ]; then
             echo '--- FAST BACKEND RELEASE GATES ---'
             venv/bin/python verify_runtime.py
-            sqlite_fast_check
+            sqlite_runtime_check
             if [ "$PERFORMANCE_CHANGED" = "true" ]; then
               venv/bin/python verify_representative_performance.py
             fi
@@ -374,7 +393,7 @@ jobs:
           status="SUCCESS"
           if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-deploy.log"
-          evidence=$(grep -E 'RELEASE_MODE\||LIVE_COMMIT\||IMS_WORKER_IDLE\||IMS_LIVE_GATE\||SQLITE_FAST\||SQLITE_ONLINE_BACKUP\||SERVICE_ACTIVATION\||WEB_ACTIVE\||WORKER_ACTIVE\||HTTP_HEALTH\||Production health check|IMS worker health check|DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\|' "$evidence_file" | tail -n 120 || true)
+          evidence=$(grep -E 'RELEASE_MODE\||LIVE_COMMIT\||IMS_WORKER_IDLE\||IMS_LIVE_GATE\||SQLITE_FAST\||SQLITE_RUNTIME\||SQLITE_ONLINE_BACKUP\||SERVICE_ACTIVATION\||WEB_ACTIVE\||WORKER_ACTIVE\||HTTP_HEALTH\||Production health check|IMS worker health check|DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\|' "$evidence_file" | tail -n 120 || true)
           body=$(jq -n --arg sha "$GITHUB_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --arg status "$status" --arg mode "$RELEASE_MODE" --arg evidence "$evidence" '{title:("IMS production deployment "+$status+" ["+$mode+"]"),body:("Commit: `"+$sha+"`\n\nWorkflow: "+$run+"\n\nMode: **"+$mode+"**\n\n```text\n"+$evidence+"\n```") }')
           curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
 

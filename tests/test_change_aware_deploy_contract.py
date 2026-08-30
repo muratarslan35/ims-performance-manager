@@ -32,6 +32,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
 
     heavy_block = text[heavy_index:import_index]
     import_block = text[import_index:backend_index]
+    backend_block = text[backend_index:ops_index]
     ops_block = text[ops_index:service_index]
 
     assert 'sqlite_online_backup.py' in heavy_block
@@ -47,6 +48,13 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'database_capacity_audit.py' not in import_block
     assert 'cleanup_old_backups.py' not in import_block
 
+    # Backend-only code releases do not mutate the database. They must keep the
+    # immediate WAL/busy_timeout gate but avoid a multi-minute full quick_check.
+    assert 'verify_runtime.py' in backend_block
+    assert 'sqlite_runtime_check' in backend_block
+    assert 'sqlite_fast_check' not in backend_block
+
+    # DB/import/ops paths retain the full SQLite quick_check acceptance gate.
     assert 'verify_runtime.py' in ops_block
     assert 'sqlite_fast_check' in ops_block
     assert 'sqlite_online_backup.py' not in ops_block
@@ -55,6 +63,8 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'IMS_WORKER_IDLE|processing=' in text
     assert 'Active IMS import detected; deploy refused' in text
     assert 'PRAGMA quick_check(1)' in text
+    assert 'SQLITE_RUNTIME|' in text
+    assert 'quick_check=skipped_backend_no_db_change' in text
     assert 'Production health check passed.' in text
     assert 'IMS worker health check passed.' in text
     assert 'HTTP_HEALTH|PASS' in text
