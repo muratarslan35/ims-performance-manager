@@ -16,7 +16,7 @@ jobs:
   maintain:
     name: Weekly SQLite and backup maintenance
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,58 +29,138 @@ jobs:
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
+          set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Run non-blocking weekly maintenance
+      - name: Launch detached maintenance job
+        id: launch
         shell: bash
         run: |
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            "$IMS_USER@$IMS_HOST" \
-            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          JOB_DIR="/tmp/ims-maintenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "job_dir=$JOB_DIR" >> "$GITHUB_OUTPUT"
+
+          SSH_OPTS=(
+            -i ~/.ssh/ims_deploy_key
+            -p "$IMS_PORT"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=3
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=6
+            -o TCPKeepAlive=yes
+          )
+
+          ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' JOB_DIR='$JOB_DIR' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = "main"
           test -z "$(git status --porcelain)"
-
-          processing=$(venv/bin/python - <<'PY'
-          import sqlite3
-          connection = sqlite3.connect("instance/ipm.db", timeout=30)
-          try:
-              exists = connection.execute(
-                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'"
-              ).fetchone()
-              value = 0 if not exists else int(connection.execute(
-                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
-              ).fetchone()[0])
-          finally:
-              connection.close()
-          print(value)
-          PY
-          )
-          if [ "$processing" != "0" ]; then
-            echo "MAINTENANCE_SKIPPED|reason=active_import|processing=$processing"
-            exit 0
-          fi
-
-          echo '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---'
-          venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize
-
-          backup_count=$(ls -1 instance/backups/ipm-predeploy-*.db 2>/dev/null | wc -l)
-          if [ "$backup_count" -gt 0 ]; then
-            echo "MAINTENANCE_BACKUP_RETENTION|keep_latest=2|found=$backup_count"
-            venv/bin/python cleanup_old_backups.py \
-              --backup-dir instance/backups \
-              --keep-latest 2 \
-              --purge-unmanaged-db
-          else
-            echo 'MAINTENANCE_BACKUP_SET|status=none'
-          fi
-
-          venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
-          echo 'MAINTENANCE_RESULT|PASS'
+          test -f scripts/run_production_maintenance.sh
+          rm -rf "$JOB_DIR"
+          mkdir -p "$JOB_DIR"
+          nohup bash scripts/run_production_maintenance.sh "$IMS_PATH" "$JOB_DIR" \
+            >"$JOB_DIR/nohup.log" 2>&1 </dev/null &
+          pid=$!
+          printf 'REMOTE_MAINTENANCE_PID|%s\n' "$pid"
           REMOTE
+
+      - name: Poll detached maintenance job
+        shell: bash
+        env:
+          JOB_DIR: ${{ steps.launch.outputs.job_dir }}
+        run: |
+          set -Eeuo pipefail
+          SSH_OPTS=(
+            -i ~/.ssh/ims_deploy_key
+            -p "$IMS_PORT"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=2
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=3
+            -o TCPKeepAlive=yes
+          )
+
+          consecutive_ssh_failures=0
+          for poll in $(seq 1 120); do
+            set +e
+            status=$(ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
+              "test -f '$JOB_DIR/status' && cat '$JOB_DIR/status' || echo RUNNING" 2>/dev/null)
+            ssh_rc=$?
+            set -e
+
+            if [ "$ssh_rc" -ne 0 ]; then
+              consecutive_ssh_failures=$((consecutive_ssh_failures + 1))
+              echo "SSH_POLL_RETRY|poll=$poll|consecutive_failures=$consecutive_ssh_failures"
+              if [ "$consecutive_ssh_failures" -ge 6 ]; then
+                echo "Remote maintenance polling lost SSH connectivity repeatedly."
+                exit 1
+              fi
+              sleep 10
+              continue
+            fi
+
+            consecutive_ssh_failures=0
+            echo "REMOTE_STATUS|poll=$poll|status=$status"
+            case "$status" in
+              PASS)
+                exit 0
+                ;;
+              FAIL*)
+                ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
+                  "cat '$JOB_DIR/evidence.log' '$JOB_DIR/nohup.log' 2>/dev/null || true"
+                exit 1
+                ;;
+              RUNNING|'')
+                sleep 10
+                ;;
+              *)
+                echo "Unexpected remote maintenance status: $status"
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Remote maintenance exceeded polling deadline."
+          exit 1
+
+      - name: Collect final maintenance evidence
+        if: always()
+        shell: bash
+        env:
+          JOB_DIR: ${{ steps.launch.outputs.job_dir }}
+        run: |
+          set -Eeuo pipefail
+          [ -n "${JOB_DIR:-}" ] || exit 0
+          SSH_OPTS=(
+            -i ~/.ssh/ims_deploy_key
+            -p "$IMS_PORT"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=3
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=3
+            -o TCPKeepAlive=yes
+          )
+          ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
+            "printf '%s\n' '--- MAINTENANCE EVIDENCE ---'; cat '$JOB_DIR/evidence.log' 2>/dev/null || true; printf '%s\n' '--- DETACHED LOG ---'; cat '$JOB_DIR/nohup.log' 2>/dev/null || true"
+
+      - name: Cleanup completed remote job files
+        if: always()
+        shell: bash
+        env:
+          JOB_DIR: ${{ steps.launch.outputs.job_dir }}
+        run: |
+          set +e
+          [ -n "${JOB_DIR:-}" ] || exit 0
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=2 \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes \
+            "$IMS_USER@$IMS_HOST" \
+            "status=\$(cat '$JOB_DIR/status' 2>/dev/null || echo RUNNING); case \"\$status\" in PASS|FAIL*) rm -rf '$JOB_DIR' ;; *) echo \"REMOTE_JOB_PRESERVED|status=\$status|job_dir=$JOB_DIR\" ;; esac"
