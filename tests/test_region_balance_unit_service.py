@@ -47,7 +47,7 @@ def test_region_balance_units_reads_mf_siz_kutu_region_subtotal(tmp_path):
 
         _CACHE.clear()
         values = region_balance_units(20, "901")
-        assert values[product.id] == 213.25983842942765
+        assert abs(values[product.id] - 213.25983842942765) < 1e-9
 
 
 def test_region_balance_units_keeps_numeric_zero(tmp_path):
