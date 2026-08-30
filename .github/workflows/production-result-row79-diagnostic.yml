@@ -1,0 +1,83 @@
+name: Production Result Row79 Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-result-row79-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          chmod 600 ~/.ssh/ims_diag_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Inspect rejected workbook row 79 read only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from app import create_app
+          from app.models import ProductionResultUpload
+          from app.services.production_result_import_service import ProductionResultImportService
+
+          app = create_app()
+          with app.app_context():
+              item = (ProductionResultUpload.query
+                      .filter_by(year=2026, month=2, production_stage=2, status='FAILED')
+                      .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
+                      .first())
+              if item is None:
+                  raise SystemExit('NO_FAILED_STAGE2_UPLOAD')
+              path = Path(app.config['UPLOAD_FOLDER']) / 'production_results' / item.stored_file_name
+              print(f'FILE|{path}|exists={path.exists()}|size={path.stat().st_size if path.exists() else 0}')
+              if not path.exists():
+                  raise SystemExit('FAILED_SOURCE_FILE_MISSING')
+
+              wb_values = load_workbook(path, read_only=False, data_only=True)
+              wb_formulas = load_workbook(path, read_only=False, data_only=False)
+              service = ProductionResultImportService(path, 2026, 2)
+              service._load_master_maps()
+              sheet_values = service._find_sheet(wb_values, 'TL')
+              sheet_formulas = wb_formulas[sheet_values.title]
+              layout = service._layout(sheet_values, 'TL')
+              print(f'SHEET|{sheet_values.title}|max_row={sheet_values.max_row}|max_col={sheet_values.max_column}')
+              print(f'LAYOUT|{layout}')
+              r = 79
+              cols = sorted(set([layout['region_column'], layout['name_column'], *layout['target_columns'], *layout['actual_columns'], *layout['percent_columns'], layout['total_actual_column'], layout['total_percent_column'], layout['target_columns'][-1] + 1]))
+              for c in cols:
+                  cv = sheet_values.cell(r, c)
+                  cf = sheet_formulas.cell(r, c)
+                  parsed = service._number(cv.value)
+                  print(f'CELL|{cv.coordinate}|value={cv.value!r}|formula={cf.value!r}|type={cv.data_type}|parsed={parsed!r}')
+          PY
+          REMOTE
