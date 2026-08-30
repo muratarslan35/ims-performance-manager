@@ -159,7 +159,9 @@ def test_vacancy_slot_reactivates_after_occupant_leaves_and_deactivates_for_repl
             vacancy_name=vacancy_name,
         )
         assert reused_id == vacancy.id
-        assert db.session.get(Representative, vacancy.id).active is False
+        # Seeing the stable vacancy identity in the current IMS means the slot
+        # is vacant now, so the importer correctly reactivates that same PK.
+        assert db.session.get(Representative, vacancy.id).active is True
 
         vacancy_week = IMSUpload(
             file_name="10.Hafta_Subat.xlsx",
