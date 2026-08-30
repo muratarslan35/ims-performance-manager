@@ -41,6 +41,7 @@ from app.services.dashboard_runtime_optimizer import install_dashboard_runtime_o
 from app.services.ims_upload_lifecycle_hooks import install_ims_upload_lifecycle
 from app.services.ims_upload_lifecycle_ui import install_ims_upload_lifecycle_ui
 from app.services.production_result_retry_ui import install_production_result_retry_ui
+from app.services.production_result_reconciliation_gate import install_production_result_reconciliation_gate
 from app.access_control import register_access_control
 
 from app.routes import main_bp
@@ -191,6 +192,7 @@ def create_app(config_object=Config):
     install_sqlite_import_maintenance()
     install_dashboard_runtime_optimizer()
     install_ims_upload_lifecycle()
+    install_production_result_reconciliation_gate()
 
     register_template_context(app)
     register_blueprints(app)
