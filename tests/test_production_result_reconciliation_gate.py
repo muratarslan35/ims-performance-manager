@@ -7,13 +7,15 @@ def test_production_result_reconciliation_gate_contract():
     retry_source = Path("app/services/production_result_retry_ui.py").read_text(encoding="utf-8")
 
     # APPLIED is revoked until all DB layers have been flushed and compared back
-    # to the parsed source report.
-    assert "upload.status = upload.STATUS_VALIDATED" in source
-    assert "db.session.flush()" in source
-    assert "_reconcile(upload, report)" in source
-    assert "upload.status = upload.STATUS_APPLIED" in source
-    assert source.index("upload.status = upload.STATUS_VALIDATED") < source.index("_reconcile(upload, report)")
-    assert source.index("_reconcile(upload, report)") < source.index("upload.status = upload.STATUS_APPLIED")
+    # to the parsed source report. Scope ordering checks to _gated_apply itself so
+    # the earlier _reconcile function definition cannot be mistaken for the call.
+    gated_apply = source[source.index("def _gated_apply") : source.index("def _stage_aware_init")]
+    assert "upload.status = upload.STATUS_VALIDATED" in gated_apply
+    assert "db.session.flush()" in gated_apply
+    assert "_reconcile(upload, report)" in gated_apply
+    assert "upload.status = upload.STATUS_APPLIED" in gated_apply
+    assert gated_apply.index("upload.status = upload.STATUS_VALIDATED") < gated_apply.index("_reconcile(upload, report)")
+    assert gated_apply.index("_reconcile(upload, report)") < gated_apply.index("upload.status = upload.STATUS_APPLIED")
 
     for model_name in (
         "ProductionResult",
@@ -49,3 +51,13 @@ def test_stage_is_recovered_from_protected_staging_name_when_route_omits_it():
     source = Path("app/services/production_result_reconciliation_gate.py").read_text(encoding="utf-8")
     assert 're.search(r"-u([12])-", str(file_path))' in source
     assert "production_stage = int(match.group(1))" in source
+
+
+def test_second_production_is_not_conditioned_on_first_production_presence():
+    source = Path("app/services/production_result_reconciliation_gate.py").read_text(encoding="utf-8")
+    # Stage resolution is local to the uploaded/staged workbook. The gate must not
+    # query for or require a stage-1 upload before allowing stage 2 to validate.
+    assert "production_stage = int(match.group(1))" in source
+    assert "production_stage == 1" not in source
+    assert "production_stage != 1" not in source
+    assert "STATUS_APPLIED" in source
