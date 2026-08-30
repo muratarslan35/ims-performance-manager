@@ -27,23 +27,32 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Inspect instance storage
+      - name: Verify cleanup and health
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo 'COMMIT'; git rev-parse HEAD
-          echo 'INSTANCE_TOP'
-          du -ah instance 2>/dev/null | sort -h | tail -n 40
-          echo 'ROOT_LARGE_FILES'
-          find . -maxdepth 2 -type f -size +50M -printf '%12s %p\n' 2>/dev/null | sort -nr
-          echo 'PROCESSING'
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'HTTP_HEALTH|PASS'
+          echo 'KEPT_BACKUPS'
+          find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' | sort -nr
+          echo 'STORAGE'
+          du -sh instance instance/backups uploads/ims_archive 2>/dev/null || true
+          df -h /
+          free -h
           venv/bin/python - <<'PY'
           from app import create_app
+          from app.extensions import db
           from app.models import IMSImportJob
           app=create_app()
           with app.app_context():
-              print(IMSImportJob.query.filter_by(status='PROCESSING').count())
+              print('IMS_PROCESSING|' + str(IMSImportJob.query.filter_by(status='PROCESSING').count()))
+              c=db.session.connection()
+              print('SQLITE_JOURNAL_MODE|' + str(c.exec_driver_sql('PRAGMA journal_mode').scalar()))
+              print('SQLITE_BUSY_TIMEOUT|' + str(c.exec_driver_sql('PRAGMA busy_timeout').scalar()))
           PY
           REMOTE
