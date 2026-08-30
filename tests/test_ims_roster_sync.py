@@ -110,3 +110,90 @@ def test_sync_refuses_empty_latest_roster_without_deactivating_everyone(tmp_path
 
         db.session.expire_all()
         assert db.session.get(Representative, rep.id).active is True
+
+
+def test_vacancy_slot_reactivates_after_occupant_leaves_and_deactivates_for_replacement(tmp_path):
+    app = _app(tmp_path)
+    from app.extensions import db
+    from app.models import IMSUpload, Representative
+    from app.services.import_roster_sync import IMSRosterSyncService
+    from app.services.ims_import_service import IMSImportService
+
+    with app.app_context():
+        db.create_all()
+        vacancy_name = "DIYARBAKIR BOS KADRO"
+        vacancy_code = IMSImportService._vacancy_code("901", vacancy_name)
+        vacancy = Representative(
+            rep_code=vacancy_code,
+            rep_name="901 DIYARBAKIR BOS KADRO",
+            region="901",
+            city="DIYARBAKIR",
+            territory="DIYARBAKIR",
+            team="TAYFUN-1",
+            active=False,
+        )
+        occupant = Representative(
+            rep_code="OZGECAN-GULACAR",
+            rep_name="OZGECAN GULACAR",
+            region="901",
+            city="DIYARBAKIR",
+            territory="DIYARBAKIR",
+            team="TAYFUN-1",
+            active=True,
+        )
+        replacement = Representative(
+            rep_code="NEW-DIYARBAKIR",
+            rep_name="YENI DIYARBAKIR TEMSILCISI",
+            region="901",
+            city="DIYARBAKIR",
+            territory="DIYARBAKIR",
+            team="TAYFUN-1",
+            active=False,
+        )
+        db.session.add_all([vacancy, occupant, replacement])
+        db.session.flush()
+
+        importer = IMSImportService("unused.xlsx")
+        reused_id = importer._ensure_vacancy_representative(
+            "901 DIYARBAKIR",
+            vacancy_name=vacancy_name,
+        )
+        assert reused_id == vacancy.id
+        assert db.session.get(Representative, vacancy.id).active is False
+
+        vacancy_week = IMSUpload(
+            file_name="10.Hafta_Subat.xlsx",
+            year=2026,
+            month=2,
+            week_number=10,
+            status="COMPLETED",
+            completed_at=datetime(2026, 8, 30, 13, 0),
+        )
+        db.session.add(vacancy_week)
+        db.session.flush()
+        db.session.add(_raw(vacancy_week.id, vacancy.id, vacancy_name))
+        db.session.commit()
+
+        result = IMSRosterSyncService.sync_latest()
+        assert result["upload_id"] == vacancy_week.id
+        assert db.session.get(Representative, vacancy.id).active is True
+        assert db.session.get(Representative, occupant.id).active is False
+
+        replacement_week = IMSUpload(
+            file_name="11.Hafta_Subat.xlsx",
+            year=2026,
+            month=2,
+            week_number=11,
+            status="COMPLETED",
+            completed_at=datetime(2026, 8, 30, 14, 0),
+        )
+        db.session.add(replacement_week)
+        db.session.flush()
+        db.session.add(_raw(replacement_week.id, replacement.id, replacement.rep_name))
+        db.session.commit()
+
+        result = IMSRosterSyncService.sync_latest()
+        assert result["upload_id"] == replacement_week.id
+        assert db.session.get(Representative, vacancy.id).active is False
+        assert db.session.get(Representative, occupant.id).active is False
+        assert db.session.get(Representative, replacement.id).active is True
