@@ -56,7 +56,8 @@ def _complete_stamps(managed: list[tuple[Path, str, str]]) -> list[str]:
         if path.name.endswith(".db"):
             kinds_by_stamp.setdefault(stamp, set()).add(kind)
     return sorted(
-        stamp for stamp, kinds in kinds_by_stamp.items()
+        stamp
+        for stamp, kinds in kinds_by_stamp.items()
         if REQUIRED_KINDS.issubset(kinds)
     )
 
@@ -91,9 +92,16 @@ def cleanup(
         if not keep_stamps:
             raise RuntimeError("Refusing cleanup: no complete rollback backup set found")
 
+    integrity_by_stamp: dict[str, dict[str, str]] = {}
     for stamp in keep_stamps:
-        retained = [(path, kind) for path, kind, item_stamp in managed if item_stamp == stamp]
-        retained_kinds = {kind for path, kind in retained if path.name.endswith(".db")}
+        retained = [
+            (path, kind)
+            for path, kind, item_stamp in managed
+            if item_stamp == stamp
+        ]
+        retained_kinds = {
+            kind for path, kind in retained if path.name.endswith(".db")
+        }
         missing = sorted(REQUIRED_KINDS - retained_kinds)
         if missing:
             raise RuntimeError(
@@ -105,30 +113,45 @@ def cleanup(
             for path, kind in retained
             if kind in REQUIRED_KINDS and path.name.endswith(".db")
         }
-        failed_integrity = [kind for kind, path in primary_paths.items() if not integrity_ok(path)]
+        failed_integrity = [
+            kind for kind, path in primary_paths.items() if not integrity_ok(path)
+        ]
         if failed_integrity:
             raise RuntimeError(
                 f"Refusing cleanup: retained backup integrity failed for {stamp}: "
                 + ", ".join(failed_integrity)
             )
+        integrity_by_stamp[stamp] = {
+            kind: "ok" for kind in sorted(primary_paths)
+        }
 
     keep_set = set(keep_stamps)
-    managed_deletions = [path for path, _kind, stamp in managed if stamp not in keep_set]
+    managed_deletions = [
+        path for path, _kind, stamp in managed if stamp not in keep_set
+    ]
     unmanaged_db_deletions = (
-        [path for path in unmanaged_paths if DATABASE_BACKUP_RE.fullmatch(path.name)]
+        [
+            path
+            for path in unmanaged_paths
+            if DATABASE_BACKUP_RE.fullmatch(path.name)
+        ]
         if purge_unmanaged_db
         else []
     )
     deletions = managed_deletions + unmanaged_db_deletions
 
     bytes_to_delete = sum(path.stat().st_size for path in deletions)
-    before_bytes = sum(path.stat().st_size for path in backup_dir.iterdir() if path.is_file())
+    before_bytes = sum(
+        path.stat().st_size for path in backup_dir.iterdir() if path.is_file()
+    )
 
     if not dry_run:
         for path in deletions:
             path.unlink()
 
-    remaining_files = sorted(path.name for path in backup_dir.iterdir() if path.is_file())
+    remaining_files = sorted(
+        path.name for path in backup_dir.iterdir() if path.is_file()
+    )
     after_bytes = before_bytes if dry_run else before_bytes - bytes_to_delete
     retained_managed = sorted(
         path.name for path, _kind, stamp in managed if stamp in keep_set
@@ -139,6 +162,11 @@ def cleanup(
         if path not in unmanaged_db_deletions or dry_run
     )
 
+    retained_integrity = (
+        integrity_by_stamp[keep_stamp]
+        if keep_stamp
+        else integrity_by_stamp
+    )
     payload = {
         "result": "PASS",
         "backup_dir": str(backup_dir),
@@ -158,7 +186,7 @@ def cleanup(
         "retained_managed": retained_managed,
         "unmanaged_preserved": unmanaged_preserved,
         "remaining_files": remaining_files,
-        "retained_integrity": {stamp: "ok" for stamp in keep_stamps},
+        "retained_integrity": retained_integrity,
     }
     return payload
 
@@ -180,7 +208,10 @@ def main() -> int:
         dry_run=args.dry_run,
         purge_unmanaged_db=args.purge_unmanaged_db,
     )
-    print("BACKUP_RETENTION|" + json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    print(
+        "BACKUP_RETENTION|"
+        + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    )
     return 0
 
 
