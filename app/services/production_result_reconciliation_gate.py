@@ -1,13 +1,18 @@
 """Fail-closed reconciliation gate for production result imports.
 
 A production workbook is never allowed to remain APPLIED merely because parsing
-and INSERT statements completed.  The staged source report is compared back to
-all persisted production-result layers inside the same transaction.  Only an
-exact semantic match (with tiny float round-trip tolerance) is finalized green.
+and INSERT statements completed. The protected source file is verified first,
+then the staged source report is compared back to every persisted production-
+result layer inside the same transaction. Only an exact semantic match (with a
+tiny float round-trip tolerance) is finalized green.
 """
 
+import hashlib
 import re
 from datetime import datetime
+from pathlib import Path
+
+from flask import current_app
 
 from app.extensions import db
 from app.models import (
@@ -28,6 +33,40 @@ _FLOAT_TOLERANCE = 1e-9
 _INSTALLED = False
 _ORIGINAL_APPLY = ProductionResultImportService.apply
 _ORIGINAL_INIT = ProductionResultImportService.__init__
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _assert_source_integrity(upload):
+    """Verify the protected workbook automatically before any DB finalization."""
+    stored_name = str(upload.stored_file_name or "")
+    if not stored_name:
+        raise ProductionWorkbookValidationError(
+            "Üretim finalizasyonu başarısız: güvenli kaynak dosya adı eksik."
+        )
+
+    source_path = (
+        Path(current_app.config["UPLOAD_FOLDER"])
+        / "production_results"
+        / stored_name
+    )
+    if not source_path.is_file():
+        raise ProductionWorkbookValidationError(
+            "Üretim finalizasyonu başarısız: güvenli kaynak dosya bulunamadı."
+        )
+
+    actual_hash = _sha256(source_path)
+    expected_hash = str(upload.source_hash or "")
+    if not expected_hash or actual_hash != expected_hash:
+        raise ProductionWorkbookValidationError(
+            "Üretim finalizasyonu başarısız: güvenli kaynak dosyanın SHA-256 değeri audit kaydıyla eşleşmiyor."
+        )
 
 
 def _equal_number(left, right):
@@ -145,6 +184,10 @@ def _reconcile(upload, report):
 
 
 def _gated_apply(upload, report):
+    # Source integrity is part of the automatic green gate. This applies to the
+    # first upload, in-place retry and any future caller of apply().
+    _assert_source_integrity(upload)
+
     # Preserve all existing insertion semantics, but revoke APPLIED until every
     # inserted layer is read back and compared to the parsed source report.
     _ORIGINAL_APPLY(upload, report)
@@ -154,11 +197,14 @@ def _gated_apply(upload, report):
     _reconcile(upload, report)
     upload.status = upload.STATUS_APPLIED
     upload.applied_at = datetime.utcnow()
-    upload.warning_message = (upload.warning_message or "") + " Kaynak Excel ↔ DB final eşleşmesi %100 doğrulandı."
+    upload.warning_message = (
+        (upload.warning_message or "")
+        + " Kaynak dosya SHA-256 bütünlüğü ve Excel ↔ DB final eşleşmesi %100 otomatik doğrulandı."
+    )
 
 
 def _stage_aware_init(self, file_path, year, month, production_stage=None):
-    # Legacy upload route may omit production_stage.  The protected staged file
+    # Legacy upload route may omit production_stage. The protected staged file
     # name contains -u1- / -u2-, so recover it deterministically rather than
     # guessing between 1. and 2. production columns.
     if production_stage is None:
