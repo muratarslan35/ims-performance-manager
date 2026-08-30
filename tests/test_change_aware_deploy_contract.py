@@ -68,6 +68,7 @@ def test_service_activation_uses_reload_for_code_only_releases():
 def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     deploy = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
     maintenance = Path('.github/workflows/ims-production-maintenance.yml').read_text(encoding='utf-8')
+    runner = Path('scripts/run_production_maintenance.sh').read_text(encoding='utf-8')
 
     # The filename can legitimately appear in the classifier, but the deploy
     # execution path itself must never run backup retention synchronously.
@@ -77,11 +78,47 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     assert 'cleanup_old_backups.py' not in deploy_execution
 
     assert 'schedule:' in maintenance
-    assert 'database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize' in maintenance
-    assert 'cleanup_old_backups.py' in maintenance
-    assert 'MAINTENANCE_SKIPPED|reason=active_import' in maintenance
-    assert 'MAINTENANCE_RESULT|PASS' in maintenance
+    assert 'Launch detached maintenance job' in maintenance
+    assert 'Poll detached maintenance job' in maintenance
+    assert 'Collect final maintenance evidence' in maintenance
+    assert 'nohup bash scripts/run_production_maintenance.sh' in maintenance
+    assert 'ConnectionAttempts=3' in maintenance
+    assert 'SSH_POLL_RETRY|' in maintenance
+    assert 'consecutive_ssh_failures' in maintenance
     assert 'install_systemd_service.sh' not in maintenance
+
+    assert 'database_capacity_audit.py' in runner
+    assert '--additional-uploads 49' in runner
+    assert '--optimize' in runner
+    assert 'cleanup_old_backups.py' in runner
+    assert '--keep-latest 2' in runner
+    assert 'MAINTENANCE_SKIPPED|reason=active_import' in runner
+    assert 'IMS_PROCESSING|' in runner
+    assert 'SQLITE_JOURNAL_MODE|' in runner
+    assert 'SQLITE_BUSY_TIMEOUT|' in runner
+    assert 'SQLITE_QUICK_CHECK|' in runner
+    assert 'WEB_ACTIVE|' in runner
+    assert 'WORKER_ACTIVE|' in runner
+    assert 'HTTP_HEALTH|PASS' in runner
+    assert 'MAINTENANCE_RESULT|PASS' in runner
+
+
+def test_detached_maintenance_status_survives_runner_disconnect():
+    maintenance = Path('.github/workflows/ims-production-maintenance.yml').read_text(encoding='utf-8')
+    runner = Path('scripts/run_production_maintenance.sh').read_text(encoding='utf-8')
+
+    # Long-running work is owned by the production host, not by one SSH session.
+    assert '>"$JOB_DIR/nohup.log" 2>&1 </dev/null &' in maintenance
+    assert "printf 'RUNNING\\n' > \"$STATUS_FILE\"" in runner
+    assert "printf 'PASS\\n' > \"$STATUS_FILE\"" in runner
+    assert "printf 'FAIL|exit_code=%s\\n'" in runner
+    assert 'flock -n 9' in runner
+
+    # GitHub Actions performs only bounded status probes and tolerates transient
+    # SSH failures before declaring connectivity lost.
+    assert 'for poll in $(seq 1 120)' in maintenance
+    assert 'sleep 10' in maintenance
+    assert 'consecutive_ssh_failures -ge 6' in maintenance
 
 
 def test_heavy_benchmark_is_not_automatic_after_deploy():
