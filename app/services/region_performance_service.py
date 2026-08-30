@@ -8,6 +8,7 @@ from app.models import IMSSummary, IMSRawData, IMSUpload, Product, ProductionReg
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
 from app.services.production_result_service import ProductionResultService
+from app.services.region_balance_unit_service import region_balance_units
 
 
 class RegionPerformanceService:
@@ -226,16 +227,12 @@ class RegionPerformanceService:
         if not upload_id:
             return {}
         balances = {
-            product_id: Decimal(str(balance_unit or 0))
-            for product_id, balance_unit in db.session.query(
-                IMSRawData.product_id, IMSRawData.unit
-            ).filter(
-                IMSRawData.upload_id == upload_id,
-                IMSRawData.sheet_type == "dashboard_balance_region",
-                IMSRawData.territory == self.region_key,
-            ).all()
+            int(product_id): Decimal(str(value))
+            for product_id, value in region_balance_units(upload_id, self.region_key).items()
         }
         if not balances:
+            # Legacy archives may be unavailable. Fail closed and allow the
+            # aggregate layer to use its existing representative fallback.
             return {}
 
         return {
