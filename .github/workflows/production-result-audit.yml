@@ -1,0 +1,57 @@
+name: Production Result Read-Only Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: Production year
+        required: true
+        default: "2026"
+      month:
+        description: Production month number
+        required: true
+        default: "2"
+      stage:
+        description: Production stage (1 or 2)
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+          IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+          IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run production result audit
+        shell: bash
+        env:
+          IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+          IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+          IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+          IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+          YEAR: ${{ inputs.year }}
+          MONTH: ${{ inputs.month }}
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" \
+            "cd '$IMS_PATH' && test \"\$(git branch --show-current)\" = main && test -z \"\$(git status --porcelain)\" && venv/bin/python scripts/audit_production_result_sources.py --year '$YEAR' --month '$MONTH' --stage '$STAGE'"
