@@ -2,6 +2,8 @@
 Description=IMS Performance Manager
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=notify
@@ -19,8 +21,6 @@ KillSignal=SIGQUIT
 TimeoutStopSec=75
 Restart=always
 RestartSec=3
-StartLimitIntervalSec=60
-StartLimitBurst=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
