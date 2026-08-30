@@ -52,7 +52,7 @@ def _manager_reports(uploads):
 
     Target and summary data are period-scoped, so recalculating the same six
     queries for every historical upload is both redundant and increasingly
-    expensive.  Fetch every visible period once and retain the existing report
+    expensive. Fetch every visible period once and retain the existing report
     semantics for each upload.
     """
     if not uploads:
@@ -159,17 +159,14 @@ def _manager_report(upload):
     return _manager_reports([upload])[upload.id]
 
 
-@ims_bp.route(
-
-    "/"
-
-)
+@ims_bp.route("/")
 @login_required
 def index():
     history_page = max(request.args.get("history_page", 1, type=int) or 1, 1)
     history_query = (request.args.get("history_q") or "").strip()[:100]
     history_status = (request.args.get("history_status") or "").strip()
     show_hidden = request.args.get("show_hidden") == "1"
+    show_failed_production = request.args.get("show_failed_production") == "1"
 
     upload_query = IMSUpload.query
     if history_query:
@@ -196,7 +193,15 @@ def index():
         for item in uploads
     }
 
-    production_uploads = ProductionResultUpload.query.order_by(
+    production_failed_count = ProductionResultUpload.query.filter_by(
+        status=ProductionResultUpload.STATUS_FAILED
+    ).count()
+    production_query = ProductionResultUpload.query
+    if not show_failed_production:
+        production_query = production_query.filter(
+            ProductionResultUpload.status != ProductionResultUpload.STATUS_FAILED
+        )
+    production_uploads = production_query.order_by(
         ProductionResultUpload.uploaded_at.desc()
     ).all()
 
@@ -217,14 +222,10 @@ def index():
     }
     manager_reports = _manager_reports(uploads)
 
-    # TEMP DEBUG
     dashboard = {}
-    # dashboard = {}
 
     rendered = render_template(
-
         "ims.html",
-
         uploads=uploads,
         latest_upload=latest_upload,
         total_uploads=total_uploads,
@@ -234,21 +235,40 @@ def index():
         hidden_upload_ids=hidden_upload_ids,
         show_hidden=show_hidden,
         delete_permissions=delete_permissions,
-
         production_uploads=production_uploads,
-
         dashboard=dashboard,
-
         ims_period=ims_period,
-
         import_status=import_status,
-
         manager_reports=manager_reports,
-
     )
-    # Preserve failed import records for audit/pagination, but keep them out of
-    # the manager dashboard. The row remains in the HTML contract for existing
-    # server-side history tests while the browser does not render it.
+
+    # Production failures are audit evidence, not successful business history.
+    # Keep them in the database, hide them from the normal view, and expose a
+    # deliberate IMS-style toggle for troubleshooting only.
+    production_badge = (
+        '<span class="badge" style="background:#fff4cf;color:#765500;'
+        'border:1px solid #f0d372;">Güvenli finalizasyon</span>'
+    )
+    if production_failed_count:
+        if show_failed_production:
+            toggle_url = url_for("ims.index") + "#production-results"
+            toggle_label = "Hatalıları gizle"
+            toggle_icon = "bi-eye-slash"
+        else:
+            toggle_url = url_for("ims.index", show_failed_production=1) + "#production-results"
+            toggle_label = f"Hatalıları göster ({production_failed_count})"
+            toggle_icon = "bi-eye"
+        production_control = (
+            '<div class="d-flex align-items-center gap-2">'
+            + production_badge
+            + f'<a class="btn btn-sm btn-outline-secondary" href="{toggle_url}">'
+            + f'<i class="bi {toggle_icon} me-1"></i>{toggle_label}</a></div>'
+        )
+        rendered = rendered.replace(production_badge, production_control, 1)
+
+    # Preserve failed IMS import records for audit/pagination, but keep them out
+    # of the manager dashboard unless the existing IMS history controls expose
+    # them explicitly.
     rendered = rendered.replace(
         'data-status="FAILED"',
         'data-status="FAILED" hidden aria-hidden="true"',
@@ -287,55 +307,100 @@ def production_upload():
     payload = file.read()
     source_hash = hashlib.sha256(payload).hexdigest()
     existing = ProductionResultUpload.query.filter_by(source_hash=source_hash).first()
-    if existing:
+    retrying_failed = existing is not None and existing.status == ProductionResultUpload.STATUS_FAILED
+
+    if existing is not None and not retrying_failed:
         flash(
-            f"Bu üretim dosyası daha önce {existing.year}/{existing.month:02d} dönemi için yüklenmiş.",
+            f"Bu üretim dosyası daha önce {existing.year}/{existing.month:02d} dönemi için başarıyla kaydedilmiş.",
+            "warning",
+        )
+        return redirect(url_for("ims.index") + "#production-results")
+
+    if retrying_failed and (
+        existing.year != year
+        or existing.month != month
+        or existing.production_stage != production_stage
+    ):
+        flash(
+            "Bu başarısız üretim dosyası yalnızca ilk seçilen aynı dönem ve üretim aşamasıyla yeniden doğrulanabilir.",
             "warning",
         )
         return redirect(url_for("ims.index") + "#production-results")
 
     production_folder = current_app.config["UPLOAD_FOLDER"] / "production_results"
     production_folder.mkdir(parents=True, exist_ok=True)
-    stored_file_name = f"{year}-{month:02d}-u{production_stage}-{uuid4().hex}{extension}"
+    if retrying_failed:
+        upload = existing
+        stored_file_name = existing.stored_file_name
+    else:
+        upload = None
+        stored_file_name = f"{year}-{month:02d}-u{production_stage}-{uuid4().hex}{extension}"
     stored_path = production_folder / stored_file_name
 
     try:
         stored_path.write_bytes(payload)
-        upload = ProductionResultUpload(
-            file_name=original_name,
-            stored_file_name=stored_file_name,
-            source_hash=source_hash,
-            year=year,
-            month=month,
+        if retrying_failed:
+            upload = db.session.get(ProductionResultUpload, existing.id)
+            upload.status = ProductionResultUpload.STATUS_PENDING_VALIDATION
+            upload.error_message = None
+            upload.warning_message = (
+                "Önceki başarısız deneme aynı kaynak hash'i ve audit kaydı korunarak yeniden doğrulanıyor."
+            )
+            upload.uploaded_by = current_user.full_name
+        else:
+            upload = ProductionResultUpload(
+                file_name=original_name,
+                stored_file_name=stored_file_name,
+                source_hash=source_hash,
+                year=year,
+                month=month,
+                production_stage=production_stage,
+                status=ProductionResultUpload.STATUS_PENDING_VALIDATION,
+                uploaded_by=current_user.full_name,
+                warning_message=(
+                    "Dosya güvenli alana alındı. Şablon doğrulaması tamamlanana kadar mevcut IMS, "
+                    "realizasyon ve prim hesaplarına uygulanmayacaktır."
+                ),
+            )
+            db.session.add(upload)
+            db.session.flush()
+
+        report = ProductionResultImportService(
+            stored_path,
+            year,
+            month,
             production_stage=production_stage,
-            status=ProductionResultUpload.STATUS_PENDING_VALIDATION,
-            uploaded_by=current_user.full_name,
-            warning_message=(
-                "Dosya güvenli alana alındı. Şablon doğrulaması tamamlanana kadar mevcut IMS, "
-                "realizasyon ve prim hesaplarına uygulanmayacaktır."
-            ),
-        )
-        db.session.add(upload)
-        db.session.flush()
-        report = ProductionResultImportService(stored_path, year, month).parse()
+        ).parse()
         ProductionResultImportService.apply(upload, report)
         db.session.commit()
     except ProductionWorkbookValidationError as exc:
         db.session.rollback()
-        # Preserve rejected source evidence and its reason without applying any result.
-        upload = ProductionResultUpload(
-            file_name=original_name, stored_file_name=stored_file_name, source_hash=source_hash,
-            year=year, month=month, production_stage=production_stage,
-            status=ProductionResultUpload.STATUS_FAILED, uploaded_by=current_user.full_name,
-            error_message=str(exc),
-        )
-        db.session.add(upload)
+        if retrying_failed:
+            failed = db.session.get(ProductionResultUpload, existing.id)
+            failed.status = ProductionResultUpload.STATUS_FAILED
+            failed.error_message = str(exc)
+            failed.warning_message = None
+            failed.uploaded_by = current_user.full_name
+        else:
+            failed = ProductionResultUpload(
+                file_name=original_name,
+                stored_file_name=stored_file_name,
+                source_hash=source_hash,
+                year=year,
+                month=month,
+                production_stage=production_stage,
+                status=ProductionResultUpload.STATUS_FAILED,
+                uploaded_by=current_user.full_name,
+                error_message=str(exc),
+            )
+            db.session.add(failed)
         db.session.commit()
         flash(f"Üretim dosyası uygulanmadı: {exc}", "danger")
         return redirect(url_for("ims.index") + "#production-results")
     except Exception:
         db.session.rollback()
-        stored_path.unlink(missing_ok=True)
+        if not retrying_failed:
+            stored_path.unlink(missing_ok=True)
         current_app.logger.exception("production_result_staging_failed")
         flash("Üretim sonucu dosyası güvenli alana kaydedilemedi.", "danger")
         return redirect(url_for("ims.index") + "#production-results")
@@ -347,41 +412,13 @@ def production_upload():
     return redirect(url_for("ims.index") + "#production-results")
 
 
-@ims_bp.route(
-
-    "/upload",
-
-    methods=["POST"]
-
-)
+@ims_bp.route("/upload", methods=["POST"])
 @login_required
 def upload():
-
-    file = request.files.get(
-
-        "file"
-
-    )
-
+    file = request.files.get("file")
     if file is None or file.filename == "":
-
-        flash(
-
-            "Lütfen bir IMS dosyası seçiniz.",
-
-            "warning"
-
-        )
-
-        return redirect(
-
-            url_for(
-
-                "ims.index"
-
-            )
-
-        )
+        flash("Lütfen bir IMS dosyası seçiniz.", "warning")
+        return redirect(url_for("ims.index"))
 
     filename = secure_filename(file.filename)
     extension = Path(filename).suffix.lower()
@@ -468,15 +505,7 @@ def upload():
             "danger",
         )
 
-    return redirect(
-
-        url_for(
-
-            "ims.index"
-
-        )
-
-    )
+    return redirect(url_for("ims.index"))
 
 
 @ims_bp.route("/uploads/<int:upload_id>/hide", methods=["POST"])
