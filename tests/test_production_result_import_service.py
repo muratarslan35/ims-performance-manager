@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -57,15 +58,29 @@ def _sheet(workbook, title, metric, values, percentages, total_actual, total_per
 
 
 def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
-    path = tmp_path / "ocak-uretim.xlsx"
+    config = type(
+        "ProductionExactResultConfig",
+        (ProductionImportConfig,),
+        {
+            "UPLOAD_FOLDER": tmp_path / "uploads",
+            "REPORT_FOLDER": tmp_path / "reports",
+            "BACKUP_FOLDER": tmp_path / "backups",
+            "LOG_FOLDER": tmp_path / "logs",
+        },
+    )
+    production_folder = config.UPLOAD_FOLDER / "production_results"
+    production_folder.mkdir(parents=True, exist_ok=True)
+    path = production_folder / "2026-01-u2-ocak-uretim.xlsx"
+
     workbook = Workbook()
     workbook.remove(workbook.active)
     _sheet(workbook, "TTS REALIZASYONLARI TL", "TL", [120] * 7, [120] * 7, 840, 120, True)
     # Approved KUTU files may not carry production-stage columns. REA is final.
     _sheet(workbook, "TTS REALIZASYONLARI KUTU", "KUTU", [11] * 7, [110] * 7, 77, 110, False)
     workbook.save(path)
+    source_hash = hashlib.sha256(path.read_bytes()).hexdigest()
 
-    app = create_app(ProductionImportConfig)
+    app = create_app(config)
     with app.app_context():
         db.create_all()
         # The factory may seed reference targets; this fixture deliberately
@@ -87,13 +102,17 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
             for product in products
         ])
         upload = ProductionResultUpload(
-            file_name=path.name, stored_file_name=path.name, source_hash="x" * 64,
-            year=2026, month=1, production_stage=2,
+            file_name="ocak-uretim.xlsx",
+            stored_file_name=path.name,
+            source_hash=source_hash,
+            year=2026,
+            month=1,
+            production_stage=2,
         )
         db.session.add(upload)
         db.session.flush()
 
-        report = ProductionResultImportService(path, 2026, 1).parse()
+        report = ProductionResultImportService(path, 2026, 1, production_stage=2).parse()
         ProductionResultImportService.apply(upload, report)
         db.session.commit()
 
