@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read production result failure evidence
+      - name: Read March week-12 IMS import failure evidence
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -44,32 +44,31 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          venv/bin/python - <<'PY'
+          echo '--- IMS IMPORT LOGS LAST 90 MIN ---'
+          sudo journalctl -u ims-import-worker.service --since '90 minutes ago' --no-pager | grep -Ei '12\.Hafta|week.?12|Tayfun-1_12|error|exception|fail|semantic|sheet|brick|representative|temsilci|alias|validation|rollback' | tail -n 350 || true
+          echo '--- WEB IMS LOGS LAST 90 MIN ---'
+          sudo journalctl -u ims-performance-manager.service --since '90 minutes ago' --no-pager | grep -Ei '12\.Hafta|Tayfun-1_12|IMS yük|ims import|error|exception|fail|semantic|sheet|brick|representative|temsilci|alias|validation|rollback' | tail -n 250 || true
+          echo '--- RECENT UPLOAD RECORDS ---'
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
-
-          app = create_app()
+          app=create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
-              )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
-                  print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
-                  )
+              names=db.inspect(db.engine).get_table_names()
+              for t in names:
+                  if 'upload' not in t.lower() and 'import' not in t.lower():
+                      continue
+                  cols=[c['name'] for c in db.inspect(db.engine).get_columns(t)]
+                  if not any(c in cols for c in ('filename','file_name','original_filename')):
+                      continue
+                  print('TABLE|'+t+'|'+','.join(cols))
+                  try:
+                      rows=db.session.execute(db.text(f'SELECT * FROM "{t}" ORDER BY id DESC LIMIT 8')).mappings().all()
+                      for r in rows:
+                          s=' | '.join(f'{k}={v}' for k,v in r.items() if k in ('id','filename','file_name','original_filename','status','error','error_message','warning_message','year','month','week','created_at','uploaded_at','completed_at'))
+                          print('ROW|'+s)
+                  except Exception as e:
+                      print('TABLE_READ_ERROR|'+t+'|'+str(e))
           PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
           echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
