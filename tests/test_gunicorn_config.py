@@ -55,8 +55,9 @@ def test_heavy_deploy_restarts_only_after_live_integrity_gate():
     assert heavy_gate < live_gate < service_start
     assert "venv/bin/python verify_ims_acceptance.py" not in workflow
     assert "nohup venv/bin/python run.py" not in workflow
-    assert "ServerAliveInterval=30" in workflow
-    assert "ServerAliveCountMax=20" in workflow
+    assert "ServerAliveInterval=15" in workflow
+    assert "ServerAliveCountMax=40" in workflow
+    assert "ConnectionAttempts=3" in workflow
     assert "FAST BACKEND RELEASE GATES" in workflow
     assert "FAST UI RELEASE: DB/IMS GATES SKIPPED" in workflow
     assert "Production health check passed." in workflow
