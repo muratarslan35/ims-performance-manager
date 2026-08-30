@@ -472,6 +472,14 @@ Temsilci Yönetimi
 
                         </span>
 
+                        {% elif (representative.rep_code or '').upper().startswith('UNASSIGNED') %}
+
+                        <span class="badge bg-secondary-lt text-secondary">
+
+                            Dolu Kadro
+
+                        </span>
+
                         {% else %}
 
                         <span class="badge bg-danger">
