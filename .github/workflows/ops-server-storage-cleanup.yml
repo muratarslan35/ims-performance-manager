@@ -1,0 +1,153 @@
+name: Guarded production backup cleanup
+
+on:
+  push:
+    branches: ["ops/server-storage-cleanup"]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Guarded cleanup
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+
+          echo '=== PRECHECK ==='
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          df -h /
+          free -h
+
+          processing=$(venv/bin/python - <<'PY'
+          from app import create_app
+          from app.models import IMSImportJob
+          app=create_app()
+          with app.app_context():
+              print(IMSImportJob.query.filter_by(status='PROCESSING').count())
+          PY
+          )
+          echo "IMS_PROCESSING|$processing"
+          test "$processing" = "0"
+
+          keep1='instance/backups/ipm-predeploy-20260827-142550.db'
+          keep2='instance/backups/ipm-predeploy-20260827-135438.db'
+          user_keep1='instance/backups/users-predeploy-20260827-142550.db'
+          user_keep2='instance/backups/users-predeploy-20260827-135438.db'
+
+          for f in "$keep1" "$keep2" "$user_keep1" "$user_keep2"; do
+            test -f "$f"
+          done
+
+          echo '=== VERIFY KEPT BACKUPS ==='
+          venv/bin/python - <<'PY'
+          import sqlite3
+          files = [
+              'instance/backups/ipm-predeploy-20260827-142550.db',
+              'instance/backups/ipm-predeploy-20260827-135438.db',
+              'instance/backups/users-predeploy-20260827-142550.db',
+              'instance/backups/users-predeploy-20260827-135438.db',
+          ]
+          for path in files:
+              con = sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=30)
+              try:
+                  result = con.execute('PRAGMA quick_check').fetchone()[0]
+              finally:
+                  con.close()
+              print(f'BACKUP_CHECK|{path}|{result}')
+              if result != 'ok':
+                  raise SystemExit(f'Backup quick_check failed: {path}: {result}')
+          PY
+
+          echo '=== BEFORE ==='
+          du -sh instance/backups backups backup 2>/dev/null || true
+          find instance/backups backups backup -maxdepth 2 -type f -printf '%12s %p\n' 2>/dev/null | sort -nr || true
+
+          removed_bytes=0
+          remove_file() {
+            f="$1"
+            if [ -f "$f" ]; then
+              sz=$(stat -c %s "$f")
+              rm -- "$f"
+              removed_bytes=$((removed_bytes + sz))
+              echo "REMOVED|$sz|$f"
+            fi
+          }
+
+          # Keep only the two newest validated production DB backups and the
+          # corresponding two tiny user-vault backups in instance/backups.
+          if [ -d instance/backups ]; then
+            while IFS= read -r -d '' f; do
+              case "$f" in
+                "$keep1"|"$keep2"|"$user_keep1"|"$user_keep2") ;;
+                *) remove_file "$f" ;;
+              esac
+            done < <(find instance/backups -maxdepth 1 -type f -print0)
+          fi
+
+          # Legacy backup directories are older than the validated Aug-27 pair.
+          if [ -d backups ]; then
+            while IFS= read -r -d '' f; do remove_file "$f"; done < <(find backups -maxdepth 1 -type f -print0)
+          fi
+          if [ -d backup ]; then
+            while IFS= read -r -d '' f; do remove_file "$f"; done < <(find backup -maxdepth 1 -type f -print0)
+          fi
+
+          # Standalone legacy snapshots in instance/. Active ipm.db and its
+          # WAL/SHM are deliberately not matched.
+          for f in \
+            instance/ipm_before_clean_20260731_1642.db \
+            instance/ipm_before_parser_fix_20260731_1652.db \
+            instance/ipm_before_reset_2026-08-06_0620.db \
+            instance/ipm.db.before_ims_cleanup \
+            instance/ipm.db.before_raw_fix \
+            instance/ipm.db.bak \
+            instance/ipm.db.pre-codex \
+            instance/ipm.db.before-box-basis-20260810.bak \
+            instance/ipm.db.before-tts-canonical-20260810.bak \
+            instance/ipm.db.before_remove_upload_1_20260816.bak
+          do
+            remove_file "$f"
+          done
+
+          echo "REMOVED_TOTAL_BYTES|$removed_bytes"
+          echo '=== POSTCHECK ==='
+          test -f instance/ipm.db
+          test -f "$keep1"
+          test -f "$keep2"
+          test -f instance/persistent/users.db
+          [ -d uploads/ims_archive ] && echo "IMS_ARCHIVE_FILES|$(find uploads/ims_archive -maxdepth 1 -type f | wc -l)"
+          du -sh instance instance/backups uploads/ims_archive 2>/dev/null || true
+          df -h /
+          free -h
+
+          venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          app=create_app()
+          with app.app_context():
+              c=db.session.connection()
+              print('SQLITE_JOURNAL_MODE|' + str(c.exec_driver_sql('PRAGMA journal_mode').scalar()))
+              print('SQLITE_BUSY_TIMEOUT|' + str(c.exec_driver_sql('PRAGMA busy_timeout').scalar()))
+          PY
+          REMOTE
