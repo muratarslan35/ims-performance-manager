@@ -118,7 +118,12 @@ def test_detached_maintenance_status_survives_runner_disconnect():
     # SSH failures before declaring connectivity lost.
     assert 'for poll in $(seq 1 120)' in maintenance
     assert 'sleep 10' in maintenance
-    assert 'consecutive_ssh_failures -ge 6' in maintenance
+    assert '"$consecutive_ssh_failures" -ge 6' in maintenance
+
+    # A runner/network failure must not delete state for a detached job that is
+    # still RUNNING; cleanup is only allowed after a terminal status.
+    assert 'REMOTE_JOB_PRESERVED|status=' in maintenance
+    assert 'PASS|FAIL*) rm -rf' in maintenance
 
 
 def test_heavy_benchmark_is_not_automatic_after_deploy():
