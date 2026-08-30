@@ -46,6 +46,36 @@ def test_cleanup_keeps_only_requested_managed_rollback_set(tmp_path):
     }
 
 
+def test_cleanup_keeps_latest_two_complete_rollback_sets(tmp_path):
+    make_set(tmp_path, "20260820-100000")
+    make_set(tmp_path, "20260821-100000")
+    make_set(tmp_path, "20260822-100000")
+
+    result = cleanup(tmp_path, keep_latest=2)
+
+    assert result["result"] == "PASS"
+    assert result["keep_stamps"] == ["20260821-100000", "20260822-100000"]
+    assert result["deleted_files"] == 3
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "ipm-pre-competition-backfill-20260821-100000.db",
+        "ipm-pre-competition-backfill-20260822-100000.db",
+        "ipm-predeploy-20260821-100000.db",
+        "ipm-predeploy-20260822-100000.db",
+        "users-predeploy-20260821-100000.db",
+        "users-predeploy-20260822-100000.db",
+    ]
+    assert result["retained_integrity"] == {
+        "20260821-100000": {
+            "ipm-predeploy": "ok",
+            "users-predeploy": "ok",
+        },
+        "20260822-100000": {
+            "ipm-predeploy": "ok",
+            "users-predeploy": "ok",
+        },
+    }
+
+
 def test_strict_cleanup_removes_old_manual_database_backups_too(tmp_path):
     make_set(tmp_path, "20260820-100000")
     make_set(tmp_path, "20260822-100000")
