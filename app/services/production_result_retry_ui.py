@@ -125,7 +125,7 @@ def install_production_result_retry_ui(app):
 
             flash(
                 f"{upload.production_stage}. üretim sonucu aynı güvenli dosyadan yeniden "
-                "doğrulandı ve uygulandı.",
+                "doğrulandı, DB ile %100 eşleştirildi ve uygulandı.",
                 "success",
             )
             return redirect(url_for("ims.index") + "#production-results")
@@ -163,7 +163,10 @@ def install_production_result_retry_ui(app):
                     + '" class="d-inline ms-2">'
                     + '<button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" '
                     + 'title="Aynı güvenli dosyayı yeniden doğrula" '
-                    + 'onclick="this.disabled=true;this.innerHTML=\'İşleniyor...\';this.form.submit();">'
+                    + 'onclick="var b=this.closest(\'td\').querySelector(\'.badge\');'
+                    + 'if(b){b.className=\'badge bg-warning text-dark\';b.textContent=\'İnceleniyor\';}'
+                    + 'this.disabled=true;this.className=\'btn btn-sm btn-warning py-0 px-2\';'
+                    + 'this.innerHTML=\'<i class=&quot;bi bi-hourglass-split me-1&quot;></i>Doğrulanıyor...\';this.form.submit();">'
                     + '<i class="bi bi-arrow-clockwise me-1"></i>Tekrar Dene</button></form>'
                 )
                 html = html.replace(_RETRY_BADGE, control, 1)
