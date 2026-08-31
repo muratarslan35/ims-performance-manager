@@ -40,6 +40,7 @@ from app.services.manager_import_report_alignment import install_manager_import_
 from app.services.dashboard_runtime_optimizer import install_dashboard_runtime_optimizer
 from app.services.ims_upload_lifecycle_hooks import install_ims_upload_lifecycle
 from app.services.ims_upload_lifecycle_ui import install_ims_upload_lifecycle_ui
+from app.services.ims_failed_retry_ui import install_ims_failed_retry_ui
 from app.services.production_result_retry_ui import install_production_result_retry_ui
 from app.services.production_result_reconciliation_gate import install_production_result_reconciliation_gate
 from app.access_control import register_access_control
@@ -143,9 +144,6 @@ def register_error_handlers(app):
 def create_database(app):
     from app.services.startup_coordinator import StartupCoordinator
 
-    # Gunicorn boots workers concurrently. Keep the existing initialization
-    # contract, but serialize its small idempotent writes so two workers cannot
-    # create the same seed user/setting at the same instant.
     with StartupCoordinator.acquire(app):
         with app.app_context():
             initialize_database()
@@ -163,10 +161,6 @@ def create_app(config_object=Config):
         and database_uri.startswith("sqlite:///")
         and database_uri != "sqlite:///"
     ):
-        # Windows does not allow a TemporaryDirectory to remove a SQLite file
-        # while QueuePool retains an idle handle. Test-only NullPool keeps each
-        # file-backed database isolated and makes teardown deterministic; the
-        # production WAL/single-writer connection policy is unchanged.
         engine_options = dict(app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {})
         engine_options["poolclass"] = NullPool
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
@@ -197,6 +191,7 @@ def create_app(config_object=Config):
     register_template_context(app)
     register_blueprints(app)
     install_ims_upload_lifecycle_ui(app)
+    install_ims_failed_retry_ui(app)
     install_production_result_retry_ui(app)
     register_access_control(app)
     register_error_handlers(app)
