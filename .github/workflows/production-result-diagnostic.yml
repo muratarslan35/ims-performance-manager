@@ -29,44 +29,28 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit TL per box stability
+      - name: Read live status
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          systemctl is-active ims-performance-manager.service | sed 's/^/WEB_ACTIVE|/'
+          systemctl is-active ims-import-worker.service | sed 's/^/WORKER_ACTIVE|/' || true
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from collections import defaultdict
-          from statistics import median
           from app import create_app
           from app.extensions import db
           app=create_app()
           with app.app_context():
-              products={int(r['id']):r for r in db.session.execute(db.text("SELECT id,product_name,unit_price FROM products WHERE is_active=1 ORDER BY id")).mappings().all()}
-              for p in products.values():
-                  print(f'PRODUCT_PRICE|product_id={p["id"]}|product={p["product_name"]}|unit_price={float(p["unit_price"] or 0):.6f}')
-              uploads={10:22,11:23}
-              by_week={}
-              for week,uid in uploads.items():
-                  rows=db.session.execute(db.text("""
-                    SELECT product_id,representative_id,unit,tl
-                    FROM ims_facts
-                    WHERE upload_id=:u AND report_type='brick_sales' AND unit>0 AND tl>0
-                  """),{'u':uid}).mappings().all()
-                  groups=defaultdict(list)
-                  for r in rows:
-                      groups[int(r['product_id'])].append(float(r['tl'])/float(r['unit']))
-                  by_week[week]=groups
-                  for pid,vals in sorted(groups.items()):
-                      p=products.get(pid,{'product_name':'?','unit_price':0})
-                      lo=min(vals); hi=max(vals); med=median(vals); avg=sum(vals)/len(vals)
-                      spread=(hi-lo)/med*100 if med else 0
-                      configured=float(p['unit_price'] or 0)
-                      cfg_diff=(med-configured)/configured*100 if configured else 0
-                      print(f'PRICE|week={week}|product_id={pid}|product={p["product_name"]}|n={len(vals)}|configured={configured:.6f}|avg={avg:.6f}|median={med:.6f}|min={lo:.6f}|max={hi:.6f}|spread_pct={spread:.4f}|configured_delta_pct={cfg_diff:.4f}')
-              for pid in sorted(set(by_week[10]) & set(by_week[11])):
-                  a=median(by_week[10][pid]); b=median(by_week[11][pid]); diff=(b-a)/a*100 if a else 0
-                  print(f'PRICE_WEEK_DELTA|product_id={pid}|product={products.get(pid,{}).get("product_name","?")}|w10_median={a:.6f}|w11_median={b:.6f}|delta_pct={diff:.4f}')
+              processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0
+              latest=db.session.execute(db.text("SELECT id,status,ims_upload_id FROM ims_import_jobs ORDER BY id DESC LIMIT 1")).mappings().first()
+              print(f'PROCESSING_COUNT|{int(processing)}')
+              if latest:
+                  print(f'LATEST_JOB|id={latest["id"]}|status={latest["status"]}|upload_id={latest["ims_upload_id"]}')
+              jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
           REMOTE
