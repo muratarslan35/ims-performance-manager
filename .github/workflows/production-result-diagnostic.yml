@@ -25,95 +25,38 @@ jobs:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
           set -Eeuo pipefail
-          test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Trace metric headers and active dashboard upload
+      - name: Audit historical brick-sales header contracts
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          echo '--- EXACT STORED SOURCE LOOKUP ---'
-          for f in 2026-03-1b5a91cde2f14547a10413260c6161cc.xlsx 2026-03-aa795086d5d143a99dbf9b8d311a5635.xlsx 2026-03-4fdf2ebb59c040a8a0dd83746929650d.xlsx; do
-            find "$IMS_PATH" -type f -name "$f" -print || true
-          done
-          echo '--- RAW HEADER TRACE / DASHBOARD SELECTION ---'
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json
-          from collections import Counter, defaultdict
+          import json,re
+          from collections import Counter,defaultdict
           from app import create_app
           from app.extensions import db
-          from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
+          metric=re.compile(r'(^|\s)(TL|CIRO|VALUE|KUTU|BOX|UNIT|ADET)(\s|$)',re.I)
           with app.app_context():
-              insp=db.inspect(db.engine)
-              # Prove which upload dashboard repository selects.
-              repo=DashboardRepository(db.session)
-              for name, obj in (
-                  ('latest_completed', repo.load_latest_completed_upload()),
-                  ('latest_successful_summary', repo.load_latest_successful_summary()),
-              ):
-                  print(f'DASHBOARD_PICK|kind={name}|id={getattr(obj,"id",None)}|week={getattr(obj,"week_number",None)}|status={getattr(obj,"status",None)}|summary={getattr(obj,"summary_record_count",None)}|reconciliation={getattr(obj,"reconciliation_status",None)}')
-
-              # Exact headers captured in raw_json/source_values on authoritative brick sheet.
-              for uid in (23,25):
-                  rows=db.session.execute(db.text("SELECT id,representative_id,product_id,representative,product,brick,unit,tl,raw_json FROM ims_raw_data WHERE upload_id=:u AND sheet_name='1001 BRICK SATIS' ORDER BY id LIMIT 80"), {'u':uid}).mappings().all()
-                  key_counter=Counter()
-                  print(f'RAW_SAMPLE_COUNT|upload={uid}|rows={len(rows)}')
-                  for i,r in enumerate(rows[:12]):
-                      payload=json.loads(r['raw_json'] or '{}')
-                      sv=payload.get('source_values') or {}
-                      key_counter.update(sv.keys())
-                      print('RAW_SAMPLE|upload=%s|rep_id=%s|rep=%s|product_id=%s|product=%s|brick=%s|unit=%s|tl=%s|source_values=%s' % (uid,r['representative_id'],r['representative'],r['product_id'],r['product'],r['brick'],r['unit'],r['tl'],json.dumps(sv,ensure_ascii=False,sort_keys=True)))
-                  # Scan all 7007 raw rows for source header keys without printing values.
-                  all_json=db.session.execute(db.text("SELECT raw_json FROM ims_raw_data WHERE upload_id=:u AND sheet_name='1001 BRICK SATIS'"), {'u':uid}).scalars().all()
-                  allkeys=Counter()
-                  for raw in all_json:
-                      try:
-                          allkeys.update((json.loads(raw or '{}').get('source_values') or {}).keys())
-                      except Exception:
-                          pass
-                  print(f'HEADER_KEYS|upload={uid}|keys={json.dumps(allkeys,ensure_ascii=False,sort_keys=True)}')
-
-              # Product-level canonical/fact totals for direct 11 -> 12 evidence.
-              pcols=[c['name'] for c in insp.get_columns('products')]
-              print('PRODUCT_COLS|'+','.join(pcols))
-              pname='product_name' if 'product_name' in pcols else ('name' if 'name' in pcols else None)
-              for uid in (23,25):
-                  q='SELECT f.product_id, COUNT(*) n, SUM(COALESCE(f.unit,0)) unit_sum, SUM(COALESCE(f.tl,0)) tl_sum' + (f', p.{pname} pname' if pname else '') + ' FROM ims_facts f' + (' LEFT JOIN products p ON p.id=f.product_id' if pname else '') + ' WHERE f.upload_id=:u GROUP BY f.product_id' + (f',p.{pname}' if pname else '') + ' ORDER BY f.product_id'
-                  for r in db.session.execute(db.text(q),{'u':uid}).mappings(): print('PRODUCT_TOTAL|upload='+str(uid)+'|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
-
-              # Named representative/product sample pairs with same identities.
-              rcols=[c['name'] for c in insp.get_columns('representatives')]
-              rname='rep_name' if 'rep_name' in rcols else ('name' if 'name' in rcols else None)
-              q='''SELECT a.representative_id,a.product_id,
-                          a.unit u11,a.tl t11,b.unit u12,b.tl t12
-                   FROM ims_facts a JOIN ims_facts b
-                     ON a.representative_id=b.representative_id AND a.product_id=b.product_id
-                   WHERE a.upload_id=23 AND b.upload_id=25'''
-              pairs=db.session.execute(db.text(q)).mappings().all()
-              def delta(r): return abs(float(r['u12'] or 0)-float(r['u11'] or 0))+abs(float(r['t12'] or 0)-float(r['t11'] or 0))
-              for r in sorted(pairs,key=delta,reverse=True)[:10]:
-                  rep=None; prod=None
-                  if rname:
-                      rep=db.session.execute(db.text(f'SELECT {rname} FROM representatives WHERE id=:i'),{'i':r['representative_id']}).scalar()
-                  if pname:
-                      prod=db.session.execute(db.text(f'SELECT {pname} FROM products WHERE id=:i'),{'i':r['product_id']}).scalar()
-                  print('NAMED_PAIR|rep_id=%s|rep=%s|product_id=%s|product=%s|u11=%s|t11=%s|u12=%s|t12=%s' % (r['representative_id'],rep,r['product_id'],prod,r['u11'],r['t11'],r['u12'],r['t12']))
-
-              # Canonical summary snapshot and derived national product totals.
-              for r in db.session.execute(db.text('''SELECT s.product_id,COUNT(*) n,SUM(COALESCE(s.unit,0)) unit_sum,SUM(COALESCE(s.tl,0)) tl_sum
-                    FROM ims_summary s WHERE s.upload_id=25 GROUP BY s.product_id ORDER BY s.product_id''')).mappings():
-                  prod=db.session.execute(db.text(f'SELECT {pname} FROM products WHERE id=:i'),{'i':r['product_id']}).scalar() if pname else None
-                  print('NATIONAL_DERIVED|upload=25|product_id=%s|product=%s|rows=%s|unit_sum=%s|tl_sum=%s' % (r['product_id'],prod,r['n'],r['unit_sum'],r['tl_sum']))
+              uploads=db.session.execute(db.text("SELECT id,year,month,week_number,file_name,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year,month,week_number,id")).mappings().all()
+              for u in uploads:
+                  raws=db.session.execute(db.text("SELECT raw_json,unit,tl FROM ims_raw_data WHERE upload_id=:u AND sheet_type='brick_sales'"),{'u':u['id']}).mappings().all()
+                  if not raws: continue
+                  keys=Counter(); bare=Counter(); unit=0.0; tl=0.0
+                  for r in raws:
+                      unit+=float(r['unit'] or 0); tl+=float(r['tl'] or 0)
+                      try: sv=(json.loads(r['raw_json'] or '{}').get('source_values') or {})
+                      except Exception: sv={}
+                      for k in sv:
+                          keys[k]+=1
+                          if not metric.search(str(k)): bare[k]+=1
+                  print('HISTORY|id=%s|period=%s-%02d-w%s|file=%s|rows=%s|unit_sum=%s|tl_sum=%s|bare_headers=%s' % (u['id'],u['year'],u['month'],u['week_number'],u['file_name'],len(raws),unit,tl,json.dumps(bare,ensure_ascii=False,sort_keys=True)))
           PY
-          echo '--- TTS HELPER CONTRACT ---'
-          grep -RInF 'TTS ÇIKIŞLARI' app tests 2>/dev/null | head -n 80 || true
-          grep -RInE 'VERIFIED_DERIVED|verified_derived|derived.*sheet|helper.*sheet' app tests 2>/dev/null | head -n 120 || true
-          echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
