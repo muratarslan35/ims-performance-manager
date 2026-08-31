@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit week13 full import
+      - name: Audit week13 schema-safe
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -44,39 +44,33 @@ jobs:
           with app.app_context():
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'PROCESSING_COUNT|{processing}')
-              latest_job=db.session.execute(db.text("SELECT id,file_name,stored_file_name,source_sha256,status,year,month,week_number,ims_upload_id,queued_at,started_at,completed_at,result_summary FROM ims_import_jobs ORDER BY id DESC LIMIT 1")).mappings().first()
+              job_cols=[r[1] for r in db.session.execute(db.text('PRAGMA table_info(ims_import_jobs)')).all()]
+              print('JOB_COLS|' + ','.join(job_cols))
+              wanted=['id','file_name','stored_file_name','status','year','month','week_number','ims_upload_id','queued_at','started_at','completed_at','result_summary']
+              sel=[c for c in wanted if c in job_cols]
+              latest_job=db.session.execute(db.text('SELECT '+','.join(sel)+' FROM ims_import_jobs ORDER BY id DESC LIMIT 1')).mappings().first()
               print('LATEST_JOB|'+'|'.join(f'{k}={latest_job[k]}' for k in latest_job.keys()))
-              if latest_job['status']!='COMPLETED' or int(latest_job['week_number'] or 0)!=13:
-                  raise RuntimeError('Latest IMS job is not completed week13')
-              uid=int(latest_job['ims_upload_id'])
-              upload=db.session.execute(db.text("SELECT * FROM ims_uploads WHERE id=:u"),{'u':uid}).mappings().one()
-              keep=['id','year','month','week_number','status','reconciliation_status','raw_record_count','fact_record_count','summary_record_count']
-              print('UPLOAD|'+'|'.join(f'{k}={upload.get(k)}' for k in keep if k in upload))
-              raw=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_raw_data WHERE upload_id=:u"),{'u':uid}).mappings().one()
-              facts=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u"),{'u':uid}).mappings().one()
-              summary=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=:u"),{'u':uid}).mappings().one()
-              print(f'RAW|rows={raw["rows"]}|unit={raw["unit"]}|tl={raw["tl"]}')
-              print(f'FACTS|rows={facts["rows"]}|unit={facts["unit"]}|tl={facts["tl"]}')
-              print(f'SUMMARY|rows={summary["rows"]}|unit={summary["unit"]}|tl={summary["tl"]}')
-              sheets=db.session.execute(db.text("SELECT sheet_name,COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_raw_data WHERE upload_id=:u GROUP BY sheet_name ORDER BY sheet_name"),{'u':uid}).mappings().all()
-              print(f'SHEET_COUNT|{len(sheets)}')
-              for s in sheets:
-                  print(f'SHEET|name={s["sheet_name"]}|rows={s["rows"]}|unit={s["unit"]}|tl={s["tl"]}')
-              report_types=db.session.execute(db.text("SELECT report_type,COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u GROUP BY report_type ORDER BY report_type"),{'u':uid}).mappings().all()
-              for r in report_types:
-                  print(f'REPORT_TYPE|type={r["report_type"]}|rows={r["rows"]}|unit={r["unit"]}|tl={r["tl"]}')
-              zero_raw=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=:u AND COALESCE(unit,0)=0 AND COALESCE(tl,0)=0"),{'u':uid}).scalar() or 0)
-              print(f'ZERO_RAW_ROWS|{zero_raw}')
-              dup=int(db.session.execute(db.text("SELECT COUNT(*) FROM (SELECT representative_id,product_id,brick,report_type,COUNT(*) c FROM ims_facts WHERE upload_id=:u GROUP BY representative_id,product_id,brick,report_type HAVING COUNT(*)>1)"),{'u':uid}).scalar() or 0)
-              print(f'FACT_DUP_GROUPS|{dup}')
+              uid=int(latest_job.get('ims_upload_id') or 0)
+              upload=db.session.execute(db.text('SELECT * FROM ims_uploads WHERE id=:u'),{'u':uid}).mappings().first() if uid else None
+              if upload:
+                  keep=['id','year','month','week_number','status','reconciliation_status','raw_record_count','fact_record_count','summary_record_count']
+                  print('UPLOAD|'+'|'.join(f'{k}={upload.get(k)}' for k in keep if k in upload))
+                  raw=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_raw_data WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  facts=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  summary=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  print(f'RAW|rows={raw["rows"]}|unit={raw["unit"]}|tl={raw["tl"]}')
+                  print(f'FACTS|rows={facts["rows"]}|unit={facts["unit"]}|tl={facts["tl"]}')
+                  print(f'SUMMARY|rows={summary["rows"]}|unit={summary["unit"]}|tl={summary["tl"]}')
+                  sheets=db.session.execute(db.text('SELECT sheet_name,COUNT(*) rows FROM ims_raw_data WHERE upload_id=:u GROUP BY sheet_name ORDER BY sheet_name'),{'u':uid}).mappings().all()
+                  print(f'RAW_SHEET_COUNT|{len(sheets)}')
+                  for s in sheets: print(f'SHEET|{s["sheet_name"]}|rows={s["rows"]}')
+                  rtypes=db.session.execute(db.text('SELECT report_type,COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u GROUP BY report_type ORDER BY report_type'),{'u':uid}).mappings().all()
+                  for r in rtypes: print(f'REPORT_TYPE|{r["report_type"]}|rows={r["rows"]}|unit={r["unit"]}|tl={r["tl"]}')
+                  reps=db.session.execute(db.text("SELECT r.rep_name,COALESCE(SUM(s.tl),0) tl,COALESCE(SUM(s.unit),0) unit FROM ims_summary s JOIN representatives r ON r.id=s.representative_id WHERE s.upload_id=:u AND UPPER(COALESCE(r.region,'')) LIKE '%DIYARBAKIR%' GROUP BY r.id,r.rep_name ORDER BY r.rep_name"),{'u':uid}).mappings().all()
+                  print(f'DIYARBAKIR_REP_COUNT|{len(reps)}')
+                  for r in reps: print(f'DIYARBAKIR_REP|name={r["rep_name"]}|tl={r["tl"]}|unit={r["unit"]}')
               latest=db.session.execute(db.text("SELECT id,week_number,status,reconciliation_status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1")).mappings().first()
               print(f'DASHBOARD_UPLOAD|id={latest["id"]}|week={latest["week_number"]}|status={latest["status"]}|reconciliation={latest["reconciliation_status"]}')
-              prev=db.session.execute(db.text("SELECT id,week_number,raw_record_count,fact_record_count,summary_record_count FROM ims_uploads WHERE id<>:u AND status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1"),{'u':uid}).mappings().first()
-              print('PREVIOUS_UPLOAD|'+'|'.join(f'{k}={prev[k]}' for k in prev.keys()))
-              reps=db.session.execute(db.text("SELECT r.rep_name,COALESCE(SUM(s.tl),0) tl,COALESCE(SUM(s.unit),0) unit FROM ims_summary s JOIN representatives r ON r.id=s.representative_id WHERE s.upload_id=:u AND (UPPER(r.rep_name) LIKE '%DIYARBAKIR%' OR UPPER(r.region) LIKE '%DIYARBAKIR%') GROUP BY r.id,r.rep_name ORDER BY r.rep_name"),{'u':uid}).mappings().all()
-              print(f'DIYARBAKIR_REP_COUNT|{len(reps)}')
-              for r in reps:
-                  print(f'DIYARBAKIR_REP|name={r["rep_name"]}|tl={r["tl"]}|unit={r["unit"]}')
               jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
