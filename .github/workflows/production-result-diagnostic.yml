@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit repaired representative coverage
+      - name: Audit Diyarbakir arithmetic
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -41,69 +41,66 @@ jobs:
           from app import create_app
           from app.extensions import db
           app=create_app()
+          names=['YAKUP CAGIR','VEYSI OZDAMAR','GOKHAN DUMAN','MURAT ARSLAN','MUSTAFA ALMAZ','OZGECAN GULACAR','DIYARBAKIR BOS','GULBAHAR KARA','YASIN TINI']
           with app.app_context():
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'PROCESSING_COUNT|{processing}')
-              cov=db.session.execute(db.text("""
-                SELECT COUNT(*) rows,
-                       COUNT(DISTINCT representative_id) reps,
-                       COUNT(DISTINCT product_id) products,
-                       SUM(CASE WHEN unit>0 THEN 1 ELSE 0 END) unit_positive_rows,
-                       SUM(CASE WHEN tl>0 THEN 1 ELSE 0 END) tl_positive_rows,
-                       SUM(CASE WHEN target_unit>0 THEN 1 ELSE 0 END) target_unit_rows,
-                       SUM(CASE WHEN target_tl>0 THEN 1 ELSE 0 END) target_tl_rows,
-                       SUM(CASE WHEN realization_percent>0 THEN 1 ELSE 0 END) realization_rows,
-                       COALESCE(SUM(unit),0) unit_sum,
-                       COALESCE(SUM(tl),0) tl_sum
-                FROM ims_summary WHERE upload_id=27
-              """)).mappings().one()
-              print('SUMMARY_COVERAGE|'+'|'.join(f'{k}={cov[k]}' for k in cov.keys()))
-              prev=db.session.execute(db.text("""
-                SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,
-                       SUM(CASE WHEN unit>0 THEN 1 ELSE 0 END) unit_positive_rows,
-                       SUM(CASE WHEN tl>0 THEN 1 ELSE 0 END) tl_positive_rows,
-                       COALESCE(SUM(unit),0) unit_sum,COALESCE(SUM(tl),0) tl_sum
-                FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales'
-              """)).mappings().one()
-              print('W11_BRICK_SALES|'+'|'.join(f'{k}={prev[k]}' for k in prev.keys()))
-              targets=db.session.execute(db.text("""
-                SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,
-                       SUM(CASE WHEN unit_target>0 THEN 1 ELSE 0 END) unit_target_rows,
-                       SUM(CASE WHEN tl_target>0 THEN 1 ELSE 0 END) tl_target_rows,
-                       SUM(CASE WHEN unit_realization>0 THEN 1 ELSE 0 END) unit_real_rows,
-                       SUM(CASE WHEN tl_realization>0 THEN 1 ELSE 0 END) tl_real_rows,
-                       COALESCE(SUM(unit_realization),0) unit_real_sum,
-                       COALESCE(SUM(tl_realization),0) tl_real_sum
-                FROM targets WHERE year=2026 AND month=3
-              """)).mappings().one()
-              print('TARGET_COVERAGE|'+'|'.join(f'{k}={targets[k]}' for k in targets.keys()))
-              matched=db.session.execute(db.text("""
-                SELECT COUNT(*) FROM ims_summary s JOIN targets t
-                  ON t.year=s.year AND t.month=s.month AND t.representative_id=s.representative_id AND t.product_id=s.product_id
-                WHERE s.upload_id=27
-              """)).scalar() or 0
-              print(f'SUMMARY_TARGET_MATCHED|{int(matched)}')
-              zero_units=db.session.execute(db.text("""
-                SELECT r.rep_name,p.product_name,s.unit,s.tl,s.target_unit,s.target_tl
-                FROM ims_summary s JOIN representatives r ON r.id=s.representative_id JOIN products p ON p.id=s.product_id
-                WHERE s.upload_id=27 AND s.tl>0 AND s.unit=0 ORDER BY s.tl DESC
-              """)).mappings().all()
-              print(f'POSITIVE_TL_ZERO_UNIT_COUNT|{len(zero_units)}')
-              for r in zero_units[:20]:
-                  print(f'ZERO_UNIT|rep={r["rep_name"]}|product={r["product_name"]}|tl={r["tl"]}|target_unit={r["target_unit"]}|target_tl={r["target_tl"]}')
-              top=db.session.execute(db.text("""
-                SELECT r.rep_name,p.product_name,s.unit,s.tl,s.target_unit,s.target_tl,s.realization_percent
-                FROM ims_summary s JOIN representatives r ON r.id=s.representative_id JOIN products p ON p.id=s.product_id
-                WHERE s.upload_id=27 ORDER BY s.tl DESC LIMIT 15
-              """)).mappings().all()
-              for r in top:
-                  print(f'TOP|rep={r["rep_name"]}|product={r["product_name"]}|unit={r["unit"]}|tl={r["tl"]}|target_unit={r["target_unit"]}|target_tl={r["target_tl"]}|realization={r["realization_percent"]}')
-              latest=db.session.execute(db.text("""
-                SELECT id,week_number,status,reconciliation_status
-                FROM ims_uploads WHERE status='COMPLETED'
-                ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1
-              """)).mappings().first()
-              print(f'DASHBOARD_UPLOAD|id={latest["id"]}|week={latest["week_number"]}|status={latest["status"]}|reconciliation={latest["reconciliation_status"]}')
+              reps=db.session.execute(db.text("SELECT id,rep_name FROM representatives ORDER BY id")).mappings().all()
+              selected=[]
+              for wanted in names:
+                  w=wanted.replace(' ','').replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C').upper()
+                  matches=[]
+                  for r in reps:
+                      n=(r['rep_name'] or '').replace(' ','').replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C').upper()
+                      if w in n:
+                          matches.append(r)
+                  if matches:
+                      r=matches[0]; selected.append((wanted,int(r['id']),r['rep_name']))
+                      print(f'REP_MATCH|wanted={wanted}|id={r["id"]}|db={r["rep_name"]}')
+                  else:
+                      print(f'REP_MISSING|wanted={wanted}')
+              ids=[x[1] for x in selected]
+              for wanted,rid,dbn in selected:
+                  vals={}
+                  for label,uid in [('w11',23),('w12source',27)]:
+                      row=db.session.execute(db.text("""
+                        SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl
+                        FROM ims_facts WHERE upload_id=:u AND report_type='brick_sales' AND representative_id=:r
+                      """),{'u':uid,'r':rid}).mappings().one()
+                      vals[label]=(float(row['unit'] or 0),float(row['tl'] or 0))
+                  s=db.session.execute(db.text("""
+                    SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl
+                    FROM ims_summary WHERE upload_id=27 AND representative_id=:r
+                  """),{'r':rid}).mappings().one()
+                  t=db.session.execute(db.text("""
+                    SELECT COALESCE(SUM(unit_target),0) unit_target,COALESCE(SUM(tl_target),0) tl_target,
+                           COALESCE(SUM(unit_realization),0) unit_real,COALESCE(SUM(tl_realization),0) tl_real
+                    FROM targets WHERE year=2026 AND month=3 AND representative_id=:r
+                  """),{'r':rid}).mappings().one()
+                  print(f'REP_TOTAL|rep={dbn}|w11_unit={vals["w11"][0]:.6f}|w11_tl={vals["w11"][1]:.6f}|w12source_unit={vals["w12source"][0]:.6f}|w12source_tl={vals["w12source"][1]:.6f}|sum_tl={float(s["tl"] or 0):.6f}|target_tl={float(t["tl_target"] or 0):.6f}|target_real_tl={float(t["tl_real"] or 0):.6f}|target_real_unit={float(t["unit_real"] or 0):.6f}')
+                  prows=db.session.execute(db.text("""
+                    SELECT p.product_name,
+                      COALESCE(f11.unit,0) w11_unit,COALESCE(f11.tl,0) w11_tl,
+                      COALESCE(f12.unit,0) w12_unit,COALESCE(f12.tl,0) w12_tl,
+                      COALESCE(s.unit,0) summary_unit,COALESCE(s.tl,0) summary_tl,
+                      COALESCE(t.tl_target,0) target_tl,COALESCE(t.tl_realization,0) target_real_tl
+                    FROM products p
+                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales' AND representative_id=:r GROUP BY product_id) f11 ON f11.product_id=p.id
+                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_facts WHERE upload_id=27 AND report_type='brick_sales' AND representative_id=:r GROUP BY product_id) f12 ON f12.product_id=p.id
+                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_summary WHERE upload_id=27 AND representative_id=:r GROUP BY product_id) s ON s.product_id=p.id
+                    LEFT JOIN targets t ON t.year=2026 AND t.month=3 AND t.representative_id=:r AND t.product_id=p.id
+                    WHERE f11.product_id IS NOT NULL OR f12.product_id IS NOT NULL OR s.product_id IS NOT NULL OR t.id IS NOT NULL
+                    ORDER BY p.product_name
+                  """),{'r':rid}).mappings().all()
+                  for pr in prows:
+                      print(f'PRODUCT|rep={dbn}|product={pr["product_name"]}|w11u={float(pr["w11_unit"] or 0):.3f}|w11tl={float(pr["w11_tl"] or 0):.3f}|w12u={float(pr["w12_unit"] or 0):.3f}|w12tl={float(pr["w12_tl"] or 0):.3f}|summaryu={float(pr["summary_unit"] or 0):.3f}|summarytl={float(pr["summary_tl"] or 0):.3f}|targettl={float(pr["target_tl"] or 0):.3f}|targetrealtl={float(pr["target_real_tl"] or 0):.3f}')
+              if ids:
+                  q=','.join(str(x) for x in ids)
+                  for label,sql in [
+                    ('W11_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales' AND representative_id IN ({q})"),
+                    ('W12_SOURCE_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=27 AND report_type='brick_sales' AND representative_id IN ({q})"),
+                    ('W12_SUMMARY_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=27 AND representative_id IN ({q})")]:
+                      row=db.session.execute(db.text(sql)).mappings().one(); print(f'{label}|unit={float(row["unit"] or 0):.6f}|tl={float(row["tl"] or 0):.6f}')
               jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
