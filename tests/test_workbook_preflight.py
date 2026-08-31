@@ -56,6 +56,23 @@ def test_zero_is_meaningful_and_never_classified_as_blank():
     service=FakeService({"TTS ÇIKIŞLARI":pd.DataFrame([["Temsilci","Ürün","Kutu"],["A B","X",0]])});WorkbookPreflight(service).validate();zero_cells=[cell for cell in service.workbook_cell_ledger if cell["row"]==2 and cell["column"]==3]
     assert len(zero_cells)==1;assert zero_cells[0]["classification"]=="IMPORTED_FACT";assert service.statistics["manifest_meaningful_cells"]==6
 
+def test_headerless_known_tts_output_is_verified_derived_not_blocking():
+    frame=pd.DataFrame([["12 HAFTA TL CIKISI TRAVAZOL","12 HAFTA KUTU CIKISI TRAVAZOL"],[100,2]])
+    service=FakeService({"TTS ÇIKIŞLARI":frame});manifest=WorkbookPreflight(service).validate()
+    assert manifest[0]["header_row"] is None
+    assert manifest[0]["sheet_type"]=="known_auxiliary"
+    assert manifest[0]["coverage"]=="verified_derived"
+    assert manifest[0]["classification_basis"]=="known_auxiliary_name"
+    assert {cell["classification"] for cell in service.workbook_cell_ledger}=={"VERIFIED_DERIVED"}
+    assert service.statistics["unclassified_sheet"]==0
+    assert service.statistics["unclassified_master_cell"]==0
+
+def test_similarly_named_headerless_tts_sheet_remains_fail_closed():
+    frame=pd.DataFrame([["12 HAFTA TL CIKISI TRAVAZOL","12 HAFTA KUTU CIKISI TRAVAZOL"],[100,2]])
+    service=FakeService({"TTS ÇIKIŞ YENİ":frame})
+    with pytest.raises(ValueError,match="sınıflandırılmamış sheet"):WorkbookPreflight(service).validate()
+    assert service.statistics["unclassified_sheet"]==1
+
 def test_specialized_and_derived_cells_receive_terminal_classes():
     service=FakeService({"Satış Brick Yayılımı":pd.DataFrame([["Master","Kutu"],["A",0]]),"PAZAR":pd.DataFrame([["Pivot","TL"],["A",10]]),"NATIONAL":pd.DataFrame([["Bölge","TL"],["TR",10]])});WorkbookPreflight(service).validate();classes={}
     for cell in service.workbook_cell_ledger:classes.setdefault(cell["sheet_name"],set()).add(cell["classification"])
