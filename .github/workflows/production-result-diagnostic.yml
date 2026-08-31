@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Inspect week11 fact streams
+      - name: Audit TL per box stability
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -37,16 +37,30 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from collections import defaultdict
+          from statistics import median
           from app import create_app
           from app.extensions import db
           app=create_app()
           with app.app_context():
-              print('FACT_COLS|'+'|'.join(r[1] for r in db.session.execute(db.text('PRAGMA table_info(ims_facts)')).all()))
-              rows=db.session.execute(db.text("SELECT report_type,COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_facts WHERE upload_id=23 GROUP BY report_type ORDER BY report_type")).mappings().all()
-              for r in rows: print(f'FACT_STREAM|report_type={r["report_type"]}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
-              raw=db.session.execute(db.text("SELECT sheet_type,source_sheet,COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=23 GROUP BY sheet_type,source_sheet ORDER BY source_sheet,sheet_type")).mappings().all()
-              for r in raw: print(f'RAW_STREAM|sheet_type={r["sheet_type"]}|source_sheet={r["source_sheet"]}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
-              samples=db.session.execute(db.text("SELECT representative_id,product_id,report_type,unit,tl FROM ims_facts WHERE upload_id=23 AND tl>0 ORDER BY tl DESC LIMIT 20")).mappings().all()
-              for r in samples: print('SAMPLE|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
+              uploads={10:22,11:23}
+              by_week={}
+              for week,uid in uploads.items():
+                  rows=db.session.execute(db.text("""
+                    SELECT f.product_id,p.name product_name,f.representative_id,f.unit,f.tl
+                    FROM ims_facts f JOIN products p ON p.id=f.product_id
+                    WHERE f.upload_id=:u AND f.report_type='brick_sales' AND f.unit>0 AND f.tl>0
+                  """),{'u':uid}).mappings().all()
+                  groups=defaultdict(list)
+                  for r in rows:
+                      groups[(int(r['product_id']),r['product_name'])].append(float(r['tl'])/float(r['unit']))
+                  by_week[week]=groups
+                  for (pid,name),vals in sorted(groups.items()):
+                      lo=min(vals); hi=max(vals); med=median(vals); avg=sum(vals)/len(vals)
+                      spread=(hi-lo)/med*100 if med else 0
+                      print(f'PRICE|week={week}|product_id={pid}|product={name}|n={len(vals)}|avg={avg:.6f}|median={med:.6f}|min={lo:.6f}|max={hi:.6f}|spread_pct={spread:.4f}')
+              for key in sorted(set(by_week[10]) & set(by_week[11])):
+                  a=median(by_week[10][key]); b=median(by_week[11][key]); diff=(b-a)/a*100 if a else 0
+                  print(f'PRICE_WEEK_DELTA|product_id={key[0]}|product={key[1]}|w10_median={a:.6f}|w11_median={b:.6f}|delta_pct={diff:.4f}')
           PY
           REMOTE
