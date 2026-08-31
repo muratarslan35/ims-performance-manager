@@ -7,7 +7,7 @@ from flask_migrate import upgrade
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSFact, IMSSummary, IMSUpload, Product, Representative, Target
+from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Product, Representative, Target
 from app.services.alias_service import AliasService
 from app.services.compact_tts_import_actual_authority import apply_compact_tts_representative_actuals
 from app.services.ims_import_service import IMSImportService
@@ -65,7 +65,7 @@ class CompactTTSActualAuthorityTestCase(unittest.TestCase):
         db.session.add(self.upload)
         db.session.flush()
 
-        for product, target_tl, brick_tl in zip(self.products, (100.0, 200.0), (10.0, 20.0)):
+        for index, (product, target_tl, brick_tl) in enumerate(zip(self.products, (100.0, 200.0), (10.0, 20.0)), start=1):
             target = Target(
                 year=2039,
                 month=3,
@@ -88,8 +88,28 @@ class CompactTTSActualAuthorityTestCase(unittest.TestCase):
                 tl=brick_tl,
                 unit=5.0,
             )
+            raw = IMSRawData(
+                upload_id=self.upload.id,
+                year=2039,
+                month=3,
+                quarter="Q1",
+                week_number=14,
+                sheet_name="1001 BRICK SATIS",
+                sheet_type="brick_sales",
+                source_row=index,
+                representative_id=self.rep.id,
+                product_id=product.id,
+                representative=self.rep.rep_name,
+                product=product.product_name,
+                unit=5.0,
+                tl=brick_tl,
+                raw_json="{}",
+            )
+            db.session.add_all([target, summary, raw])
+            db.session.flush()
             fact = IMSFact(
                 upload_id=self.upload.id,
+                raw_data_id=raw.id,
                 representative_id=self.rep.id,
                 product_id=product.id,
                 year=2039,
@@ -99,8 +119,9 @@ class CompactTTSActualAuthorityTestCase(unittest.TestCase):
                 report_type="brick_sales",
                 tl=brick_tl,
                 unit=5.0,
+                metrics_json="{}",
             )
-            db.session.add_all([target, summary, fact])
+            db.session.add(fact)
         db.session.commit()
         AliasService.clear()
         AliasService.warmup()
@@ -124,7 +145,7 @@ class CompactTTSActualAuthorityTestCase(unittest.TestCase):
         service.upload = self.upload
         service.workbook = {"TTS ÇIKIŞLARI": self._compact_frame(), "1001 BRICK SATIS": pd.DataFrame([[1]])}
 
-        fact_before = {(row.product_id, row.tl, row.unit) for row in IMSFact.query.filter_by(upload_id=self.upload.id).all()}
+        fact_before = {(row.product_id, row.tl, row.unit, row.raw_data_id) for row in IMSFact.query.filter_by(upload_id=self.upload.id).all()}
         result = apply_compact_tts_representative_actuals(service, 2039, 3)
         db.session.commit()
 
@@ -139,7 +160,7 @@ class CompactTTSActualAuthorityTestCase(unittest.TestCase):
         self.assertAlmostEqual(summaries[self.products[1].id].realization_percent, 0.0)
         self.assertAlmostEqual(targets[self.products[0].id].tl_realization, 120.0)
         self.assertAlmostEqual(targets[self.products[1].id].tl_realization, 0.0)
-        fact_after = {(row.product_id, row.tl, row.unit) for row in IMSFact.query.filter_by(upload_id=self.upload.id).all()}
+        fact_after = {(row.product_id, row.tl, row.unit, row.raw_data_id) for row in IMSFact.query.filter_by(upload_id=self.upload.id).all()}
         self.assertEqual(fact_before, fact_after)
 
     def test_wide_weekly_layout_is_not_claimed_by_compact_fallback(self):
