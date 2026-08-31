@@ -4,15 +4,73 @@ A compact regional workbook may contain only incremental representative/product
 TL exits and omit the usual box, competition and brick-spread layers. Such a
 workbook must not zero the representative's already-published IMS position.
 
-Only representative/product actuals are changed. Competition, market share,
-brick spread, prime and P2>P1>IMS precedence remain untouched.
+For March TL-only partial files, missing box deltas are derived from the same
+representative/product effective price in the previous full March IMS. If that
+basis is unavailable, the March target TL/unit ratio is used. Current product
+list prices are deliberately not used for March because of the Feb->Mar price
+transition. From April onward, the configured current unit price may be used.
+
+Competition, market share, brick spread, prime and P2>P1>IMS precedence remain
+untouched.
 """
 from __future__ import annotations
 
 from sqlalchemy import desc, func
 
 from app.extensions import db
-from app.models import IMSFact, IMSSummary, IMSUpload, Target
+from app.models import IMSFact, IMSSummary, IMSUpload, Product, Target
+
+
+def _safe_price(tl_value, unit_value):
+    tl_value = float(tl_value or 0.0)
+    unit_value = float(unit_value or 0.0)
+    return tl_value / unit_value if tl_value > 0.0 and unit_value > 0.0 else 0.0
+
+
+def derive_missing_unit_delta(
+    *,
+    month,
+    incremental_tl,
+    incremental_unit,
+    previous_unit,
+    previous_tl,
+    target_unit=0.0,
+    target_tl=0.0,
+    configured_unit_price=0.0,
+):
+    """Derive a missing box delta using period-appropriate authoritative price basis."""
+    incremental_unit = float(incremental_unit or 0.0)
+    incremental_tl = float(incremental_tl or 0.0)
+    if incremental_unit != 0.0 or incremental_tl == 0.0:
+        return incremental_unit, "source"
+
+    month = int(month)
+    previous_effective_price = _safe_price(previous_tl, previous_unit)
+    target_effective_price = _safe_price(target_tl, target_unit)
+    configured_unit_price = float(configured_unit_price or 0.0)
+
+    if month == 3:
+        candidates = (
+            (previous_effective_price, "previous_full_march_ims"),
+            (target_effective_price, "march_target_ratio"),
+        )
+    elif month > 3:
+        candidates = (
+            (configured_unit_price, "configured_current_unit_price"),
+            (previous_effective_price, "previous_full_ims"),
+            (target_effective_price, "target_ratio"),
+        )
+    else:
+        candidates = (
+            (previous_effective_price, "previous_full_ims"),
+            (target_effective_price, "target_ratio"),
+        )
+
+    for price, source in candidates:
+        if price > 0.0:
+            # Kutu is a physical count; keep the calculated delta as a whole box.
+            return float(round(incremental_tl / price)), source
+    return 0.0, "unavailable"
 
 
 def combine_incremental_actuals(previous_unit, previous_tl, incremental_unit, incremental_tl):
@@ -56,46 +114,6 @@ def _is_partial_compact_upload(importer) -> bool:
     return float(unit_total or 0.0) == 0.0 and float(tl_total or 0.0) > 0.0
 
 
-def _apply_incremental_actuals(upload_id: int, year: int, month: int, baseline: dict) -> int:
-    summaries = IMSSummary.query.filter_by(
-        upload_id=int(upload_id), year=int(year), month=int(month)
-    ).all()
-    targets = {
-        (int(row.representative_id), int(row.product_id)): row
-        for row in Target.query.filter_by(year=int(year), month=int(month)).all()
-    }
-
-    changed = 0
-    for summary in summaries:
-        if summary.representative_id is None or summary.product_id is None:
-            continue
-        key = (int(summary.representative_id), int(summary.product_id))
-        previous_unit, previous_tl = baseline.get(key, (0.0, 0.0))
-        combined_unit, combined_tl = combine_incremental_actuals(
-            previous_unit, previous_tl, summary.unit, summary.tl
-        )
-
-        target = targets.get(key)
-        if target is not None:
-            target.unit_realization = combined_unit
-            target.tl_realization = combined_tl
-            target_tl = float(target.tl_target or 0.0)
-            target.realization_percent = round(combined_tl * 100.0 / target_tl, 2) if target_tl else 0.0
-            summary.target_unit = float(target.unit_target or 0.0)
-            summary.target_tl = target_tl
-        else:
-            target_tl = float(summary.target_tl or 0.0)
-
-        summary.unit = combined_unit
-        summary.tl = combined_tl
-        summary.realization_percent = round(combined_tl * 100.0 / target_tl, 2) if target_tl else 0.0
-        changed += 1
-
-    if changed:
-        db.session.flush()
-    return changed
-
-
 def _previous_full_brick_sales_baseline(upload: IMSUpload):
     previous = (
         IMSUpload.query.filter(
@@ -134,6 +152,61 @@ def _previous_full_brick_sales_baseline(upload: IMSUpload):
     return previous, baseline
 
 
+def _apply_incremental_actuals(upload_id: int, year: int, month: int, baseline: dict) -> tuple[int, dict]:
+    summaries = IMSSummary.query.filter_by(
+        upload_id=int(upload_id), year=int(year), month=int(month)
+    ).all()
+    targets = {
+        (int(row.representative_id), int(row.product_id)): row
+        for row in Target.query.filter_by(year=int(year), month=int(month)).all()
+    }
+    products = {int(row.id): row for row in Product.query.all()}
+
+    changed = 0
+    unit_sources = {}
+    for summary in summaries:
+        if summary.representative_id is None or summary.product_id is None:
+            continue
+        key = (int(summary.representative_id), int(summary.product_id))
+        previous_unit, previous_tl = baseline.get(key, (0.0, 0.0))
+        target = targets.get(key)
+        product = products.get(int(summary.product_id))
+
+        derived_unit, unit_source = derive_missing_unit_delta(
+            month=month,
+            incremental_tl=summary.tl,
+            incremental_unit=summary.unit,
+            previous_unit=previous_unit,
+            previous_tl=previous_tl,
+            target_unit=float(target.unit_target or 0.0) if target is not None else 0.0,
+            target_tl=float(target.tl_target or 0.0) if target is not None else 0.0,
+            configured_unit_price=float(product.unit_price or 0.0) if product is not None else 0.0,
+        )
+        unit_sources[unit_source] = unit_sources.get(unit_source, 0) + 1
+        combined_unit, combined_tl = combine_incremental_actuals(
+            previous_unit, previous_tl, derived_unit, summary.tl
+        )
+
+        if target is not None:
+            target.unit_realization = combined_unit
+            target.tl_realization = combined_tl
+            target_tl = float(target.tl_target or 0.0)
+            target.realization_percent = round(combined_tl * 100.0 / target_tl, 2) if target_tl else 0.0
+            summary.target_unit = float(target.unit_target or 0.0)
+            summary.target_tl = target_tl
+        else:
+            target_tl = float(summary.target_tl or 0.0)
+
+        summary.unit = combined_unit
+        summary.tl = combined_tl
+        summary.realization_percent = round(combined_tl * 100.0 / target_tl, 2) if target_tl else 0.0
+        changed += 1
+
+    if changed:
+        db.session.flush()
+    return changed, unit_sources
+
+
 def repair_existing_partial_upload(upload_id: int) -> dict:
     """Repair one published TL-only partial upload from prior full brick_sales facts."""
     upload = db.session.get(IMSUpload, int(upload_id))
@@ -160,7 +233,7 @@ def repair_existing_partial_upload(upload_id: int) -> dict:
         raise ValueError("Önceki tam brick_sales baseline bulunamadı")
 
     delta_tl = float(tl_total or 0.0)
-    rows = _apply_incremental_actuals(upload.id, upload.year, upload.month, baseline)
+    rows, unit_sources = _apply_incremental_actuals(upload.id, upload.year, upload.month, baseline)
     combined = (
         db.session.query(
             func.coalesce(func.sum(IMSSummary.unit), 0.0),
@@ -176,6 +249,7 @@ def repair_existing_partial_upload(upload_id: int) -> dict:
         "incremental_tl": delta_tl,
         "combined_unit": float(combined[0] or 0.0),
         "combined_tl": float(combined[1] or 0.0),
+        "unit_sources": unit_sources,
     }
 
 
@@ -188,7 +262,7 @@ def install_partial_ims_carry_forward() -> None:
     original_process = IMSImportService.process_workbook
 
     def process_with_partial_carry_forward(self, year, month, week_number=None):
-        baseline = _actual_snapshot(year, month)
+        prior_target_snapshot = _actual_snapshot(year, month)
         result = original_process(self, year, month, week_number=week_number)
 
         if not self._is_current_week_snapshot(year, month, week_number):
@@ -196,14 +270,19 @@ def install_partial_ims_carry_forward() -> None:
         if not _is_partial_compact_upload(self):
             self.statistics["partial_ims_carry_forward"] = 0
             return result
+
+        previous, full_baseline = _previous_full_brick_sales_baseline(self.upload)
+        baseline = full_baseline or prior_target_snapshot
         if not baseline or not any(unit != 0.0 or tl != 0.0 for unit, tl in baseline.values()):
             self.statistics["partial_ims_carry_forward"] = 0
             return result
 
-        changed = _apply_incremental_actuals(self.upload.id, year, month, baseline)
+        changed, unit_sources = _apply_incremental_actuals(self.upload.id, year, month, baseline)
         self.statistics["partial_ims_carry_forward"] = 1
         self.statistics["partial_ims_carry_forward_rows"] = changed
         self.statistics["partial_ims_baseline_rows"] = len(baseline)
+        self.statistics["partial_ims_baseline_upload_id"] = int(previous.id) if previous is not None else None
+        self.statistics["partial_ims_unit_sources"] = unit_sources
         return result
 
     IMSImportService.process_workbook = process_with_partial_carry_forward
