@@ -30,7 +30,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Deep audit week 12 IMS import against week 11
+      - name: Trace metric headers and active dashboard upload
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,99 +38,82 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
-          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          echo '--- SOURCE XLSX CANDIDATES ---'
-          find "$IMS_PATH" -type f \( -iname '*12*Hafta*.xlsx' -o -iname '*12.Hafta*.xlsx' \) -printf '%T@|%p\n' 2>/dev/null | sort -nr | head -n 10 || true
-          echo '--- DB DEEP AUDIT ---'
+          echo '--- EXACT STORED SOURCE LOOKUP ---'
+          for f in 2026-03-1b5a91cde2f14547a10413260c6161cc.xlsx 2026-03-aa795086d5d143a99dbf9b8d311a5635.xlsx 2026-03-4fdf2ebb59c040a8a0dd83746929650d.xlsx; do
+            find "$IMS_PATH" -type f -name "$f" -print || true
+          done
+          echo '--- RAW HEADER TRACE / DASHBOARD SELECTION ---'
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json, os, glob
-          from collections import defaultdict
+          import json
+          from collections import Counter, defaultdict
           from app import create_app
           from app.extensions import db
+          from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
           with app.app_context():
               insp=db.inspect(db.engine)
-              tables=insp.get_table_names()
-              print('TABLES|' + ','.join(t for t in tables if any(x in t.lower() for x in ('ims','import','job','setting','config','period'))))
-              ups=db.session.execute(db.text('SELECT * FROM ims_uploads WHERE id IN (23,24,25) ORDER BY id')).mappings().all()
-              for r in ups:
-                  print('UPLOAD_FULL|' + '|'.join(f'{k}={r.get(k)}' for k in r.keys()))
-              for t in ('ims_raw_data','ims_facts','ims_summary'):
-                  cols=[c['name'] for c in insp.get_columns(t)]
-                  for uid in (23,25):
-                      n=db.session.execute(db.text(f'SELECT COUNT(*) FROM {t} WHERE upload_id=:u'),{'u':uid}).scalar()
-                      print(f'COUNT|table={t}|upload={uid}|rows={n}')
-                      if 'week_number' in cols:
-                          vals=db.session.execute(db.text(f'SELECT week_number,COUNT(*) n FROM {t} WHERE upload_id=:u GROUP BY week_number ORDER BY week_number'),{'u':uid}).all()
-                          print(f'WEEKS|table={t}|upload={uid}|values={vals}')
+              # Prove which upload dashboard repository selects.
+              repo=DashboardRepository(db.session)
+              for name, obj in (
+                  ('latest_completed', repo.load_latest_completed_upload()),
+                  ('latest_successful_summary', repo.load_latest_successful_summary()),
+              ):
+                  print(f'DASHBOARD_PICK|kind={name}|id={getattr(obj,"id",None)}|week={getattr(obj,"week_number",None)}|status={getattr(obj,"status",None)}|summary={getattr(obj,"summary_record_count",None)}|reconciliation={getattr(obj,"reconciliation_status",None)}')
+
+              # Exact headers captured in raw_json/source_values on authoritative brick sheet.
               for uid in (23,25):
-                  rows=db.session.execute(db.text('SELECT sheet_name,sheet_type,COUNT(*) n,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=:u GROUP BY sheet_name,sheet_type ORDER BY n DESC'),{'u':uid}).mappings().all()
-                  for r in rows:
-                      print('SHEET|' + f'upload={uid}|' + '|'.join(f'{k}={r[k]}' for k in r.keys()))
-                  z=db.session.execute(db.text('SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=:u AND (unit=0 OR tl=0)'),{'u':uid}).scalar()
-                  zz=db.session.execute(db.text('SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=:u AND unit=0 AND tl=0'),{'u':uid}).scalar()
-                  print(f'ZERO|upload={uid}|either_zero={z}|both_zero={zz}')
-                  agg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  print(f'RAW_TOTAL|upload={uid}|rows={agg["rows"]}|unit_sum={agg["unit_sum"]}|tl_sum={agg["tl_sum"]}')
-                  fagg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_facts WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  print(f'FACT_TOTAL|upload={uid}|rows={fagg["rows"]}|unit_sum={fagg["unit_sum"]}|tl_sum={fagg["tl_sum"]}')
-                  sagg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_summary WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  print(f'SUMMARY_TOTAL|upload={uid}|rows={sagg["rows"]}|unit_sum={sagg["unit_sum"]}|tl_sum={sagg["tl_sum"]}')
-              # Representative/product examples present in both week 11 and week 12 facts.
+                  rows=db.session.execute(db.text("SELECT id,representative_id,product_id,representative,product,brick,unit,tl,raw_json FROM ims_raw_data WHERE upload_id=:u AND sheet_name='1001 BRICK SATIS' ORDER BY id LIMIT 80"), {'u':uid}).mappings().all()
+                  key_counter=Counter()
+                  print(f'RAW_SAMPLE_COUNT|upload={uid}|rows={len(rows)}')
+                  for i,r in enumerate(rows[:12]):
+                      payload=json.loads(r['raw_json'] or '{}')
+                      sv=payload.get('source_values') or {}
+                      key_counter.update(sv.keys())
+                      print('RAW_SAMPLE|upload=%s|rep_id=%s|rep=%s|product_id=%s|product=%s|brick=%s|unit=%s|tl=%s|source_values=%s' % (uid,r['representative_id'],r['representative'],r['product_id'],r['product'],r['brick'],r['unit'],r['tl'],json.dumps(sv,ensure_ascii=False,sort_keys=True)))
+                  # Scan all 7007 raw rows for source header keys without printing values.
+                  all_json=db.session.execute(db.text("SELECT raw_json FROM ims_raw_data WHERE upload_id=:u AND sheet_name='1001 BRICK SATIS'"), {'u':uid}).scalars().all()
+                  allkeys=Counter()
+                  for raw in all_json:
+                      try:
+                          allkeys.update((json.loads(raw or '{}').get('source_values') or {}).keys())
+                      except Exception:
+                          pass
+                  print(f'HEADER_KEYS|upload={uid}|keys={json.dumps(allkeys,ensure_ascii=False,sort_keys=True)}')
+
+              # Product-level canonical/fact totals for direct 11 -> 12 evidence.
+              pcols=[c['name'] for c in insp.get_columns('products')]
+              print('PRODUCT_COLS|'+','.join(pcols))
+              pname='product_name' if 'product_name' in pcols else ('name' if 'name' in pcols else None)
+              for uid in (23,25):
+                  q='SELECT f.product_id, COUNT(*) n, SUM(COALESCE(f.unit,0)) unit_sum, SUM(COALESCE(f.tl,0)) tl_sum' + (f', p.{pname} pname' if pname else '') + ' FROM ims_facts f' + (' LEFT JOIN products p ON p.id=f.product_id' if pname else '') + ' WHERE f.upload_id=:u GROUP BY f.product_id' + (f',p.{pname}' if pname else '') + ' ORDER BY f.product_id'
+                  for r in db.session.execute(db.text(q),{'u':uid}).mappings(): print('PRODUCT_TOTAL|upload='+str(uid)+'|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
+
+              # Named representative/product sample pairs with same identities.
+              rcols=[c['name'] for c in insp.get_columns('representatives')]
+              rname='rep_name' if 'rep_name' in rcols else ('name' if 'name' in rcols else None)
               q='''SELECT a.representative_id,a.product_id,
-                    a.unit u11,a.tl t11,b.unit u12,b.tl t12
+                          a.unit u11,a.tl t11,b.unit u12,b.tl t12
                    FROM ims_facts a JOIN ims_facts b
                      ON a.representative_id=b.representative_id AND a.product_id=b.product_id
-                   WHERE a.upload_id=23 AND b.upload_id=25
-                   ORDER BY ABS(COALESCE(b.tl,0)-COALESCE(a.tl,0)) DESC LIMIT 12'''
-              for r in db.session.execute(db.text(q)).mappings():
-                  print('PAIR|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
-              # National-like source rows, if encoded explicitly.
-              for uid in (23,25):
-                  nq='''SELECT representative,manager,brick,territory,province,product,unit,tl,sheet_name,source_row
-                        FROM ims_raw_data WHERE upload_id=:u AND (
-                        UPPER(COALESCE(representative,'')) LIKE '%NATIONAL%' OR
-                        UPPER(COALESCE(manager,'')) LIKE '%NATIONAL%' OR
-                        UPPER(COALESCE(brick,'')) LIKE '%NATIONAL%' OR
-                        UPPER(COALESCE(territory,'')) LIKE '%NATIONAL%' OR
-                        UPPER(COALESCE(province,'')) LIKE '%NATIONAL%') LIMIT 20'''
-                  nr=db.session.execute(db.text(nq),{'u':uid}).mappings().all()
-                  print(f'NATIONAL_ROWS|upload={uid}|count={len(nr)}')
-                  for r in nr[:8]: print('NATIONAL_ROW|' + f'upload={uid}|' + '|'.join(f'{k}={r[k]}' for k in r.keys()))
-              # Logical duplicate check in fact layer for the same upload/week/rep/product/report type.
-              for uid in (23,25):
-                  dq='''SELECT COUNT(*) FROM (SELECT representative_id,product_id,year,month,week_number,report_type,COUNT(*) c
-                        FROM ims_facts WHERE upload_id=:u GROUP BY representative_id,product_id,year,month,week_number,report_type HAVING c>1)'''
-                  print(f'FACT_DUP_GROUPS|upload={uid}|count={db.session.execute(db.text(dq),{"u":uid}).scalar()}')
-              # Inspect possible import-job tables and latest rows without mutation.
-              for t in tables:
-                  low=t.lower()
-                  if ('job' in low or 'import' in low) and t != 'ims_raw_data':
-                      try:
-                          cols=[c['name'] for c in insp.get_columns(t)]
-                          print('JOBTABLE|'+t+'|cols='+','.join(cols))
-                          rows=db.session.execute(db.text(f'SELECT * FROM {t} ORDER BY id DESC LIMIT 5')).mappings().all() if 'id' in cols else []
-                          for r in rows: print('JOBROW|'+t+'|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
-                      except Exception as e: print('JOBTABLE_ERROR|'+t+'|'+str(e))
+                   WHERE a.upload_id=23 AND b.upload_id=25'''
+              pairs=db.session.execute(db.text(q)).mappings().all()
+              def delta(r): return abs(float(r['u12'] or 0)-float(r['u11'] or 0))+abs(float(r['t12'] or 0)-float(r['t11'] or 0))
+              for r in sorted(pairs,key=delta,reverse=True)[:10]:
+                  rep=None; prod=None
+                  if rname:
+                      rep=db.session.execute(db.text(f'SELECT {rname} FROM representatives WHERE id=:i'),{'i':r['representative_id']}).scalar()
+                  if pname:
+                      prod=db.session.execute(db.text(f'SELECT {pname} FROM products WHERE id=:i'),{'i':r['product_id']}).scalar()
+                  print('NAMED_PAIR|rep_id=%s|rep=%s|product_id=%s|product=%s|u11=%s|t11=%s|u12=%s|t12=%s' % (r['representative_id'],rep,r['product_id'],prod,r['u11'],r['t11'],r['u12'],r['t12']))
+
+              # Canonical summary snapshot and derived national product totals.
+              for r in db.session.execute(db.text('''SELECT s.product_id,COUNT(*) n,SUM(COALESCE(s.unit,0)) unit_sum,SUM(COALESCE(s.tl,0)) tl_sum
+                    FROM ims_summary s WHERE s.upload_id=25 GROUP BY s.product_id ORDER BY s.product_id''')).mappings():
+                  prod=db.session.execute(db.text(f'SELECT {pname} FROM products WHERE id=:i'),{'i':r['product_id']}).scalar() if pname else None
+                  print('NATIONAL_DERIVED|upload=25|product_id=%s|product=%s|rows=%s|unit_sum=%s|tl_sum=%s' % (r['product_id'],prod,r['n'],r['unit_sum'],r['tl_sum']))
           PY
-          echo '--- WORKBOOK SHEETS ---'
-          latest=$(find "$IMS_PATH" -type f \( -iname '*12*Hafta*.xlsx' -o -iname '*12.Hafta*.xlsx' \) -printf '%T@|%p\n' 2>/dev/null | sort -nr | head -n1 | cut -d'|' -f2- || true)
-          if [ -n "$latest" ]; then
-            XLSX="$latest" venv/bin/python - <<'PY'
-          import os
-          from openpyxl import load_workbook
-          p=os.environ['XLSX']
-          wb=load_workbook(p, read_only=True, data_only=False)
-          print('WORKBOOK|path='+p+'|sheet_count='+str(len(wb.sheetnames))+'|sheets='+repr(wb.sheetnames))
-          for s in wb.sheetnames:
-              ws=wb[s]
-              print(f'WORKBOOK_SHEET|name={s}|max_row={ws.max_row}|max_col={ws.max_column}')
-          PY
-          else
-            echo 'WORKBOOK|NOT_FOUND_ON_SERVER_ARCHIVE'
-          fi
-          echo '--- DASHBOARD/ACTIVE IMS CODE PATHS ---'
-          grep -RInE 'week_number|reconciliation_status|ims_summary|active.*ims|latest.*ims|IMSUpload' app --include='*.py' | grep -Ei 'dashboard|latest|active|summary|completed|reconciliation' | head -n 160 || true
+          echo '--- TTS HELPER CONTRACT ---'
+          grep -RInF 'TTS ÇIKIŞLARI' app tests 2>/dev/null | head -n 80 || true
+          grep -RInE 'VERIFIED_DERIVED|verified_derived|derived.*sheet|helper.*sheet' app tests 2>/dev/null | head -n 120 || true
           echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
