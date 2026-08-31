@@ -130,9 +130,6 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
 
     def test_compact_region_subtotal_rows_are_preserved_and_reconciled(self):
         workbook = self._workbook()
-        # Week-7 style pivot export: region subtotal label remains in column B
-        # while the hierarchy cell in column A is blank. Representative rows
-        # below it still keep their region in column A.
         workbook["BAKİYE"].iat[3, 0] = None
         workbook["TTS HAFTALIK ÇIKIŞLARI"].iat[3, 0] = None
 
@@ -149,6 +146,51 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         self.assertEqual(len(region), 1)
         self.assertAlmostEqual(region[0]["target_tl"], 1005.0, places=8)
         self.assertAlmostEqual(region[0]["actual_tl"], 250.0, places=8)
+        self.assertAlmostEqual(region[0]["actual_unit"], 17.25, places=8)
+
+    def test_compact_tts_subtotals_replace_tl_but_preserve_direct_box_sources(self):
+        old_service = IMSImportService(Path(self.temp_dir.name) / "wide.xlsx")
+        old_service.upload = self.upload
+        old_service.workbook = self._workbook()
+        persist_official_aggregates(old_service, 2038, 1)
+        db.session.commit()
+
+        compact_upload = IMSUpload(
+            file_name="compact.xlsx",
+            year=2038,
+            month=1,
+            quarter="Q1",
+            week_number=2,
+            status="COMPLETED",
+            completed_at=datetime.utcnow(),
+        )
+        db.session.add(compact_upload)
+        db.session.flush()
+        compact = {
+            "TTS ÇIKIŞLARI": pd.DataFrame([
+                [None, "OCAK HEDEF", None, "1-31 OCAK Çıkış", None, "REAL%"],
+                [None, None, "TRAVAZOL", None, "TRAVAZOL", None],
+                [None, "NATIONAL", 777.0, None, 333.0, None],
+                ["901 DIYARBAKIR", "901 DIYARBAKIR", 777.0, None, 333.0, None],
+                ["901 DIYARBAKIR", "OFFICIAL TEST REP", 9999.0, None, 9999.0, None],
+            ])
+        }
+        service = IMSImportService(Path(self.temp_dir.name) / "compact.xlsx")
+        service.upload = compact_upload
+        service.workbook = compact
+        result = persist_official_aggregates(service, 2038, 1)
+        db.session.commit()
+
+        self.assertTrue(result["reconciliation"]["passed"])
+        self.assertEqual(result["reconciliation"]["targets"]["region_count"], 1)
+        self.assertEqual(result["reconciliation"]["actuals"]["region_count"], 1)
+        region = OfficialAggregateService.product_totals(2038, 1, "901")
+        national = OfficialAggregateService.product_totals(2038, 1, "NATIONAL")
+        self.assertAlmostEqual(region[0]["target_tl"], 777.0, places=8)
+        self.assertAlmostEqual(region[0]["actual_tl"], 333.0, places=8)
+        self.assertAlmostEqual(national[0]["target_tl"], 777.0, places=8)
+        self.assertAlmostEqual(national[0]["actual_tl"], 333.0, places=8)
+        self.assertAlmostEqual(region[0]["target_unit"], 100.5, places=8)
         self.assertAlmostEqual(region[0]["actual_unit"], 17.25, places=8)
 
     def test_dashboard_uses_official_box_target_and_direct_box_actual(self):
