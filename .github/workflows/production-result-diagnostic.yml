@@ -31,45 +31,88 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read production result failure evidence
+      - name: Audit week 12 source workbook and live DB
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
-            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          venv/bin/python - <<'PY'
+          echo '--- RECENT IMS JOB LOG ---'
+          sudo journalctl -u ims-import-worker.service --since '45 minutes ago' --no-pager | grep -Ei '12\.Hafta|TTS|BRICK|upload|completed|failed|reconcil|sheet' | tail -n 250 || true
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
+          from sqlalchemy import text, inspect
+          from openpyxl import load_workbook
 
-          app = create_app()
+          app=create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
-              )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
-                  print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
-                  )
+              insp=inspect(db.engine)
+              print('--- IMS UPLOADS ---')
+              cols=[c['name'] for c in insp.get_columns('ims_uploads')]
+              rows=db.session.execute(text('SELECT * FROM ims_uploads ORDER BY id DESC LIMIT 5')).mappings().all()
+              for r in rows:
+                  print('UPLOAD|'+'|'.join(f'{k}={r.get(k)}' for k in cols if k in r and k in ('id','filename','file_name','original_filename','status','year','month','week','file_path','source_path','source_hash','uploaded_at','created_at','completed_at','error_message','warning_message')))
+              target=next((r for r in rows if '12.Hafta' in str(r.get('filename') or r.get('file_name') or r.get('original_filename') or '')), rows[0] if rows else None)
+              if not target:
+                  raise SystemExit('WEEK12_UPLOAD_NOT_FOUND')
+              uid=target['id']
+              print(f'WEEK12_UPLOAD_ID|{uid}')
+              # locate retained source by known path columns, then archive/pending dirs
+              candidates=[]
+              for key in ('file_path','source_path'):
+                  v=target.get(key)
+                  if v: candidates.append(Path(str(v)))
+              name=str(target.get('filename') or target.get('file_name') or target.get('original_filename') or '')
+              for root in (Path('uploads'),Path('instance'),Path('instance/uploads')):
+                  if root.exists():
+                      candidates.extend(root.rglob('*12.Hafta*.xlsx'))
+              source=next((p for p in candidates if p.exists() and p.is_file()),None)
+              print(f'WEEK12_SOURCE|{source or "NOT_FOUND"}')
+              if source:
+                  wb=load_workbook(source,read_only=True,data_only=True)
+                  print('WORKBOOK_SHEETS|'+'|'.join(wb.sheetnames))
+                  for ws in wb.worksheets:
+                      nonempty=0
+                      numeric=0
+                      for row in ws.iter_rows(values_only=True):
+                          vals=[v for v in row if v is not None and str(v).strip()!='']
+                          if vals: nonempty+=1
+                          numeric+=sum(isinstance(v,(int,float)) and not isinstance(v,bool) for v in vals)
+                      print(f'SHEET|name={ws.title}|rows={ws.max_row}|cols={ws.max_column}|nonempty_rows={nonempty}|numeric_cells={numeric}')
+              print('--- WEEK 11 VS 12 DB COUNTS/SUMS ---')
+              # dynamically inspect IMS fact/raw tables and use available upload/week/value columns
+              for table in ('ims_raw_data','ims_facts','ims_summary'):
+                  if table not in insp.get_table_names(): continue
+                  cs=[c['name'] for c in insp.get_columns(table)]
+                  print('TABLE_SCHEMA|'+table+'|'+','.join(cs))
+                  upload_col=next((c for c in ('upload_id','ims_upload_id') if c in cs),None)
+                  week_col=next((c for c in ('week','week_number','ims_week') if c in cs),None)
+                  numcols=[c for c in cs if any(x in c.lower() for x in ('sales','sale','unit','box','quantity','qty','amount','value','tl','kutu','satis','satış'))]
+                  if upload_col:
+                      for rid in [uid]:
+                          q=text(f'SELECT COUNT(*) n FROM "{table}" WHERE "{upload_col}"=:u')
+                          n=db.session.execute(q,{'u':rid}).scalar()
+                          print(f'UPLOAD_TABLE_COUNT|table={table}|upload={rid}|count={n}')
+                          for c in numcols[:12]:
+                              try:
+                                  s=db.session.execute(text(f'SELECT SUM(CAST("{c}" AS REAL)) FROM "{table}" WHERE "{upload_col}"=:u'),{'u':rid}).scalar()
+                                  print(f'UPLOAD_SUM|table={table}|upload={rid}|col={c}|sum={s}')
+                              except Exception: pass
+                  if week_col:
+                      for w in (11,12):
+                          n=db.session.execute(text(f'SELECT COUNT(*) FROM "{table}" WHERE "{week_col}"=:w'),{'w':w}).scalar()
+                          print(f'WEEK_TABLE_COUNT|table={table}|week={w}|count={n}')
+                          for c in numcols[:12]:
+                              try:
+                                  s=db.session.execute(text(f'SELECT SUM(CAST("{c}" AS REAL)) FROM "{table}" WHERE "{week_col}"=:w'),{'w':w}).scalar()
+                                  print(f'WEEK_SUM|table={table}|week={w}|col={c}|sum={s}')
+                              except Exception: pass
+              print('AUDIT_COMPLETE')
           PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
-          echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
