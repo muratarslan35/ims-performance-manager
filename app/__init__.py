@@ -32,6 +32,7 @@ from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
+from app.services.compact_brick_sales_metric_authority import install_compact_brick_sales_metric_authority
 from app.services.import_result_report import (
     install_import_result_reporting,
     latest_import_report,
@@ -181,6 +182,7 @@ def create_app(config_object=Config):
     install_official_brick_spread_atomic()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
+    install_compact_brick_sales_metric_authority()
     install_import_result_reporting()
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
