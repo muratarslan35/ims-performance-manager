@@ -8,7 +8,7 @@ actuals (and fully covered TL targets) with the newest cumulative IMS snapshot.
 from collections import defaultdict
 from decimal import Decimal
 
-from app.models import IMSSummary, Target
+from app.models import IMSRawData, IMSSummary, Target
 from app.services.official_aggregate_service import (
     ACTUAL_TYPE,
     TARGET_TYPE,
@@ -96,6 +96,17 @@ def _product_totals(year, month, territory):
     return result
 
 
+def _latest_has_direct_region_subtotal(upload_id, region_key):
+    if not upload_id:
+        return False
+    prefix = f"{str(region_key).strip()}%"
+    return IMSRawData.query.filter(
+        IMSRawData.upload_id == int(upload_id),
+        IMSRawData.sheet_type.in_(("dashboard_balance_region", "dashboard_weekly_region")),
+        IMSRawData.territory.like(prefix),
+    ).first() is not None
+
+
 def _region_month(self, year, month):
     base = _ORIGINAL_REGION_MONTH(self, year, month)
     if not base:
@@ -111,6 +122,11 @@ def _region_month(self, year, month):
     actual_source = OfficialAggregateService.latest_upload_id(year, month, ACTUAL_TYPE)
     latest_id = overlay["upload_id"]
     if latest_id == target_source and latest_id == actual_source:
+        return base
+    # If the newest workbook itself carries a direct region subtotal, that row
+    # remains authoritative. The overlay exists only to bridge a newer compact
+    # workbook that omitted the region subtotal layer entirely.
+    if _latest_has_direct_region_subtotal(latest_id, self.region_key):
         return base
 
     result = {}
