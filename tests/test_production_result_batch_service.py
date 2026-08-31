@@ -53,11 +53,17 @@ def _seed(tmp_path):
     representative_id = representative.id
     product_ids = [product.id for product in products]
 
-    ims_upload = IMSUpload(
-        file_name="batch-ims.xlsx", year=2026, month=8, quarter="Q3",
-        status="COMPLETED", completed_at=datetime(2026, 8, 19, 8, 0),
+    stale_ims_upload = IMSUpload(
+        file_name="batch-ims-week12.xlsx", year=2026, month=8, quarter="Q3",
+        week_number=12, status="COMPLETED", reconciliation_status="PASSED",
+        summary_record_count=7, completed_at=datetime(2026, 8, 18, 8, 0),
     )
-    db.session.add(ims_upload)
+    latest_ims_upload = IMSUpload(
+        file_name="batch-ims-week13.xlsx", year=2026, month=8, quarter="Q3",
+        week_number=13, status="COMPLETED", reconciliation_status="PASSED",
+        summary_record_count=7, completed_at=datetime(2026, 8, 19, 8, 0),
+    )
+    db.session.add_all([stale_ims_upload, latest_ims_upload])
     db.session.flush()
     for index, product in enumerate(products, start=1):
         db.session.add(Target(
@@ -65,7 +71,13 @@ def _seed(tmp_path):
             product_id=product.id, tl_target=100.0, unit_target=10.0,
         ))
         db.session.add(IMSSummary(
-            upload_id=ims_upload.id, year=2026, month=8, quarter="Q3",
+            upload_id=stale_ims_upload.id, year=2026, month=8, quarter="Q3",
+            representative_id=representative_id, product_id=product.id,
+            tl=10.0 + index, unit=1.0 + index / 10,
+            target_tl=100.0, target_unit=10.0,
+        ))
+        db.session.add(IMSSummary(
+            upload_id=latest_ims_upload.id, year=2026, month=8, quarter="Q3",
             representative_id=representative_id, product_id=product.id,
             tl=50.0 + index, unit=5.0 + index / 10,
             target_tl=100.0, target_unit=10.0,
@@ -112,6 +124,20 @@ def test_batch_resolution_preserves_product_level_p2_p1_ims_priority(tmp_path):
         assert rows[product_ids[1]]["realization_percent"] == Decimal("110.0")
         assert rows[product_ids[2]]["source"] == "IMS"
         assert rows[product_ids[2]]["complete"] is True
+        assert rows[product_ids[2]]["actual_tl"] == Decimal("53.0")
+        assert rows[product_ids[2]]["actual_unit"] == Decimal("5.3")
+
+
+def test_single_product_ims_fallback_uses_latest_reconciled_week(tmp_path):
+    application = _app(tmp_path)
+    with application.app_context():
+        representative_id, product_ids = _seed(tmp_path)
+        row = ProductionResultService.effective_product(2026, 8, representative_id, product_ids[2])
+
+        assert row["source"] == "IMS"
+        assert row["complete"] is True
+        assert row["actual_tl"] == Decimal("53.0")
+        assert row["actual_unit"] == Decimal("5.3")
 
 
 def test_batch_context_eliminates_per_product_query_fanout(tmp_path):
@@ -137,6 +163,6 @@ def test_batch_context_eliminates_per_product_query_fanout(tmp_path):
         finally:
             event.remove(db.engine, "before_cursor_execute", capture)
 
-        assert prefetch_count <= 4
+        assert prefetch_count <= 5
         assert after_context_count == prefetch_count
         assert [row["source"] for row in results[:3]] == ["PRODUCTION_2", "PRODUCTION_1", "IMS"]
