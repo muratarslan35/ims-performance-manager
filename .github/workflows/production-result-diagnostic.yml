@@ -29,26 +29,96 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read live status
+      - name: Repair upload 27 representative actuals
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          systemctl is-active ims-performance-manager.service | sed 's/^/WEB_ACTIVE|/'
-          systemctl is-active ims-import-worker.service | sed 's/^/WORKER_ACTIVE|/' || true
+          EXPECTED_COMMIT='7a92b9848634f086226cf0599c31999b97bb8a98'
+          LIVE_COMMIT="$(git rev-parse HEAD)"
+          echo "LIVE_COMMIT|$LIVE_COMMIT"
+          test "$LIVE_COMMIT" = "$EXPECTED_COMMIT"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlite3
+          from datetime import datetime
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
+          from app.services.partial_ims_import_carry_forward import repair_existing_partial_upload
+
           app=create_app()
           with app.app_context():
-              processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              print(f'PROCESSING_COUNT|{processing}')
+              if processing != 0:
+                  raise RuntimeError('Aktif IMS import varken onarım reddedildi')
+
               latest=db.session.execute(db.text("SELECT id,status,ims_upload_id FROM ims_import_jobs ORDER BY id DESC LIMIT 1")).mappings().first()
-              print(f'PROCESSING_COUNT|{int(processing)}')
-              if latest:
-                  print(f'LATEST_JOB|id={latest["id"]}|status={latest["status"]}|upload_id={latest["ims_upload_id"]}')
+              print(f'LATEST_JOB|id={latest["id"]}|status={latest["status"]}|upload_id={latest["ims_upload_id"]}')
+              if int(latest['id']) != 19 or latest['status'] != 'COMPLETED' or int(latest['ims_upload_id']) != 27:
+                  raise RuntimeError('Beklenen latest job/upload imzası değişti; onarım reddedildi')
+
+              before=db.session.execute(db.text("SELECT COUNT(*) rows, COALESCE(SUM(unit),0) unit_sum, COALESCE(SUM(tl),0) tl_sum FROM ims_summary WHERE upload_id=27")).mappings().one()
+              facts_before=db.session.execute(db.text("SELECT COUNT(*) rows, COALESCE(SUM(unit),0) unit_sum, COALESCE(SUM(tl),0) tl_sum FROM ims_facts WHERE upload_id=27")).mappings().one()
+              competition_before=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_competition_data")).scalar() or 0)
+              print(f'BEFORE_SUMMARY|rows={before["rows"]}|unit={before["unit_sum"]}|tl={before["tl_sum"]}')
+              print(f'BEFORE_FACTS|rows={facts_before["rows"]}|unit={facts_before["unit_sum"]}|tl={facts_before["tl_sum"]}')
+              print(f'BEFORE_COMPETITION_COUNT|{competition_before}')
+              if int(before['rows']) != 791 or float(before['unit_sum'] or 0) != 0.0 or float(before['tl_sum'] or 0) <= 0.0:
+                  raise RuntimeError('Upload 27 artık beklenen TL-only partial durumda değil; onarım reddedildi')
+
+              db_path=Path(str(db.engine.url.database)).resolve()
+              backup_dir=Path(app.config.get('BACKUP_FOLDER') or (db_path.parent / 'backups'))
+              backup_dir.mkdir(parents=True, exist_ok=True)
+              backup_path=backup_dir / f'pre_week12_partial_repair_{datetime.now().strftime("%Y%m%d_%H%M%S")}.sqlite'
+              src=sqlite3.connect(str(db_path), timeout=30)
+              dst=sqlite3.connect(str(backup_path), timeout=30)
+              try:
+                  src.backup(dst)
+              finally:
+                  dst.close(); src.close()
+              print(f'BACKUP|{backup_path}|exists={backup_path.exists()}|bytes={backup_path.stat().st_size if backup_path.exists() else 0}')
+              if not backup_path.exists() or backup_path.stat().st_size <= 0:
+                  raise RuntimeError('Pre-repair SQLite backup oluşturulamadı')
+
+              try:
+                  result=repair_existing_partial_upload(27)
+                  after=db.session.execute(db.text("SELECT COUNT(*) rows, COALESCE(SUM(unit),0) unit_sum, COALESCE(SUM(tl),0) tl_sum FROM ims_summary WHERE upload_id=27")).mappings().one()
+                  facts_after=db.session.execute(db.text("SELECT COUNT(*) rows, COALESCE(SUM(unit),0) unit_sum, COALESCE(SUM(tl),0) tl_sum FROM ims_facts WHERE upload_id=27")).mappings().one()
+                  competition_after=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_competition_data")).scalar() or 0)
+                  if int(after['rows']) != int(before['rows']):
+                      raise RuntimeError('Summary satır sayısı değişti')
+                  if float(after['unit_sum'] or 0) <= 0.0:
+                      raise RuntimeError('Kutu carry-forward/türetme oluşmadı')
+                  if float(after['tl_sum'] or 0) <= float(before['tl_sum'] or 0):
+                      raise RuntimeError('TL carry-forward oluşmadı')
+                  if (int(facts_after['rows']), float(facts_after['unit_sum'] or 0), float(facts_after['tl_sum'] or 0)) != (int(facts_before['rows']), float(facts_before['unit_sum'] or 0), float(facts_before['tl_sum'] or 0)):
+                      raise RuntimeError('Kaynak facts katmanı beklenmedik şekilde değişti')
+                  if competition_after != competition_before:
+                      raise RuntimeError('Rekabet verisi beklenmedik şekilde değişti')
+                  db.session.commit()
+              except Exception:
+                  db.session.rollback()
+                  raise
+
+              print('REPAIR_RESULT|'+'|'.join(f'{k}={v}' for k,v in result.items()))
+              print(f'AFTER_SUMMARY|rows={after["rows"]}|unit={after["unit_sum"]}|tl={after["tl_sum"]}')
+              print(f'AFTER_FACTS|rows={facts_after["rows"]}|unit={facts_after["unit_sum"]}|tl={facts_after["tl_sum"]}')
+              print(f'AFTER_COMPETITION_COUNT|{competition_after}')
+
+              samples=db.session.execute(db.text("""
+                  SELECT r.rep_name,p.product_name,s.unit,s.tl,s.realization_percent
+                  FROM ims_summary s
+                  JOIN representatives r ON r.id=s.representative_id
+                  JOIN products p ON p.id=s.product_id
+                  WHERE s.upload_id=27 AND p.product_name='Travazol'
+                  ORDER BY s.tl DESC LIMIT 5
+              """)).mappings().all()
+              for r in samples:
+                  print(f'SAMPLE|rep={r["rep_name"]}|product={r["product_name"]}|unit={r["unit"]}|tl={r["tl"]}|realization={r["realization_percent"]}')
+
               jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
