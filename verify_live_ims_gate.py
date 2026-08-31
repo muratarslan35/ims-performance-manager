@@ -152,13 +152,29 @@ def main():
             actual_counts["raw"] >= semantic_raw,
             f"physical raw eksik: db={actual_counts['raw']} semantic={semantic_raw}",
         )
+
+        # Official aggregate/spread rows are validated side channels. Historical
+        # uploads can acquire these rows through a guarded post-import repair
+        # after the immutable manager audit was written. A positive audit count
+        # remains strict and must match exactly. An audit value of zero is
+        # treated as "not captured at import time" only when the physical RAW
+        # side-channel delta is large enough to account for the current rows.
+        post_import_side_channels = {}
+        raw_side_channel_delta = actual_counts["raw"] - semantic_raw
         for key in ("official_brick_spread", "official_aggregates"):
-            if key in expected_counts:
-                expected = int(expected_counts.get(key, 0) or 0)
+            if key not in expected_counts:
+                continue
+            expected = int(expected_counts.get(key, 0) or 0)
+            current = int(actual_counts[key] or 0)
+            if expected > 0:
+                _require(current == expected, f"{key} count mismatch: db={current} audit={expected}")
+                continue
+            if current > 0:
                 _require(
-                    actual_counts[key] == expected,
-                    f"{key} count mismatch: db={actual_counts[key]} audit={expected}",
+                    raw_side_channel_delta >= current,
+                    f"{key} post-import side-channel unaccounted: db={current} raw_delta={raw_side_channel_delta}",
                 )
+                post_import_side_channels[key] = current
 
         _require(actual_counts["facts"] == int(upload.fact_record_count or 0), f"fact mismatch: db={actual_counts['facts']} upload={upload.fact_record_count}")
 
@@ -177,7 +193,8 @@ def main():
             "stored": int(upload.stored_source_record_count or 0),
             "semantic_raw": semantic_raw,
             "physical_raw": actual_counts["raw"],
-            "raw_side_channel_delta": actual_counts["raw"] - semantic_raw,
+            "raw_side_channel_delta": raw_side_channel_delta,
+            "post_import_side_channels": post_import_side_channels,
             "reconciliation": upload.reconciliation_status,
             "critical": critical,
             "sheets": sheets,
