@@ -29,63 +29,32 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit rendered week13 dashboard paths
+      - name: Audit week13 target coverage
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, IMSSummary
-          from app.query.dashboard_query import DashboardQuery
-          from app.query.filters import DashboardFilterParams
-          from app.services.dashboard_service import DashboardService
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE
-          from app.cache.dashboard_cache import DashboardCache
-
+          from app.models import IMSUpload, IMSSummary, Target, Product, Representative
+          from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
           app=create_app()
           with app.app_context():
-              processing = int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              print(f'PROCESSING_COUNT|{processing}')
               latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
-              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}')
-              summary_tl = db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar()
-              summary_unit = db.session.query(db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.upload_id==latest.id).scalar()
-              print(f'LATEST_SUMMARY|tl={summary_tl}|unit={summary_unit}')
-
-              dq=DashboardQuery()
-              filters=DashboardFilterParams(year=2026,month=3)
-              period=dq.load_period_performance(filters)
-              national=dq.load_national_dashboard_metrics(filters)
-              products=dq.load_product_performance(filters)
-              print(f'QUERY_PERIOD|target={period.target_tl}|actual={period.realization_tl}')
-              print(f'QUERY_NATIONAL|source={national.get("source")}|target={national.get("target_tl")}|actual={national.get("actual_tl")}|unit_target={national.get("unit_target")}|unit_actual={national.get("unit_actual")}|products={len(national.get("products") or [])}')
-              print(f'QUERY_PRODUCTS|total={sum(float(getattr(r,"realization_tl",0) or 0) for r in products)}|rows={len(products)}')
-
-              oa=OfficialAggregateService.product_totals(2026,3,'NATIONAL')
-              oar=OfficialAggregateService.rows(2026,3,'NATIONAL',ACTUAL_TYPE)
-              print(f'OFFICIAL_NATIONAL|product_totals={len(oa or [])}|actual_rows={len(oar or [])}|actual_tl={sum(float(r.get("actual_tl",0) or 0) for r in (oa or []))}')
-
-              region=RegionPerformanceService('901',2026,3).report()
-              monthly=(region.get('periods') or {}).get('monthly') or {}
-              print(f'REGION_901|rep_count={region.get("representative_count")}|target={monthly.get("target_tl")}|actual={monthly.get("actual_tl")}|percent={monthly.get("realization_percent")}')
-
-              cache=DashboardCache()
-              print(f'CACHE|enabled={cache.enabled}|entries={len(cache._store)}|keys={list(cache._store.keys())[:10]}')
-              service=DashboardService(year=2026,month=3)
-              payload=service.run()
-              perf=payload.get('performance') or {}
-              national_payload=payload.get('national_metrics') or payload.get('national') or {}
-              print(f'SERVICE_PERFORMANCE|{perf}')
-              print(f'SERVICE_NATIONAL|{national_payload}')
-              print(f'CACHE_AFTER|entries={len(cache._store)}|keys={list(cache._store.keys())[:10]}')
-              jm = db.session.execute(db.text('PRAGMA journal_mode')).scalar()
-              bt = db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
+              targets=Target.query.filter_by(year=2026,month=3).all()
+              print(f'LATEST|id={latest.id}|week={latest.week_number}|processing={int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status=\'PROCESSING\'")).scalar() or 0)}')
+              print(f'TARGETS|rows={len(targets)}|reps={len(set(t.representative_id for t in targets))}|products={len(set(t.product_id for t in targets))}|tl={sum(float(t.tl_target or 0) for t in targets)}|unit={sum(float(t.unit_target or 0) for t in targets)}')
+              print(f'SUMMARY|rows={IMSSummary.query.filter_by(upload_id=latest.id).count()}|reps={db.session.query(db.func.count(db.distinct(IMSSummary.representative_id))).filter(IMSSummary.upload_id==latest.id).scalar()}|products={db.session.query(db.func.count(db.distinct(IMSSummary.product_id))).filter(IMSSummary.upload_id==latest.id).scalar()}')
+              print(f'OFFICIAL_SOURCE|target_upload={OfficialAggregateService.latest_upload_id(2026,3,TARGET_TYPE)}|actual_upload={OfficialAggregateService.latest_upload_id(2026,3,ACTUAL_TYPE)}|latest_upload={OfficialAggregateService.latest_upload_id(2026,3)}')
+              for pid,name,ttl,tunit,stl in db.session.query(Target.product_id,Product.product_name,db.func.sum(Target.tl_target),db.func.sum(Target.unit_target),db.func.sum(IMSSummary.tl)).join(Product,Product.id==Target.product_id).join(IMSSummary,db.and_(IMSSummary.upload_id==latest.id,IMSSummary.representative_id==Target.representative_id,IMSSummary.product_id==Target.product_id)).filter(Target.year==2026,Target.month==3).group_by(Target.product_id,Product.product_name).order_by(Product.product_name).all():
+                  print(f'PRODUCT|{name}|target_tl={ttl}|target_unit={tunit}|actual_tl={stl}')
+              rep_ids=[r.id for r in Representative.query.filter(Representative.region=='901').all()]
+              rt=db.session.query(db.func.coalesce(db.func.sum(Target.tl_target),0),db.func.coalesce(db.func.sum(Target.unit_target),0)).filter(Target.year==2026,Target.month==3,Target.representative_id.in_(rep_ids)).one()
+              rs=db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id,IMSSummary.representative_id.in_(rep_ids)).scalar()
+              print(f'REGION901|target_tl={rt[0]}|target_unit={rt[1]}|actual_tl={rs}')
+              print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
           PY
           REMOTE
