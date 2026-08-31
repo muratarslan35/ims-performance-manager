@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit week13 schema-safe
+      - name: Audit week13 accepted read sources
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,40 +38,44 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from decimal import Decimal
           from app import create_app
           from app.extensions import db
+          from app.models import IMSUpload, IMSSummary, ProductionResultUpload, ProductionResult, Target
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.services.production_result_service import ProductionResultService
+
           app=create_app()
           with app.app_context():
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'PROCESSING_COUNT|{processing}')
-              job_cols=[r[1] for r in db.session.execute(db.text('PRAGMA table_info(ims_import_jobs)')).all()]
-              print('JOB_COLS|' + ','.join(job_cols))
-              wanted=['id','file_name','stored_file_name','status','year','month','week_number','ims_upload_id','queued_at','started_at','completed_at','result_summary']
-              sel=[c for c in wanted if c in job_cols]
-              latest_job=db.session.execute(db.text('SELECT '+','.join(sel)+' FROM ims_import_jobs ORDER BY id DESC LIMIT 1')).mappings().first()
-              print('LATEST_JOB|'+'|'.join(f'{k}={latest_job[k]}' for k in latest_job.keys()))
-              uid=int(latest_job.get('ims_upload_id') or 0)
-              upload=db.session.execute(db.text('SELECT * FROM ims_uploads WHERE id=:u'),{'u':uid}).mappings().first() if uid else None
-              if upload:
-                  keep=['id','year','month','week_number','status','reconciliation_status','raw_record_count','fact_record_count','summary_record_count']
-                  print('UPLOAD|'+'|'.join(f'{k}={upload.get(k)}' for k in keep if k in upload))
-                  raw=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_raw_data WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  facts=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  summary=db.session.execute(db.text('SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=:u'),{'u':uid}).mappings().one()
-                  print(f'RAW|rows={raw["rows"]}|unit={raw["unit"]}|tl={raw["tl"]}')
-                  print(f'FACTS|rows={facts["rows"]}|unit={facts["unit"]}|tl={facts["tl"]}')
-                  print(f'SUMMARY|rows={summary["rows"]}|unit={summary["unit"]}|tl={summary["tl"]}')
-                  sheets=db.session.execute(db.text('SELECT sheet_name,COUNT(*) rows FROM ims_raw_data WHERE upload_id=:u GROUP BY sheet_name ORDER BY sheet_name'),{'u':uid}).mappings().all()
-                  print(f'RAW_SHEET_COUNT|{len(sheets)}')
-                  for s in sheets: print(f'SHEET|{s["sheet_name"]}|rows={s["rows"]}')
-                  rtypes=db.session.execute(db.text('SELECT report_type,COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=:u GROUP BY report_type ORDER BY report_type'),{'u':uid}).mappings().all()
-                  for r in rtypes: print(f'REPORT_TYPE|{r["report_type"]}|rows={r["rows"]}|unit={r["unit"]}|tl={r["tl"]}')
-                  reps=db.session.execute(db.text("SELECT r.rep_name,COALESCE(SUM(s.tl),0) tl,COALESCE(SUM(s.unit),0) unit FROM ims_summary s JOIN representatives r ON r.id=s.representative_id WHERE s.upload_id=:u AND UPPER(COALESCE(r.region,'')) LIKE '%DIYARBAKIR%' GROUP BY r.id,r.rep_name ORDER BY r.rep_name"),{'u':uid}).mappings().all()
-                  print(f'DIYARBAKIR_REP_COUNT|{len(reps)}')
-                  for r in reps: print(f'DIYARBAKIR_REP|name={r["rep_name"]}|tl={r["tl"]}|unit={r["unit"]}')
-              latest=db.session.execute(db.text("SELECT id,week_number,status,reconciliation_status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1")).mappings().first()
-              print(f'DASHBOARD_UPLOAD|id={latest["id"]}|week={latest["week_number"]}|status={latest["status"]}|reconciliation={latest["reconciliation_status"]}')
-              jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
+
+              latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
+              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}|summary_count={latest.summary_record_count}')
+              for row in db.session.query(IMSSummary.upload_id,db.func.count(IMSSummary.id),db.func.coalesce(db.func.sum(IMSSummary.tl),0),db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.year==2026,IMSSummary.month==3).group_by(IMSSummary.upload_id).order_by(IMSSummary.upload_id).all():
+                  print(f'SUMMARY_BY_UPLOAD|upload={row[0]}|rows={row[1]}|tl={row[2]}|unit={row[3]}')
+
+              uploads=ProductionResultUpload.query.filter_by(year=2026,month=3,status=ProductionResultUpload.STATUS_APPLIED).order_by(ProductionResultUpload.production_stage.desc(),ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()).all()
+              print(f'APPLIED_PRODUCTION_UPLOADS|count={len(uploads)}')
+              for up in uploads:
+                  agg=db.session.query(db.func.count(ProductionResult.id),db.func.coalesce(db.func.sum(ProductionResult.actual_tl),0),db.func.coalesce(db.func.sum(ProductionResult.actual_unit),0)).filter(ProductionResult.upload_id==up.id).one()
+                  print(f'PRODUCTION_UPLOAD|id={up.id}|stage={up.production_stage}|status={up.status}|rows={agg[0]}|tl={agg[1]}|unit={agg[2]}')
+
+              targets=Target.query.filter_by(year=2026,month=3).all()
+              print(f'TARGET_ROWS|{len(targets)}|target_tl={sum(Decimal(str(t.tl_target or 0)) for t in targets)}|stored_real_tl={sum(Decimal(str(t.tl_realization or 0)) for t in targets)}')
+              dq=DashboardQuery()
+              period=dq.load_period_performance(DashboardFilterParams(year=2026,month=3))
+              print(f'DASHBOARD_PERIOD|target={period.target_tl}|actual={period.realization_tl}')
+
+              latest_summary_tl=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar() or 0))
+              effective_total=Decimal('0')
+              source_counts={}
+              for target in targets:
+                  row=ProductionResultService.effective_product(2026,3,target.representative_id,target.product_id)
+                  effective_total += Decimal(str(row.get('actual_tl') or 0))
+                  source_counts[row.get('source')]=source_counts.get(row.get('source'),0)+1
+              print(f'EFFECTIVE_SERVICE|actual={effective_total}|sources={source_counts}|latest_ims_summary={latest_summary_tl}')
+              print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
           PY
           REMOTE
