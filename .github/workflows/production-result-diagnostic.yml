@@ -30,7 +30,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit week 12 IMS import and week 11 replacement
+      - name: Deep audit week 12 IMS import against week 11
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -40,44 +40,97 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          echo '--- RECENT IMS LOGS ---'
-          sudo journalctl -u ims-import-worker.service --since '60 minutes ago' --no-pager | grep -Ei '12\.Hafta|11\.Hafta|TTS ÇIKIŞLARI|BRICK SATIŞLARI|completed|failed|reconciliation|sheet|row' | tail -n 250 || true
-          echo '--- DB WEEK AUDIT ---'
+          echo '--- SOURCE XLSX CANDIDATES ---'
+          find "$IMS_PATH" -type f \( -iname '*12*Hafta*.xlsx' -o -iname '*12.Hafta*.xlsx' \) -printf '%T@|%p\n' 2>/dev/null | sort -nr | head -n 10 || true
+          echo '--- DB DEEP AUDIT ---'
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json, os, glob
+          from collections import defaultdict
           from app import create_app
           from app.extensions import db
           app=create_app()
           with app.app_context():
               insp=db.inspect(db.engine)
-              for t in ('ims_uploads','ims_raw_data','ims_facts','ims_summary'):
-                  cols=[c['name'] for c in insp.get_columns(t)]
-                  print('COLS|'+t+'|'+','.join(cols))
-              ups=db.session.execute(db.text('SELECT * FROM ims_uploads ORDER BY id DESC LIMIT 6')).mappings().all()
+              tables=insp.get_table_names()
+              print('TABLES|' + ','.join(t for t in tables if any(x in t.lower() for x in ('ims','import','job','setting','config','period'))))
+              ups=db.session.execute(db.text('SELECT * FROM ims_uploads WHERE id IN (23,24,25) ORDER BY id')).mappings().all()
               for r in ups:
-                  print('UPLOAD|'+'|'.join(f'{k}={v}' for k,v in r.items() if k in ('id','filename','original_filename','status','week','year','month','row_count','records_count','error_message','warning_message','uploaded_at','completed_at')))
-              # Discover period/source columns and report counts for recent upload ids without mutating data.
-              recent=[int(r['id']) for r in ups if r.get('id') is not None]
+                  print('UPLOAD_FULL|' + '|'.join(f'{k}={r.get(k)}' for k in r.keys()))
               for t in ('ims_raw_data','ims_facts','ims_summary'):
                   cols=[c['name'] for c in insp.get_columns(t)]
-                  upload_col=next((c for c in ('upload_id','ims_upload_id','source_upload_id') if c in cols),None)
-                  if upload_col:
-                      for uid in recent[:4]:
-                          n=db.session.execute(db.text(f'SELECT COUNT(*) FROM {t} WHERE {upload_col}=:u'),{'u':uid}).scalar()
-                          print(f'COUNT|table={t}|upload={uid}|rows={n}')
-              # Compare aggregate numeric values by week where week column exists.
-              for t in ('ims_raw_data','ims_facts','ims_summary'):
-                  cols=[c['name'] for c in insp.get_columns(t)]
-                  if 'week' not in cols: continue
-                  nums=[c for c in ('quantity','units','unit','box','boxes','sales_quantity','amount','sales_amount','tl','value') if c in cols]
-                  for w in (11,12):
-                      n=db.session.execute(db.text(f'SELECT COUNT(*) FROM {t} WHERE week=:w'),{'w':w}).scalar()
-                      parts=[f'rows={n}']
-                      for c in nums[:4]:
-                          try:
-                              v=db.session.execute(db.text(f'SELECT SUM(CAST({c} AS REAL)) FROM {t} WHERE week=:w'),{'w':w}).scalar()
-                              parts.append(f'{c}_sum={v}')
-                          except Exception: pass
-                      print(f'WEEK|table={t}|week={w}|'+'|'.join(parts))
+                  for uid in (23,25):
+                      n=db.session.execute(db.text(f'SELECT COUNT(*) FROM {t} WHERE upload_id=:u'),{'u':uid}).scalar()
+                      print(f'COUNT|table={t}|upload={uid}|rows={n}')
+                      if 'week_number' in cols:
+                          vals=db.session.execute(db.text(f'SELECT week_number,COUNT(*) n FROM {t} WHERE upload_id=:u GROUP BY week_number ORDER BY week_number'),{'u':uid}).all()
+                          print(f'WEEKS|table={t}|upload={uid}|values={vals}')
+              for uid in (23,25):
+                  rows=db.session.execute(db.text('SELECT sheet_name,sheet_type,COUNT(*) n,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=:u GROUP BY sheet_name,sheet_type ORDER BY n DESC'),{'u':uid}).mappings().all()
+                  for r in rows:
+                      print('SHEET|' + f'upload={uid}|' + '|'.join(f'{k}={r[k]}' for k in r.keys()))
+                  z=db.session.execute(db.text('SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=:u AND (unit=0 OR tl=0)'),{'u':uid}).scalar()
+                  zz=db.session.execute(db.text('SELECT COUNT(*) FROM ims_raw_data WHERE upload_id=:u AND unit=0 AND tl=0'),{'u':uid}).scalar()
+                  print(f'ZERO|upload={uid}|either_zero={z}|both_zero={zz}')
+                  agg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  print(f'RAW_TOTAL|upload={uid}|rows={agg["rows"]}|unit_sum={agg["unit_sum"]}|tl_sum={agg["tl_sum"]}')
+                  fagg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_facts WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  print(f'FACT_TOTAL|upload={uid}|rows={fagg["rows"]}|unit_sum={fagg["unit_sum"]}|tl_sum={fagg["tl_sum"]}')
+                  sagg=db.session.execute(db.text('SELECT COUNT(*) rows, SUM(COALESCE(unit,0)) unit_sum, SUM(COALESCE(tl,0)) tl_sum FROM ims_summary WHERE upload_id=:u'),{'u':uid}).mappings().one()
+                  print(f'SUMMARY_TOTAL|upload={uid}|rows={sagg["rows"]}|unit_sum={sagg["unit_sum"]}|tl_sum={sagg["tl_sum"]}')
+              # Representative/product examples present in both week 11 and week 12 facts.
+              q='''SELECT a.representative_id,a.product_id,
+                    a.unit u11,a.tl t11,b.unit u12,b.tl t12
+                   FROM ims_facts a JOIN ims_facts b
+                     ON a.representative_id=b.representative_id AND a.product_id=b.product_id
+                   WHERE a.upload_id=23 AND b.upload_id=25
+                   ORDER BY ABS(COALESCE(b.tl,0)-COALESCE(a.tl,0)) DESC LIMIT 12'''
+              for r in db.session.execute(db.text(q)).mappings():
+                  print('PAIR|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
+              # National-like source rows, if encoded explicitly.
+              for uid in (23,25):
+                  nq='''SELECT representative,manager,brick,territory,province,product,unit,tl,sheet_name,source_row
+                        FROM ims_raw_data WHERE upload_id=:u AND (
+                        UPPER(COALESCE(representative,'')) LIKE '%NATIONAL%' OR
+                        UPPER(COALESCE(manager,'')) LIKE '%NATIONAL%' OR
+                        UPPER(COALESCE(brick,'')) LIKE '%NATIONAL%' OR
+                        UPPER(COALESCE(territory,'')) LIKE '%NATIONAL%' OR
+                        UPPER(COALESCE(province,'')) LIKE '%NATIONAL%') LIMIT 20'''
+                  nr=db.session.execute(db.text(nq),{'u':uid}).mappings().all()
+                  print(f'NATIONAL_ROWS|upload={uid}|count={len(nr)}')
+                  for r in nr[:8]: print('NATIONAL_ROW|' + f'upload={uid}|' + '|'.join(f'{k}={r[k]}' for k in r.keys()))
+              # Logical duplicate check in fact layer for the same upload/week/rep/product/report type.
+              for uid in (23,25):
+                  dq='''SELECT COUNT(*) FROM (SELECT representative_id,product_id,year,month,week_number,report_type,COUNT(*) c
+                        FROM ims_facts WHERE upload_id=:u GROUP BY representative_id,product_id,year,month,week_number,report_type HAVING c>1)'''
+                  print(f'FACT_DUP_GROUPS|upload={uid}|count={db.session.execute(db.text(dq),{"u":uid}).scalar()}')
+              # Inspect possible import-job tables and latest rows without mutation.
+              for t in tables:
+                  low=t.lower()
+                  if ('job' in low or 'import' in low) and t != 'ims_raw_data':
+                      try:
+                          cols=[c['name'] for c in insp.get_columns(t)]
+                          print('JOBTABLE|'+t+'|cols='+','.join(cols))
+                          rows=db.session.execute(db.text(f'SELECT * FROM {t} ORDER BY id DESC LIMIT 5')).mappings().all() if 'id' in cols else []
+                          for r in rows: print('JOBROW|'+t+'|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
+                      except Exception as e: print('JOBTABLE_ERROR|'+t+'|'+str(e))
           PY
+          echo '--- WORKBOOK SHEETS ---'
+          latest=$(find "$IMS_PATH" -type f \( -iname '*12*Hafta*.xlsx' -o -iname '*12.Hafta*.xlsx' \) -printf '%T@|%p\n' 2>/dev/null | sort -nr | head -n1 | cut -d'|' -f2- || true)
+          if [ -n "$latest" ]; then
+            XLSX="$latest" venv/bin/python - <<'PY'
+          import os
+          from openpyxl import load_workbook
+          p=os.environ['XLSX']
+          wb=load_workbook(p, read_only=True, data_only=False)
+          print('WORKBOOK|path='+p+'|sheet_count='+str(len(wb.sheetnames))+'|sheets='+repr(wb.sheetnames))
+          for s in wb.sheetnames:
+              ws=wb[s]
+              print(f'WORKBOOK_SHEET|name={s}|max_row={ws.max_row}|max_col={ws.max_column}')
+          PY
+          else
+            echo 'WORKBOOK|NOT_FOUND_ON_SERVER_ARCHIVE'
+          fi
+          echo '--- DASHBOARD/ACTIVE IMS CODE PATHS ---'
+          grep -RInE 'week_number|reconciliation_status|ims_summary|active.*ims|latest.*ims|IMSUpload' app --include='*.py' | grep -Ei 'dashboard|latest|active|summary|completed|reconciliation' | head -n 160 || true
           echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
