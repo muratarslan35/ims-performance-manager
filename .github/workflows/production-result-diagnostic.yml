@@ -43,12 +43,12 @@ jobs:
           from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
           with app.app_context():
-              jobs=db.session.execute(db.text("SELECT * FROM ims_import_jobs ORDER BY id DESC LIMIT 8")).mappings().all()
+              jobs=db.session.execute(db.text("SELECT * FROM ims_import_jobs ORDER BY id DESC LIMIT 5")).mappings().all()
               for r in jobs:
                   print('JOB|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
               processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar()
               print(f'PROCESSING_COUNT|{processing}')
-              uploads=db.session.execute(db.text("SELECT id,file_name,status,year,month,week_number,reconciliation_status,raw_record_count,fact_record_count,summary_record_count,created_at FROM ims_uploads WHERE year=2026 AND month=3 AND week_number=12 ORDER BY id DESC LIMIT 5")).mappings().all()
+              uploads=db.session.execute(db.text("SELECT id,file_name,status,year,month,week_number,reconciliation_status,raw_record_count,fact_record_count,summary_record_count FROM ims_uploads WHERE year=2026 AND month=3 AND week_number=12 ORDER BY id DESC LIMIT 5")).mappings().all()
               for u in uploads:
                   print('W12UPLOAD|'+'|'.join(f'{k}={u[k]}' for k in u.keys()))
               latest=uploads[0] if uploads else None
@@ -64,9 +64,6 @@ jobs:
                   prod=db.session.execute(db.text("SELECT p.name product,SUM(COALESCE(f.unit,0)) unit_sum,SUM(COALESCE(f.tl,0)) tl_sum FROM ims_facts f LEFT JOIN products p ON p.id=f.product_id WHERE f.upload_id=:uid GROUP BY p.name ORDER BY p.name"), {'uid':uid}).mappings().all()
                   for r in prod:
                       print(f'PRODUCT|upload_id={uid}|product={r["product"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
-                  reps=db.session.execute(db.text("SELECT COALESCE(rep.name,CAST(f.representative_id AS TEXT)) representative,p.name product,SUM(COALESCE(f.unit,0)) unit_sum,SUM(COALESCE(f.tl,0)) tl_sum FROM ims_facts f LEFT JOIN representatives rep ON rep.id=f.representative_id LEFT JOIN products p ON p.id=f.product_id WHERE f.upload_id=:uid AND lower(COALESCE(rep.name,'')) IN ('fehmi akarca','şeyma topcu','seyma topcu') AND lower(COALESCE(p.name,''))='travazol' GROUP BY rep.name,f.representative_id,p.name"), {'uid':uid}).mappings().all()
-                  for r in reps:
-                      print(f'REP_SAMPLE|upload_id={uid}|representative={r["representative"]}|product={r["product"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
               repo=DashboardRepository(db.session)
               x=repo.load_latest_successful_summary()
               print(f'DASHBOARD|id={x.id if x else None}|week={x.week_number if x else None}|status={x.status if x else None}|reconciliation={x.reconciliation_status if x else None}')
