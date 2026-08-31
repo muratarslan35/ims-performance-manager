@@ -43,24 +43,30 @@ jobs:
           from app.extensions import db
           app=create_app()
           with app.app_context():
+              products={int(r['id']):r for r in db.session.execute(db.text("SELECT id,product_name,unit_price FROM products WHERE is_active=1 ORDER BY id")).mappings().all()}
+              for p in products.values():
+                  print(f'PRODUCT_PRICE|product_id={p["id"]}|product={p["product_name"]}|unit_price={float(p["unit_price"] or 0):.6f}')
               uploads={10:22,11:23}
               by_week={}
               for week,uid in uploads.items():
                   rows=db.session.execute(db.text("""
-                    SELECT f.product_id,p.name product_name,f.representative_id,f.unit,f.tl
-                    FROM ims_facts f JOIN products p ON p.id=f.product_id
-                    WHERE f.upload_id=:u AND f.report_type='brick_sales' AND f.unit>0 AND f.tl>0
+                    SELECT product_id,representative_id,unit,tl
+                    FROM ims_facts
+                    WHERE upload_id=:u AND report_type='brick_sales' AND unit>0 AND tl>0
                   """),{'u':uid}).mappings().all()
                   groups=defaultdict(list)
                   for r in rows:
-                      groups[(int(r['product_id']),r['product_name'])].append(float(r['tl'])/float(r['unit']))
+                      groups[int(r['product_id'])].append(float(r['tl'])/float(r['unit']))
                   by_week[week]=groups
-                  for (pid,name),vals in sorted(groups.items()):
+                  for pid,vals in sorted(groups.items()):
+                      p=products.get(pid,{'product_name':'?','unit_price':0})
                       lo=min(vals); hi=max(vals); med=median(vals); avg=sum(vals)/len(vals)
                       spread=(hi-lo)/med*100 if med else 0
-                      print(f'PRICE|week={week}|product_id={pid}|product={name}|n={len(vals)}|avg={avg:.6f}|median={med:.6f}|min={lo:.6f}|max={hi:.6f}|spread_pct={spread:.4f}')
-              for key in sorted(set(by_week[10]) & set(by_week[11])):
-                  a=median(by_week[10][key]); b=median(by_week[11][key]); diff=(b-a)/a*100 if a else 0
-                  print(f'PRICE_WEEK_DELTA|product_id={key[0]}|product={key[1]}|w10_median={a:.6f}|w11_median={b:.6f}|delta_pct={diff:.4f}')
+                      configured=float(p['unit_price'] or 0)
+                      cfg_diff=(med-configured)/configured*100 if configured else 0
+                      print(f'PRICE|week={week}|product_id={pid}|product={p["product_name"]}|n={len(vals)}|configured={configured:.6f}|avg={avg:.6f}|median={med:.6f}|min={lo:.6f}|max={hi:.6f}|spread_pct={spread:.4f}|configured_delta_pct={cfg_diff:.4f}')
+              for pid in sorted(set(by_week[10]) & set(by_week[11])):
+                  a=median(by_week[10][pid]); b=median(by_week[11][pid]); diff=(b-a)/a*100 if a else 0
+                  print(f'PRICE_WEEK_DELTA|product_id={pid}|product={products.get(pid,{}).get("product_name","?")}|w10_median={a:.6f}|w11_median={b:.6f}|delta_pct={diff:.4f}')
           PY
           REMOTE
