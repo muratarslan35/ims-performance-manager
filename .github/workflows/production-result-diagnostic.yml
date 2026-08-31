@@ -45,9 +45,13 @@ jobs:
           with app.app_context():
               latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
               targets=Target.query.filter_by(year=2026,month=3).all()
-              print(f'LATEST|id={latest.id}|week={latest.week_number}|processing={int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status=\'PROCESSING\'")).scalar() or 0)}')
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              print(f'LATEST|id={latest.id}|week={latest.week_number}|processing={processing}')
               print(f'TARGETS|rows={len(targets)}|reps={len(set(t.representative_id for t in targets))}|products={len(set(t.product_id for t in targets))}|tl={sum(float(t.tl_target or 0) for t in targets)}|unit={sum(float(t.unit_target or 0) for t in targets)}')
-              print(f'SUMMARY|rows={IMSSummary.query.filter_by(upload_id=latest.id).count()}|reps={db.session.query(db.func.count(db.distinct(IMSSummary.representative_id))).filter(IMSSummary.upload_id==latest.id).scalar()}|products={db.session.query(db.func.count(db.distinct(IMSSummary.product_id))).filter(IMSSummary.upload_id==latest.id).scalar()}')
+              summary_rows=IMSSummary.query.filter_by(upload_id=latest.id).count()
+              summary_reps=db.session.query(db.func.count(db.distinct(IMSSummary.representative_id))).filter(IMSSummary.upload_id==latest.id).scalar()
+              summary_products=db.session.query(db.func.count(db.distinct(IMSSummary.product_id))).filter(IMSSummary.upload_id==latest.id).scalar()
+              print(f'SUMMARY|rows={summary_rows}|reps={summary_reps}|products={summary_products}')
               print(f'OFFICIAL_SOURCE|target_upload={OfficialAggregateService.latest_upload_id(2026,3,TARGET_TYPE)}|actual_upload={OfficialAggregateService.latest_upload_id(2026,3,ACTUAL_TYPE)}|latest_upload={OfficialAggregateService.latest_upload_id(2026,3)}')
               for pid,name,ttl,tunit,stl in db.session.query(Target.product_id,Product.product_name,db.func.sum(Target.tl_target),db.func.sum(Target.unit_target),db.func.sum(IMSSummary.tl)).join(Product,Product.id==Target.product_id).join(IMSSummary,db.and_(IMSSummary.upload_id==latest.id,IMSSummary.representative_id==Target.representative_id,IMSSummary.product_id==Target.product_id)).filter(Target.year==2026,Target.month==3).group_by(Target.product_id,Product.product_name).order_by(Product.product_name).all():
                   print(f'PRODUCT|{name}|target_tl={ttl}|target_unit={tunit}|actual_tl={stl}')
@@ -55,6 +59,7 @@ jobs:
               rt=db.session.query(db.func.coalesce(db.func.sum(Target.tl_target),0),db.func.coalesce(db.func.sum(Target.unit_target),0)).filter(Target.year==2026,Target.month==3,Target.representative_id.in_(rep_ids)).one()
               rs=db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id,IMSSummary.representative_id.in_(rep_ids)).scalar()
               print(f'REGION901|target_tl={rt[0]}|target_unit={rt[1]}|actual_tl={rs}')
-              print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
+              jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
           REMOTE
