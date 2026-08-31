@@ -6,6 +6,7 @@ metrics from the last source that supplied them while replacing stale TL
 actuals (and fully covered TL targets) with the newest cumulative IMS snapshot.
 """
 from collections import defaultdict
+from decimal import Decimal
 
 from app.models import IMSSummary, Target
 from app.services.official_aggregate_service import (
@@ -121,9 +122,9 @@ def _region_month(self, year, month):
             and overlay["target_complete"]
             and pid in overlay["target_tl"]
         ):
-            target_tl = overlay["target_tl"][pid]
+            target_tl = Decimal(str(overlay["target_tl"][pid]))
         if latest_id != actual_source and pid in overlay["actual_tl"]:
-            actual_tl = overlay["actual_tl"][pid]
+            actual_tl = Decimal(str(overlay["actual_tl"][pid]))
             complete = True
         result[product_id] = [target_tl, actual_tl, complete]
     return result
