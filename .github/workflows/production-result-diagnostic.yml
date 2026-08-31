@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,78 +29,76 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit all March IMS and production resolution
+      - name: Compare source workbook totals to DB
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/march-audit.txt" 2>&1 <<'REMOTE'
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from collections import Counter, defaultdict
           from decimal import Decimal
+          from openpyxl import load_workbook
           from app import create_app
-          from app.extensions import db
-          from app.models import IMSUpload, IMSSummary, Target, Representative, Product, ProductionResultUpload, ProductionResult
-          from app.services.production_result_service import ProductionResultService
-          from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
+          from app.models import IMSUpload, Representative, Target, IMSSummary
+          from app.services.alias_service import AliasService
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+
           app=create_app()
           with app.app_context():
-              year, month = 2026, 3
-              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              print(f'PROCESSING_COUNT|{processing}')
-              latest=(IMSUpload.query.filter_by(year=year,month=month,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.id.desc()).first())
-              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}|file={latest.file_name}')
-              print(f'OFFICIAL_SOURCES|target={OfficialAggregateService.latest_upload_id(year,month,TARGET_TYPE)}|actual={OfficialAggregateService.latest_upload_id(year,month,ACTUAL_TYPE)}')
-              uploads=ProductionResultUpload.query.filter_by(year=year,month=month).order_by(ProductionResultUpload.production_stage,ProductionResultUpload.id).all()
-              print(f'PRODUCTION_UPLOADS|count={len(uploads)}')
-              for u in uploads:
-                  rc=ProductionResult.query.filter_by(upload_id=u.id).count()
-                  reps_count=db.session.query(ProductionResult.representative_id).filter_by(upload_id=u.id).distinct().count()
-                  print(f'PROD_UPLOAD|id={u.id}|stage={u.production_stage}|status={u.status}|rows={u.row_count}|matched={u.matched_row_count}|db_results={rc}|reps={reps_count}|file={u.file_name}')
-              reps={r.id:r for r in Representative.query.all()}
-              targets=Target.query.filter_by(year=year,month=month).all()
-              target_keys={(int(t.representative_id),int(t.product_id)) for t in targets}
-              summary_keys={(int(s.representative_id),int(s.product_id)) for s in IMSSummary.query.filter_by(upload_id=latest.id,year=year,month=month).all()}
-              print(f'COVERAGE|target_keys={len(target_keys)}|latest_summary_keys={len(summary_keys)}|missing_summary={len(target_keys-summary_keys)}|extra_summary={len(summary_keys-target_keys)}')
-              applied=ProductionResultService.applied_uploads(year,month)
-              for u in applied:
-                  keys={(int(r.representative_id),int(r.product_id)) for r in ProductionResult.query.filter_by(upload_id=u.id).all()}
-                  print(f'PROD_COVERAGE|id={u.id}|stage={u.production_stage}|keys={len(keys)}|missing_vs_target={len(target_keys-keys)}')
-              source_counter=Counter(); incomplete=[]; rep_totals=[]; target_by_rep=defaultdict(list)
-              for t in targets: target_by_rep[int(t.representative_id)].append(t)
-              for rep_id, rows in target_by_rep.items():
-                  resolved=ProductionResultService.effective_products(year,month,rep_id,[t.product_id for t in rows])
-                  rt=Decimal('0'); ra=Decimal('0'); src=Counter()
-                  for pid,row in resolved.items():
-                      source_counter[row['source']]+=1; src[row['source']]+=1; rt+=row['target_tl']; ra+=row['actual_tl']
-                      if not row['complete']: incomplete.append((rep_id,pid,row['source']))
-                  pct=(ra*Decimal('100')/rt) if rt else Decimal('0')
-                  rep_totals.append((rep_id,rt,ra,pct,dict(src)))
-              print('SOURCE_COUNTS|' + '|'.join(f'{k}={v}' for k,v in sorted(source_counter.items())))
-              print(f'INCOMPLETE_EFFECTIVE|count={len(incomplete)}')
-              for rep_id,rt,ra,pct,src in sorted(rep_totals,key=lambda x:(str(getattr(reps.get(x[0]),"region",'')),str(getattr(reps.get(x[0]),"rep_name",'')))):
-                  r=reps.get(rep_id)
-                  print(f'REP|id={rep_id}|name={getattr(r,"rep_name",None)}|region={getattr(r,"region",None)}|target={rt}|actual={ra}|pct={pct}|sources={src}')
-              top=ProductionResultService.final_upload(year,month)
-              if top:
-                  top_rep_ids={int(x[0]) for x in db.session.query(ProductionResult.representative_id).filter_by(upload_id=top.id).distinct().all()}
-                  target_rep_ids=set(target_by_rep); missing=sorted(target_rep_ids-top_rep_ids)
-                  print(f'TOP_STAGE_REP_COVERAGE|upload={top.id}|stage={top.production_stage}|target_reps={len(target_rep_ids)}|production_reps={len(top_rep_ids)}|missing={len(missing)}')
-                  for rid in missing:
-                      r=reps.get(rid); print(f'MISSING_PROD_REP|id={rid}|name={getattr(r,"rep_name",None)}|region={getattr(r,"region",None)}')
-              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f'SQLITE|journal_mode={journal}|busy_timeout={busy}')
+              upload=IMSUpload.query.get(29)
+              path=IMSUploadLifecycleService.archived_source_for_upload(29)
+              wb=load_workbook(path, data_only=True, read_only=True)
+              ws=wb['TTS ÇIKIŞLARI']
+              # Header is row 2 in this compact layout. Discover the right-most TOPLAM,
+              # which is the workbook's displayed total realization column.
+              headers=[AliasService.normalize(ws.cell(2,c).value) for c in range(1,ws.max_column+1)]
+              total_cols=[i+1 for i,v in enumerate(headers) if v=='TOPLAM']
+              total_col=max(total_cols)
+              print(f'LAYOUT|rows={ws.max_row}|cols={ws.max_column}|total_cols={total_cols}|selected_total={total_col}')
+              reps={AliasService.normalize(r.rep_name):r for r in Representative.query.all()}
+              aliases={}
+              for r in Representative.query.all():
+                  for label in (r.rep_name,r.rep_code,r.ims_code):
+                      if label: aliases[AliasService.normalize(label)]=r
+              mismatches=[]; checked=0; source_missing=[]
+              for row in range(3,ws.max_row+1):
+                  raw=ws.cell(row,2).value
+                  name=AliasService.normalize(raw)
+                  if not name or name=='NATIONAL' or (len(name)>4 and name[:3].isdigit() and name[3]==' '):
+                      continue
+                  rep=aliases.get(name)
+                  if rep is None:
+                      continue
+                  source_pct=ws.cell(row,total_col).value
+                  if source_pct is None:
+                      source_missing.append((row,raw)); continue
+                  try: source_pct=Decimal(str(source_pct))
+                  except Exception: continue
+                  targets=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).all()
+                  summaries=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3,representative_id=rep.id).all()
+                  t=sum((Decimal(str(x.tl_target or 0)) for x in targets),Decimal('0'))
+                  a=sum((Decimal(str(x.tl or 0)) for x in summaries),Decimal('0'))
+                  db_pct=(a*Decimal('100')/t) if t else Decimal('0')
+                  checked+=1
+                  diff=abs(db_pct-source_pct)
+                  if diff>Decimal('0.55'):
+                      mismatches.append((row,rep.id,rep.rep_name,rep.region,source_pct,db_pct,t,a,diff))
+              print(f'WORKBOOK_PERCENT_AUDIT|checked={checked}|mismatches={len(mismatches)}|source_missing={len(source_missing)}')
+              for x in mismatches:
+                  print('MISMATCH|row=%s|id=%s|name=%s|region=%s|source_pct=%s|db_pct=%s|target=%s|actual=%s|diff=%s'%x)
+              # Dump source cells and DB product rows for every mismatch.
+              for row,rep_id,name,region,sp,dp,t,a,diff in mismatches:
+                  vals=[]
+                  for c in range(1,ws.max_column+1):
+                      v=ws.cell(row,c).value
+                      if v is not None: vals.append(f'{c}={v}')
+                  print(f'SOURCE_ROW|row={row}|name={name}|'+';'.join(vals))
+                  ss=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3,representative_id=rep_id).all()
+                  ts={x.product_id:x for x in Target.query.filter_by(year=2026,month=3,representative_id=rep_id).all()}
+                  for s in ss:
+                      tt=ts.get(s.product_id)
+                      pct=(Decimal(str(s.tl or 0))*100/Decimal(str(tt.tl_target or 0))) if tt and tt.tl_target else Decimal('0')
+                      print(f'DB_PRODUCT|rep={name}|pid={s.product_id}|target={getattr(tt,"tl_target",None)}|actual={s.tl}|pct={pct}')
           PY
-          for stage in 1 2; do
-            if PYTHONPATH="$IMS_PATH" venv/bin/python scripts/audit_production_result_sources.py --year 2026 --month 3 --stage "$stage"; then :; else echo "SOURCE_AUDIT_STAGE_${stage}|NO_PASS"; fi
-          done
           REMOTE
-          cat "$RUNNER_TEMP/march-audit.txt"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: march-full-audit
-          path: ${{ runner.temp }}/march-audit.txt
-          retention-days: 1
