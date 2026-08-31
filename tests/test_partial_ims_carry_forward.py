@@ -1,4 +1,4 @@
-from app.services.partial_ims_carry_forward import combine_incremental_actuals
+from app.services.partial_ims_import_carry_forward import combine_incremental_actuals
 
 
 def test_partial_tl_is_added_to_previous_position_and_units_are_preserved():
