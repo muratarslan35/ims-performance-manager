@@ -33,6 +33,7 @@ from app.services.official_brick_spread_atomic import install_official_brick_spr
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
 from app.services.compact_brick_sales_metric_authority import install_compact_brick_sales_metric_authority
+from app.services.partial_ims_import_carry_forward import install_partial_ims_carry_forward
 from app.services.import_result_report import (
     install_import_result_reporting,
     latest_import_report,
@@ -183,6 +184,7 @@ def create_app(config_object=Config):
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
     install_compact_brick_sales_metric_authority()
+    install_partial_ims_carry_forward()
     install_import_result_reporting()
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
