@@ -24,6 +24,11 @@ class WorkbookPreflight:
         ("official_national_region_aggregate", ("NATIONAL", "BOLGE TOPLAM", "BÖLGE TOPLAM", "GENEL TOPLAM")),
         ("master_pivot_derived", ("PIVOT", "MASTER", "PAZAR")),
     )
+    # This exact worksheet is a presentation/output helper in the official IMS
+    # workbook family. Historical imports already skipped it when no representative
+    # header existed. Keep that compatibility without weakening unknown-sheet
+    # fail-closed behaviour or accepting similarly named future sheets implicitly.
+    KNOWN_AUXILIARY_SHEETS=("TTS CIKISLARI","TTS ÇIKIŞLARI")
     MONTHS={"OCAK","SUBAT","ŞUBAT","MART","NISAN","NİSAN","MAYIS","HAZIRAN","HAZİRAN","TEMMUZ","AGUSTOS","AĞUSTOS","EYLUL","EYLÜL","EKIM","EKİM","KASIM","ARALIK"}
     SPECIALIZED={"official_brick_spread","brick_realization","weekly_sales","balance","competition","competition_tl","competition_box","competition_pp","official_national_region_aggregate","master_pivot_derived"}
     TERMINAL_CELL_CLASSES={"IMPORTED_FACT","IMPORTED_MASTER","VERIFIED_DERIVED","AGGREGATE_VERIFIED","EXPLICIT_NONDATA"}
@@ -38,15 +43,10 @@ class WorkbookPreflight:
         except Exception:pass
         return not(isinstance(value,str) and not value.strip())
     def _iter_meaningful_cells(self,frame):
-        # ``DataFrame.iloc[row, col]`` performs pandas indexing machinery for every
-        # cell.  Preflight only needs scalar values plus physical coordinates, so a
-        # zero-copy object-array view preserves exactly the same cell semantics with
-        # dramatically less per-cell overhead. Numeric zero remains meaningful.
         values=frame.to_numpy(dtype=object,copy=False)
         for row_index,row in enumerate(values):
             for column_index,value in enumerate(row):
-                if self._is_meaningful(value):
-                    yield row_index,column_index,value
+                if self._is_meaningful(value):yield row_index,column_index,value
     def _meaningful_cells(self,frame):return sum(1 for _row,_column,_value in self._iter_meaningful_cells(frame))
     def _header_signature(self,frame):
         values=[]
@@ -73,8 +73,6 @@ class WorkbookPreflight:
         return None
     def classify(self,sheet_name,frame):
         name=self._normalized(sheet_name)
-        # Authoritative source identity is stronger than generic words such as MASTER
-        # inside the sheet body. This also preserves current workbook compatibility.
         if any(self._normalized(token) in name for token in self.RULES[0][1]):return "official_brick_spread"
         content_type=self._content_classify(frame)
         if content_type:return content_type
@@ -87,12 +85,21 @@ class WorkbookPreflight:
             return "monthly_master"
         if name in {"KUTU","TL"}:return "master_pivot_derived"
         return "unknown"
+    def _is_known_auxiliary(self,sheet_name,sheet_type,header_row):
+        if sheet_type!="representative_sales" or header_row is not None:return False
+        normalized=self._normalized(sheet_name)
+        return normalized in {self._normalized(name) for name in self.KNOWN_AUXILIARY_SHEETS}
     def build(self):
         manifest=[]
         for sheet_name,frame in(self.service.workbook or {}).items():
-            meaningful=self._meaningful_cells(frame);explicit_nondata=meaningful<=1;sheet_type="explicit_nondata" if explicit_nondata else self.classify(sheet_name,frame);header_row=None if explicit_nondata else self.service.find_header_row(frame)
-            coverage="explicit_nondata" if explicit_nondata else("generic_parser" if sheet_type=="representative_sales" and header_row is not None else("specialized_parser" if sheet_type in self.SPECIALIZED or sheet_type.startswith("monthly_master") or sheet_type=="brick_sales" else "unclassified"))
-            content_type=None if explicit_nondata else self._content_classify(frame);basis="nondata" if explicit_nondata else("content" if content_type==sheet_type else "name_fallback")
+            meaningful=self._meaningful_cells(frame);explicit_nondata=meaningful<=1
+            sheet_type="explicit_nondata" if explicit_nondata else self.classify(sheet_name,frame)
+            header_row=None if explicit_nondata else self.service.find_header_row(frame)
+            known_auxiliary=False if explicit_nondata else self._is_known_auxiliary(sheet_name,sheet_type,header_row)
+            if known_auxiliary:sheet_type="known_auxiliary"
+            coverage="explicit_nondata" if explicit_nondata else("verified_derived" if known_auxiliary else("generic_parser" if sheet_type=="representative_sales" and header_row is not None else("specialized_parser" if sheet_type in self.SPECIALIZED or sheet_type.startswith("monthly_master") or sheet_type=="brick_sales" else "unclassified")))
+            content_type=None if explicit_nondata else self._content_classify(frame)
+            basis="nondata" if explicit_nondata else("known_auxiliary_name" if known_auxiliary else("content" if content_type==sheet_type else "name_fallback"))
             manifest.append({"sheet_name":str(sheet_name),"rows":int(frame.shape[0]),"columns":int(frame.shape[1]),"meaningful_cells":meaningful,"header_row":header_row,"sheet_type":sheet_type,"coverage":coverage,"classification_basis":basis})
         return manifest
     def build_cell_ledger(self,manifest):
@@ -102,7 +109,7 @@ class WorkbookPreflight:
             if item["coverage"]=="explicit_nondata":default_class="EXPLICIT_NONDATA"
             elif item["coverage"]=="generic_parser" or item["sheet_type"]=="brick_sales":default_class="IMPORTED_FACT"
             elif item["sheet_type"]=="official_national_region_aggregate":default_class="AGGREGATE_VERIFIED"
-            elif item["sheet_type"] in{"master_pivot_derived","brick_realization"} or item["sheet_type"].startswith("monthly_master"):default_class="VERIFIED_DERIVED"
+            elif item["sheet_type"] in{"master_pivot_derived","brick_realization","known_auxiliary"} or item["sheet_type"].startswith("monthly_master"):default_class="VERIFIED_DERIVED"
             elif item["coverage"]=="specialized_parser":default_class="IMPORTED_MASTER"
             else:default_class="UNCLASSIFIED_MASTER_CELL"
             ledger.extend({"sheet_name":str(sheet_name),"row":row+1,"column":col+1,"classification":default_class,"sheet_type":item["sheet_type"]} for row,col,_value in self._iter_meaningful_cells(frame))
