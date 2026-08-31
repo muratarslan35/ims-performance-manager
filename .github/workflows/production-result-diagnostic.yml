@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 8
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Compare source workbook totals to DB
+      - name: Compare all source totals to DB
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -37,68 +37,73 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from collections import defaultdict
           from decimal import Decimal
-          from openpyxl import load_workbook
+          import pandas as pd
           from app import create_app
-          from app.models import IMSUpload, Representative, Target, IMSSummary
+          from app.extensions import db
+          from app.models import IMSUpload, Representative, RepresentativeAlias, Target, IMSSummary, Product
           from app.services.alias_service import AliasService
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 
           app=create_app()
           with app.app_context():
-              upload=IMSUpload.query.get(29)
               path=IMSUploadLifecycleService.archived_source_for_upload(29)
-              wb=load_workbook(path, data_only=True, read_only=True)
-              ws=wb['TTS ÇIKIŞLARI']
-              # Header is row 2 in this compact layout. Discover the right-most TOPLAM,
-              # which is the workbook's displayed total realization column.
-              headers=[AliasService.normalize(ws.cell(2,c).value) for c in range(1,ws.max_column+1)]
-              total_cols=[i+1 for i,v in enumerate(headers) if v=='TOPLAM']
+              df=pd.read_excel(path,sheet_name='TTS ÇIKIŞLARI',header=None)
+              headers=[AliasService.normalize(v) for v in df.iloc[1].tolist()]
+              total_cols=[i for i,v in enumerate(headers) if v=='TOPLAM']
               total_col=max(total_cols)
-              print(f'LAYOUT|rows={ws.max_row}|cols={ws.max_column}|total_cols={total_cols}|selected_total={total_col}')
-              reps={AliasService.normalize(r.rep_name):r for r in Representative.query.all()}
-              aliases={}
+              print(f'LAYOUT|shape={df.shape}|total_cols_0based={total_cols}|selected={total_col}')
+
+              alias_map={}
               for r in Representative.query.all():
                   for label in (r.rep_name,r.rep_code,r.ims_code):
-                      if label: aliases[AliasService.normalize(label)]=r
-              mismatches=[]; checked=0; source_missing=[]
-              for row in range(3,ws.max_row+1):
-                  raw=ws.cell(row,2).value
+                      if label: alias_map[AliasService.normalize(label)]=r
+              for a in RepresentativeAlias.query.all():
+                  if a.representative: alias_map[AliasService.normalize(a.alias_name)]=a.representative
+
+              target_rows=Target.query.filter_by(year=2026,month=3).all()
+              summary_rows=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3).all()
+              targets=defaultdict(Decimal); actuals=defaultdict(Decimal)
+              by_product_target={}; by_product_actual={}
+              for x in target_rows:
+                  targets[int(x.representative_id)]+=Decimal(str(x.tl_target or 0))
+                  by_product_target[(int(x.representative_id),int(x.product_id))]=Decimal(str(x.tl_target or 0))
+              for x in summary_rows:
+                  actuals[int(x.representative_id)]+=Decimal(str(x.tl or 0))
+                  by_product_actual[(int(x.representative_id),int(x.product_id))]=Decimal(str(x.tl or 0))
+
+              checked=0; mism=[]; unmatched=[]
+              for idx,row in df.iterrows():
+                  if idx<2: continue
+                  raw=row.iloc[1] if len(row)>1 else None
                   name=AliasService.normalize(raw)
-                  if not name or name=='NATIONAL' or (len(name)>4 and name[:3].isdigit() and name[3]==' '):
-                      continue
-                  rep=aliases.get(name)
-                  if rep is None:
-                      continue
-                  source_pct=ws.cell(row,total_col).value
-                  if source_pct is None:
-                      source_missing.append((row,raw)); continue
-                  try: source_pct=Decimal(str(source_pct))
+                  if not name or name=='NATIONAL' or (len(name)>4 and name[:3].isdigit() and name[3]==' '): continue
+                  rep=alias_map.get(name)
+                  if not rep:
+                      unmatched.append((idx+1,str(raw))); continue
+                  val=row.iloc[total_col] if total_col<len(row) else None
+                  try:
+                      if pd.isna(val): continue
+                      source=Decimal(str(float(val)))
                   except Exception: continue
-                  targets=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).all()
-                  summaries=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3,representative_id=rep.id).all()
-                  t=sum((Decimal(str(x.tl_target or 0)) for x in targets),Decimal('0'))
-                  a=sum((Decimal(str(x.tl or 0)) for x in summaries),Decimal('0'))
-                  db_pct=(a*Decimal('100')/t) if t else Decimal('0')
+                  target=targets[int(rep.id)]; actual=actuals[int(rep.id)]
+                  dbpct=actual*Decimal('100')/target if target else Decimal('0')
                   checked+=1
-                  diff=abs(db_pct-source_pct)
+                  diff=abs(dbpct-source)
                   if diff>Decimal('0.55'):
-                      mismatches.append((row,rep.id,rep.rep_name,rep.region,source_pct,db_pct,t,a,diff))
-              print(f'WORKBOOK_PERCENT_AUDIT|checked={checked}|mismatches={len(mismatches)}|source_missing={len(source_missing)}')
-              for x in mismatches:
-                  print('MISMATCH|row=%s|id=%s|name=%s|region=%s|source_pct=%s|db_pct=%s|target=%s|actual=%s|diff=%s'%x)
-              # Dump source cells and DB product rows for every mismatch.
-              for row,rep_id,name,region,sp,dp,t,a,diff in mismatches:
-                  vals=[]
-                  for c in range(1,ws.max_column+1):
-                      v=ws.cell(row,c).value
-                      if v is not None: vals.append(f'{c}={v}')
-                  print(f'SOURCE_ROW|row={row}|name={name}|'+';'.join(vals))
-                  ss=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3,representative_id=rep_id).all()
-                  ts={x.product_id:x for x in Target.query.filter_by(year=2026,month=3,representative_id=rep_id).all()}
-                  for s in ss:
-                      tt=ts.get(s.product_id)
-                      pct=(Decimal(str(s.tl or 0))*100/Decimal(str(tt.tl_target or 0))) if tt and tt.tl_target else Decimal('0')
-                      print(f'DB_PRODUCT|rep={name}|pid={s.product_id}|target={getattr(tt,"tl_target",None)}|actual={s.tl}|pct={pct}')
+                      mism.append((idx+1,rep,source,dbpct,target,actual,diff))
+              print(f'FULL_PERCENT_AUDIT|checked={checked}|mismatches={len(mism)}|unmatched_source_names={len(unmatched)}')
+              for rownum,rep,source,dbpct,target,actual,diff in mism:
+                  print(f'MISMATCH|row={rownum}|id={rep.id}|name={rep.rep_name}|region={rep.region}|source_pct={source}|db_pct={dbpct}|target={target}|actual={actual}|diff={diff}')
+                  for p in Product.query.filter_by(is_active=True).all():
+                      t=by_product_target.get((int(rep.id),int(p.id)),Decimal('0')); a=by_product_actual.get((int(rep.id),int(p.id)),Decimal('0'))
+                      pp=a*Decimal('100')/t if t else Decimal('0')
+                      print(f'PRODUCT|rep={rep.rep_name}|product={p.product_name}|target={t}|actual={a}|pct={pp}')
+              for rownum,name in unmatched[:30]: print(f'UNMATCHED_SOURCE|row={rownum}|name={name}')
+              print(f'KEY_COVERAGE|target={len(by_product_target)}|summary={len(by_product_actual)}|missing={len(set(by_product_target)-set(by_product_actual))}|extra={len(set(by_product_actual)-set(by_product_target))}')
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f'RUNTIME|processing={processing}|journal={journal}|busy_timeout={busy}')
           PY
           REMOTE
