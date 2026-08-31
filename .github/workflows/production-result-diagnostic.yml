@@ -50,10 +50,13 @@ jobs:
 
           app=create_app()
           with app.app_context():
-              print(f'PROCESSING_COUNT|{int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status=\'PROCESSING\'")).scalar() or 0)}')
+              processing = int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              print(f'PROCESSING_COUNT|{processing}')
               latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
               print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}')
-              print(f'LATEST_SUMMARY|tl={db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar()}|unit={db.session.query(db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.upload_id==latest.id).scalar()}')
+              summary_tl = db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar()
+              summary_unit = db.session.query(db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.upload_id==latest.id).scalar()
+              print(f'LATEST_SUMMARY|tl={summary_tl}|unit={summary_unit}')
 
               dq=DashboardQuery()
               filters=DashboardFilterParams(year=2026,month=3)
@@ -81,6 +84,8 @@ jobs:
               print(f'SERVICE_PERFORMANCE|{perf}')
               print(f'SERVICE_NATIONAL|{national_payload}')
               print(f'CACHE_AFTER|entries={len(cache._store)}|keys={list(cache._store.keys())[:10]}')
-              print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
+              jm = db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              bt = db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
           REMOTE
