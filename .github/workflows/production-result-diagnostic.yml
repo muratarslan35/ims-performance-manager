@@ -43,7 +43,7 @@ jobs:
           from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
           with app.app_context():
-              jobs=db.session.execute(db.text("SELECT id,status,ims_upload_id,source_file_name,source_hash,queued_at,started_at,completed_at,error_message FROM ims_import_jobs ORDER BY id DESC LIMIT 5")).mappings().all()
+              jobs=db.session.execute(db.text("SELECT * FROM ims_import_jobs ORDER BY id DESC LIMIT 5")).mappings().all()
               for r in jobs:
                   print('JOB|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
               processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar()
