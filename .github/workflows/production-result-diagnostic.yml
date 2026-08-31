@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit historical brick-sales header contracts
+      - name: Confirm post-deploy week-12 snapshot
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,25 +38,23 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json,re
-          from collections import Counter,defaultdict
           from app import create_app
           from app.extensions import db
+          from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
-          metric=re.compile(r'(^|\s)(TL|CIRO|VALUE|KUTU|BOX|UNIT|ADET)(\s|$)',re.I)
           with app.app_context():
-              uploads=db.session.execute(db.text("SELECT id,year,month,week_number,file_name,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year,month,week_number,id")).mappings().all()
-              for u in uploads:
-                  raws=db.session.execute(db.text("SELECT raw_json,unit,tl FROM ims_raw_data WHERE upload_id=:u AND sheet_type='brick_sales'"),{'u':u['id']}).mappings().all()
-                  if not raws: continue
-                  keys=Counter(); bare=Counter(); unit=0.0; tl=0.0
-                  for r in raws:
-                      unit+=float(r['unit'] or 0); tl+=float(r['tl'] or 0)
-                      try: sv=(json.loads(r['raw_json'] or '{}').get('source_values') or {})
-                      except Exception: sv={}
-                      for k in sv:
-                          keys[k]+=1
-                          if not metric.search(str(k)): bare[k]+=1
-                  print('HISTORY|id=%s|period=%s-%02d-w%s|file=%s|rows=%s|unit_sum=%s|tl_sum=%s|bare_headers=%s' % (u['id'],u['year'],u['month'],u['week_number'],u['file_name'],len(raws),unit,tl,json.dumps(bare,ensure_ascii=False,sort_keys=True)))
+              jobs=db.session.execute(db.text("SELECT id,status,ims_upload_id,source_file_name,source_hash,queued_at,started_at,completed_at,error_message FROM ims_import_jobs ORDER BY id DESC LIMIT 5")).mappings().all()
+              for r in jobs:
+                  print('JOB|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
+              processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar()
+              print(f'PROCESSING_COUNT|{processing}')
+              u=db.session.execute(db.text("SELECT id,file_name,status,year,month,week_number,reconciliation_status,raw_record_count,fact_record_count,summary_record_count FROM ims_uploads WHERE id=25")).mappings().one()
+              print('UPLOAD25|'+'|'.join(f'{k}={u[k]}' for k in u.keys()))
+              for t in ('ims_raw_data','ims_facts','ims_summary'):
+                  r=db.session.execute(db.text(f"SELECT COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM {t} WHERE upload_id=25")).mappings().one()
+                  print(f'SNAPSHOT|table={t}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
+              repo=DashboardRepository(db.session)
+              x=repo.load_latest_successful_summary()
+              print(f'DASHBOARD|id={x.id if x else None}|week={x.week_number if x else None}|status={x.status if x else None}|reconciliation={x.reconciliation_status if x else None}')
           PY
           REMOTE
