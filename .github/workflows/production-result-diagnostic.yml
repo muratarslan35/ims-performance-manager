@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit all week13 read paths
+      - name: Audit week14 target authority
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,94 +38,57 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from collections import defaultdict
           from decimal import Decimal
           from app import create_app
           from app.extensions import db
-          from app.models import CompetitionData, IMSRawData, IMSUpload, IMSSummary, Representative, Target
+          from app.models import IMSRawData, IMSUpload, IMSSummary, Target
           from app.query.dashboard_query import DashboardQuery
           from app.query.filters import DashboardFilterParams
           from app.services.region_performance_service import RegionPerformanceService
-          from app.services.region_market_service import RegionMarketService
           from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
-          from app.services.production_result_service import ProductionResultService
 
           app=create_app()
           with app.app_context():
-              year, month = 2026, 3
+              y,m=2026,3
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              latest=IMSUpload.query.filter_by(year=year,month=month,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
-              print(f'PROCESSING_COUNT|{processing}')
-              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}')
-              if processing != 0 or latest.id != 28 or latest.week_number != 13 or latest.reconciliation_status != 'PASSED':
-                  raise SystemExit('Latest IMS acceptance failed')
+              latest=IMSUpload.query.filter_by(year=y,month=m,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
+              print(f'PROCESSING|{processing}')
+              print(f'LATEST|id={latest.id}|week={latest.week_number}|file={latest.file_name}|recon={latest.reconciliation_status}|sheets={latest.sheet_count}|processed={latest.processed_sheets}')
+              print('RAW_TYPES|' + str(dict(db.session.query(IMSRawData.sheet_type,db.func.count(IMSRawData.id)).filter(IMSRawData.upload_id==latest.id).group_by(IMSRawData.sheet_type).all())))
+              print(f'SUMMARY|rows={IMSSummary.query.filter_by(upload_id=latest.id).count()}|tl={db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar()}')
+              print(f'OFFICIAL_IDS|target={OfficialAggregateService.latest_upload_id(y,m,TARGET_TYPE)}|actual={OfficialAggregateService.latest_upload_id(y,m,ACTUAL_TYPE)}|latest={OfficialAggregateService.latest_upload_id(y,m)}')
 
-              summary_tl=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar() or 0))
-              summary_rows=IMSSummary.query.filter_by(upload_id=latest.id).count()
-              print(f'SUMMARY|rows={summary_rows}|tl={summary_tl}')
-              print(f'OFFICIAL_SOURCE|target={OfficialAggregateService.latest_upload_id(year,month,TARGET_TYPE)}|actual={OfficialAggregateService.latest_upload_id(year,month,ACTUAL_TYPE)}|latest={OfficialAggregateService.latest_upload_id(year,month)}')
-              print(f'PRODUCTION_FINAL|{getattr(ProductionResultService.final_upload(year,month),"id",None)}')
+              # Inspect latest workbook rows that can carry target semantics for region 901.
+              rows=IMSRawData.query.filter(IMSRawData.upload_id==latest.id).filter(
+                  db.or_(IMSRawData.territory.like('901%'), IMSRawData.representative.like('901%'))
+              ).all()
+              by_type=defaultdict(lambda: [Decimal('0'),Decimal('0'),0])
+              for r in rows:
+                  b=by_type[str(r.sheet_type)]
+                  b[0]+=Decimal(str(r.unit or 0)); b[1]+=Decimal(str(r.tl or 0)); b[2]+=1
+              for k,v in sorted(by_type.items()):
+                  print(f'RAW901|type={k}|rows={v[2]}|unit={v[0]}|tl={v[1]}')
 
-              dq=DashboardQuery()
-              f=DashboardFilterParams(year=year,month=month)
-              national=dq.load_national_dashboard_metrics(f)
-              products=dq.load_product_performance(f)
+              # Current Target table region 901 values.
+              rps=RegionPerformanceService('901',y,m)
+              target_rows=Target.query.filter(Target.year==y,Target.month==m,Target.representative_id.in_(rps.rep_ids)).all()
+              print(f'TARGET901|reps={len(rps.rep_ids)}|rows={len(target_rows)}|tl={sum(Decimal(str(x.tl_target or 0)) for x in target_rows)}|unit={sum(Decimal(str(x.unit_target or 0)) for x in target_rows)}')
+
+              dq=DashboardQuery(); f=DashboardFilterParams(year=y,month=m)
               maps=dq.load_region_performance(f)
-              national_actual=Decimal(str(national.get('actual_tl') or 0))
-              product_actual=sum((Decimal(str(getattr(x,'realization_tl',0) or 0)) for x in products), Decimal('0'))
-              print(f'NATIONAL|target={national.get("target_tl")}|actual={national.get("actual_tl")}|real={national.get("realization_percent")}|unit_target={national.get("unit_target")}|unit_actual={national.get("unit_actual")}|products={len(products)}')
-              print(f'PRODUCT_SUM|target={sum(Decimal(str(getattr(x,"target_tl",0) or 0)) for x in products)}|actual={product_actual}')
-              if abs(national_actual-summary_tl) > Decimal('0.02') or abs(product_actual-summary_tl) > Decimal('0.02'):
-                  raise SystemExit('National/product latest TL mismatch')
+              rr=next((x for x in maps if str(getattr(x,'region',''))=='901'),None)
+              report=rps.report(); monthly=(report.get('periods') or {}).get('monthly') or {}
+              print(f'MAP901|target={getattr(rr,"tl_target",None)}|actual={getattr(rr,"tl_actual",None)}|reps={getattr(rr,"representative_count",None)}')
+              print(f'DETAIL901|target={monthly.get("target_tl")}|actual={monthly.get("actual_tl")}|real={monthly.get("realization_percent")}|reps={report.get("representative_count")}')
 
-              mismatches=[]
-              for row in maps:
-                  region=str(getattr(row,'region','')).strip()
-                  try:
-                      report=RegionPerformanceService(region,year,month).report()
-                  except ValueError:
-                      continue
-                  monthly=(report.get('periods') or {}).get('monthly') or {}
-                  map_target=Decimal(str(getattr(row,'tl_target',0) or 0)); map_actual=Decimal(str(getattr(row,'tl_actual',0) or 0))
-                  detail_target=Decimal(str(monthly.get('target_tl') or 0)); detail_actual=Decimal(str(monthly.get('actual_tl') or 0))
-                  map_reps=int(getattr(row,'representative_count',0) or 0); detail_reps=int(report.get('representative_count') or 0)
-                  ok=abs(map_target-detail_target) <= Decimal('0.02') and abs(map_actual-detail_actual) <= Decimal('0.02') and map_reps == detail_reps
-                  print(f'REGION_COMPARE|{region}|map_target={map_target}|detail_target={detail_target}|map_actual={map_actual}|detail_actual={detail_actual}|map_reps={map_reps}|detail_reps={detail_reps}|ok={int(ok)}')
-                  if not ok: mismatches.append(region)
-              if mismatches:
-                  raise SystemExit(f'Region map/detail mismatch: {mismatches}')
+              # Print candidate rows with exact 901 subtotal-like labels.
+              cand=IMSRawData.query.filter(IMSRawData.upload_id==latest.id).filter(
+                  db.or_(IMSRawData.territory.in_(['901','901 DIYARBAKIR']), IMSRawData.representative.in_(['901','901 DIYARBAKIR']))
+              ).order_by(IMSRawData.sheet_type,IMSRawData.source_row).all()
+              for r in cand[:100]:
+                  print(f'CAND901|sheet={r.sheet_name}|type={r.sheet_type}|row={r.source_row}|rep={r.representative}|terr={r.territory}|product={r.product_id}|unit={r.unit}|tl={r.tl}')
 
-              metric_counts=dict(db.session.query(CompetitionData.metric_type,db.func.count(CompetitionData.id)).filter(CompetitionData.upload_id==latest.id).group_by(CompetitionData.metric_type).all())
-              raw_counts=dict(db.session.query(IMSRawData.sheet_type,db.func.count(IMSRawData.id)).filter(IMSRawData.upload_id==latest.id,IMSRawData.sheet_type.in_(("brick_sales","competition_box"))).group_by(IMSRawData.sheet_type).all())
-              print(f'COMPETITION_METRICS|{metric_counts}')
-              print(f'RAW_ANALYSIS_LAYERS|{raw_counts}')
-              if int(metric_counts.get('UNIT',0) or 0) <= 0 or int(raw_counts.get('brick_sales',0) or 0) <= 0 or int(raw_counts.get('competition_box',0) or 0) <= 0:
-                  raise SystemExit('Week13 analysis layers missing')
-
-              region901=RegionPerformanceService('901',year,month)
-              market=RegionMarketService('901',region901.rep_ids,year,month)
-              market_upload=market._latest_upload_id()
-              competition_rows=market._competition_rows(market_upload)
-              print(f'REGION901_MARKET|upload={market_upload}|unit_rows={len(competition_rows)}|reps={len(region901.rep_ids)}')
-              if market_upload != latest.id or not competition_rows:
-                  raise SystemExit('Region competition path is not using latest week13 UNIT data')
-
-              # Representative/product effective TL must resolve to the latest summary when P1/P2 is absent.
-              target_keys=db.session.query(Target.representative_id,Target.product_id).filter(Target.year==year,Target.month==month).all()
-              sample=target_keys[:25]
-              bad=0
-              for rep_id, product_id in sample:
-                  expected=IMSSummary.query.filter_by(upload_id=latest.id,representative_id=rep_id,product_id=product_id).first()
-                  effective=ProductionResultService.effective_product(year,month,rep_id,product_id)
-                  if expected is None or abs(Decimal(str(effective.get('actual_tl') or 0))-Decimal(str(expected.tl or 0))) > Decimal('0.02'):
-                      bad += 1
-              print(f'REP_EFFECTIVE_SAMPLE|checked={len(sample)}|bad={bad}')
-              if bad:
-                  raise SystemExit('Representative effective TL mismatch')
-
-              jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
-              if str(jm).lower()!='wal' or int(bt)!=30000:
-                  raise SystemExit('SQLite runtime invariant failed')
-              print('FINAL_READ_PATH_ACCEPTANCE|PASS')
+              print(f'SQLITE|journal={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
           PY
           REMOTE
