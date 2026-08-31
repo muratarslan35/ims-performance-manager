@@ -21,7 +21,8 @@ def test_failed_retry_route_is_fail_closed_and_sha_guarded():
 def test_failed_rows_are_visible_and_retry_is_in_options_menu():
     source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")
     assert "Failed rows must stay visible" in source
-    assert '/ims/uploads/${id}/retry' in source
+    # Python f-string source escapes JS template braces as ${{id}}; rendered JS is ${id}.
+    assert '/ims/uploads/${{id}}/retry' in source
     assert "Tekrar Dene" in source
     assert "data-ims-options-toggle" in source
 
