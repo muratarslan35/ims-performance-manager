@@ -24,10 +24,12 @@ def _inject_lifecycle_markup(rendered: str) -> str:
     payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
     script = f"""
 <style>
-.ims-lifecycle-cell {{ min-width: 108px; }}
+.ims-lifecycle-cell {{ min-width: 108px; position:relative; overflow:visible; }}
 .ims-hidden-badge {{ margin-left:6px;font-size:10px;vertical-align:middle; }}
 .ims-lifecycle-dropdown .dropdown-item {{ font-size:12px; }}
 .ims-lifecycle-dropdown form {{ margin:0; }}
+.ims-lifecycle-dropdown .dropdown-menu.show {{ display:block; z-index:1080; }}
+#imsHistoryTable, #imsHistoryTable tbody, #imsHistoryTable tr {{ overflow:visible; }}
 </style>
 <script>
 (function() {{
@@ -69,14 +71,32 @@ def _inject_lifecycle_markup(rendered: str) -> str:
     headerRow.appendChild(th);
   }}
 
+  function closeMenus(except) {{
+    table.querySelectorAll('.ims-lifecycle-dropdown .dropdown-menu.show').forEach((menu) => {{
+      if (menu === except) return;
+      menu.classList.remove('show');
+      const button = menu.closest('.ims-lifecycle-dropdown')?.querySelector('[data-ims-options-toggle]');
+      if (button) button.setAttribute('aria-expanded', 'false');
+    }});
+  }}
+
   table.querySelectorAll('.ims-history-row').forEach((row) => {{
     const id = Number(row.dataset.id || 0);
     const isHidden = hiddenIds.has(id);
-    if (isHidden && !cfg.showHidden) {{
+    const isFailed = ['FAILED', 'Hata'].includes(row.dataset.status);
+
+    // Failed rows must stay visible so the administrator can inspect/retry them.
+    // Explicit lifecycle hiding still wins when the user intentionally hid a row.
+    if (isFailed && !isHidden) {{
+      row.hidden = false;
+      row.removeAttribute('aria-hidden');
+    }} else if (isHidden && !cfg.showHidden) {{
       row.hidden = true;
       row.setAttribute('aria-hidden', 'true');
     }}
     if (isHidden && cfg.showHidden) {{
+      row.hidden = false;
+      row.removeAttribute('aria-hidden');
       const fileCell = row.children[1];
       if (fileCell && !fileCell.querySelector('.ims-hidden-badge')) {{
         const badge = document.createElement('span');
@@ -95,11 +115,19 @@ def _inject_lifecycle_markup(rendered: str) -> str:
     const visibilityAction = isHidden ? 'show' : 'hide';
     const visibilityLabel = isHidden ? 'Göster' : 'Gizle';
     const visibilityIcon = isHidden ? 'bi-eye' : 'bi-eye-slash';
+    const retryItem = isFailed ? `
+          <li>
+            <form method="post" action="/ims/uploads/${{id}}/retry" data-ims-retry-form>
+              <button class="dropdown-item text-primary" type="submit"><i class="bi bi-arrow-clockwise me-2"></i>Tekrar Dene</button>
+            </form>
+          </li>
+          <li><hr class="dropdown-divider"></li>` : '';
 
     td.innerHTML = `
       <div class="dropdown ims-lifecycle-dropdown">
-        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-1 px-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="font-size:11px;">Seçenekler</button>
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-1 px-2" type="button" data-ims-options-toggle aria-expanded="false" style="font-size:11px;">Seçenekler</button>
         <ul class="dropdown-menu dropdown-menu-end">
+          ${{retryItem}}
           <li>
             <form method="post" action="/ims/uploads/${{id}}/${{visibilityAction}}">
               <button class="dropdown-item" type="submit"><i class="bi ${{visibilityIcon}} me-2"></i>${{visibilityLabel}}</button>
@@ -114,9 +142,36 @@ def _inject_lifecycle_markup(rendered: str) -> str:
         </ul>
       </div>`;
 
-    // Do not stop the dropdown toggle click from bubbling: Bootstrap's data API
-    // handles data-bs-toggle="dropdown" at document level. Blocking propagation
-    // makes the mobile/desktop "Seçenekler" button look disabled.
+    const toggleButton = td.querySelector('[data-ims-options-toggle]');
+    const menu = td.querySelector('.dropdown-menu');
+    if (toggleButton && menu) {{
+      toggleButton.addEventListener('click', (event) => {{
+        event.preventDefault();
+        event.stopPropagation();
+        const opening = !menu.classList.contains('show');
+        closeMenus(menu);
+        menu.classList.toggle('show', opening);
+        toggleButton.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      }});
+      menu.addEventListener('click', (event) => event.stopPropagation());
+    }}
+
+    const retryForm = td.querySelector('[data-ims-retry-form]');
+    if (retryForm) {{
+      retryForm.addEventListener('submit', () => {{
+        const badge = row.querySelector('.badge.bg-danger');
+        if (badge) {{
+          badge.className = 'badge bg-warning text-dark';
+          badge.textContent = 'Kuyruğa alınıyor';
+        }}
+        const button = retryForm.querySelector('button');
+        if (button) {{
+          button.disabled = true;
+          button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Yeniden işleniyor';
+        }}
+      }});
+    }}
+
     const deleteForm = td.querySelector('[data-ims-delete-form]');
     if (deleteForm && permission.allowed) {{
       deleteForm.addEventListener('submit', (event) => {{
@@ -128,6 +183,7 @@ def _inject_lifecycle_markup(rendered: str) -> str:
     row.appendChild(td);
   }});
 
+  document.addEventListener('click', () => closeMenus(null));
   const emptyRow = table.querySelector('tbody tr:not(.ims-history-row) td[colspan]');
   if (emptyRow) emptyRow.colSpan = 10;
 }})();

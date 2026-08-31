@@ -14,11 +14,11 @@ def test_lifecycle_ui_is_scoped_to_ims_history_and_replace_defaults_safe():
     assert "window.confirm" in source
 
 
-def test_options_dropdown_does_not_block_bootstrap_data_api_bubbling():
+def test_options_dropdown_has_native_click_fallback():
     source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")
-    assert 'data-bs-toggle="dropdown"' in source
-    assert "querySelectorAll('button, form')" not in source
-    assert "event.stopPropagation()" not in source
+    assert "data-ims-options-toggle" in source
+    assert "menu.classList.toggle('show', opening)" in source
+    assert "document.addEventListener('click', () => closeMenus(null))" in source
 
 
 def test_upload_route_rejects_exact_duplicate_and_requires_explicit_changed_week_replace():
