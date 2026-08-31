@@ -1,30 +1,26 @@
 """Carry forward representative IMS actuals when a weekly workbook is partial.
 
 A compact regional workbook may contain only incremental representative/product
-TL exits and omit the usual box, competition and brick-spread layers.  Such a
+TL exits and omit the usual box, competition and brick-spread layers. Such a
 workbook must not zero the representative's already-published IMS position.
 
-This adapter is intentionally narrow:
-- only current-week compact/partial uploads are eligible;
-- current TL/unit values are treated as increments over the pre-import period
-  actuals;
-- missing unit data therefore preserves the previous unit realization;
-- targets and IMSSummary actuals are updated together;
-- competition, market-share, brick-spread, prime and P2>P1>IMS precedence are
-  untouched.
-
-A separate repair helper exists for an already-published partial upload.  It uses
-the previous completed week's authoritative ``brick_sales`` facts as its baseline
-so it never mixes competition/realization fact streams into representative sales.
+Only representative/product actuals are changed. Competition, market share,
+brick spread, prime and P2>P1>IMS precedence remain untouched.
 """
 from __future__ import annotations
-
-from collections import defaultdict
 
 from sqlalchemy import desc, func
 
 from app.extensions import db
 from app.models import IMSFact, IMSSummary, IMSUpload, Target
+
+
+def combine_incremental_actuals(previous_unit, previous_tl, incremental_unit, incremental_tl):
+    """Add a partial IMS delta while preserving numeric zero as real data."""
+    return (
+        float(previous_unit or 0.0) + float(incremental_unit or 0.0),
+        float(previous_tl or 0.0) + float(incremental_tl or 0.0),
+    )
 
 
 def _actual_snapshot(year: int, month: int):
@@ -49,7 +45,7 @@ def _is_partial_compact_upload(importer) -> bool:
     if int(stats.get("official_brick_spread_present", 0) or 0) != 0:
         return False
 
-    totals = (
+    unit_total, tl_total = (
         db.session.query(
             func.coalesce(func.sum(func.abs(IMSSummary.unit)), 0.0),
             func.coalesce(func.sum(func.abs(IMSSummary.tl)), 0.0),
@@ -57,8 +53,7 @@ def _is_partial_compact_upload(importer) -> bool:
         .filter(IMSSummary.upload_id == int(upload.id))
         .one()
     )
-    unit_total, tl_total = float(totals[0] or 0.0), float(totals[1] or 0.0)
-    return unit_total == 0.0 and tl_total > 0.0
+    return float(unit_total or 0.0) == 0.0 and float(tl_total or 0.0) > 0.0
 
 
 def _apply_incremental_actuals(upload_id: int, year: int, month: int, baseline: dict) -> int:
@@ -76,10 +71,9 @@ def _apply_incremental_actuals(upload_id: int, year: int, month: int, baseline: 
             continue
         key = (int(summary.representative_id), int(summary.product_id))
         previous_unit, previous_tl = baseline.get(key, (0.0, 0.0))
-        incremental_unit = float(summary.unit or 0.0)
-        incremental_tl = float(summary.tl or 0.0)
-        combined_unit = previous_unit + incremental_unit
-        combined_tl = previous_tl + incremental_tl
+        combined_unit, combined_tl = combine_incremental_actuals(
+            previous_unit, previous_tl, summary.unit, summary.tl
+        )
 
         target = targets.get(key)
         if target is not None:
@@ -141,8 +135,8 @@ def _previous_full_brick_sales_baseline(upload: IMSUpload):
 
 
 def repair_existing_partial_upload(upload_id: int) -> dict:
-    """Repair one already-published compact partial upload from prior full sales facts."""
-    upload = IMSUpload.query.get(int(upload_id))
+    """Repair one published TL-only partial upload from prior full brick_sales facts."""
+    upload = db.session.get(IMSUpload, int(upload_id))
     if upload is None:
         raise ValueError(f"IMS upload {upload_id} bulunamadı")
     if upload.status != "COMPLETED" or upload.week_number is None:
