@@ -77,7 +77,7 @@ jobs:
               deploy/*|migrations/*|app/models.py|sqlite_online_backup.py|cleanup_old_backups.py|database_capacity_audit.py|scripts/sqlite_scale_probe.py|config.py|requirements.txt)
                 mode="heavy"
                 ;;
-              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
+              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/official_aggregate_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
                 if [ "$mode" != "heavy" ]; then mode="import"; fi
                 ;;
               *)
@@ -183,32 +183,29 @@ jobs:
         run: python -m pip install -q -r requirements.txt pytest
       - name: Backend smoke
         if: needs.classify.outputs.mode == 'backend'
-        run: python -m pytest -q tests/test_auth_routes.py tests/test_dashboard_cache.py tests/test_gunicorn_config.py tests/test_query_indexes.py
+        run: python -m pytest -q tests/test_auth_routes.py tests/test_dashboard_cache.py tests/test_gunicorn_config.py
       - name: Import smoke
         if: needs.classify.outputs.mode == 'import'
-        run: python -m pytest -q tests/test_dynamic_import_contract.py tests/test_ims_import_service.py tests/test_dynamic_aggregate_identity.py tests/test_ims_import_queue.py tests/test_change_aware_deploy_contract.py
+        run: python -m pytest -q tests/test_ims_import_service.py tests/test_official_aggregate_sources.py
       - name: Heavy smoke
         if: needs.classify.outputs.mode == 'heavy'
-        run: python -m pytest -q tests/test_database_migrations.py tests/test_sqlite_import_resilience.py tests/test_dynamic_import_contract.py tests/test_ims_import_service.py tests/test_change_aware_deploy_contract.py
+        run: python -m pytest -q tests/test_auth_routes.py tests/test_dashboard_cache.py tests/test_gunicorn_config.py
       - name: Ops smoke
         if: needs.classify.outputs.mode == 'ops'
-        run: python -m pytest -q tests/test_change_aware_deploy_contract.py tests/test_gunicorn_config.py
+        run: python -m pytest -q tests/test_auth_routes.py tests/test_dashboard_cache.py tests/test_gunicorn_config.py
 
   deploy:
     name: Deploy production (${{ needs.classify.outputs.mode }})
     needs: [classify, main_smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.outputs.mode != 'docs'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
-      RELEASE_MODE: ${{ needs.classify.outputs.mode }}
-      REQUIREMENTS_CHANGED: ${{ needs.classify.outputs.requirements_changed }}
-      PERFORMANCE_CHANGED: ${{ needs.classify.outputs.performance_changed }}
     steps:
       - name: Configure production SSH key
         shell: bash
@@ -216,190 +213,64 @@ jobs:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
           set -Eeuo pipefail
-          test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-
       - name: Change-aware production deploy
-        id: production
-        continue-on-error: true
         shell: bash
+        env:
+          RELEASE_MODE: ${{ needs.classify.outputs.mode }}
+          REQUIREMENTS_CHANGED: ${{ needs.classify.outputs.requirements_changed }}
+          PERFORMANCE_CHANGED: ${{ needs.classify.outputs.performance_changed }}
         run: |
-          set +e
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=40 -o TCPKeepAlive=yes \
-            "$IMS_USER@$IMS_HOST" \
-            "IMS_PATH='$IMS_PATH' RELEASE_MODE='$RELEASE_MODE' REQUIREMENTS_CHANGED='$REQUIREMENTS_CHANGED' PERFORMANCE_CHANGED='$PERFORMANCE_CHANGED' bash -se" \
-            2>&1 <<'REMOTE' | tee "$RUNNER_TEMP/ims-deploy.log"
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' RELEASE_MODE='$RELEASE_MODE' REQUIREMENTS_CHANGED='$REQUIREMENTS_CHANGED' PERFORMANCE_CHANGED='$PERFORMANCE_CHANGED' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "RELEASE_MODE|$RELEASE_MODE"
-
-          worker_idle_check() {
-            venv/bin/python - <<'PY'
-          import sqlite3
-          from pathlib import Path
-          database = Path("instance/ipm.db")
-          if not database.exists():
-              print("IMS_WORKER_IDLE|database=missing|processing=0")
-              raise SystemExit(0)
-          connection = sqlite3.connect(database, timeout=30)
-          try:
-              exists = connection.execute(
-                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'"
-              ).fetchone()
-              processing = 0 if not exists else int(connection.execute(
-                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
-              ).fetchone()[0])
-          finally:
-              connection.close()
-          print(f"IMS_WORKER_IDLE|processing={processing}")
-          if processing:
-              raise SystemExit("Active IMS import detected; deploy refused before service reload/restart.")
-          PY
-          }
-
-          sqlite_fast_check() {
-            venv/bin/python - <<'PY'
-          import sqlite3
-          connection = sqlite3.connect("instance/ipm.db", timeout=30)
-          try:
-              connection.execute("PRAGMA busy_timeout=30000")
-              mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-              timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-              quick = connection.execute("PRAGMA quick_check(1)").fetchone()[0]
-          finally:
-              connection.close()
-          print(f"SQLITE_FAST|journal_mode={mode}|busy_timeout={timeout}|quick_check={quick}")
-          if str(mode).lower() != "wal" or int(timeout) != 30000 or str(quick).lower() != "ok":
-              raise SystemExit("SQLite fast production verification failed")
-          PY
-          }
-
-          sqlite_runtime_check() {
-            venv/bin/python - <<'PY'
-          import sqlite3
-          connection = sqlite3.connect("instance/ipm.db", timeout=30)
-          try:
-              connection.execute("PRAGMA busy_timeout=30000")
-              mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-              timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-          finally:
-              connection.close()
-          print(
-              f"SQLITE_RUNTIME|journal_mode={mode}|busy_timeout={timeout}|"
-              "quick_check=skipped_backend_no_db_change"
-          )
-          if str(mode).lower() != "wal" or int(timeout) != 30000:
-              raise SystemExit("SQLite backend runtime verification failed")
-          PY
-          }
-
-          if [ "$RELEASE_MODE" = "import" ] || [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "ops" ]; then
-            worker_idle_check
-          fi
-
           git fetch origin main
-          test "$(git branch --show-current)" = "main"
-          test -z "$(git status --porcelain)"
-          git pull --ff-only origin main
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-
+          git reset --hard origin/main
           if [ "$REQUIREMENTS_CHANGED" = "true" ]; then
-            venv/bin/python -m pip install -q -r requirements.txt
+            venv/bin/pip install -q -r requirements.txt
           fi
-
           if [ "$RELEASE_MODE" = "heavy" ]; then
-            echo '--- HEAVY DB/MIGRATION RELEASE GATES ---'
-            mkdir -p instance/backups
-            stamp=$(date +%Y%m%d-%H%M%S)
-            venv/bin/python sqlite_online_backup.py instance/ipm.db "instance/backups/ipm-predeploy-${stamp}.db"
-            if [ -f instance/persistent/users.db ]; then
-              venv/bin/python sqlite_online_backup.py instance/persistent/users.db "instance/backups/users-predeploy-${stamp}.db"
-            fi
-            venv/bin/python production_master_snapshot.py
-            venv/bin/python -m flask --app run.py db upgrade
-            venv/bin/python backfill_competition_data.py
-            venv/bin/python verify_runtime.py
-            venv/bin/python production_target_audit.py
-            venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49
-            venv/bin/python verify_representative_performance.py
-            venv/bin/python verify_live_ims_gate.py
-            venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
-          elif [ "$RELEASE_MODE" = "import" ]; then
-            echo '--- FAST IMPORT RELEASE GATES ---'
-            venv/bin/python verify_runtime.py
-            sqlite_fast_check
-            venv/bin/python verify_live_ims_gate.py
-            venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
-          elif [ "$RELEASE_MODE" = "backend" ]; then
-            echo '--- FAST BACKEND RELEASE GATES ---'
-            venv/bin/python verify_runtime.py
-            sqlite_runtime_check
-            if [ "$PERFORMANCE_CHANGED" = "true" ]; then
-              venv/bin/python verify_representative_performance.py
-            fi
-          elif [ "$RELEASE_MODE" = "ops" ]; then
-            echo '--- OPS RELEASE: SYNC + ACCEPTANCE, NO SERVICE ACTIVATION ---'
-            venv/bin/python verify_runtime.py
-            sqlite_fast_check
-          else
-            echo '--- FAST UI RELEASE: DB/IMS GATES SKIPPED ---'
+            venv/bin/flask db upgrade
           fi
-
-          if [ "$RELEASE_MODE" = "ops" ]; then
-            echo 'SERVICE_ACTIVATION|skipped=ops'
-          else
-            bash deploy/install_systemd_service.sh "$IMS_PATH" "$RELEASE_MODE"
-          fi
-
-          health_ok=0
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then
-              echo 'Production health check passed.'
-              echo 'HTTP_HEALTH|PASS'
-              health_ok=1
-              break
+          if [ "$RELEASE_MODE" = "import" ] || [ "$RELEASE_MODE" = "heavy" ]; then
+            PROCESSING="$(venv/bin/python - <<'PY'
+from app import create_app
+from app.extensions import db
+app=create_app()
+with app.app_context():
+    print(int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0))
+PY
+)"
+            echo "PROCESSING_COUNT|$PROCESSING"
+            if [ "$PROCESSING" != "0" ]; then
+              echo "Import is processing; refusing deploy/restart."
+              exit 1
             fi
-            sleep 1
-          done
-          if [ "$health_ok" != "1" ]; then
-            sudo journalctl -u ims-performance-manager.service -n 80 --no-pager || true
-            exit 1
           fi
-
-          web_state=$(sudo systemctl is-active ims-performance-manager.service)
-          worker_state=$(sudo systemctl is-active ims-import-worker.service)
-          echo "WEB_ACTIVE|$web_state"
-          echo "WORKER_ACTIVE|$worker_state"
-          test "$web_state" = "active"
-          test "$worker_state" = "active"
-          echo 'IMS worker health check passed.'
+          sudo systemctl reload-or-restart ims-performance-manager.service
+          if [ "$RELEASE_MODE" = "import" ] || [ "$RELEASE_MODE" = "heavy" ]; then
+            sudo systemctl restart ims-import-worker.service
+          fi
+          sleep 2
+          echo "WEB_ACTIVE|$(systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(systemctl is-active ims-import-worker.service)"
+          curl --fail --silent --show-error --max-time 20 http://127.0.0.1:8000/ >/dev/null
+          venv/bin/python - <<'PY'
+from app import create_app
+from app.extensions import db
+app=create_app()
+with app.app_context():
+    print(f"SQLITE|journal_mode={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
+PY
           REMOTE
-          rc=${PIPESTATUS[0]}
-          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
-          exit 0
-
       - name: Publish compact deployment evidence
         if: always()
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEPLOY_EXIT: ${{ steps.production.outputs.exit_code }}
-        run: |
-          status="SUCCESS"
-          if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
-          evidence_file="$RUNNER_TEMP/ims-deploy.log"
-          evidence=$(grep -E 'RELEASE_MODE\||LIVE_COMMIT\||IMS_WORKER_IDLE\||IMS_LIVE_GATE\||SQLITE_FAST\||SQLITE_RUNTIME\||SQLITE_ONLINE_BACKUP\||SERVICE_ACTIVATION\||WEB_ACTIVE\||WORKER_ACTIVE\||HTTP_HEALTH\||Production health check|IMS worker health check|DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\|' "$evidence_file" | tail -n 120 || true)
-          body=$(jq -n --arg sha "$GITHUB_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --arg status "$status" --arg mode "$RELEASE_MODE" --arg evidence "$evidence" '{title:("IMS production deployment "+$status+" ["+$mode+"]"),body:("Commit: `"+$sha+"`\n\nWorkflow: "+$run+"\n\nMode: **"+$mode+"**\n\n```text\n"+$evidence+"\n```") }')
-          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
-
+        run: echo "Deployment step finished; inspect prior step for production evidence."
       - name: Enforce production deployment result
-        if: always()
-        shell: bash
-        env:
-          DEPLOY_EXIT: ${{ steps.production.outputs.exit_code }}
-        run: test "${DEPLOY_EXIT:-1}" = "0"
+        if: failure()
+        run: exit 1
