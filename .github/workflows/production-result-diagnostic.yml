@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,81 +29,264 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Compare all source totals to DB
+
+      - name: Repair and verify week14 compact TTS representative actuals
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=40 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+
+          expected_commit='3e6edb96fa9f4c6ad95ec73589b7204e766f03f8'
+          live_commit=$(git rev-parse HEAD)
+          echo "LIVE_COMMIT|$live_commit"
+          test "$live_commit" = "$expected_commit"
+
+          processing=$(venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          app=create_app()
+          with app.app_context():
+              print(int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0))
+          PY
+          )
+          echo "PROCESSING_COUNT|$processing"
+          test "$processing" = "0"
+
+          stamp=$(date +%Y%m%d_%H%M%S)
+          mkdir -p backups
+          backup="backups/pre_week14_compact_tts_actual_repair_${stamp}.sqlite"
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "$backup"
+          test -s "$backup"
+          echo "BACKUP|path=$backup|bytes=$(stat -c%s "$backup")"
+
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from collections import defaultdict
           from decimal import Decimal
+          import math
           import pandas as pd
+          from sqlalchemy import func
+
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, Representative, RepresentativeAlias, Target, IMSSummary, Product
+          from app.models import (
+              CompetitionData,
+              IMSFact,
+              IMSRawData,
+              IMSSummary,
+              IMSUpload,
+              Product,
+              Representative,
+              Target,
+          )
           from app.services.alias_service import AliasService
+          from app.services.compact_tts_import_actual_authority import (
+              _blank,
+              _compact_layout,
+              _region_subtotal,
+              apply_compact_tts_representative_actuals,
+          )
+          from app.services.ims_import_service import IMSImportService
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+
+          UPLOAD_ID=29
+          YEAR=2026
+          MONTH=3
+          WEEK=14
+
+          def D(value):
+              return Decimal(str(value or 0))
+
+          def close(a,b,tol=Decimal('0.02')):
+              return abs(D(a)-D(b)) <= tol
 
           app=create_app()
           with app.app_context():
-              path=IMSUploadLifecycleService.archived_source_for_upload(29)
-              df=pd.read_excel(path,sheet_name='TTS ÇIKIŞLARI',header=None)
-              headers=[AliasService.normalize(v) for v in df.iloc[1].tolist()]
-              total_cols=[i for i,v in enumerate(headers) if v=='TOPLAM']
-              total_col=max(total_cols)
-              print(f'LAYOUT|shape={df.shape}|total_cols_0based={total_cols}|selected={total_col}')
+              upload=db.session.get(IMSUpload,UPLOAD_ID)
+              assert upload is not None, 'upload29 missing'
+              assert upload.status=='COMPLETED', upload.status
+              assert upload.reconciliation_status=='PASSED', upload.reconciliation_status
+              assert (upload.year,upload.month,upload.week_number)==(YEAR,MONTH,WEEK), (upload.year,upload.month,upload.week_number)
 
-              alias_map={}
-              for r in Representative.query.all():
-                  for label in (r.rep_name,r.rep_code,r.ims_code):
-                      if label: alias_map[AliasService.normalize(label)]=r
-              for a in RepresentativeAlias.query.all():
-                  if a.representative: alias_map[AliasService.normalize(a.alias_name)]=a.representative
-
-              target_rows=Target.query.filter_by(year=2026,month=3).all()
-              summary_rows=IMSSummary.query.filter_by(upload_id=29,year=2026,month=3).all()
-              targets=defaultdict(Decimal); actuals=defaultdict(Decimal)
-              by_product_target={}; by_product_actual={}
-              for x in target_rows:
-                  targets[int(x.representative_id)]+=Decimal(str(x.tl_target or 0))
-                  by_product_target[(int(x.representative_id),int(x.product_id))]=Decimal(str(x.tl_target or 0))
-              for x in summary_rows:
-                  actuals[int(x.representative_id)]+=Decimal(str(x.tl or 0))
-                  by_product_actual[(int(x.representative_id),int(x.product_id))]=Decimal(str(x.tl or 0))
-
-              checked=0; mism=[]; unmatched=[]
-              for idx,row in df.iterrows():
-                  if idx<2: continue
-                  raw=row.iloc[1] if len(row)>1 else None
-                  name=AliasService.normalize(raw)
-                  if not name or name=='NATIONAL' or (len(name)>4 and name[:3].isdigit() and name[3]==' '): continue
-                  rep=alias_map.get(name)
-                  if not rep:
-                      unmatched.append((idx+1,str(raw))); continue
-                  val=row.iloc[total_col] if total_col<len(row) else None
-                  try:
-                      if pd.isna(val): continue
-                      source=Decimal(str(float(val)))
-                  except Exception: continue
-                  target=targets[int(rep.id)]; actual=actuals[int(rep.id)]
-                  dbpct=actual*Decimal('100')/target if target else Decimal('0')
-                  checked+=1
-                  diff=abs(dbpct-source)
-                  if diff>Decimal('0.55'):
-                      mism.append((idx+1,rep,source,dbpct,target,actual,diff))
-              print(f'FULL_PERCENT_AUDIT|checked={checked}|mismatches={len(mism)}|unmatched_source_names={len(unmatched)}')
-              for rownum,rep,source,dbpct,target,actual,diff in mism:
-                  print(f'MISMATCH|row={rownum}|id={rep.id}|name={rep.rep_name}|region={rep.region}|source_pct={source}|db_pct={dbpct}|target={target}|actual={actual}|diff={diff}')
-                  for p in Product.query.filter_by(is_active=True).all():
-                      t=by_product_target.get((int(rep.id),int(p.id)),Decimal('0')); a=by_product_actual.get((int(rep.id),int(p.id)),Decimal('0'))
-                      pp=a*Decimal('100')/t if t else Decimal('0')
-                      print(f'PRODUCT|rep={rep.rep_name}|product={p.product_name}|target={t}|actual={a}|pct={pp}')
-              for rownum,name in unmatched[:30]: print(f'UNMATCHED_SOURCE|row={rownum}|name={name}')
-              print(f'KEY_COVERAGE|target={len(by_product_target)}|summary={len(by_product_actual)}|missing={len(set(by_product_target)-set(by_product_actual))}|extra={len(set(by_product_actual)-set(by_product_target))}')
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              assert processing==0, f'processing={processing}'
+
+              archive=IMSUploadLifecycleService.archived_source_for_upload(UPLOAD_ID)
+              assert archive and archive.exists(), archive
+              print(f'ARCHIVE|{archive}')
+
+              before={
+                  'fact_count': IMSFact.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'fact_tl': db.session.query(func.coalesce(func.sum(IMSFact.tl),0)).filter_by(upload_id=UPLOAD_ID).scalar(),
+                  'fact_unit': db.session.query(func.coalesce(func.sum(IMSFact.unit),0)).filter_by(upload_id=UPLOAD_ID).scalar(),
+                  'raw_count': IMSRawData.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'official_count': IMSRawData.query.filter(
+                      IMSRawData.upload_id==UPLOAD_ID,
+                      IMSRawData.sheet_type.in_(("official_target_aggregate","official_actual_aggregate")),
+                  ).count(),
+                  'competition_count': CompetitionData.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'summary_count': IMSSummary.query.filter_by(upload_id=UPLOAD_ID,year=YEAR,month=MONTH).count(),
+                  'target_count': Target.query.filter_by(year=YEAR,month=MONTH).count(),
+                  'target_tl_sum': db.session.query(func.coalesce(func.sum(Target.tl_target),0)).filter_by(year=YEAR,month=MONTH).scalar(),
+              }
+              print('BEFORE|'+'|'.join(f'{k}={v}' for k,v in before.items()))
+              assert before['fact_count']==791
+              assert before['summary_count']==791
+              assert before['target_count']==791
+              assert before['official_count']==168
+
+              service=IMSImportService(str(archive), uploaded_by=None)
+              service.upload=upload
+              service.workbook=pd.read_excel(archive, sheet_name=None, header=None)
+              layout=_compact_layout(service)
+              assert layout is not None, 'compact layout unavailable'
+              print(f"LAYOUT|sheet={layout['sheet_name']}|header_row={layout['header_row']}|products={len(layout['product_ids'])}")
+
+              # Capture workbook source authority independently before mutation.
+              frame=layout['frame']
+              header_row=layout['header_row']
+              groups=[]; totals=[]; current={}
+              for col in range(frame.shape[1]):
+                  label=service.clean_text(frame.iloc[header_row,col])
+                  norm=AliasService.normalize(label)
+                  if norm in {'TOPLAM','TOTAL','GENEL TOPLAM','GRAND TOTAL'}:
+                      groups.append(current); current={}; totals.append(col); continue
+                  match=service.resolve_product_match(label) if label else {'matched':False}
+                  if match.get('matched'):
+                      current[int(match['object'].id)]=col
+              if current: groups.append(current)
+              assert len(groups)>=3 and len(totals)>=3, (len(groups),totals)
+              target_cols,actual_cols,percent_cols=groups[:3]
+              assert set(target_cols)==set(actual_cols)==set(percent_cols)==set(layout['product_ids'])
+
+              source_target={}; source_actual={}; source_pct={}; source_rep_rows=0; unmatched=[]
+              for row_index in range(header_row+1,len(frame.index)):
+                  rep_name=service.clean_text(frame.iloc[row_index,layout['representative_column']])
+                  norm=AliasService.normalize(rep_name)
+                  if not rep_name or norm=='NATIONAL' or _region_subtotal(rep_name):
+                      continue
+                  rep_match=service.resolve_representative_match(rep_name)
+                  rep_id=int(rep_match['object'].id) if rep_match.get('matched') else None
+                  if rep_id is None and service._is_vacancy_representative(rep_name):
+                      location=''
+                      if layout['region_column'] is not None:
+                          location=service.clean_text(frame.iloc[row_index,layout['region_column']])
+                      rep_id=int(service._ensure_vacancy_representative(location,vacancy_name=rep_name))
+                  if rep_id is None:
+                      unmatched.append((row_index+1,rep_name)); continue
+                  source_rep_rows+=1
+                  for product_id,col in target_cols.items():
+                      raw=frame.iloc[row_index,col]
+                      if not _blank(raw): source_target[(rep_id,int(product_id))]=D(service.safe_float(raw))
+                  for product_id,col in actual_cols.items():
+                      raw=frame.iloc[row_index,col]
+                      if not _blank(raw): source_actual[(rep_id,int(product_id))]=D(service.safe_float(raw))
+                  pct_raw=frame.iloc[row_index,totals[2]]
+                  if not _blank(pct_raw): source_pct[rep_id]=D(service.safe_float(pct_raw))
+
+              print(f'SOURCE|representatives={source_rep_rows}|target_values={len(source_target)}|actual_values={len(source_actual)}|pct_rows={len(source_pct)}|unmatched={len(unmatched)}')
+              assert not unmatched, unmatched[:20]
+              assert source_rep_rows==101, source_rep_rows
+              assert len(source_target)==707, len(source_target)
+              assert len(source_actual)==707, len(source_actual)
+
+              result=apply_compact_tts_representative_actuals(service,YEAR,MONTH)
+              print(f'REPAIR_RESULT|{result}')
+              assert result.get('source')=='compact_tts_direct_actual', result
+              assert int(result.get('rows') or 0)==101, result
+              assert int(result.get('updated_values') or 0)==707, result
+              db.session.commit()
+
+              summaries={(int(x.representative_id),int(x.product_id)):x for x in IMSSummary.query.filter_by(upload_id=UPLOAD_ID,year=YEAR,month=MONTH).all()}
+              targets={(int(x.representative_id),int(x.product_id)):x for x in Target.query.filter_by(year=YEAR,month=MONTH).all()}
+
+              target_mism=[]; actual_mism=[]; realization_mism=[]
+              for key,expected in source_target.items():
+                  row=targets.get(key)
+                  if row is None or not close(row.tl_target,expected):
+                      target_mism.append((key,expected,None if row is None else row.tl_target))
+              for key,expected in source_actual.items():
+                  s=summaries.get(key); t=targets.get(key)
+                  if s is None or not close(s.tl,expected):
+                      actual_mism.append((key,expected,None if s is None else s.tl))
+                  if t is None or not close(t.tl_realization,expected):
+                      realization_mism.append((key,expected,None if t is None else t.tl_realization))
+              print(f'KEY_AUDIT|target_mismatches={len(target_mism)}|summary_actual_mismatches={len(actual_mism)}|target_realization_mismatches={len(realization_mism)}')
+              for item in (target_mism+actual_mism+realization_mism)[:20]: print(f'KEY_MISMATCH|{item}')
+              assert not target_mism
+              assert not actual_mism
+              assert not realization_mism
+
+              # Source TOPLAM percentage -> DB representative total realization.
+              target_totals=defaultdict(Decimal); actual_totals=defaultdict(Decimal)
+              for key,val in source_target.items(): target_totals[key[0]]+=val
+              for key,val in source_actual.items(): actual_totals[key[0]]+=val
+              pct_mism=[]
+              for rep_id,expected_pct in source_pct.items():
+                  target=target_totals[rep_id]; actual=actual_totals[rep_id]
+                  calc=(actual*Decimal('100')/target) if target else Decimal('0')
+                  if abs(calc-expected_pct)>Decimal('0.55'):
+                      rep=db.session.get(Representative,rep_id)
+                      pct_mism.append((rep.rep_name if rep else rep_id,expected_pct,calc,target,actual))
+              print(f'FULL_PERCENT_AUDIT|checked={len(source_pct)}|mismatches={len(pct_mism)}')
+              for item in pct_mism[:20]: print(f'PCT_MISMATCH|{item}')
+              assert not pct_mism
+
+              # Specific evidence for the originally visible Diyarbakir mismatches.
+              for name in ('GULBAHAR KARA','YASIN TINI'):
+                  rep=next((r for r in Representative.query.all() if AliasService.normalize(r.rep_name)==name),None)
+                  assert rep is not None, name
+                  rid=int(rep.id); target=target_totals[rid]; actual=actual_totals[rid]
+                  pct=(actual*Decimal('100')/target) if target else Decimal('0')
+                  print(f'DIYARBAKIR_REP|name={rep.rep_name}|target={target}|actual={actual}|pct={pct}')
+
+              after={
+                  'fact_count': IMSFact.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'fact_tl': db.session.query(func.coalesce(func.sum(IMSFact.tl),0)).filter_by(upload_id=UPLOAD_ID).scalar(),
+                  'fact_unit': db.session.query(func.coalesce(func.sum(IMSFact.unit),0)).filter_by(upload_id=UPLOAD_ID).scalar(),
+                  'raw_count': IMSRawData.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'official_count': IMSRawData.query.filter(
+                      IMSRawData.upload_id==UPLOAD_ID,
+                      IMSRawData.sheet_type.in_(("official_target_aggregate","official_actual_aggregate")),
+                  ).count(),
+                  'competition_count': CompetitionData.query.filter_by(upload_id=UPLOAD_ID).count(),
+                  'summary_count': IMSSummary.query.filter_by(upload_id=UPLOAD_ID,year=YEAR,month=MONTH).count(),
+                  'target_count': Target.query.filter_by(year=YEAR,month=MONTH).count(),
+                  'target_tl_sum': db.session.query(func.coalesce(func.sum(Target.tl_target),0)).filter_by(year=YEAR,month=MONTH).scalar(),
+              }
+              print('AFTER|'+'|'.join(f'{k}={v}' for k,v in after.items()))
+              for key in ('fact_count','raw_count','official_count','competition_count','summary_count','target_count'):
+                  assert after[key]==before[key], (key,before[key],after[key])
+              for key in ('fact_tl','fact_unit','target_tl_sum'):
+                  assert close(after[key],before[key],Decimal('0.0001')), (key,before[key],after[key])
+
+              # Official region/NATIONAL side channel must remain untouched.
+              diy_rows=IMSRawData.query.filter(
+                  IMSRawData.upload_id==UPLOAD_ID,
+                  IMSRawData.sheet_type.in_(("official_target_aggregate","official_actual_aggregate")),
+                  IMSRawData.territory=='901 DIYARBAKIR',
+              ).all()
+              print(f'DIYARBAKIR_OFFICIAL_ROWS|count={len(diy_rows)}')
+              assert len(diy_rows)==14, len(diy_rows)
+
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'RUNTIME|processing={processing}|journal={journal}|busy_timeout={busy}')
+              assert processing==0
+              assert str(journal).lower()=='wal'
+              assert int(busy)==30000
+              print('WEEK14_COMPACT_TTS_REPRESENTATIVE_ACCEPTANCE|PASS')
           PY
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python verify_live_ims_gate.py
+
+          # Clear per-worker in-memory dashboard caches after the DB repair.
+          sudo systemctl reload ims-performance-manager.service
+          sleep 3
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'HTTP_HEALTH|PASS'
+          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
           REMOTE
