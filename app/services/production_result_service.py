@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
-from app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target
+from app.models import IMSUpload, IMSSummary, ProductionResult, ProductionResultUpload, Target
 
 
 class ProductionResultService:
@@ -31,6 +31,30 @@ class ProductionResultService:
                 ProductionResultUpload.id.desc(),
             )
             .all()
+        )
+
+    @classmethod
+    def latest_successful_ims_upload(cls, year, month):
+        """Return the one IMS snapshot allowed to satisfy IMS fallback.
+
+        Multiple weekly uploads can coexist inside the same month. Read paths
+        must never let an older summary row win through an unordered ``first``.
+        Only the latest completed and reconciled snapshot is authoritative.
+        """
+        return (
+            IMSUpload.query.filter_by(
+                year=int(year),
+                month=int(month),
+                status="COMPLETED",
+                reconciliation_status="PASSED",
+            )
+            .filter(IMSUpload.summary_record_count > 0)
+            .order_by(
+                IMSUpload.week_number.desc(),
+                IMSUpload.completed_at.desc(),
+                IMSUpload.id.desc(),
+            )
+            .first()
         )
 
     @classmethod
@@ -71,11 +95,16 @@ class ProductionResultService:
         if not resolved_ids:
             return {}
 
-        summary_query = IMSSummary.query.filter_by(
-            year=year, month=month, representative_id=representative_id,
-        ).filter(IMSSummary.product_id.in_(resolved_ids))
-        summaries = summary_query.all()
-        summaries_by_product = {int(summary.product_id): summary for summary in summaries}
+        latest_ims_upload = cls.latest_successful_ims_upload(year, month)
+        summaries_by_product = {}
+        if latest_ims_upload is not None:
+            summaries = IMSSummary.query.filter_by(
+                upload_id=latest_ims_upload.id,
+                year=year,
+                month=month,
+                representative_id=representative_id,
+            ).filter(IMSSummary.product_id.in_(resolved_ids)).all()
+            summaries_by_product = {int(summary.product_id): summary for summary in summaries}
 
         uploads = cls.applied_uploads(year, month)
         upload_ids = [int(upload.id) for upload in uploads]
@@ -183,9 +212,16 @@ class ProductionResultService:
                 "actual_unit": actual_unit,
             }
 
-        summary = IMSSummary.query.filter_by(
-            year=year, month=month, representative_id=representative_id, product_id=product_id,
-        ).first()
+        latest_ims_upload = cls.latest_successful_ims_upload(year, month)
+        summary = None
+        if latest_ims_upload is not None:
+            summary = IMSSummary.query.filter_by(
+                upload_id=latest_ims_upload.id,
+                year=year,
+                month=month,
+                representative_id=representative_id,
+                product_id=product_id,
+            ).first()
         actual_tl = cls._d(summary.tl if summary else 0)
         actual_unit = cls._d(summary.unit if summary else 0)
         percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")
