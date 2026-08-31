@@ -29,78 +29,105 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit Diyarbakir arithmetic
+      - name: Repair upload 27 cumulative overlay
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          EXPECTED_COMMIT='c2e64a892a1a1ec46a9c6f2993dd3cbb1ce81aab'
+          LIVE_COMMIT="$(git rev-parse HEAD)"
+          echo "LIVE_COMMIT|$LIVE_COMMIT"
+          test "$LIVE_COMMIT" = "$EXPECTED_COMMIT"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlite3
+          from datetime import datetime
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
+          from app.services.partial_ims_import_carry_forward import repair_existing_partial_upload
+
           app=create_app()
-          names=['YAKUP CAGIR','VEYSI OZDAMAR','GOKHAN DUMAN','MURAT ARSLAN','MUSTAFA ALMAZ','OZGECAN GULACAR','DIYARBAKIR BOS','GULBAHAR KARA','YASIN TINI']
           with app.app_context():
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'PROCESSING_COUNT|{processing}')
-              reps=db.session.execute(db.text("SELECT id,rep_name FROM representatives ORDER BY id")).mappings().all()
-              selected=[]
-              for wanted in names:
-                  w=wanted.replace(' ','').replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C').upper()
-                  matches=[]
-                  for r in reps:
-                      n=(r['rep_name'] or '').replace(' ','').replace('İ','I').replace('Ş','S').replace('Ğ','G').replace('Ü','U').replace('Ö','O').replace('Ç','C').upper()
-                      if w in n:
-                          matches.append(r)
-                  if matches:
-                      r=matches[0]; selected.append((wanted,int(r['id']),r['rep_name']))
-                      print(f'REP_MATCH|wanted={wanted}|id={r["id"]}|db={r["rep_name"]}')
-                  else:
-                      print(f'REP_MISSING|wanted={wanted}')
-              ids=[x[1] for x in selected]
-              for wanted,rid,dbn in selected:
-                  vals={}
-                  for label,uid in [('w11',23),('w12source',27)]:
-                      row=db.session.execute(db.text("""
-                        SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl
-                        FROM ims_facts WHERE upload_id=:u AND report_type='brick_sales' AND representative_id=:r
-                      """),{'u':uid,'r':rid}).mappings().one()
-                      vals[label]=(float(row['unit'] or 0),float(row['tl'] or 0))
-                  s=db.session.execute(db.text("""
-                    SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl
-                    FROM ims_summary WHERE upload_id=27 AND representative_id=:r
-                  """),{'r':rid}).mappings().one()
-                  t=db.session.execute(db.text("""
-                    SELECT COALESCE(SUM(unit_target),0) unit_target,COALESCE(SUM(tl_target),0) tl_target,
-                           COALESCE(SUM(unit_realization),0) unit_real,COALESCE(SUM(tl_realization),0) tl_real
-                    FROM targets WHERE year=2026 AND month=3 AND representative_id=:r
-                  """),{'r':rid}).mappings().one()
-                  print(f'REP_TOTAL|rep={dbn}|w11_unit={vals["w11"][0]:.6f}|w11_tl={vals["w11"][1]:.6f}|w12source_unit={vals["w12source"][0]:.6f}|w12source_tl={vals["w12source"][1]:.6f}|sum_tl={float(s["tl"] or 0):.6f}|target_tl={float(t["tl_target"] or 0):.6f}|target_real_tl={float(t["tl_real"] or 0):.6f}|target_real_unit={float(t["unit_real"] or 0):.6f}')
-                  prows=db.session.execute(db.text("""
-                    SELECT p.product_name,
-                      COALESCE(f11.unit,0) w11_unit,COALESCE(f11.tl,0) w11_tl,
-                      COALESCE(f12.unit,0) w12_unit,COALESCE(f12.tl,0) w12_tl,
-                      COALESCE(s.unit,0) summary_unit,COALESCE(s.tl,0) summary_tl,
-                      COALESCE(t.tl_target,0) target_tl,COALESCE(t.tl_realization,0) target_real_tl
-                    FROM products p
-                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales' AND representative_id=:r GROUP BY product_id) f11 ON f11.product_id=p.id
-                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_facts WHERE upload_id=27 AND report_type='brick_sales' AND representative_id=:r GROUP BY product_id) f12 ON f12.product_id=p.id
-                    LEFT JOIN (SELECT product_id,SUM(unit) unit,SUM(tl) tl FROM ims_summary WHERE upload_id=27 AND representative_id=:r GROUP BY product_id) s ON s.product_id=p.id
-                    LEFT JOIN targets t ON t.year=2026 AND t.month=3 AND t.representative_id=:r AND t.product_id=p.id
-                    WHERE f11.product_id IS NOT NULL OR f12.product_id IS NOT NULL OR s.product_id IS NOT NULL OR t.id IS NOT NULL
-                    ORDER BY p.product_name
-                  """),{'r':rid}).mappings().all()
-                  for pr in prows:
-                      print(f'PRODUCT|rep={dbn}|product={pr["product_name"]}|w11u={float(pr["w11_unit"] or 0):.3f}|w11tl={float(pr["w11_tl"] or 0):.3f}|w12u={float(pr["w12_unit"] or 0):.3f}|w12tl={float(pr["w12_tl"] or 0):.3f}|summaryu={float(pr["summary_unit"] or 0):.3f}|summarytl={float(pr["summary_tl"] or 0):.3f}|targettl={float(pr["target_tl"] or 0):.3f}|targetrealtl={float(pr["target_real_tl"] or 0):.3f}')
-              if ids:
-                  q=','.join(str(x) for x in ids)
-                  for label,sql in [
-                    ('W11_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales' AND representative_id IN ({q})"),
-                    ('W12_SOURCE_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=27 AND report_type='brick_sales' AND representative_id IN ({q})"),
-                    ('W12_SUMMARY_GROUP',f"SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=27 AND representative_id IN ({q})")]:
-                      row=db.session.execute(db.text(sql)).mappings().one(); print(f'{label}|unit={float(row["unit"] or 0):.6f}|tl={float(row["tl"] or 0):.6f}')
+              if processing != 0:
+                  raise RuntimeError('Aktif IMS import varken onarım reddedildi')
+              latest=db.session.execute(db.text("SELECT id,status,ims_upload_id FROM ims_import_jobs ORDER BY id DESC LIMIT 1")).mappings().first()
+              print(f'LATEST_JOB|id={latest["id"]}|status={latest["status"]}|upload_id={latest["ims_upload_id"]}')
+              if int(latest['id']) != 19 or latest['status'] != 'COMPLETED' or int(latest['ims_upload_id']) != 27:
+                  raise RuntimeError('Beklenen latest job/upload değişti; onarım reddedildi')
+
+              facts_before=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=27")).mappings().one()
+              summary_before=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=27")).mappings().one()
+              competition_before=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_competition_data")).scalar() or 0)
+              print(f'FACTS_BEFORE|rows={facts_before["rows"]}|unit={facts_before["unit"]}|tl={facts_before["tl"]}')
+              print(f'SUMMARY_BEFORE|rows={summary_before["rows"]}|unit={summary_before["unit"]}|tl={summary_before["tl"]}')
+              print(f'COMPETITION_BEFORE|{competition_before}')
+              if int(facts_before['rows']) != 791 or abs(float(facts_before['tl'] or 0)-90278166.66155168) > 1.0:
+                  raise RuntimeError('Immutable upload27 facts beklenen kaynak imzasında değil')
+
+              db_path=Path(str(db.engine.url.database)).resolve()
+              backup_dir=Path(app.config.get('BACKUP_FOLDER') or (db_path.parent/'backups'))
+              backup_dir.mkdir(parents=True,exist_ok=True)
+              backup_path=backup_dir/f'pre_week12_overlay_repair_{datetime.now().strftime("%Y%m%d_%H%M%S")}.sqlite'
+              src=sqlite3.connect(str(db_path),timeout=30); dst=sqlite3.connect(str(backup_path),timeout=30)
+              try:
+                  src.backup(dst)
+              finally:
+                  dst.close(); src.close()
+              print(f'BACKUP|{backup_path}|bytes={backup_path.stat().st_size if backup_path.exists() else 0}')
+              if not backup_path.exists() or backup_path.stat().st_size <= 0:
+                  raise RuntimeError('Backup oluşturulamadı')
+
+              try:
+                  result=repair_existing_partial_upload(27)
+                  facts_after=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=27")).mappings().one()
+                  summary_after=db.session.execute(db.text("SELECT COUNT(*) rows,COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=27")).mappings().one()
+                  competition_after=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_competition_data")).scalar() or 0)
+                  if (int(facts_after['rows']),float(facts_after['unit'] or 0),float(facts_after['tl'] or 0)) != (int(facts_before['rows']),float(facts_before['unit'] or 0),float(facts_before['tl'] or 0)):
+                      raise RuntimeError('Immutable facts değişti')
+                  if competition_after != competition_before:
+                      raise RuntimeError('Rekabet verisi değişti')
+                  if int(summary_after['rows']) != 791 or abs(float(summary_after['tl'] or 0)-float(facts_after['tl'] or 0)) > 1.0:
+                      raise RuntimeError('Overlay summary TL kaynak facts ile eşleşmedi')
+                  db.session.commit()
+              except Exception:
+                  db.session.rollback()
+                  raise
+              print('REPAIR_RESULT|'+'|'.join(f'{k}={v}' for k,v in result.items()))
+              print(f'FACTS_AFTER|rows={facts_after["rows"]}|unit={facts_after["unit"]}|tl={facts_after["tl"]}')
+              print(f'SUMMARY_AFTER|rows={summary_after["rows"]}|unit={summary_after["unit"]}|tl={summary_after["tl"]}')
+              print(f'COMPETITION_AFTER|{competition_after}')
+
+              reps={'YAKUP CAGIR':94,'VEYSI OZDAMAR':96,'GOKHAN DUMAN':93,'MURAT ARSLAN':97,'MUSTAFA ALMAZ':98,'OZGECAN GULACAR':117,'DIYARBAKIR BOS':111,'GULBAHAR KARA':95,'YASIN TINI':99}
+              for name,rid in reps.items():
+                  srcrow=db.session.execute(db.text("SELECT COALESCE(SUM(tl),0) tl FROM ims_facts WHERE upload_id=27 AND report_type='brick_sales' AND representative_id=:r"),{'r':rid}).mappings().one()
+                  sumrow=db.session.execute(db.text("SELECT COALESCE(SUM(unit),0) unit,COALESCE(SUM(tl),0) tl FROM ims_summary WHERE upload_id=27 AND representative_id=:r"),{'r':rid}).mappings().one()
+                  targetrow=db.session.execute(db.text("SELECT COALESCE(SUM(tl_realization),0) tl FROM targets WHERE year=2026 AND month=3 AND representative_id=:r"),{'r':rid}).mappings().one()
+                  print(f'REP|name={name}|source_tl={float(srcrow["tl"] or 0):.6f}|summary_tl={float(sumrow["tl"] or 0):.6f}|target_tl={float(targetrow["tl"] or 0):.6f}|summary_unit={float(sumrow["unit"] or 0):.3f}')
+                  if abs(float(sumrow['tl'] or 0)-float(srcrow['tl'] or 0)) > 0.05:
+                      raise RuntimeError(f'{name} summary/source mismatch')
+                  if abs(float(targetrow['tl'] or 0)-float(srcrow['tl'] or 0)) > 0.05:
+                      raise RuntimeError(f'{name} target/source mismatch')
+
+              # Product realization checks against the workbook screenshot semantics.
+              for pname,expected in [('Travazol',76),('Monurol',25),('Mixovul',40)]:
+                  row=db.session.execute(db.text("""
+                    SELECT COALESCE(SUM(s.tl),0) actual,COALESCE(SUM(t.tl_target),0) target
+                    FROM ims_summary s
+                    JOIN products p ON p.id=s.product_id
+                    LEFT JOIN targets t ON t.year=2026 AND t.month=3 AND t.representative_id=s.representative_id AND t.product_id=s.product_id
+                    WHERE s.upload_id=27 AND s.representative_id IN (94,96,93,97,98,117,111,95,99) AND p.product_name=:p
+                  """),{'p':pname}).mappings().one()
+                  pct=(float(row['actual'] or 0)*100.0/float(row['target'] or 1)) if float(row['target'] or 0)>0 else 0
+                  print(f'PRODUCT_REGION|product={pname}|actual={float(row["actual"] or 0):.6f}|target={float(row["target"] or 0):.6f}|pct={pct:.2f}|excel={expected}')
+                  if abs(pct-expected) > 1.5:
+                      raise RuntimeError(f'{pname} region pct mismatch')
+
+              latest_upload=db.session.execute(db.text("SELECT id,week_number,status,reconciliation_status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1")).mappings().first()
+              print(f'DASHBOARD_UPLOAD|id={latest_upload["id"]}|week={latest_upload["week_number"]}|status={latest_upload["status"]}|reconciliation={latest_upload["reconciliation_status"]}')
               jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
