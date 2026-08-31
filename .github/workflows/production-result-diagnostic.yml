@@ -29,60 +29,24 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit week-12 dashboard completeness
+      - name: Inspect week11 fact streams
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.repository.dashboard_repository import DashboardRepository
           app=create_app()
           with app.app_context():
-              latest=db.session.execute(db.text("SELECT * FROM ims_uploads WHERE year=2026 AND month=3 AND week_number=12 AND status='COMPLETED' ORDER BY id DESC LIMIT 1")).mappings().first()
-              print('LATEST_W12|' + ('missing=1' if not latest else '|'.join(f'{k}={latest[k]}' for k in latest.keys())))
-              if not latest: raise SystemExit(0)
-              uid=latest['id']
-              processing=db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0
-              print(f'PROCESSING_COUNT|{processing}')
-              # Core period comparison: week 11 vs latest week 12
-              prev=db.session.execute(db.text("SELECT id FROM ims_uploads WHERE year=2026 AND month=3 AND week_number=11 AND status='COMPLETED' ORDER BY id DESC LIMIT 1")).scalar()
-              print(f'COMPARE_UPLOADS|week11={prev}|week12={uid}')
-              for x,label in ((prev,'W11'),(uid,'W12')):
-                  if not x: continue
-                  for t in ('ims_raw_data','ims_facts','ims_summary'):
-                      r=db.session.execute(db.text(f"SELECT COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM {t} WHERE upload_id=:u"),{'u':x}).mappings().one()
-                      print(f'CORE|period={label}|table={t}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
-              # Every upload-scoped table: this exposes which dashboard/analysis datasets disappeared.
-              tables=[r[0] for r in db.session.execute(db.text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")).all()]
-              for t in tables:
-                  cols=[r[1] for r in db.session.execute(db.text(f'PRAGMA table_info("{t}")')).all()]
-                  if 'upload_id' not in cols: continue
-                  counts=[]
-                  for x,label in ((prev,'W11'),(uid,'W12')):
-                      if not x: continue
-                      try:
-                          c=db.session.execute(db.text(f'SELECT COUNT(*) FROM "{t}" WHERE upload_id=:u'),{'u':x}).scalar() or 0
-                          counts.append(f'{label}={c}')
-                      except Exception as e:
-                          db.session.rollback(); counts.append(f'{label}=ERR')
-                  print(f'UPLOAD_TABLE|table={t}|'+ '|'.join(counts))
-              # Upload metadata/result summaries show source coverage and parser decisions.
-              jobs=db.session.execute(db.text("SELECT id,status,ims_upload_id,result_summary FROM ims_import_jobs WHERE ims_upload_id IN (:w11,:w12) ORDER BY id"),{'w11':prev or -1,'w12':uid}).mappings().all()
-              for j in jobs: print(f'JOB_SUMMARY|id={j["id"]}|upload={j["ims_upload_id"]}|status={j["status"]}|summary={j["result_summary"]}')
-              # Product coverage in summary and competition.
-              for x,label in ((prev,'W11'),(uid,'W12')):
-                  if not x: continue
-                  p=db.session.execute(db.text("SELECT COUNT(DISTINCT product_id) products,COUNT(DISTINCT representative_id) reps FROM ims_summary WHERE upload_id=:u"),{'u':x}).mappings().one()
-                  print(f'SUMMARY_COVERAGE|period={label}|products={p["products"]}|reps={p["reps"]}')
-              repo=DashboardRepository(db.session)
-              d=repo.load_latest_successful_summary()
-              print(f'DASHBOARD|upload={d.id if d else None}|week={d.week_number if d else None}|status={d.status if d else None}|reconciliation={d.reconciliation_status if d else None}')
-              db.session.execute(db.text('PRAGMA busy_timeout=30000'))
-              print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
+              print('FACT_COLS|'+'|'.join(r[1] for r in db.session.execute(db.text('PRAGMA table_info(ims_facts)')).all()))
+              rows=db.session.execute(db.text("SELECT report_type,COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_facts WHERE upload_id=23 GROUP BY report_type ORDER BY report_type")).mappings().all()
+              for r in rows: print(f'FACT_STREAM|report_type={r["report_type"]}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
+              raw=db.session.execute(db.text("SELECT sheet_type,source_sheet,COUNT(*) rows,SUM(COALESCE(unit,0)) unit_sum,SUM(COALESCE(tl,0)) tl_sum FROM ims_raw_data WHERE upload_id=23 GROUP BY sheet_type,source_sheet ORDER BY source_sheet,sheet_type")).mappings().all()
+              for r in raw: print(f'RAW_STREAM|sheet_type={r["sheet_type"]}|source_sheet={r["source_sheet"]}|rows={r["rows"]}|unit_sum={r["unit_sum"]}|tl_sum={r["tl_sum"]}')
+              samples=db.session.execute(db.text("SELECT representative_id,product_id,report_type,unit,tl FROM ims_facts WHERE upload_id=23 AND tl>0 ORDER BY tl DESC LIMIT 20")).mappings().all()
+              for r in samples: print('SAMPLE|'+'|'.join(f'{k}={r[k]}' for k in r.keys()))
           PY
           REMOTE
