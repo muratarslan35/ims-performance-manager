@@ -36,13 +36,12 @@ jobs:
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.services.dashboard_repository import DashboardRepository
           app=create_app()
           with app.app_context():
-              print(f'LIVE_COMMIT|{db.session.execute(db.text("SELECT 1")).scalar()}|git=7a92b9848634f086226cf0599c31999b97bb8a98')
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f'PROCESSING_COUNT|{processing}')
               cov=db.session.execute(db.text("""
@@ -59,7 +58,6 @@ jobs:
                 FROM ims_summary WHERE upload_id=27
               """)).mappings().one()
               print('SUMMARY_COVERAGE|'+'|'.join(f'{k}={cov[k]}' for k in cov.keys()))
-
               prev=db.session.execute(db.text("""
                 SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,
                        SUM(CASE WHEN unit>0 THEN 1 ELSE 0 END) unit_positive_rows,
@@ -68,7 +66,6 @@ jobs:
                 FROM ims_facts WHERE upload_id=23 AND report_type='brick_sales'
               """)).mappings().one()
               print('W11_BRICK_SALES|'+'|'.join(f'{k}={prev[k]}' for k in prev.keys()))
-
               targets=db.session.execute(db.text("""
                 SELECT COUNT(*) rows,COUNT(DISTINCT representative_id) reps,COUNT(DISTINCT product_id) products,
                        SUM(CASE WHEN unit_target>0 THEN 1 ELSE 0 END) unit_target_rows,
@@ -80,14 +77,12 @@ jobs:
                 FROM targets WHERE year=2026 AND month=3
               """)).mappings().one()
               print('TARGET_COVERAGE|'+'|'.join(f'{k}={targets[k]}' for k in targets.keys()))
-
               matched=db.session.execute(db.text("""
                 SELECT COUNT(*) FROM ims_summary s JOIN targets t
                   ON t.year=s.year AND t.month=s.month AND t.representative_id=s.representative_id AND t.product_id=s.product_id
                 WHERE s.upload_id=27
               """)).scalar() or 0
               print(f'SUMMARY_TARGET_MATCHED|{int(matched)}')
-
               zero_units=db.session.execute(db.text("""
                 SELECT r.rep_name,p.product_name,s.unit,s.tl,s.target_unit,s.target_tl
                 FROM ims_summary s JOIN representatives r ON r.id=s.representative_id JOIN products p ON p.id=s.product_id
@@ -96,7 +91,6 @@ jobs:
               print(f'POSITIVE_TL_ZERO_UNIT_COUNT|{len(zero_units)}')
               for r in zero_units[:20]:
                   print(f'ZERO_UNIT|rep={r["rep_name"]}|product={r["product_name"]}|tl={r["tl"]}|target_unit={r["target_unit"]}|target_tl={r["target_tl"]}')
-
               top=db.session.execute(db.text("""
                 SELECT r.rep_name,p.product_name,s.unit,s.tl,s.target_unit,s.target_tl,s.realization_percent
                 FROM ims_summary s JOIN representatives r ON r.id=s.representative_id JOIN products p ON p.id=s.product_id
@@ -104,12 +98,12 @@ jobs:
               """)).mappings().all()
               for r in top:
                   print(f'TOP|rep={r["rep_name"]}|product={r["product_name"]}|unit={r["unit"]}|tl={r["tl"]}|target_unit={r["target_unit"]}|target_tl={r["target_tl"]}|realization={r["realization_percent"]}')
-
-              try:
-                  latest=DashboardRepository.load_latest_completed_upload()
-                  print(f'DASHBOARD_UPLOAD|id={latest.id if latest else None}|week={latest.week_number if latest else None}|status={latest.status if latest else None}')
-              except Exception as exc:
-                  print(f'DASHBOARD_UPLOAD_ERROR|{type(exc).__name__}:{exc}')
+              latest=db.session.execute(db.text("""
+                SELECT id,week_number,status,reconciliation_status
+                FROM ims_uploads WHERE status='COMPLETED'
+                ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1
+              """)).mappings().first()
+              print(f'DASHBOARD_UPLOAD|id={latest["id"]}|week={latest["week_number"]}|status={latest["status"]}|reconciliation={latest["reconciliation_status"]}')
               jm=db.session.execute(db.text('PRAGMA journal_mode')).scalar(); bt=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f'SQLITE|journal_mode={jm}|busy_timeout={bt}')
           PY
