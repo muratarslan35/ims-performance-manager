@@ -29,7 +29,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Audit week13 accepted read sources
+      - name: Audit rendered week13 dashboard paths
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,44 +38,49 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from decimal import Decimal
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, IMSSummary, ProductionResultUpload, ProductionResult, Target
+          from app.models import IMSUpload, IMSSummary
           from app.query.dashboard_query import DashboardQuery
           from app.query.filters import DashboardFilterParams
-          from app.services.production_result_service import ProductionResultService
+          from app.services.dashboard_service import DashboardService
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.official_aggregate_service import OfficialAggregateService, ACTUAL_TYPE
+          from app.cache.dashboard_cache import DashboardCache
 
           app=create_app()
           with app.app_context():
-              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              print(f'PROCESSING_COUNT|{processing}')
-
+              print(f'PROCESSING_COUNT|{int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status=\'PROCESSING\'")).scalar() or 0)}')
               latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first()
-              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}|summary_count={latest.summary_record_count}')
-              for row in db.session.query(IMSSummary.upload_id,db.func.count(IMSSummary.id),db.func.coalesce(db.func.sum(IMSSummary.tl),0),db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.year==2026,IMSSummary.month==3).group_by(IMSSummary.upload_id).order_by(IMSSummary.upload_id).all():
-                  print(f'SUMMARY_BY_UPLOAD|upload={row[0]}|rows={row[1]}|tl={row[2]}|unit={row[3]}')
+              print(f'LATEST_IMS|id={latest.id}|week={latest.week_number}|recon={latest.reconciliation_status}')
+              print(f'LATEST_SUMMARY|tl={db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar()}|unit={db.session.query(db.func.coalesce(db.func.sum(IMSSummary.unit),0)).filter(IMSSummary.upload_id==latest.id).scalar()}')
 
-              uploads=ProductionResultUpload.query.filter_by(year=2026,month=3,status=ProductionResultUpload.STATUS_APPLIED).order_by(ProductionResultUpload.production_stage.desc(),ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()).all()
-              print(f'APPLIED_PRODUCTION_UPLOADS|count={len(uploads)}')
-              for up in uploads:
-                  agg=db.session.query(db.func.count(ProductionResult.id),db.func.coalesce(db.func.sum(ProductionResult.actual_tl),0),db.func.coalesce(db.func.sum(ProductionResult.actual_unit),0)).filter(ProductionResult.upload_id==up.id).one()
-                  print(f'PRODUCTION_UPLOAD|id={up.id}|stage={up.production_stage}|status={up.status}|rows={agg[0]}|tl={agg[1]}|unit={agg[2]}')
-
-              targets=Target.query.filter_by(year=2026,month=3).all()
-              print(f'TARGET_ROWS|{len(targets)}|target_tl={sum(Decimal(str(t.tl_target or 0)) for t in targets)}|stored_real_tl={sum(Decimal(str(t.tl_realization or 0)) for t in targets)}')
               dq=DashboardQuery()
-              period=dq.load_period_performance(DashboardFilterParams(year=2026,month=3))
-              print(f'DASHBOARD_PERIOD|target={period.target_tl}|actual={period.realization_tl}')
+              filters=DashboardFilterParams(year=2026,month=3)
+              period=dq.load_period_performance(filters)
+              national=dq.load_national_dashboard_metrics(filters)
+              products=dq.load_product_performance(filters)
+              print(f'QUERY_PERIOD|target={period.target_tl}|actual={period.realization_tl}')
+              print(f'QUERY_NATIONAL|source={national.get("source")}|target={national.get("target_tl")}|actual={national.get("actual_tl")}|unit_target={national.get("unit_target")}|unit_actual={national.get("unit_actual")}|products={len(national.get("products") or [])}')
+              print(f'QUERY_PRODUCTS|total={sum(float(getattr(r,"realization_tl",0) or 0) for r in products)}|rows={len(products)}')
 
-              latest_summary_tl=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==latest.id).scalar() or 0))
-              effective_total=Decimal('0')
-              source_counts={}
-              for target in targets:
-                  row=ProductionResultService.effective_product(2026,3,target.representative_id,target.product_id)
-                  effective_total += Decimal(str(row.get('actual_tl') or 0))
-                  source_counts[row.get('source')]=source_counts.get(row.get('source'),0)+1
-              print(f'EFFECTIVE_SERVICE|actual={effective_total}|sources={source_counts}|latest_ims_summary={latest_summary_tl}')
+              oa=OfficialAggregateService.product_totals(2026,3,'NATIONAL')
+              oar=OfficialAggregateService.rows(2026,3,'NATIONAL',ACTUAL_TYPE)
+              print(f'OFFICIAL_NATIONAL|product_totals={len(oa or [])}|actual_rows={len(oar or [])}|actual_tl={sum(float(r.get("actual_tl",0) or 0) for r in (oa or []))}')
+
+              region=RegionPerformanceService('901',2026,3).report()
+              monthly=(region.get('periods') or {}).get('monthly') or {}
+              print(f'REGION_901|rep_count={region.get("representative_count")}|target={monthly.get("target_tl")}|actual={monthly.get("actual_tl")}|percent={monthly.get("realization_percent")}')
+
+              cache=DashboardCache()
+              print(f'CACHE|enabled={cache.enabled}|entries={len(cache._store)}|keys={list(cache._store.keys())[:10]}')
+              service=DashboardService(year=2026,month=3)
+              payload=service.run()
+              perf=payload.get('performance') or {}
+              national_payload=payload.get('national_metrics') or payload.get('national') or {}
+              print(f'SERVICE_PERFORMANCE|{perf}')
+              print(f'SERVICE_NATIONAL|{national_payload}')
+              print(f'CACHE_AFTER|entries={len(cache._store)}|keys={list(cache._store.keys())[:10]}')
               print(f'SQLITE|journal_mode={db.session.execute(db.text("PRAGMA journal_mode")).scalar()}|busy_timeout={db.session.execute(db.text("PRAGMA busy_timeout")).scalar()}')
           PY
           REMOTE
