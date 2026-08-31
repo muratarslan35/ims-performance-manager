@@ -6,6 +6,8 @@ from flask_migrate import upgrade
 from app import create_app
 from app.extensions import db
 from app.models import IMSRawData, IMSSummary, IMSUpload, Product, Representative, Target
+from app.query.dashboard_query import DashboardQuery
+from app.query.filters import DashboardFilterParams
 from app.services.official_aggregate_service import ACTUAL_TYPE, TARGET_TYPE, OfficialAggregateService
 from app.services.region_performance_service import RegionPerformanceService
 
@@ -130,3 +132,35 @@ def test_incomplete_target_scope_does_not_replace_official_target(tmp_path):
         assert national[0]["target_tl"] == 100.0
         assert national[0]["actual_tl"] == 175.0
         assert national[0]["target_unit"] == 20.0
+
+
+def test_map_region_uses_latest_compact_tl_and_current_target_roster(tmp_path):
+    app = _app(tmp_path)
+    with app.app_context():
+        product, rep, old, latest, summary = _seed()
+
+        rows = DashboardQuery().load_region_performance(
+            DashboardFilterParams(year=2041, month=3)
+        )
+        region = next(row for row in rows if str(row.region) == "901")
+        assert region.tl_target == 200.0
+        assert region.tl_actual == 150.0
+        # Box metrics stay on the prior direct region source.
+        assert region.unit_target == 20.0
+        assert region.unit_actual == 10.0
+        assert region.representative_count == 1
+
+
+def test_map_region_numeric_zero_is_real_latest_actual(tmp_path):
+    app = _app(tmp_path)
+    with app.app_context():
+        product, rep, old, latest, summary = _seed()
+        summary.tl = 0.0
+        db.session.commit()
+
+        rows = DashboardQuery().load_region_performance(
+            DashboardFilterParams(year=2041, month=3)
+        )
+        region = next(row for row in rows if str(row.region) == "901")
+        assert region.tl_actual == 0.0
+        assert region.unit_actual == 10.0
