@@ -28,9 +28,6 @@ def install_ims_upload_lifecycle() -> None:
 
     @classmethod
     def exact_duplicate_job_with_explicit_replace(cls, source_hash):
-        # An administrator may intentionally re-process an identical workbook
-        # after importer/parsing fixes. The explicit replace switch is the
-        # safety acknowledgement; without it, byte-identical files stay blocked.
         if has_request_context() and request.form.get("replace") == "1":
             return None
         return original_exact_duplicate_job(source_hash)
@@ -40,7 +37,10 @@ def install_ims_upload_lifecycle() -> None:
     @classmethod
     def process_with_upload_lifecycle(cls, job):
         staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
-        pending_source = IMSUploadLifecycleService._archive_root() / f"pending-job-{int(job.id)}{staging_path.suffix.lower()}"
+        archive_root = IMSUploadLifecycleService._archive_root()
+        suffix = staging_path.suffix.lower() if staging_path.suffix.lower() in {".xlsx", ".xls"} else ".xlsx"
+        pending_source = archive_root / f"pending-job-{int(job.id)}{suffix}"
+        failed_source = archive_root / f"failed-job-{int(job.id)}{suffix}"
         snapshot_captured = False
 
         try:
@@ -50,9 +50,6 @@ def install_ims_upload_lifecycle() -> None:
                 month=job.month,
                 week_number=detected_week,
             )
-            # Normal uploads still reject semantically identical workbooks.
-            # Explicit replacement intentionally bypasses this guard so a file
-            # can be reprocessed after an importer/parser correction.
             if not bool(job.clear_before_import) and existing_week is not None and existing_week.ims_upload_id:
                 same_semantic = IMSUploadLifecycleService.same_semantic_workbook(
                     staging_path,
@@ -112,6 +109,7 @@ def install_ims_upload_lifecycle() -> None:
                             staging_path=pending_source,
                             upload_id=refreshed.ims_upload_id,
                         )
+                        failed_source.unlink(missing_ok=True)
                     except Exception:
                         logger.exception(
                             "ims_lifecycle_source_archive_failed job_id=%s upload_id=%s",
@@ -130,12 +128,15 @@ def install_ims_upload_lifecycle() -> None:
                     )
             else:
                 IMSUploadLifecycleService.discard_pending_snapshot(job.id)
+                if pending_source.is_file():
+                    try:
+                        pending_source.replace(failed_source)
+                        logger.info("ims_failed_source_preserved job_id=%s path=%s", job.id, failed_source.name)
+                    except Exception:
+                        logger.exception("ims_failed_source_preserve_failed job_id=%s", job.id)
             return result
         finally:
             pending_source.unlink(missing_ok=True)
-            # The original queue deletes staging files after normal processing.
-            # Semantic duplicates return before that call, so remove their staged
-            # source here as well. No live/accepted IMS data is changed.
             staging_path.unlink(missing_ok=True)
             refreshed = db.session.get(IMSImportJob, int(job.id))
             if refreshed is None or refreshed.status != IMSImportJob.STATUS_COMPLETED:
