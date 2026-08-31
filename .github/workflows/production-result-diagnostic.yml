@@ -38,41 +38,29 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import os
           import pandas as pd
           from app import create_app
-          from app.extensions import db
-          from app.models import IMSImportJob, IMSUpload
+          from app.models import IMSUpload
           from app.services.target_import_service import TargetImportService
-          from app.services.alias_service import AliasService
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 
           app=create_app()
           with app.app_context():
               latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
-              job=IMSImportJob.query.filter_by(ims_upload_id=latest.id).order_by(IMSImportJob.id.desc()).first()
-              path=None
-              if job:
-                  candidates=[
-                      os.path.join(app.config.get('UPLOAD_FOLDER',''), job.stored_file_name),
-                      os.path.join(app.config.get('UPLOAD_FOLDER',''), job.file_name),
-                      os.path.join('/home/ubuntu/ims_system/uploads', job.stored_file_name),
-                  ]
-                  path=next((p for p in candidates if p and os.path.exists(p)),None)
-              print(f'LATEST|id={latest.id}|week={latest.week_number}|file={latest.file_name}')
-              print(f'JOB|id={getattr(job,"id",None)}|stored={getattr(job,"stored_file_name",None)}|path={path}')
+              path=IMSUploadLifecycleService.archived_source_for_upload(latest.id)
+              print(f'LATEST|id={latest.id}|week={latest.week_number}|file={latest.file_name}|archive={path}')
               if not path:
-                  raise SystemExit('source workbook not found')
+                  raise SystemExit('archived source workbook not found')
               wb=pd.read_excel(path,sheet_name=None,header=None)
-              svc=TargetImportService(path, latest.id, workbook=wb)
+              svc=TargetImportService(str(path), latest.id, workbook=wb)
               svc.load_workbook()
               for name,df in wb.items():
                   title=' | '.join(str(v) for v in df.iloc[0].tolist() if str(v)!='nan') if len(df) else ''
                   row2=' | '.join(str(v) for v in df.iloc[1].tolist() if str(v)!='nan') if len(df)>1 else ''
                   print(f'SHEET|{name}|shape={df.shape}|compact={int(svc._is_compact_target_layout(df))}|target_sheet={int(svc._is_target_sheet(name,df))}')
-                  print(f'ROW1|{name}|{title[:1200]}')
-                  print(f'ROW2|{name}|{row2[:1200]}')
+                  print(f'ROW1|{name}|{title[:1800]}')
+                  print(f'ROW2|{name}|{row2[:1800]}')
                   if len(df)>2:
-                      print(f'ROW3|{name}|'+' | '.join(str(v) for v in df.iloc[2].tolist() if str(v)!='nan')[:1200])
-              print('PARSER_DECISIONS|' + str(svc.parser_decisions))
+                      print(f'ROW3|{name}|'+' | '.join(str(v) for v in df.iloc[2].tolist() if str(v)!='nan')[:1800])
           PY
           REMOTE
