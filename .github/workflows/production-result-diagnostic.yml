@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,38 +29,149 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Inspect compact target parser
+      - name: Repair week14 compact official aggregates
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=40 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import pandas as pd
+          LIVE_COMMIT="$(git rev-parse HEAD)"
+          echo "LIVE_COMMIT|$LIVE_COMMIT"
+          test "$LIVE_COMMIT" = "4b0cd3a769624dd61e57d08f8cc0ee6cd89c089a"
+
+          PROCESSING="$(venv/bin/python - <<'PY'
           from app import create_app
-          from app.models import IMSUpload
-          from app.services.target_import_service import TargetImportService
+          from app.extensions import db
+          app=create_app()
+          with app.app_context():
+              print(int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0))
+          PY
+          )"
+          echo "PROCESSING_COUNT|$PROCESSING"
+          test "$PROCESSING" = "0"
+
+          mkdir -p instance/backups
+          stamp="$(date +%Y%m%d-%H%M%S)"
+          backup="instance/backups/ipm-pre-week14-official-repair-${stamp}.db"
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "$backup"
+          echo "BACKUP|$backup|bytes=$(stat -c%s "$backup")"
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from decimal import Decimal
+          import pandas as pd
+
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSRawData, IMSUpload, IMSSummary, Target
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.services.ims_import_service import IMSImportService
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.services.official_aggregate_service import (
+              ACTUAL_TYPE,
+              TARGET_TYPE,
+              OfficialAggregateService,
+              persist_official_aggregates,
+          )
+          from app.services.region_performance_service import RegionPerformanceService
 
           app=create_app()
           with app.app_context():
-              latest=IMSUpload.query.filter_by(year=2026,month=3,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
-              path=IMSUploadLifecycleService.archived_source_for_upload(latest.id)
-              print(f'LATEST|id={latest.id}|week={latest.week_number}|file={latest.file_name}|archive={path}')
-              if not path:
-                  raise SystemExit('archived source workbook not found')
-              wb=pd.read_excel(path,sheet_name=None,header=None)
-              svc=TargetImportService(str(path), latest.id, workbook=wb)
-              svc.load_workbook()
-              for name,df in wb.items():
-                  title=' | '.join(str(v) for v in df.iloc[0].tolist() if str(v)!='nan') if len(df) else ''
-                  row2=' | '.join(str(v) for v in df.iloc[1].tolist() if str(v)!='nan') if len(df)>1 else ''
-                  print(f'SHEET|{name}|shape={df.shape}|compact={int(svc._is_compact_target_layout(df))}|target_sheet={int(svc._is_target_sheet(name,df))}')
-                  print(f'ROW1|{name}|{title[:1800]}')
-                  print(f'ROW2|{name}|{row2[:1800]}')
-                  if len(df)>2:
-                      print(f'ROW3|{name}|'+' | '.join(str(v) for v in df.iloc[2].tolist() if str(v)!='nan')[:1800])
+              year, month = 2026, 3
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              if processing:
+                  raise SystemExit(f'Active IMS import detected: {processing}')
+
+              upload=(IMSUpload.query.filter_by(year=year,month=month,status='COMPLETED')
+                      .order_by(IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()).first())
+              if upload is None or upload.id != 29 or upload.week_number != 14 or upload.reconciliation_status != 'PASSED':
+                  raise SystemExit(f'Unexpected latest upload: {getattr(upload,"id",None)} week={getattr(upload,"week_number",None)} recon={getattr(upload,"reconciliation_status",None)}')
+
+              archive=IMSUploadLifecycleService.archived_source_for_upload(upload.id)
+              if archive is None:
+                  raise SystemExit('Archived source for upload 29 is missing')
+
+              person_target_before=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(Target.tl_target),0)).filter(Target.year==year,Target.month==month).scalar() or 0))
+              summary_tl_before=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==upload.id).scalar() or 0))
+              fact_raw_before=IMSRawData.query.filter_by(upload_id=upload.id,sheet_type='brick_sales').count()
+              target_source_before=OfficialAggregateService.latest_upload_id(year,month,TARGET_TYPE)
+              actual_source_before=OfficialAggregateService.latest_upload_id(year,month,ACTUAL_TYPE)
+              print(f'PRE|upload={upload.id}|target_source={target_source_before}|actual_source={actual_source_before}|person_target={person_target_before}|summary_tl={summary_tl_before}|brick_raw={fact_raw_before}')
+
+              workbook=pd.read_excel(archive,sheet_name=None,header=None)
+              service=IMSImportService(str(archive))
+              service.upload=upload
+              service.workbook=workbook
+
+              try:
+                  result=persist_official_aggregates(service,year,month)
+                  db.session.commit()
+              except Exception:
+                  db.session.rollback()
+                  raise
+              print(f'REPAIR_RESULT|targets={result.get("targets")}|actuals={result.get("actuals")}|recon={result.get("reconciliation",{}).get("passed")}')
+
+              target_source=OfficialAggregateService.latest_upload_id(year,month,TARGET_TYPE)
+              actual_source=OfficialAggregateService.latest_upload_id(year,month,ACTUAL_TYPE)
+              if target_source != 29 or actual_source != 29:
+                  raise SystemExit(f'Official sources not promoted to week14: target={target_source} actual={actual_source}')
+
+              person_target_after=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(Target.tl_target),0)).filter(Target.year==year,Target.month==month).scalar() or 0))
+              summary_tl_after=Decimal(str(db.session.query(db.func.coalesce(db.func.sum(IMSSummary.tl),0)).filter(IMSSummary.upload_id==upload.id).scalar() or 0))
+              fact_raw_after=IMSRawData.query.filter_by(upload_id=upload.id,sheet_type='brick_sales').count()
+              if person_target_after != person_target_before:
+                  raise SystemExit(f'Person targets changed: before={person_target_before} after={person_target_after}')
+              if abs(summary_tl_after-summary_tl_before) > Decimal('0.01'):
+                  raise SystemExit(f'Summary TL changed: before={summary_tl_before} after={summary_tl_after}')
+              if fact_raw_after != fact_raw_before:
+                  raise SystemExit(f'Brick raw changed: before={fact_raw_before} after={fact_raw_after}')
+
+              national=OfficialAggregateService.product_totals(year,month,'NATIONAL') or []
+              region901=OfficialAggregateService.product_totals(year,month,'901') or []
+              nat_target=sum(Decimal(str(r.get('target_tl') or 0)) for r in national)
+              nat_actual=sum(Decimal(str(r.get('actual_tl') or 0)) for r in national)
+              reg_target=sum(Decimal(str(r.get('target_tl') or 0)) for r in region901)
+              reg_actual=sum(Decimal(str(r.get('actual_tl') or 0)) for r in region901)
+              nat_unit_target=sum(Decimal(str(r.get('target_unit') or 0)) for r in national)
+              nat_unit_actual=sum(Decimal(str(r.get('actual_unit') or 0)) for r in national)
+              print(f'OFFICIAL_NATIONAL|target_tl={nat_target}|actual_tl={nat_actual}|target_unit={nat_unit_target}|actual_unit={nat_unit_actual}|products={len(national)}')
+              print(f'OFFICIAL_901|target_tl={reg_target}|actual_tl={reg_actual}|products={len(region901)}')
+
+              # Workbook row shown by the user is 10,848,777 rounded. Accept only the exact source subtotal around that value.
+              if abs(reg_target-Decimal('10848777')) > Decimal('1.0'):
+                  raise SystemExit(f'Unexpected Diyarbakir official target: {reg_target}')
+              if abs(nat_target-Decimal('131153511.8')) > Decimal('0.05'):
+                  raise SystemExit(f'Unexpected NATIONAL official target: {nat_target}')
+              if abs(nat_actual-Decimal('133317588.61054145')) > Decimal('0.05'):
+                  raise SystemExit(f'Unexpected NATIONAL official actual: {nat_actual}')
+
+              dq=DashboardQuery(); filters=DashboardFilterParams(year=year,month=month)
+              national_metrics=dq.load_national_dashboard_metrics(filters)
+              maps=dq.load_region_performance(filters)
+              map901=next((row for row in maps if str(getattr(row,'region',''))=='901'),None)
+              detail=RegionPerformanceService('901',year,month).report()
+              monthly=(detail.get('periods') or {}).get('monthly') or {}
+              print(f'DASHBOARD_NATIONAL|target={national_metrics.get("target_tl")}|actual={national_metrics.get("actual_tl")}|unit_target={national_metrics.get("unit_target")}|unit_actual={national_metrics.get("unit_actual")}')
+              print(f'MAP901|target={getattr(map901,"tl_target",None)}|actual={getattr(map901,"tl_actual",None)}|reps={getattr(map901,"representative_count",None)}')
+              print(f'DETAIL901|target={monthly.get("target_tl")}|actual={monthly.get("actual_tl")}|real={monthly.get("realization_percent")}|reps={detail.get("representative_count")}')
+
+              if map901 is None:
+                  raise SystemExit('Map 901 row missing')
+              map_target=Decimal(str(map901.tl_target or 0)); detail_target=Decimal(str(monthly.get('target_tl') or 0))
+              map_actual=Decimal(str(map901.tl_actual or 0)); detail_actual=Decimal(str(monthly.get('actual_tl') or 0))
+              if abs(map_target-reg_target)>Decimal('0.02') or abs(detail_target-reg_target)>Decimal('0.02'):
+                  raise SystemExit('Diyarbakir target read path does not use official week14 subtotal')
+              if abs(map_actual-reg_actual)>Decimal('0.02') or abs(detail_actual-reg_actual)>Decimal('0.02'):
+                  raise SystemExit('Diyarbakir actual read path does not use official week14 subtotal')
+
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f'SQLITE|journal_mode={journal}|busy_timeout={busy}')
+              if str(journal).lower()!='wal' or int(busy)!=30000:
+                  raise SystemExit('SQLite runtime invariant failed')
+              print('WEEK14_COMPACT_OFFICIAL_ACCEPTANCE|PASS')
           PY
           REMOTE
