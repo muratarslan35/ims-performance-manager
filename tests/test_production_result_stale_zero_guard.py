@@ -158,3 +158,138 @@ def test_departed_row_with_current_period_target_is_not_ignored():
         service._load_master_maps()
         with pytest.raises(ProductionWorkbookValidationError, match="Eşleşmeyen temsilci"):
             service._read_sheet(sheet, "KUTU")
+
+
+def _append_semantic_row(sheet, region, name, target, actual, metric):
+    targets = [target] * 7
+    actuals = [actual] * 7
+    percentages = [(actual * 100 / target) if target else 0] * 7
+    total_target = sum(targets)
+    total_actual = sum(actuals)
+    total_percent = total_actual * 100 / total_target if total_target else 0
+    row = ["", region, name] + targets + [total_target, "", ""]
+    row += actuals + [total_actual, "", ""] + percentages + [total_percent]
+    sheet.append(row)
+
+
+def _make_metric_sheet(metric, rows):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = f"URETIM {metric}"
+    header = ["SICIL", "BOLGE", "TEMSILCI"] + PRODUCTS + [f"{metric} HEDEF", "", ""]
+    header += PRODUCTS + [f"{metric} CIKIS", "", ""] + PRODUCTS + ["REA"]
+    sheet.append(header)
+    for item in rows:
+        _append_semantic_row(sheet, *item, metric)
+    return sheet
+
+
+def test_zero_departed_box_row_maps_to_unique_vacancy_when_workbook_signature_proves_succession():
+    app = create_app(GuardConfig)
+    with app.app_context():
+        db.create_all()
+        db.session.query(Target).delete()
+        db.session.query(Representative).delete()
+
+        active_reps = []
+        for idx in range(3):
+            rep = Representative(
+                rep_code=f"ACTIVE{idx}", rep_name=f"ACTIVE {idx}", region="501", city="ANKARA", active=True
+            )
+            db.session.add(rep)
+            active_reps.append(rep)
+        vacancy = Representative(
+            rep_code="UNASSIGNED501ANKARABOSKADRO",
+            rep_name="ATANMAMIŞ · 501 ANKARA · ANKARA BOS KADRO",
+            region="501",
+            city="ANKARA",
+            active=True,
+        )
+        departed = Representative(
+            rep_code="ILAYDANURVARSAK",
+            rep_name="ILAYDA NUR VARSAK",
+            region="501",
+            city="ANKARA",
+            active=False,
+        )
+        db.session.add_all([vacancy, departed])
+        db.session.flush()
+
+        products = []
+        for position, code in enumerate(PRODUCTS, start=1):
+            product = Product.query.filter_by(product_code=code).first()
+            if product is None:
+                product = Product(product_code=code, product_name=code.title(), is_active=True, display_order=position)
+                db.session.add(product)
+            products.append(product)
+        db.session.flush()
+
+        for rep in [*active_reps, vacancy]:
+            for product in products:
+                db.session.add(Target(year=2026, month=3, representative_id=rep.id, product_id=product.id, tl_target=120, unit_target=0))
+        db.session.commit()
+
+        tl_rows = [("501 ANKARA", rep.rep_name, 100, 50) for rep in active_reps]
+        tl_rows.append(("501 ANKARA", vacancy.rep_name, 120, 60))
+        kutu_rows = [("501 ANKARA", rep.rep_name, 10, 5) for rep in active_reps]
+        kutu_rows.append(("501 ANKARA", departed.rep_name, 12, 0))
+        tl_sheet = _make_metric_sheet("TL", tl_rows)
+        kutu_sheet = _make_metric_sheet("KUTU", kutu_rows)
+
+        service = ProductionResultImportService("/tmp/not-used.xlsx", 2026, 3, production_stage=2)
+        service._load_master_maps()
+        parsed_tl = service._read_sheet(tl_sheet, "TL")
+        parsed_kutu = service._read_sheet(kutu_sheet, "KUTU")
+
+        assert set(parsed_tl) == set(parsed_kutu)
+        assert vacancy.id in parsed_kutu
+        assert departed.id not in parsed_kutu
+        assert parsed_kutu[vacancy.id]["targets"] == [12.0] * 7
+        assert parsed_kutu[vacancy.id]["values"] == [0.0] * 7
+
+
+def test_vacancy_succession_remains_fail_closed_when_more_than_one_vacancy_matches():
+    app = create_app(GuardConfig)
+    with app.app_context():
+        db.create_all()
+        db.session.query(Target).delete()
+        db.session.query(Representative).delete()
+
+        active_reps = []
+        for idx in range(3):
+            rep = Representative(rep_code=f"ACTIVE{idx}", rep_name=f"ACTIVE {idx}", region="501", city="ANKARA", active=True)
+            db.session.add(rep)
+            active_reps.append(rep)
+        vacancies = [
+            Representative(rep_code="UNASSIGNED501A", rep_name="ATANMAMIŞ · 501 ANKARA · BOS A", region="501", city="ANKARA", active=True),
+            Representative(rep_code="UNASSIGNED501B", rep_name="ATANMAMIŞ · 501 ANKARA · BOS B", region="501", city="ANKARA", active=True),
+        ]
+        departed = Representative(rep_code="ILAYDANURVARSAK", rep_name="ILAYDA NUR VARSAK", region="501", city="ANKARA", active=False)
+        db.session.add_all([*vacancies, departed])
+        db.session.flush()
+
+        products = []
+        for position, code in enumerate(PRODUCTS, start=1):
+            product = Product.query.filter_by(product_code=code).first()
+            if product is None:
+                product = Product(product_code=code, product_name=code.title(), is_active=True, display_order=position)
+                db.session.add(product)
+            products.append(product)
+        db.session.flush()
+        for rep in [*active_reps, *vacancies]:
+            for product in products:
+                db.session.add(Target(year=2026, month=3, representative_id=rep.id, product_id=product.id, tl_target=120, unit_target=0))
+        db.session.commit()
+
+        tl_rows = [("501 ANKARA", rep.rep_name, 100, 50) for rep in active_reps]
+        tl_rows.extend(("501 ANKARA", vacancy.rep_name, 120, 60) for vacancy in vacancies)
+        kutu_rows = [("501 ANKARA", rep.rep_name, 10, 5) for rep in active_reps]
+        kutu_rows.append(("501 ANKARA", departed.rep_name, 12, 0))
+        tl_sheet = _make_metric_sheet("TL", tl_rows)
+        kutu_sheet = _make_metric_sheet("KUTU", kutu_rows)
+
+        service = ProductionResultImportService("/tmp/not-used.xlsx", 2026, 3, production_stage=2)
+        service._load_master_maps()
+        service._read_sheet(tl_sheet, "TL")
+        with pytest.raises(ProductionWorkbookValidationError, match="tekil olarak kanıtlanamadı"):
+            service._read_sheet(kutu_sheet, "KUTU")
