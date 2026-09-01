@@ -6,152 +6,118 @@
             <span class="sidebar-brand-divider" aria-hidden="true"></span>
             <img src="{{ url_for('static', filename='img/bilimsel-paydas.png') }}" class="sidebar-partner-art" alt="Bilimsel Paydaş">
         </a>
-        <button id="sidebarCloseBtn" class="sidebar-close-btn d-lg-none" aria-label="Menüyü Kapat">
-            <i class="bi bi-x-lg"></i>
-        </button>
+        <button id="sidebarCloseBtn" class="sidebar-close-btn d-lg-none" aria-label="Menüyü Kapat"><i class="bi bi-x-lg"></i></button>
     </div>
 
     <nav class="sidebar-nav">
         <ul class="sidebar-nav-list">
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}"
-                   href="{{ url_for('dashboard.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-speedometer2"></i></span>
-                    <span class="sidebar-nav-label">Ana Sayfa</span>
+                <a class="sidebar-nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-speedometer2"></i></span><span class="sidebar-nav-label">Ana Sayfa</span>
                 </a>
             </li>
-
             <li class="sidebar-nav-item">
                 <a class="sidebar-nav-link {% if request.endpoint == 'main.market_analysis' %}active{% endif %}" href="{{ url_for('main.market_analysis') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-globe2"></i></span>
-                    <span class="sidebar-nav-label">Türkiye Pazar Analizi</span>
+                    <span class="sidebar-nav-icon"><i class="bi bi-globe2"></i></span><span class="sidebar-nav-label">Türkiye Pazar Analizi</span>
                 </a>
             </li>
 
-            {% if manager_access %}<li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('ims.') %}active{% endif %}"
-                   href="{{ url_for('ims.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-cloud-upload-fill"></i></span>
-                    <span class="sidebar-nav-label">IMS Merkezi</span>
+            {% if manager_access %}
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('ims.') %}active{% endif %}" href="{{ url_for('ims.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-cloud-upload-fill"></i></span><span class="sidebar-nav-label">IMS Merkezi</span>
                 </a>
-            </li>{% endif %}
+            </li>
+            {% endif %}
 
             <li class="sidebar-section-label">Tanımlar</li>
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.') and not request.endpoint.startswith('representatives.territory_') %}active{% endif %}"
-                   href="{{ url_for('representatives.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-people-fill"></i></span>
-                    <span class="sidebar-nav-label">Temsilciler</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.') and not request.endpoint.startswith('representatives.territory_') %}active{% endif %}" href="{{ url_for('representatives.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-people-fill"></i></span><span class="sidebar-nav-label">Temsilciler</span>
                 </a>
             </li>
 
+            {% if not regional_manager_restricted %}
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.territory_') %}active{% endif %}"
-                   href="{{ url_for('representatives.territory_management') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-geo-alt-fill"></i></span>
-                    <span class="sidebar-nav-label">Bölge Atamaları</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('representatives.territory_') %}active{% endif %}" href="{{ url_for('representatives.territory_management') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-geo-alt-fill"></i></span><span class="sidebar-nav-label">Bölge Atamaları</span>
                 </a>
             </li>
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}"
-                   href="{{ url_for('products.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-capsule-pill"></i></span>
-                    <span class="sidebar-nav-label">Ürünler</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-capsule-pill"></i></span><span class="sidebar-nav-label">Ürünler</span>
                 </a>
             </li>
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('targets.') %}active{% endif %}"
-                   href="{{ url_for('targets.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-bullseye"></i></span>
-                    <span class="sidebar-nav-label">Hedefler</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('targets.') %}active{% endif %}" href="{{ url_for('targets.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-bullseye"></i></span><span class="sidebar-nav-label">Hedefler</span>
                 </a>
             </li>
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('matching.') %}active{% endif %}"
-                   href="{{ url_for('matching.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-diagram-3-fill"></i></span>
-                    <span class="sidebar-nav-label">Manuel Eşleştirme</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('matching.') %}active{% endif %}" href="{{ url_for('matching.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-diagram-3-fill"></i></span><span class="sidebar-nav-label">Manuel Eşleştirme</span>
                 </a>
             </li>
+            {% endif %}
 
             <li class="sidebar-section-label">Analiz &amp; Prim</li>
-
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint == 'main.prime' %}active{% endif %}"
-                   href="{{ url_for('main.prime') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-cash-stack"></i></span>
-                    <span class="sidebar-nav-label">Prim Merkezi</span>
+                <a class="sidebar-nav-link {% if request.endpoint == 'main.prime' %}active{% endif %}" href="{{ url_for('main.prime') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-cash-stack"></i></span><span class="sidebar-nav-label">Prim Merkezi</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('simulation.') %}active{% endif %}" href="{{ url_for('simulation.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-calculator-fill"></i></span><span class="sidebar-nav-label">Prim Simülasyonu</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint == 'main.quarter' %}active{% endif %}" href="{{ url_for('main.quarter') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-calendar2-week-fill"></i></span><span class="sidebar-nav-label">Q Dönem Analizi</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint == 'main.recovery' %}active{% endif %}" href="{{ url_for('main.recovery') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-arrow-repeat"></i></span><span class="sidebar-nav-label">Telafi Takibi</span>
+                </a>
+            </li>
+            <li class="sidebar-nav-item">
+                <a class="sidebar-nav-link {% if request.endpoint == 'main.reports' %}active{% endif %}" href="{{ url_for('main.reports') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-bar-chart-fill"></i></span><span class="sidebar-nav-label">Raporlar</span>
                 </a>
             </li>
 
+            {% if manager_access or can_manage_region_managers %}
+            <li class="sidebar-section-label">Sistem</li>
+            {% endif %}
+            {% if can_manage_region_managers %}
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('simulation.') %}active{% endif %}"
-                   href="{{ url_for('simulation.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-calculator-fill"></i></span>
-                    <span class="sidebar-nav-label">Prim Simülasyonu</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('manager_users.') %}active{% endif %}" href="{{ url_for('manager_users.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-person-badge-fill"></i></span><span class="sidebar-nav-label">Bölge Müdürleri</span>
                 </a>
             </li>
-
+            {% endif %}
+            {% if manager_access %}
             <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint == 'main.quarter' %}active{% endif %}"
-                   href="{{ url_for('main.quarter') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-calendar2-week-fill"></i></span>
-                    <span class="sidebar-nav-label">Q Dönem Analizi</span>
+                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}" href="{{ url_for('settings.index') }}">
+                    <span class="sidebar-nav-icon"><i class="bi bi-gear-fill"></i></span><span class="sidebar-nav-label">Ayarlar</span>
                 </a>
             </li>
-
-            <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint == 'main.recovery' %}active{% endif %}"
-                   href="{{ url_for('main.recovery') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-arrow-repeat"></i></span>
-                    <span class="sidebar-nav-label">Telafi Takibi</span>
-                </a>
-            </li>
-
-            <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint == 'main.reports' %}active{% endif %}"
-                   href="{{ url_for('main.reports') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-bar-chart-fill"></i></span>
-                    <span class="sidebar-nav-label">Raporlar</span>
-                </a>
-            </li>
-
-            {% if manager_access %}<li class="sidebar-section-label">Sistem</li>
-
-            <li class="sidebar-nav-item">
-                <a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}"
-                   href="{{ url_for('settings.index') }}">
-                    <span class="sidebar-nav-icon" aria-hidden="true"><i class="bi bi-gear-fill"></i></span>
-                    <span class="sidebar-nav-label">Ayarlar</span>
-                </a>
-            </li>{% endif %}
-
+            {% endif %}
         </ul>
     </nav>
 
     <div class="sidebar-footer">
         <div class="sidebar-user">
-            <div class="sidebar-user-avatar" aria-hidden="true">
-                <i class="bi bi-person-fill"></i>
-            </div>
+            <div class="sidebar-user-avatar"><i class="bi bi-person-fill"></i></div>
             <div class="sidebar-user-info">
                 <div class="sidebar-user-name">{{ current_user.full_name }}</div>
-                <div class="sidebar-user-role">{{ current_user.role }}</div>
+                <div class="sidebar-user-role">
+                    {% if regional_manager_restricted %}Bölge Müdürü{% if regional_manager_region %} · {{ regional_manager_region }}{% endif %}{% else %}{{ current_user.role }}{% endif %}
+                </div>
             </div>
         </div>
-        <a class="sidebar-logout"
-           href="{{ url_for('auth.logout') }}"
-           title="Güvenli Çıkış"
-           aria-label="Güvenli Çıkış">
-            <i class="bi bi-box-arrow-right"></i>
-        </a>
+        <a class="sidebar-logout" href="{{ url_for('auth.logout') }}" title="Güvenli Çıkış" aria-label="Güvenli Çıkış"><i class="bi bi-box-arrow-right"></i></a>
     </div>
-
 </aside>
-
 <div id="sidebarOverlay" class="sidebar-overlay" aria-hidden="true"></div>
