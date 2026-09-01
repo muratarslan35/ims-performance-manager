@@ -1,4 +1,4 @@
-name: March Production Ankara Succession Diagnostic
+name: March Production Parse Acceptance
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  diagnostic:
+  acceptance:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,60 +30,71 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Trace historical identity read only
+      - name: Parse immutable stage-2 source read only
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          test "$(git rev-parse HEAD)" = "9f410f1f361d16d3b4e624eb47b4cfc691b09ba5"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "0830cc4621b24b7c1b339b28d7e87903ae6e3d86"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import hashlib
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import Representative, RepresentativeAlias, Target, ProductionResultUpload, ProductionResult
+          from app.models import IMSUpload, ProductionResultUpload, ProductionResult, Target
+          from app.services.production_result_import_service import ProductionResultImportService
 
           app=create_app()
           with app.app_context():
-              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
-              print(f"IMS_JOB_GATE|active={processing}")
-              assert processing == 0
+              active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
+              print(f"IMS_JOB_GATE|active={active}")
+              assert active == 0
 
-              for rid in (105,112,115):
-                  r=db.session.get(Representative,rid)
-                  print(f"REP|id={rid}|name={getattr(r,'rep_name',None)}|code={getattr(r,'rep_code',None)}|ims={getattr(r,'ims_code',None)}|active={getattr(r,'active',None)}|region={getattr(r,'region',None)}|city={getattr(r,'city',None)}")
-                  aliases=RepresentativeAlias.query.filter_by(representative_id=rid).all()
-                  print(f"ALIASES|id={rid}|{[(a.id,a.alias_name) for a in aliases]}")
-                  for month in (1,2,3):
-                      rows=Target.query.filter_by(year=2026,month=month,representative_id=rid).order_by(Target.product_id).all()
-                      print(f"TARGET|id={rid}|month={month}|count={len(rows)}|tl={[(t.product_id,float(t.tl_target or 0)) for t in rows]}|unit={[(t.product_id,float(t.unit_target or 0)) for t in rows]}")
+              upload=db.session.get(ProductionResultUpload,3)
+              assert upload is not None and upload.status=='FAILED'
+              path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/upload.stored_file_name
+              digest=hashlib.sha256(path.read_bytes()).hexdigest()
+              print(f"SOURCE|exists={path.exists()}|stored_sha={upload.source_hash}|actual_sha={digest}|stage={upload.production_stage}")
+              assert path.exists() and digest==upload.source_hash=='cb05a56937b764a91bab69173a16962adc59f096439a6b985809650534a71560'
+              assert upload.year==2026 and upload.month==3 and upload.production_stage==2
 
-              uploads=ProductionResultUpload.query.filter_by(year=2026,month=3).order_by(ProductionResultUpload.id).all()
-              for u in uploads:
-                  print(f"PROD_UPLOAD|id={u.id}|stage={u.production_stage}|status={u.status}|rows={u.row_count}|matched={u.matched_row_count}|file={u.file_name}")
-                  for rid in (105,112,115):
-                      rows=ProductionResult.query.filter_by(upload_id=u.id,representative_id=rid).order_by(ProductionResult.product_id).all()
-                      if rows:
-                          print(f"PROD_ROWS|upload={u.id}|rid={rid}|{[(x.product_id,float(x.target_tl or 0),float(x.target_unit or 0),float(x.actual_tl or 0),float(x.actual_unit or 0)) for x in rows]}")
+              before_results=ProductionResult.query.filter_by(upload_id=3).count()
+              before_targets=Target.query.filter_by(year=2026,month=3).count()
+              latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+              print(f"BEFORE|results={before_results}|targets={before_targets}|ims={getattr(latest,'id',None)}|week={getattr(latest,'week_number',None)}")
+              assert before_results==0 and before_targets==791
+              assert latest is not None and latest.id==29 and latest.week_number==14
 
-              # Raw DB history for these ids across IMS summary/facts, schema-safe via sqlite metadata.
-              tables={r[0] for r in db.session.execute(db.text("SELECT name FROM sqlite_master WHERE type='table'"))}
-              for table in ('ims_summary','ims_summaries','ims_facts'):
-                  if table not in tables:
-                      continue
-                  cols=[r[1] for r in db.session.execute(db.text(f"PRAGMA table_info({table})"))]
-                  print(f"TABLE|{table}|cols={cols}")
-                  if 'representative_id' in cols:
-                      selected=[c for c in ('id','ims_upload_id','year','month','week_number','representative_id','product_id','tl','unit','metric_type','metric_value') if c in cols]
-                      if selected:
-                          sql=f"SELECT {','.join(selected)} FROM {table} WHERE representative_id IN (105,112,115) ORDER BY " + ("ims_upload_id," if 'ims_upload_id' in cols else "") + "representative_id" 
-                          rows=list(db.session.execute(db.text(sql)))
-                          print(f"HISTORY|{table}|rows={len(rows)}")
-                          for row in rows[-120:]: print(tuple(row))
+              report=ProductionResultImportService(path,2026,3,production_stage=2).parse()
+              rep_ids={int(row['representative_id']) for row in report.product_results}
+              vacancy_rows=[row for row in report.product_results if int(row['representative_id'])==112]
+              departed_rows=[row for row in report.product_results if int(row['representative_id'])==115]
+              print(f"PARSE|rows_seen={report.rows_seen}|matched_rows={report.matched_rows}|products={report.matched_result_count}|rep_totals={len(report.representative_totals)}|regions={len(report.region_totals)}|region_products={len(report.region_product_results)}|target_mismatches={report.target_mismatch_count}")
+              print(f"SCOPE|reps={len(rep_ids)}|vacancy112={len(vacancy_rows)}|departed115={len(departed_rows)}")
+              print(f"VACANCY112|{[(row['product_id'],row['target_tl'],row['target_unit'],row['actual_tl'],row['actual_unit']) for row in vacancy_rows]}")
+
+              assert report.rows_seen==113 and report.matched_rows==113
+              assert report.matched_result_count==791 and len(report.representative_totals)==113
+              assert len(rep_ids)==113 and 112 in rep_ids and 115 not in rep_ids
+              assert len(vacancy_rows)==7 and not departed_rows
+              assert all(float(row['actual_unit'])==0 for row in vacancy_rows)
+              assert all(float(row['target_unit'])>0 for row in vacancy_rows)
+              assert report.national_total is not None
+              assert len(report.region_totals)==11 and len(report.region_product_results)==77
+
+              # parse is read-only
+              db.session.rollback()
+              assert ProductionResult.query.filter_by(upload_id=3).count()==0
+              assert db.session.get(ProductionResultUpload,3).status=='FAILED'
+              assert Target.query.filter_by(year=2026,month=3).count()==791
 
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}")
               assert str(journal).lower()=='wal' and int(busy)==30000
+              print('MARCH_STAGE2_PARSE_ACCEPTANCE|PASS')
           PY
           REMOTE
