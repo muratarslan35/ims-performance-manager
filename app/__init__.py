@@ -47,6 +47,7 @@ from app.services.ims_upload_lifecycle_ui import install_ims_upload_lifecycle_ui
 from app.services.ims_failed_retry_ui import install_ims_failed_retry_ui
 from app.services.production_result_retry_ui import install_production_result_retry_ui
 from app.services.production_result_reconciliation_gate import install_production_result_reconciliation_gate
+from app.services.production_result_stale_zero_guard import install_production_result_stale_zero_guard
 from app.access_control import register_access_control
 
 from app.routes import main_bp
@@ -195,6 +196,7 @@ def create_app(config_object=Config):
     install_dashboard_runtime_optimizer()
     install_ims_upload_lifecycle()
     install_production_result_reconciliation_gate()
+    install_production_result_stale_zero_guard()
 
     register_template_context(app)
     register_blueprints(app)
