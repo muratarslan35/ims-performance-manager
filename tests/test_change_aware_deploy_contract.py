@@ -75,6 +75,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '|| [ "$RELEASE_MODE" = "backend" ]' in text
     acceptance = Path('verify_region_manager_production.py').read_text(encoding='utf-8')
     assert 'session["portal"] = "manager"' in acceptance
+    compile(acceptance, 'verify_region_manager_production.py', 'exec')
 
     # Real-workbook acceptance remains manual qualification rather than an
     # automatic production re-import.
