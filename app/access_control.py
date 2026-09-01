@@ -9,7 +9,10 @@ from flask_login import current_user
 MANAGER_ROLES = {"admin", "administrator", "manager", "yönetici", "yonetici"}
 MANAGER_ONLY_ENDPOINT_PREFIXES = ("ims.", "settings.", "representatives.territory_")
 DUAL_PORTAL_EMAIL_HASHES = {
+    # Previously authorised Murat Arslan manager account.
     "192ef0622a370d063bbada9e29ff3137d7580691186bed0ab0a44c3d631278c0",
+    # Preserve the existing murat.asan@bilimilac.com manager outside regional restrictions.
+    "c14c76f05798cf3933ef16395d8f5afaf2179d37165c9801208de2d7c38a52ec",
 }
 
 
