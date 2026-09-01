@@ -17,6 +17,10 @@ DENIED_SYSTEM = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazs�
 
 
 def _login_as(client, user_id):
+    # This CLI runs in its own process and has no browser fingerprint. Disable
+    # only the test client's session-fingerprint check; authorization remains
+    # fully active and the production web process is untouched.
+    client.application.login_manager.session_protection = None
     with client.session_transaction() as session:
         session["_user_id"] = str(user_id)
         session["_fresh"] = True
