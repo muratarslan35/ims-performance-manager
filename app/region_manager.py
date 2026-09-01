@@ -1,12 +1,13 @@
 """Region-scoped manager accounts and access enforcement.
 
 Regional managers can read the national dashboard but may only drill into their
-assigned region and representatives.  They cannot mutate IMS/system/master data.
-The explicitly authorised dual-portal Murat account and Admin accounts retain
-existing unrestricted behaviour.
+assigned region and representatives. They cannot mutate IMS/system/master data.
+Admin accounts, existing dual-portal accounts and explicitly preserved manager
+accounts retain their previous unrestricted manager behaviour.
 """
 
 from datetime import datetime
+import hashlib
 import re
 from functools import wraps
 from urllib.parse import unquote
@@ -15,9 +16,15 @@ from flask import Blueprint, flash, jsonify, redirect, render_template, request,
 from flask_login import current_user, login_required
 from werkzeug.security import generate_password_hash
 
-from app.access_control import has_dual_portal_access, is_manager
+from app.access_control import has_dual_portal_access, has_manager_access, is_manager
 from app.extensions import db
 from app.models import Product, Representative, RepresentativeBrickAssignment, User
+
+
+UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES = {
+    # Existing murat.asan@bilimilac.com manager keeps its previously defined access.
+    "c14c76f05798cf3933ef16395d8f5afaf2179d37165c9801208de2d7c38a52ec",
+}
 
 
 class RegionManagerScope(db.Model):
@@ -37,11 +44,20 @@ def region_code(value):
     return match.group(1) if match else ""
 
 
+def _email_hash(user):
+    email = str(getattr(user, "email", "") or "").strip().casefold()
+    return hashlib.sha256(email.encode("utf-8")).hexdigest() if email else ""
+
+
 def is_privileged_manager(user):
     role = str(getattr(user, "role", "") or "").strip().casefold()
     return bool(
         getattr(user, "is_authenticated", False)
-        and (role in {"admin", "administrator"} or has_dual_portal_access(user))
+        and (
+            role in {"admin", "administrator"}
+            or has_dual_portal_access(user)
+            or _email_hash(user) in UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES
+        )
     )
 
 
@@ -262,9 +278,11 @@ def install_region_manager_scope(app):
             "can_manage_region_managers": bool(
                 current_user.is_authenticated and is_privileged_manager(current_user)
             ),
-            # Override the broad legacy manager flag for navigation visibility.
+            # Preserve the existing portal-aware manager visibility contract.
             "manager_access": bool(
-                current_user.is_authenticated and is_manager(current_user) and not restricted
+                current_user.is_authenticated
+                and has_manager_access(current_user)
+                and not restricted
             ),
         }
 
@@ -274,7 +292,11 @@ def install_region_manager_scope(app):
             return None
 
         endpoint = request.endpoint or ""
-        json_response = request.is_json or endpoint.startswith("competition.") or endpoint.startswith("simulation.") and request.method != "GET"
+        json_response = (
+            request.is_json
+            or endpoint.startswith("competition.")
+            or (endpoint.startswith("simulation.") and request.method != "GET")
+        )
 
         forbidden_prefixes = (
             "ims.", "settings.", "targets.", "matching.", "products.",
@@ -348,7 +370,7 @@ def _manager_rows():
     managers = User.query.filter(db.func.lower(User.role) == "manager").order_by(User.full_name.asc()).all()
     rows = []
     for user in managers:
-        if has_dual_portal_access(user):
+        if is_privileged_manager(user):
             continue
         scope = RegionManagerScope.query.filter_by(user_id=user.id).one_or_none()
         rows.append({"user": user, "region_code": scope.region_code if scope else None})
@@ -407,7 +429,7 @@ def create():
 @privileged_manager_required
 def update(user_id):
     user = db.session.get(User, user_id)
-    if user is None or str(user.role or "").casefold() != "manager" or has_dual_portal_access(user):
+    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
         flash("Bölge müdürü hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
 
@@ -447,7 +469,7 @@ def update(user_id):
 @privileged_manager_required
 def toggle(user_id):
     user = db.session.get(User, user_id)
-    if user is None or str(user.role or "").casefold() != "manager" or has_dual_portal_access(user):
+    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
         flash("Bölge müdürü hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
     user.active = not user.active
