@@ -1,4 +1,4 @@
-name: March Production Merge Gate
+name: March Production Post Deploy Parse Acceptance
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  gate:
+  acceptance:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read-only production gate
+      - name: Parse immutable March stage-2 source read only
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,13 +38,14 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "396b048f114b97e93790bc7c0993f9dc3cd0d29b"
+          test "$(git rev-parse HEAD)" = "9f410f1f361d16d3b4e624eb47b4cfc691b09ba5"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import hashlib
           from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
+          from app.models import IMSUpload, ProductionResultUpload, ProductionResult, Target
+          from app.services.production_result_import_service import ProductionResultImportService
 
           app=create_app()
           with app.app_context():
@@ -53,20 +54,40 @@ jobs:
               print(f"IMS_JOB_GATE|processing={processing}|queued={queued}")
               assert processing == 0 and queued == 0
 
-              item=ProductionResultUpload.query.get(3)
-              assert item is not None
+              item=db.session.get(ProductionResultUpload,3)
+              assert item is not None and item.status=='FAILED'
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
-              digest=hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-              print(f"PROD_UPLOAD|id={item.id}|status={item.status}|stored_sha={item.source_hash}|actual_sha={digest}|exists={path.exists()}|stage={item.production_stage}")
-              assert item.status == 'FAILED'
-              assert path.exists()
-              assert item.source_hash and digest == item.source_hash
-              assert item.year == 2026 and item.month == 3 and item.production_stage == 2
+              digest=hashlib.sha256(path.read_bytes()).hexdigest()
+              print(f"SOURCE|exists={path.exists()}|stored_sha={item.source_hash}|actual_sha={digest}")
+              assert digest == item.source_hash == 'cb05a56937b764a91bab69173a16962adc59f096439a6b985809650534a71560'
+
+              before_results=ProductionResult.query.filter_by(upload_id=3).count()
+              before_targets=Target.query.filter_by(year=2026,month=3).count()
+              latest_ims=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+              print(f"BEFORE|prod_results={before_results}|march_targets={before_targets}|latest_ims_id={getattr(latest_ims,'id',None)}|week={getattr(latest_ims,'week_number',None)}")
+              assert before_results == 0 and before_targets == 791
+
+              report=ProductionResultImportService(path,2026,3,production_stage=2).parse()
+              rep_ids={int(row['representative_id']) for row in report.product_results}
+              print(f"PARSE|rows_seen={report.rows_seen}|matched_rows={report.matched_rows}|product_results={report.matched_result_count}|rep_totals={len(report.representative_totals)}|regions={len(report.region_totals)}|target_mismatches={report.target_mismatch_count}")
+              print(f"PARSE_REPS|count={len(rep_ids)}|contains_departed_115={115 in rep_ids}")
+              assert report.matched_rows == 113
+              assert report.matched_result_count == 791
+              assert len(report.representative_totals) == 113
+              assert len(rep_ids) == 113
+              assert 115 not in rep_ids
+              assert report.national_total is not None
+
+              # parse() must remain read-only
+              db.session.rollback()
+              assert ProductionResult.query.filter_by(upload_id=3).count() == 0
+              assert db.session.get(ProductionResultUpload,3).status == 'FAILED'
+              assert Target.query.filter_by(year=2026,month=3).count() == 791
 
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}")
-              assert str(journal).lower() == 'wal' and int(busy) == 30000
-              print('MARCH_PRODUCTION_PREMERGE_GATE|PASS')
+              assert str(journal).lower()=='wal' and int(busy)==30000
+              print('MARCH_PRODUCTION_PARSE_ACCEPTANCE|PASS')
           PY
           REMOTE
