@@ -1,0 +1,106 @@
+name: Target Management Latest Period Acceptance
+
+on:
+  push:
+    paths:
+      - '.github/workflows/targets-latest-period-acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          chmod 600 ~/.ssh/ims_diag_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Verify latest target period view
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "396b048f114b97e93790bc7c0993f9dc3cd0d29b"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from collections import Counter
+          from flask import render_template
+          from app import create_app
+          from app.extensions import db
+          from app.models import Product, Representative, Target
+
+          app=create_app()
+          with app.app_context():
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
+              print(f"PROCESSING_COUNT|{processing}")
+              assert processing == 0
+
+              latest=Target.query.order_by(Target.year.desc(), Target.month.desc()).first()
+              assert latest is not None
+              year,month=int(latest.year),int(latest.month)
+              print(f"LATEST_TARGET_PERIOD|{year}-{month:02d}")
+              assert (year,month)==(2026,3)
+
+              all_count=Target.query.count()
+              current=Target.query.filter_by(year=year,month=month).order_by(Target.representative_id,Target.product_id).all()
+              jan=Target.query.filter_by(year=2026,month=1).count()
+              feb=Target.query.filter_by(year=2026,month=2).count()
+              reps=Representative.query.filter_by(active=True).order_by(Representative.rep_name).all()
+              products=Product.query.filter_by(is_active=True).order_by(Product.display_order).all()
+              counts=Counter(int(t.representative_id) for t in current)
+              dist=Counter(counts.values())
+              print(f"TARGET_COUNTS|all={all_count}|jan={jan}|feb={feb}|mar={len(current)}")
+              print(f"MASTER_COUNTS|active_reps={len(reps)}|active_products={len(products)}")
+              print(f"REP_TARGET_DISTRIBUTION|{dict(sorted(dist.items()))}")
+              assert len(current)==791
+              assert len(reps)==113
+              assert len(products)==7
+              assert len(counts)==113 and set(counts.values())=={7}
+              assert jan==791 and feb==791 and all_count==2373
+
+              grouped={}
+              for target in Target.query.order_by(Target.year.desc(),Target.month.desc()).all():
+                  group=grouped.setdefault(target.representative_id,{"representative":target.representative,"targets":[]})
+                  group["targets"].append(target)
+              target_groups=list(grouped.values())
+              for group in target_groups:
+                  group["targets"].sort(key=lambda item:(item.product.display_order,item.product.product_name))
+              target_groups.sort(key=lambda item:((item["representative"].region or "999"),item["representative"].city or "",item["representative"].rep_name))
+
+              with app.test_request_context('/targets/'):
+                  html=render_template('targets.html',targets=Target.query.order_by(Target.year.desc(),Target.month.desc()).all(),representatives=reps,products=products,target_groups=target_groups)
+              assert '03/2026' in html
+              assert '· 7 ürün' in html
+              assert '· 21 ürün' not in html
+              assert '>791<' in html.replace('\n','').replace(' ','') or '791' in html
+              assert 'value="3" selected' in html
+              print("TARGET_TEMPLATE|period=03/2026|total=791|rep_products=7|old_21_absent=1|form_month=3")
+
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert str(journal).lower()=='wal' and int(busy)==30000
+              print('TARGET_MANAGEMENT_PRODUCTION_ACCEPTANCE|PASS')
+          PY
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+          echo 'HTTP_HEALTH|PASS'
+          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
+          REMOTE
