@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Bölge Müdürü Yönetimi{% endblock %}
+{% block page_title %}Bölge Müdürü Yönetimi{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <div class="col-12 col-xl-4">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Yeni Bölge Müdürü</h3></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('manager_users.create') }}" class="vstack gap-3">
+          <div>
+            <label class="form-label">İsim Soyisim</label>
+            <input class="form-control" name="full_name" required minlength="3" autocomplete="name">
+          </div>
+          <div>
+            <label class="form-label">Mail</label>
+            <input class="form-control" name="email" type="email" required autocomplete="email">
+          </div>
+          <div>
+            <label class="form-label">Şifre</label>
+            <input class="form-control" name="password" type="password" required minlength="8" autocomplete="new-password">
+          </div>
+          <div>
+            <label class="form-label">Bölge</label>
+            <select class="form-select" name="region_code" required>
+              <option value="">Bölge seçin</option>
+              {% for code, label in regions %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+            </select>
+            <div class="form-hint">Bölge müdürü yalnız bu bölgenin temsilci, prim simülasyonu ve Q detaylarına erişebilir.</div>
+          </div>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-person-plus me-1"></i> Müdür Ekle</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-8">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h3 class="card-title mb-0">Kayıtlı Bölge Müdürleri</h3>
+        <span class="badge bg-blue-lt">{{ managers|length }} kullanıcı</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table">
+          <thead><tr><th>İsim Soyisim</th><th>Mail</th><th>Bölge</th><th>Durum</th><th></th></tr></thead>
+          <tbody>
+          {% for row in managers %}
+            <tr>
+              <td>{{ row.user.full_name }}</td>
+              <td>{{ row.user.email }}</td>
+              <td>
+                {% if row.region_code %}<span class="badge bg-azure-lt">{{ row.region_code }}</span>{% else %}<span class="badge bg-yellow-lt">Bölge atanmamış</span>{% endif %}
+              </td>
+              <td>{% if row.user.active %}<span class="badge bg-green-lt">Aktif</span>{% else %}<span class="badge bg-red-lt">Pasif</span>{% endif %}</td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editManager{{ row.user.id }}">Düzenle</button>
+                <form method="post" action="{{ url_for('manager_users.toggle', user_id=row.user.id) }}" class="d-inline">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Pasife Al' if row.user.active else 'Aktifleştir' }}</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-secondary py-4">Henüz bölge müdürü tanımlanmadı.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% for row in managers %}
+<div class="modal modal-blur fade" id="editManager{{ row.user.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('manager_users.update', user_id=row.user.id) }}">
+        <div class="modal-header"><h5 class="modal-title">Bölge Müdürünü Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body vstack gap-3">
+          <div><label class="form-label">İsim Soyisim</label><input class="form-control" name="full_name" value="{{ row.user.full_name }}" required></div>
+          <div><label class="form-label">Mail</label><input class="form-control" name="email" type="email" value="{{ row.user.email }}" required></div>
+          <div><label class="form-label">Yeni Şifre</label><input class="form-control" name="password" type="password" minlength="8"><div class="form-hint">Değiştirmeyecekseniz boş bırakın.</div></div>
+          <div><label class="form-label">Bölge</label><select class="form-select" name="region_code" required>{% for code, label in regions %}<option value="{{ code }}" {% if row.region_code == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-link" data-bs-dismiss="modal">Vazgeç</button><button class="btn btn-primary" type="submit">Kaydet</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
