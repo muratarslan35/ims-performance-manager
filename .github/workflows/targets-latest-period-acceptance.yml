@@ -1,4 +1,4 @@
-name: March Production Parse Acceptance
+name: March Production Safe Apply
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  acceptance:
+  apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Parse immutable stage-2 source read only
+      - name: Backup and apply validated stage-2 source
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -40,12 +40,19 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD)" = "0830cc4621b24b7c1b339b28d7e87903ae6e3d86"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import hashlib
+          import hashlib, sqlite3
+          from datetime import datetime
           from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, ProductionResultUpload, ProductionResult, Target
+          from app.models import (
+              IMSUpload, IMSFact, IMSSummary, Target,
+              ProductionResultUpload, ProductionResult, ProductionRepresentativeTotal,
+              ProductionNationalProductResult, ProductionNationalTotal,
+              ProductionRegionProductResult, ProductionRegionTotal,
+          )
           from app.services.production_result_import_service import ProductionResultImportService
+          from app.services.production_result_service import ProductionResultService
 
           app=create_app()
           with app.app_context():
@@ -55,46 +62,92 @@ jobs:
 
               upload=db.session.get(ProductionResultUpload,3)
               assert upload is not None and upload.status=='FAILED'
+              assert upload.year==2026 and upload.month==3 and upload.production_stage==2
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/upload.stored_file_name
               digest=hashlib.sha256(path.read_bytes()).hexdigest()
-              print(f"SOURCE|exists={path.exists()}|stored_sha={upload.source_hash}|actual_sha={digest}|stage={upload.production_stage}")
               assert path.exists() and digest==upload.source_hash=='cb05a56937b764a91bab69173a16962adc59f096439a6b985809650534a71560'
-              assert upload.year==2026 and upload.month==3 and upload.production_stage==2
 
-              before_results=ProductionResult.query.filter_by(upload_id=3).count()
-              before_targets=Target.query.filter_by(year=2026,month=3).count()
               latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              print(f"BEFORE|results={before_results}|targets={before_targets}|ims={getattr(latest,'id',None)}|week={getattr(latest,'week_number',None)}")
-              assert before_results==0 and before_targets==791
               assert latest is not None and latest.id==29 and latest.week_number==14
+              baseline={
+                  'targets': Target.query.filter_by(year=2026,month=3).count(),
+                  'facts': IMSFact.query.filter_by(upload_id=29).count(),
+                  'summary': IMSSummary.query.filter_by(upload_id=29).count(),
+              }
+              existing={
+                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
+                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
+                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
+                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
+                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
+                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
+              }
+              print(f"BASELINE|{baseline}|existing={existing}")
+              assert baseline=={'targets':791,'facts':854,'summary':791}
+              assert all(value==0 for value in existing.values())
+              assert ProductionResultService.final_upload(2026,3) is None
 
               report=ProductionResultImportService(path,2026,3,production_stage=2).parse()
               rep_ids={int(row['representative_id']) for row in report.product_results}
-              vacancy_rows=[row for row in report.product_results if int(row['representative_id'])==112]
-              departed_rows=[row for row in report.product_results if int(row['representative_id'])==115]
-              print(f"PARSE|rows_seen={report.rows_seen}|matched_rows={report.matched_rows}|products={report.matched_result_count}|rep_totals={len(report.representative_totals)}|regions={len(report.region_totals)}|region_products={len(report.region_product_results)}|target_mismatches={report.target_mismatch_count}")
-              print(f"SCOPE|reps={len(rep_ids)}|vacancy112={len(vacancy_rows)}|departed115={len(departed_rows)}")
-              print(f"VACANCY112|{[(row['product_id'],row['target_tl'],row['target_unit'],row['actual_tl'],row['actual_unit']) for row in vacancy_rows]}")
+              assert report.matched_rows==113 and report.matched_result_count==791
+              assert len(report.representative_totals)==113 and len(report.region_totals)==11
+              assert len(report.region_product_results)==77 and len(report.national_product_results)==7
+              assert 112 in rep_ids and 115 not in rep_ids
 
-              assert report.rows_seen==113 and report.matched_rows==113
-              assert report.matched_result_count==791 and len(report.representative_totals)==113
-              assert len(rep_ids)==113 and 112 in rep_ids and 115 not in rep_ids
-              assert len(vacancy_rows)==7 and not departed_rows
-              assert all(float(row['actual_unit'])==0 for row in vacancy_rows)
-              assert all(float(row['target_unit'])>0 for row in vacancy_rows)
-              assert report.national_total is not None
-              assert len(report.region_totals)==11 and len(report.region_product_results)==77
+              db_path=Path(db.engine.url.database)
+              if not db_path.is_absolute():
+                  db_path=(Path.cwd()/db_path).resolve()
+              backup_dir=Path(app.config['BACKUP_FOLDER'])
+              backup_dir.mkdir(parents=True,exist_ok=True)
+              backup_path=backup_dir/f"pre_march_stage2_apply_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.sqlite"
+              src=sqlite3.connect(str(db_path),timeout=30)
+              dst=sqlite3.connect(str(backup_path),timeout=30)
+              try:
+                  src.backup(dst)
+                  integrity=dst.execute('PRAGMA integrity_check').fetchone()[0]
+              finally:
+                  dst.close(); src.close()
+              print(f"BACKUP|path={backup_path}|bytes={backup_path.stat().st_size}|integrity={integrity}")
+              assert integrity=='ok' and backup_path.stat().st_size>0
 
-              # parse is read-only
-              db.session.rollback()
-              assert ProductionResult.query.filter_by(upload_id=3).count()==0
-              assert db.session.get(ProductionResultUpload,3).status=='FAILED'
+              ProductionResultImportService.apply(upload,report)
+              upload.error_message=None
+              upload.warning_message=None
+              db.session.flush()
+
+              staged={
+                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
+                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
+                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
+                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
+                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
+                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
+              }
+              print(f"STAGED|status={upload.status}|{staged}")
+              assert upload.status=='APPLIED'
+              assert staged=={'results':791,'rep_totals':113,'national_products':7,'national_totals':1,'region_products':77,'region_totals':11}
+              assert Target.query.filter_by(year=2026,month=3).count()==baseline['targets']
+              assert IMSFact.query.filter_by(upload_id=29).count()==baseline['facts']
+              assert IMSSummary.query.filter_by(upload_id=29).count()==baseline['summary']
+              db.session.commit()
+
+              final=ProductionResultService.final_upload(2026,3)
+              assert final is not None and final.id==3 and final.production_stage==2 and final.status=='APPLIED'
+              vacancy=ProductionResult.query.filter_by(upload_id=3,representative_id=112).all()
+              departed=ProductionResult.query.filter_by(upload_id=3,representative_id=115).count()
+              print(f"FINAL|upload={final.id}|stage={final.production_stage}|status={final.status}|vacancy112={len(vacancy)}|departed115={departed}")
+              print(f"VACANCY112|{[(r.product_id,float(r.target_tl or 0),float(r.target_unit or 0),float(r.actual_tl or 0),float(r.actual_unit or 0)) for r in vacancy]}")
+              assert len(vacancy)==7 and departed==0
+              assert all(float(r.actual_unit or 0)==0 for r in vacancy)
+              assert all(float(r.target_unit or 0)>0 for r in vacancy)
+
               assert Target.query.filter_by(year=2026,month=3).count()==791
-
+              assert IMSFact.query.filter_by(upload_id=29).count()==854
+              assert IMSSummary.query.filter_by(upload_id=29).count()==791
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}")
               assert str(journal).lower()=='wal' and int(busy)==30000
-              print('MARCH_STAGE2_PARSE_ACCEPTANCE|PASS')
+              print('MARCH_STAGE2_SAFE_APPLY|PASS')
           PY
           REMOTE
