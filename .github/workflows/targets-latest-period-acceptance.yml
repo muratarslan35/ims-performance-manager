@@ -1,4 +1,4 @@
-name: March Production Representative Diagnostic
+name: March Production Merge Gate
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  diagnostic:
+  gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,62 +30,43 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Locate rejected row read only
+      - name: Read-only production gate
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "396b048f114b97e93790bc7c0993f9dc3cd0d29b"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import hashlib
           from pathlib import Path
-          from openpyxl import load_workbook
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload, Representative, Target
-          from app.services.alias_service import AliasService
-          from app.services.production_result_import_service import ProductionResultImportService
+          from app.models import ProductionResultUpload
 
           app=create_app()
           with app.app_context():
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              print(f"PROCESSING_COUNT|{processing}")
+              queued=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='QUEUED'")).scalar() or 0)
+              print(f"IMS_JOB_GATE|processing={processing}|queued={queued}")
+              assert processing == 0 and queued == 0
+
               item=ProductionResultUpload.query.get(3)
+              assert item is not None
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
-              print(f"FAILED_UPLOAD|{item.id}|{item.status}|{item.error_message}|exists={path.exists()}")
-              wb=load_workbook(path, read_only=False, data_only=True)
-              needle='ILAYDA'
-              hits=[]
-              for sh in wb.worksheets:
-                  for row in sh.iter_rows():
-                      for cell in row:
-                          n=AliasService.normalize(cell.value)
-                          if needle in n or 'VARSAK' in n:
-                              hits.append((sh.title,cell.row,cell.column,cell.value,n))
-              print(f"CELL_HITS|{len(hits)}")
-              for hit in hits:
-                  print(f"CELL_HIT|sheet={hit[0]}|row={hit[1]}|col={hit[2]}|value={hit[3]!r}|norm={hit[4]}")
+              digest=hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+              print(f"PROD_UPLOAD|id={item.id}|status={item.status}|stored_sha={item.file_sha256}|actual_sha={digest}|exists={path.exists()}|stage={item.production_stage}")
+              assert item.status == 'FAILED'
+              assert path.exists()
+              assert item.file_sha256 and digest == item.file_sha256
+              assert item.year == 2026 and item.month == 3 and item.production_stage == 2
 
-              service=ProductionResultImportService(path,2026,3,production_stage=2)
-              service._load_master_maps()
-              for metric in ('TL','KUTU'):
-                  sh=service._find_sheet(wb,metric)
-                  layout=service._layout(sh,metric)
-                  print(f"LAYOUT|metric={metric}|sheet={sh.title}|{layout}")
-                  for r in range(layout['header_row']+1,sh.max_row+1):
-                      raw=sh.cell(r,layout['name_column']).value
-                      n=AliasService.normalize(raw)
-                      if 'ILAYDA' in n or 'VARSAK' in n:
-                          region=sh.cell(r,layout['region_column']).value
-                          vals=service._read_metric_values(sh,r,layout,'diagnostic')
-                          print(f"MATCHING_ROW|metric={metric}|sheet={sh.title}|row={r}|raw={raw!r}|norm={n}|region={region!r}|target_total={vals['total_target']}|actual_total={vals['total_actual']}|pids={vals['product_ids']}|targets={vals['targets']}|actuals={vals['values']}")
-
-              # Print all current active Region 501 representatives and March TL targets.
-              for rep in Representative.query.filter_by(active=True,region='501').order_by(Representative.id).all():
-                  rows=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).order_by(Target.product_id).all()
-                  print(f"REGION501_ACTIVE|id={rep.id}|name={rep.rep_name}|code={rep.rep_code}|targets={[(t.product_id,float(t.tl_target or 0),float(t.unit_target or 0)) for t in rows]}|tl_total={sum(float(t.tl_target or 0) for t in rows)}|unit_total={sum(float(t.unit_target or 0) for t in rows)}")
-              old=Representative.query.get(115)
-              print(f"OLD_REP|id={old.id}|name={old.rep_name}|active={old.active}|region={old.region}|code={old.rep_code}")
-              print(f"SQLITE|journal={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert str(journal).lower() == 'wal' and int(busy) == 30000
+              print('MARCH_PRODUCTION_PREMERGE_GATE|PASS')
           PY
           REMOTE
