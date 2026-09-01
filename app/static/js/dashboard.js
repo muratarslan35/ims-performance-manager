@@ -390,6 +390,12 @@ function initTurkeyMap(regionRealization) {
     });
 
     region.addEventListener("click", () => {
+      if (region.dataset.allowed === "false") {
+        if (selectedInfo) {
+          selectedInfo.innerHTML = '<i class="bi bi-shield-lock-fill"></i> <strong>Sadece Kendi Bölgenize Erişim Mevcut</strong>';
+        }
+        return;
+      }
       if (selectedRegion) selectedRegion.classList.remove("map-region-selected");
       if (selectedRegion === region) {
         selectedRegion = null;

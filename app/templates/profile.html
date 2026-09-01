@@ -30,7 +30,7 @@
               <label class="form-label" for="profile_phone">Telefon</label>
               <input class="form-control" id="profile_phone" name="phone" value="{{ current_user.phone or '' }}" autocomplete="tel" placeholder="+90 5XX XXX XX XX">
             </div>
-            <div class="col-md-6" id="region">
+            {% if not field_portal %}<div class="col-md-6" id="region">
               <label class="form-label" for="profile_region">Bağlı bölge</label>
               <select class="form-select" id="profile_region" name="region">
                 <option value="">Bölgeyi değiştirme</option>
@@ -38,16 +38,16 @@
                 <option value="{{ code }}" {% if representative and representative.region == code %}selected{% endif %}>{{ code }} {{ city }}</option>
                 {% endfor %}
               </select>
-            </div>
+            </div>{% endif %}
           </div>
-          <div class="alert alert-info mt-4 mb-0">
+          {% if not field_portal %}<div class="alert alert-info mt-4 mb-0">
             <i class="bi bi-info-circle me-2"></i>
             {% if representative %}
               Bölge değişikliği, adınızla eşleşen temsilci master kaydına da uygulanır.
             {% else %}
               Bu hesapla eşleşen bir temsilci kaydı bulunamadığından bölge değişikliği master kayda uygulanmaz.
             {% endif %}
-          </div>
+          </div>{% endif %}
           <button class="btn btn-primary mt-4" type="submit"><i class="bi bi-check2-circle me-2"></i>Profili Kaydet</button>
         </form>
       </div>
