@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect rejected March row and current target identity
+      - name: Locate rejected row read only
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,7 +39,6 @@ jobs:
           cd "$IMS_PATH"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from pathlib import Path
-          from math import isclose
           from openpyxl import load_workbook
           from app import create_app
           from app.extensions import db
@@ -49,66 +48,44 @@ jobs:
 
           app=create_app()
           with app.app_context():
-              print(f"LIVE_COMMIT|{__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}")
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               print(f"PROCESSING_COUNT|{processing}")
-              item=(ProductionResultUpload.query.filter_by(id=3).first())
-              assert item is not None and item.status=='FAILED'
+              item=ProductionResultUpload.query.get(3)
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
-              print(f"FAILED_UPLOAD|id={item.id}|file={item.file_name}|stored={item.stored_file_name}|exists={path.exists()}|error={item.error_message}")
-              assert path.exists()
-
+              print(f"FAILED_UPLOAD|{item.id}|{item.status}|{item.error_message}|exists={path.exists()}")
               wb=load_workbook(path, read_only=False, data_only=True)
+              needle='ILAYDA'
+              hits=[]
+              for sh in wb.worksheets:
+                  for row in sh.iter_rows():
+                      for cell in row:
+                          n=AliasService.normalize(cell.value)
+                          if needle in n or 'VARSAK' in n:
+                              hits.append((sh.title,cell.row,cell.column,cell.value,n))
+              print(f"CELL_HITS|{len(hits)}")
+              for hit in hits:
+                  print(f"CELL_HIT|sheet={hit[0]}|row={hit[1]}|col={hit[2]}|value={hit[3]!r}|norm={hit[4]}")
+
               service=ProductionResultImportService(path,2026,3,production_stage=2)
               service._load_master_maps()
-              sh=service._find_sheet(wb,'TL')
-              layout=service._layout(sh,'TL')
-              print(f"TL_SHEET|{sh.title}|layout={layout}")
-              needle=AliasService.normalize('İLAYDA NUR VARSAK')
-              found=[]
-              for r in range(layout['header_row']+1, sh.max_row+1):
-                  raw_name=sh.cell(r,layout['name_column']).value
-                  if AliasService.normalize(raw_name)==needle:
-                      raw_region=sh.cell(r,layout['region_column']).value
-                      vals=service._read_metric_values(sh,r,layout,'diagnostic')
-                      found.append((r,raw_name,raw_region,vals))
-              print(f"REJECTED_ROWS|count={len(found)}")
-              assert len(found)==1
-              r,raw_name,raw_region,vals=found[0]
-              print(f"REJECTED_ROW|row={r}|name={raw_name}|region={raw_region}|target_total={vals['total_target']}|actual_total={vals['total_actual']}|product_ids={vals['product_ids']}|targets={vals['targets']}")
+              for metric in ('TL','KUTU'):
+                  sh=service._find_sheet(wb,metric)
+                  layout=service._layout(sh,metric)
+                  print(f"LAYOUT|metric={metric}|sheet={sh.title}|{layout}")
+                  for r in range(layout['header_row']+1,sh.max_row+1):
+                      raw=sh.cell(r,layout['name_column']).value
+                      n=AliasService.normalize(raw)
+                      if 'ILAYDA' in n or 'VARSAK' in n:
+                          region=sh.cell(r,layout['region_column']).value
+                          vals=service._read_metric_values(sh,r,layout,'diagnostic')
+                          print(f"MATCHING_ROW|metric={metric}|sheet={sh.title}|row={r}|raw={raw!r}|norm={n}|region={region!r}|target_total={vals['total_target']}|actual_total={vals['total_actual']}|pids={vals['product_ids']}|targets={vals['targets']}|actuals={vals['values']}")
 
-              region_code=AliasService.normalize(raw_region).split(' ',1)[0]
-              candidates=[]
-              reps=Representative.query.filter_by(active=True).all()
-              for rep in reps:
-                  if AliasService.normalize(rep.region).split(' ',1)[0] != region_code:
-                      continue
-                  targets=(Target.query.filter_by(year=2026,month=3,representative_id=rep.id).order_by(Target.product_id).all())
-                  by_pid={t.product_id:float(t.tl_target or 0) for t in targets}
-                  vec=[by_pid.get(pid) for pid in vals['product_ids']]
-                  if any(v is None for v in vec):
-                      continue
-                  total=sum(vec)
-                  diffs=[abs(float(a)-float(b)) for a,b in zip(vec,vals['targets'])]
-                  exact=all(isclose(float(a),float(b),rel_tol=0,abs_tol=0.02) for a,b in zip(vec,vals['targets']))
-                  candidates.append((sum(diffs),abs(total-vals['total_target']),exact,rep,vec,total))
-              candidates.sort(key=lambda x:(not x[2],x[0],x[1],x[3].id))
-              for diff,total_diff,exact,rep,vec,total in candidates[:12]:
-                  print(f"CURRENT_CANDIDATE|exact={exact}|diff={diff:.4f}|total_diff={total_diff:.4f}|id={rep.id}|name={rep.rep_name}|code={rep.rep_code}|region={rep.region}|target_total={total}|targets={vec}")
-
+              # Print all current active Region 501 representatives and March TL targets.
+              for rep in Representative.query.filter_by(active=True,region='501').order_by(Representative.id).all():
+                  rows=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).order_by(Target.product_id).all()
+                  print(f"REGION501_ACTIVE|id={rep.id}|name={rep.rep_name}|code={rep.rep_code}|targets={[(t.product_id,float(t.tl_target or 0),float(t.unit_target or 0)) for t in rows]}|tl_total={sum(float(t.tl_target or 0) for t in rows)}|unit_total={sum(float(t.unit_target or 0) for t in rows)}")
               old=Representative.query.get(115)
-              for m in (1,2,3):
-                  rows=Target.query.filter_by(year=2026,month=m,representative_id=115).order_by(Target.product_id).all()
-                  print(f"OLD_REP_TARGETS|month={m}|count={len(rows)}|total={sum(float(x.tl_target or 0) for x in rows)}|values={[float(x.tl_target or 0) for x in rows]}")
               print(f"OLD_REP|id={old.id}|name={old.rep_name}|active={old.active}|region={old.region}|code={old.rep_code}")
-
-              exacts=[c for c in candidates if c[2]]
-              print(f"EXACT_CURRENT_MATCH_COUNT|{len(exacts)}")
-              if exacts:
-                  for c in exacts:
-                      rep=c[3]
-                      print(f"EXACT_CURRENT_MATCH|id={rep.id}|name={rep.rep_name}|code={rep.rep_code}|region={rep.region}")
-
               print(f"SQLITE|journal={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
           PY
           REMOTE
