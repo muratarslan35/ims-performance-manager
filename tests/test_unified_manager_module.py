@@ -209,8 +209,13 @@ def test_functional_managers_cannot_open_settings_but_keep_operational_navigatio
 
 def test_region_manager_keeps_existing_scope_rules(client):
     login(client, "region.manager@example.com")
-    allowed = client.get("/regions/101")
+    # The synthetic fixture has no complete regional performance period, so the
+    # permitted route may legitimately redirect to a data-state page. The
+    # authorization contract is that own-region access is not rejected.
+    allowed = client.get("/regions/101", follow_redirects=True)
     assert allowed.status_code == 200
+    assert "Bu bölgenin yöneticisi değilsiniz." not in allowed.get_data(as_text=True)
+
     denied = client.get("/regions/201", follow_redirects=True)
     assert "Bu bölgenin yöneticisi değilsiniz." in denied.get_data(as_text=True)
     ims = client.get("/ims/", follow_redirects=True)
