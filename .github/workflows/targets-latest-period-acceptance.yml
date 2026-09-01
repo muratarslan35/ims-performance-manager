@@ -1,4 +1,4 @@
-name: Production Backup Inventory
+name: Production Backup Cleanup
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  inventory:
+  cleanup:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inventory backup directory read only
+      - name: Remove only obsolete DB backups
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -43,22 +43,43 @@ jobs:
           from app import create_app
           from app.extensions import db
 
+          DELETE={
+              'pre_week12_partial_repair_20260831_104353.sqlite',
+              'pre_week12_overlay_repair_20260831_132940.sqlite',
+          }
+          KEEP={
+              'pre_week14_compact_tts_actual_repair_20260831_212357.sqlite',
+              'pre_march_stage2_apply_20260901_082416.sqlite',
+          }
+
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
               print(f"IMS_JOB_GATE|active={active}")
               assert active == 0
               backup_dir=Path(app.config['BACKUP_FOLDER'])
-              files=[p for p in backup_dir.rglob('*') if p.is_file()]
-              files.sort(key=lambda p:p.stat().st_mtime)
-              total=sum(p.stat().st_size for p in files)
-              print(f"BACKUP_DIR|{backup_dir}|files={len(files)}|bytes={total}")
-              for p in files:
-                  st=p.stat()
-                  print(f"BACKUP_FILE|mtime={int(st.st_mtime)}|bytes={st.st_size}|name={p.relative_to(backup_dir)}")
+              files={p.name:p for p in backup_dir.iterdir() if p.is_file()}
+              print(f"BEFORE|files={sorted(files)}|bytes={sum(p.stat().st_size for p in files.values())}")
+              assert set(files)==DELETE|KEEP, (set(files), DELETE|KEEP)
+              for name in KEEP:
+                  assert files[name].stat().st_size > 2_000_000_000
+              removed=0
+              for name in sorted(DELETE):
+                  p=files[name]
+                  size=p.stat().st_size
+                  p.unlink()
+                  removed += size
+                  print(f"REMOVED|name={name}|bytes={size}")
+              remaining={p.name:p for p in backup_dir.iterdir() if p.is_file()}
+              print(f"AFTER|files={sorted(remaining)}|bytes={sum(p.stat().st_size for p in remaining.values())}|freed={removed}")
+              assert set(remaining)==KEEP
+              assert all(remaining[name].stat().st_size > 2_000_000_000 for name in KEEP)
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
-              assert str(journal).lower()=='wal' and int(busy)==30000
+              quick=db.session.execute(db.text('PRAGMA quick_check')).scalar()
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}|quick_check={quick}")
+              assert str(journal).lower()=='wal' and int(busy)==30000 and quick=='ok'
+              print('BACKUP_CLEANUP|PASS')
           PY
+          df -h "$IMS_PATH" | tail -n 1 | sed 's/^/DISK|/'
           REMOTE
