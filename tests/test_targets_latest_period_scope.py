@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from flask import render_template
@@ -5,9 +6,20 @@ from flask import render_template
 from app import create_app
 
 
+class TargetScopeConfig:
+    TESTING = True
+    SECRET_KEY = "target-scope-test"
+    SQLALCHEMY_DATABASE_URI = "sqlite://"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    UPLOAD_FOLDER = Path("/tmp/target-scope-test/uploads")
+    REPORT_FOLDER = Path("/tmp/target-scope-test/reports")
+    BACKUP_FOLDER = Path("/tmp/target-scope-test/backups")
+    LOG_FOLDER = Path("/tmp/target-scope-test/logs")
+
+
 def test_targets_template_shows_only_latest_period():
-    app = create_app()
-    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    app = create_app(TargetScopeConfig)
+    app.config.update(WTF_CSRF_ENABLED=False)
 
     rep = SimpleNamespace(id=1, rep_name="TEST TEMSILCI", region="901", city="DIYARBAKIR")
     product = SimpleNamespace(id=1, product_name="TEST URUN", display_order=1)
