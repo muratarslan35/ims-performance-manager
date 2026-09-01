@@ -50,6 +50,7 @@ from app.services.production_result_reconciliation_gate import install_productio
 from app.services.production_result_stale_zero_guard import install_production_result_stale_zero_guard
 from app.access_control import register_access_control
 from app.region_manager import install_region_manager_scope, manager_users_bp
+from app.region_manager_detail_scope import install_region_manager_detail_scope
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -207,6 +208,7 @@ def create_app(config_object=Config):
     install_production_result_retry_ui(app)
     register_access_control(app)
     install_region_manager_scope(app)
+    install_region_manager_detail_scope(app)
     register_error_handlers(app)
 
     if not app.config.get("TESTING", False):
