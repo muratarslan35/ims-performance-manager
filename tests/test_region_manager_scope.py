@@ -40,20 +40,8 @@ def app():
         upgrade(directory=MIGRATIONS_DIR)
         initialize_database()
 
-        rep_101 = Representative(
-            rep_code="RM101",
-            rep_name="101 Temsilci",
-            region="101 ADANA",
-            city="ADANA",
-            active=True,
-        )
-        rep_201 = Representative(
-            rep_code="RM201",
-            rep_name="201 Temsilci",
-            region="201 ANKARA",
-            city="ANKARA",
-            active=True,
-        )
+        rep_101 = Representative(rep_code="RM101", rep_name="101 Temsilci", region="101 ADANA", city="ADANA", active=True)
+        rep_201 = Representative(rep_code="RM201", rep_name="201 Temsilci", region="201 ANKARA", city="ANKARA", active=True)
         manager = User(
             full_name="101 Bölge Müdürü",
             email="manager101@example.com",
@@ -63,13 +51,12 @@ def app():
         )
         db.session.add_all([rep_101, rep_201, manager])
         db.session.flush()
-        db.session.add(RegionManagerScope(user_id=manager.id, region_code="101"))
+        db.session.add(RegionManagerScope(user_id=manager.id, region_code="101", manager_type="region"))
         db.session.commit()
         application.config["TEST_REP_101"] = rep_101.id
         application.config["TEST_REP_201"] = rep_201.id
 
     yield application
-
     with application.app_context():
         from app.extensions import db
         db.session.remove()
@@ -117,6 +104,7 @@ def test_manager_module_creates_login_user_with_region_scope(app, client):
             "full_name": "Yeni Bölge Müdürü",
             "email": "new.manager@example.com",
             "password": "StrongPass123",
+            "manager_type": "region",
             "region_code": "201",
         },
         follow_redirects=False,
@@ -126,13 +114,13 @@ def test_manager_module_creates_login_user_with_region_scope(app, client):
     with app.app_context():
         from app.models import User
         from app.region_manager import RegionManagerScope
-
         user = User.query.filter_by(email="new.manager@example.com").one()
         scope = RegionManagerScope.query.filter_by(user_id=user.id).one()
         assert user.role == "Manager"
         assert user.active is True
         assert check_password_hash(user.password, "StrongPass123")
         assert scope.region_code == "201"
+        assert scope.manager_type == "region"
 
 
 def test_regional_manager_sees_only_own_representatives(app, client):
@@ -153,10 +141,7 @@ def test_regional_manager_cannot_open_other_region_detail(client):
 
 def test_regional_manager_cannot_open_other_representative(app, client):
     login_manager(client)
-    response = client.get(
-        f"/representatives/view/{app.config['TEST_REP_201']}",
-        follow_redirects=True,
-    )
+    response = client.get(f"/representatives/view/{app.config['TEST_REP_201']}", follow_redirects=True)
     assert response.status_code == 200
     assert "Bu bölgenin yöneticisi değilsiniz." in response.get_data(as_text=True)
 
@@ -171,7 +156,6 @@ def test_regional_manager_cannot_use_ims_settings_or_master_mutations(client):
 
 def test_simulation_and_q_are_region_scoped(app, client):
     login_manager(client)
-
     simulation = client.get("/simulation/")
     assert simulation.status_code == 200
     simulation_html = simulation.get_data(as_text=True)
@@ -188,10 +172,7 @@ def test_simulation_and_q_are_region_scoped(app, client):
     assert "101 Temsilci" in quarter_html
     assert "201 Temsilci" not in quarter_html
 
-    denied_q = client.get(
-        f"/quarter?representative_id={app.config['TEST_REP_201']}",
-        follow_redirects=True,
-    )
+    denied_q = client.get(f"/quarter?representative_id={app.config['TEST_REP_201']}", follow_redirects=True)
     assert "Bu bölgenin yöneticisi değilsiniz." in denied_q.get_data(as_text=True)
 
 
@@ -205,11 +186,25 @@ def test_global_search_filters_cross_region_results(client):
     assert "201 Temsilci" not in titles
 
 
-def test_regional_manager_cannot_open_manager_user_module(client):
+def test_regional_manager_can_view_manager_module_but_cannot_mutate(client):
     login_manager(client)
-    response = client.get("/manager-users/", follow_redirects=True)
+    response = client.get("/manager-users/")
     assert response.status_code == 200
-    assert "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız." in response.get_data(as_text=True)
+    html = response.get_data(as_text=True)
+    assert "Yönetici Modülü" in html
+    assert "Yeni Yönetici" not in html
+
+    denied = client.post(
+        "/manager-users/create",
+        data={
+            "full_name": "Yetkisiz",
+            "email": "forbidden@example.com",
+            "password": "password123",
+            "manager_type": "marketing",
+        },
+        follow_redirects=True,
+    )
+    assert "yönetici ekleme veya düzenleme yetkisine sahip değildir" in denied.get_data(as_text=True)
 
 
 def test_murat_asan_manager_keeps_unrestricted_special_access(app):
