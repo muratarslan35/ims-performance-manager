@@ -1,4 +1,5 @@
 import logging
+import os
 
 from sqlalchemy import inspect
 from werkzeug.security import generate_password_hash
@@ -149,6 +150,15 @@ DEFAULT_PRODUCTS = [
     }
 
 ]
+
+
+PERSISTENT_ADMIN_USERS = (
+    {
+        "full_name": "Mehmet Özkoçak",
+        "email": "mehmet.ozkocak@bilimilac.com",
+        "password_env": "IMS_ADMIN_MEHMET_OZKOC_PASSWORD",
+    },
+)
 
 
 logger = logging.getLogger(__name__)
@@ -311,37 +321,86 @@ def create_default_prime_rules():
 
 def create_admin_user():
 
+    changed = False
+
     admin = User.query.filter_by(
 
         email="admin@ipm.local"
 
     ).first()
 
-    if admin:
+    if admin is None:
 
-        return
+        db.session.add(
 
-    admin = User(
+            User(
 
-        full_name="Sistem Yöneticisi",
+                full_name="Sistem Yöneticisi",
 
-        email="admin@ipm.local",
+                email="admin@ipm.local",
 
-        password=generate_password_hash(
+                password=generate_password_hash(
 
-            "Admin12345"
+                    "Admin12345"
 
-        ),
+                ),
 
-        role="Admin",
+                role="Admin",
 
 
-    )
+            )
 
-    db.session.add(
+        )
 
-        admin
+        changed = True
 
-    )
+    for item in PERSISTENT_ADMIN_USERS:
 
-    db.session.commit()
+        persistent_admin = User.query.filter_by(
+
+            email=item["email"]
+
+        ).first()
+
+        if persistent_admin:
+
+            continue
+
+        password = os.getenv(item["password_env"])
+
+        if not password:
+
+            logger.warning(
+
+                "Persistent admin %s not created because %s is unset",
+
+                item["email"],
+
+                item["password_env"],
+
+            )
+
+            continue
+
+        db.session.add(
+
+            User(
+
+                full_name=item["full_name"],
+
+                email=item["email"],
+
+                password=generate_password_hash(password),
+
+                role="Admin",
+
+
+            )
+
+        )
+
+        changed = True
+
+    if changed:
+
+        db.session.commit()
