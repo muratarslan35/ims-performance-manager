@@ -57,10 +57,10 @@ jobs:
               assert item is not None
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
               digest=hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-              print(f"PROD_UPLOAD|id={item.id}|status={item.status}|stored_sha={item.file_sha256}|actual_sha={digest}|exists={path.exists()}|stage={item.production_stage}")
+              print(f"PROD_UPLOAD|id={item.id}|status={item.status}|stored_sha={item.source_hash}|actual_sha={digest}|exists={path.exists()}|stage={item.production_stage}")
               assert item.status == 'FAILED'
               assert path.exists()
-              assert item.file_sha256 and digest == item.file_sha256
+              assert item.source_hash and digest == item.source_hash
               assert item.year == 2026 and item.month == 3 and item.production_stage == 2
 
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
