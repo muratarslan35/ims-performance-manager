@@ -1,4 +1,4 @@
-name: Production Backup Cleanup
+name: Create Production Manager User
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  cleanup:
+  create-manager:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Remove only obsolete DB backups
+      - name: Create or update manager account
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,47 +39,58 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from pathlib import Path
           from app import create_app
           from app.extensions import db
+          from app.models import User
+          from app.access_control import is_manager
 
-          DELETE={
-              'pre_week12_partial_repair_20260831_104353.sqlite',
-              'pre_week12_overlay_repair_20260831_132940.sqlite',
-          }
-          KEEP={
-              'pre_week14_compact_tts_actual_repair_20260831_212357.sqlite',
-              'pre_march_stage2_apply_20260901_082416.sqlite',
-          }
+          EMAIL='mehmet.ozkocak@bilimilac.com'
+          FULL_NAME='Mehmet Özkoçak'
+          PASSWORD_HASH='pbkdf2:sha256:1000000$nN1MLeNW47crHJm5$9b48c54db4f4a6a49e5eaaa2d618eb19c7369644313ae64011044d3451d7f0a8'
 
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
               print(f"IMS_JOB_GATE|active={active}")
               assert active == 0
-              backup_dir=Path(app.config['BACKUP_FOLDER'])
-              files={p.name:p for p in backup_dir.iterdir() if p.is_file()}
-              print(f"BEFORE|files={sorted(files)}|bytes={sum(p.stat().st_size for p in files.values())}")
-              assert set(files)==DELETE|KEEP, (set(files), DELETE|KEEP)
-              for name in KEEP:
-                  assert files[name].stat().st_size > 2_000_000_000
-              removed=0
-              for name in sorted(DELETE):
-                  p=files[name]
-                  size=p.stat().st_size
-                  p.unlink()
-                  removed += size
-                  print(f"REMOVED|name={name}|bytes={size}")
-              remaining={p.name:p for p in backup_dir.iterdir() if p.is_file()}
-              print(f"AFTER|files={sorted(remaining)}|bytes={sum(p.stat().st_size for p in remaining.values())}|freed={removed}")
-              assert set(remaining)==KEEP
-              assert all(remaining[name].stat().st_size > 2_000_000_000 for name in KEEP)
+
+              before=User.query.filter_by(email=EMAIL).all()
+              print(f"BEFORE|matches={len(before)}")
+              assert len(before) <= 1
+
+              user=before[0] if before else None
+              action='updated' if user else 'created'
+              if user is None:
+                  user=User(full_name=FULL_NAME,email=EMAIL,password=PASSWORD_HASH,role='Manager',active=True)
+                  db.session.add(user)
+              else:
+                  user.full_name=FULL_NAME
+                  user.password=PASSWORD_HASH
+                  user.role='Manager'
+                  user.active=True
+
+              db.session.commit()
+              db.session.expire_all()
+
+              user=User.query.filter_by(email=EMAIL).one()
+              print(f"MANAGER_USER|action={action}|id={user.id}|email={user.email}|name={user.full_name}|role={user.role}|active={user.active}")
+              assert user.full_name==FULL_NAME
+              assert user.email==EMAIL
+              assert user.role=='Manager'
+              assert user.active is True
+              assert user.password==PASSWORD_HASH
+              assert is_manager(user)
+              assert User.query.filter_by(email=EMAIL).count()==1
+
+              admin=User.query.filter_by(email='admin@ipm.local').first()
+              assert admin is not None and admin.role=='Admin'
+              print(f"EXISTING_ADMIN|id={admin.id}|role={admin.role}|preserved=1")
+
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               quick=db.session.execute(db.text('PRAGMA quick_check')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}|quick_check={quick}")
               assert str(journal).lower()=='wal' and int(busy)==30000 and quick=='ok'
-              print('BACKUP_CLEANUP|PASS')
+              print('MANAGER_USER_CREATE|PASS')
           PY
-          df -h "$IMS_PATH" | tail -n 1 | sed 's/^/DISK|/'
           REMOTE
