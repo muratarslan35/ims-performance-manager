@@ -11,7 +11,7 @@ import re
 from functools import wraps
 from urllib.parse import unquote
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from werkzeug.security import generate_password_hash
 
@@ -105,6 +105,39 @@ def is_functional_manager(user):
     return bool(manager_type(user) in {"promotion", "product", "marketing"})
 
 
+def is_field_portal():
+    return bool(
+        current_user.is_authenticated
+        and session.get("portal") == "representative"
+        and session.get("portal_explicit", False)
+    )
+
+
+def _region_identity(value):
+    code = region_code(value)
+    return code or str(value or "").strip().casefold()
+
+
+def current_field_representative():
+    """Resolve the signed-in field user without a fuzzy cross-user match."""
+    if not is_field_portal():
+        return None
+    email = str(getattr(current_user, "email", "") or "").strip().casefold()
+    if email:
+        exact = Representative.query.filter(db.func.lower(Representative.email) == email).all()
+        if len(exact) == 1:
+            return exact[0]
+    from app.services.alias_service import AliasService
+    name = AliasService.normalize(getattr(current_user, "full_name", ""))
+    matches = [row for row in Representative.query.all() if AliasService.normalize(row.rep_name) == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def field_region():
+    representative = current_field_representative()
+    return _region_identity(representative.region) if representative else None
+
+
 def can_view_manager_module(user):
     return bool(is_manager(user))
 
@@ -132,16 +165,21 @@ def assigned_region(user):
 
 
 def representative_in_region(representative, code):
-    return bool(representative is not None and code and region_code(representative.region) == code)
+    return bool(representative is not None and code and _region_identity(representative.region) == code)
 
 
 def can_access_representative(user, representative):
+    if is_field_portal() and getattr(user, "id", None) == getattr(current_user, "id", None):
+        return representative_in_region(representative, field_region())
     if not is_regional_manager(user):
         return True
     return representative_in_region(representative, assigned_region(user))
 
 
 def can_access_region(user, candidate):
+    if is_field_portal() and getattr(user, "id", None) == getattr(current_user, "id", None):
+        code = field_region()
+        return bool(code and _region_identity(candidate) == code)
     if not is_regional_manager(user):
         return True
     return bool(assigned_region(user) and region_code(candidate) == assigned_region(user))
@@ -180,6 +218,14 @@ def _deny_system(json_response=False):
     return redirect(url_for("dashboard.index"))
 
 
+def _deny_field(json_response=False):
+    message = "Temsilci hesabınızla bu alana erişemezsiniz."
+    if json_response:
+        return jsonify({"success": False, "message": message}), 403
+    flash(message, "warning")
+    return redirect(url_for("dashboard.index"))
+
+
 def _deny_settings(json_response=False):
     message = "Bu yönetici hesabıyla Ayarlar menüsüne erişemezsiniz."
     if json_response:
@@ -201,8 +247,8 @@ def _request_rep_allowed(rep_id):
     return can_access_representative(current_user, representative)
 
 
-def _regional_representatives(active_only=False):
-    code = assigned_region(current_user)
+def _scoped_representatives(active_only=False):
+    code = field_region() if is_field_portal() else assigned_region(current_user)
     query = Representative.query
     if active_only:
         query = query.filter(Representative.active.is_(True))
@@ -215,7 +261,7 @@ def _restricted_representatives_index():
         RepresentativeBrickAssignment.year.desc(), RepresentativeBrickAssignment.month.desc()
     ).first()
     assignments_by_rep = {}
-    representatives = _regional_representatives(active_only=False)
+    representatives = _scoped_representatives(active_only=False)
     rep_ids = {row.id for row in representatives}
     if latest and rep_ids:
         assignments = RepresentativeBrickAssignment.query.filter_by(
@@ -233,7 +279,7 @@ def _restricted_representatives_index():
 
 
 def _restricted_simulation_index():
-    representatives = _regional_representatives(active_only=True)
+    representatives = _scoped_representatives(active_only=True)
     representatives.sort(
         key=lambda representative: (
             str(representative.rep_name or "").strip().upper().startswith(("ATANMAMIŞ", "ATANMAMIS")),
@@ -247,7 +293,7 @@ def _restricted_simulation_index():
 def _restricted_quarter():
     from app.services.quarter_entitlement_service import QuarterEntitlementService
 
-    representatives = _regional_representatives(active_only=True)
+    representatives = _scoped_representatives(active_only=True)
     year = request.args.get("year", type=int) or 2026
     quarter = request.args.get("quarter", type=int) or 2
     representative_id = request.args.get("representative_id", type=int)
@@ -271,7 +317,7 @@ def _restricted_quarter():
 
 
 def _filter_search_response(response):
-    if not is_regional_manager(current_user) or not response.is_json:
+    if not (is_regional_manager(current_user) or is_field_portal()) or not response.is_json:
         return response
     payload = response.get_json(silent=True) or {}
     results = payload.get("results")
@@ -302,11 +348,12 @@ def install_region_manager_scope(app):
     original_rep_index = app.view_functions.get("representatives.index")
     original_sim_index = app.view_functions.get("simulation.index")
     original_quarter = app.view_functions.get("main.quarter")
+    original_territory_index = app.view_functions.get("representatives.territory_management")
 
     if original_rep_index:
         @wraps(original_rep_index)
         def rep_index_wrapper(*args, **kwargs):
-            if is_regional_manager(current_user):
+            if is_regional_manager(current_user) or is_field_portal():
                 return _restricted_representatives_index()
             return original_rep_index(*args, **kwargs)
         app.view_functions["representatives.index"] = rep_index_wrapper
@@ -314,7 +361,7 @@ def install_region_manager_scope(app):
     if original_sim_index:
         @wraps(original_sim_index)
         def simulation_index_wrapper(*args, **kwargs):
-            if is_regional_manager(current_user):
+            if is_regional_manager(current_user) or is_field_portal():
                 return _restricted_simulation_index()
             return original_sim_index(*args, **kwargs)
         app.view_functions["simulation.index"] = simulation_index_wrapper
@@ -322,18 +369,47 @@ def install_region_manager_scope(app):
     if original_quarter:
         @wraps(original_quarter)
         def quarter_wrapper(*args, **kwargs):
-            if is_regional_manager(current_user):
+            if is_regional_manager(current_user) or is_field_portal():
                 return _restricted_quarter()
             return original_quarter(*args, **kwargs)
         app.view_functions["main.quarter"] = quarter_wrapper
 
+    if original_territory_index:
+        @wraps(original_territory_index)
+        def territory_index_wrapper(*args, **kwargs):
+            if is_regional_manager(current_user):
+                from app.services.period_service import PeriodService
+                period = PeriodService.get_active_period()
+                year = request.args.get("year", type=int) or period["year"]
+                month = request.args.get("month", type=int) or period["month"]
+                representatives = _scoped_representatives(active_only=False)
+                rep_ids = {row.id for row in representatives}
+                assignments = RepresentativeBrickAssignment.query.filter_by(year=year, month=month).order_by(
+                    RepresentativeBrickAssignment.active.desc(), RepresentativeBrickAssignment.brick.asc()
+                ).all()
+                assignments = [row for row in assignments if row.representative_id in rep_ids]
+                counts = {}
+                for item in assignments:
+                    bucket = counts.setdefault(item.representative_id, {"active": 0, "passive": 0, "total": 0})
+                    bucket["active" if item.active else "passive"] += 1
+                    bucket["total"] += 1
+                return render_template(
+                    "territory_management.html", representatives=representatives, assignments=assignments,
+                    counts=counts, year=year, month=month, can_manage=True,
+                )
+            return original_territory_index(*args, **kwargs)
+        app.view_functions["representatives.territory_management"] = territory_index_wrapper
+
     @app.context_processor
     def regional_manager_context():
         regional = bool(current_user.is_authenticated and is_regional_manager(current_user))
+        field_scoped = bool(current_user.is_authenticated and is_field_portal())
         portal_manager_access = bool(current_user.is_authenticated and has_manager_access(current_user))
         return {
             "regional_manager_restricted": regional,
             "regional_manager_region": assigned_region(current_user) if regional else None,
+            "field_portal_scoped": field_scoped,
+            "field_portal_region": field_region() if field_scoped else None,
             "manager_type_label": manager_type_label(current_user) if current_user.is_authenticated else None,
             "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user) and portal_manager_access),
             "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
@@ -345,7 +421,7 @@ def install_region_manager_scope(app):
 
     @app.before_request
     def enforce_manager_scope():
-        if not current_user.is_authenticated or not is_manager(current_user):
+        if not current_user.is_authenticated:
             return None
 
         endpoint = request.endpoint or ""
@@ -354,6 +430,49 @@ def install_region_manager_scope(app):
             or endpoint.startswith("competition.")
             or (endpoint.startswith("simulation.") and request.method != "GET")
         )
+
+        if is_field_portal():
+            forbidden_prefixes = (
+                "ims.", "settings.", "targets.", "matching.", "products.",
+                "manager_users.", "representatives.territory_",
+            )
+            if endpoint.startswith(forbidden_prefixes) or endpoint in {
+                "main.market_analysis", "representatives.add", "representatives.edit",
+                "representatives.status", "representatives.save_assignment",
+            }:
+                return _deny_field(json_response=json_response)
+            if endpoint == "regions.detail" and not can_access_region(current_user, (request.view_args or {}).get("region_key")):
+                return _deny_region()
+            if endpoint == "representatives.view":
+                rep_id = int((request.view_args or {}).get("id") or 0)
+                if not _request_rep_allowed(rep_id):
+                    return _deny_region()
+            if endpoint == "simulation.representative_info":
+                rep_id = int((request.view_args or {}).get("rep_id") or 0)
+                if not _request_rep_allowed(rep_id):
+                    return _deny_region(json_response=True)
+            if endpoint.startswith("simulation.") and request.method == "POST":
+                rep_id = _json_rep_id()
+                if rep_id and not _request_rep_allowed(rep_id):
+                    return _deny_region(json_response=True)
+            if endpoint == "main.quarter":
+                rep_id = request.args.get("representative_id", type=int)
+                if rep_id and not _request_rep_allowed(rep_id):
+                    return _deny_region()
+            if endpoint.startswith("competition."):
+                rep_id = (
+                    (request.view_args or {}).get("representative_id")
+                    or (request.view_args or {}).get("rep_id")
+                    or request.args.get("representative_id", type=int)
+                    or request.args.get("rep_id", type=int)
+                    or _json_rep_id()
+                )
+                if rep_id and not _request_rep_allowed(int(rep_id)):
+                    return _deny_region(json_response=True)
+            return None
+
+        if not is_manager(current_user):
+            return None
 
         if is_functional_manager(current_user):
             if endpoint.startswith("settings."):
@@ -365,13 +484,29 @@ def install_region_manager_scope(app):
 
         forbidden_prefixes = (
             "ims.", "settings.", "targets.", "matching.", "products.",
-            "representatives.territory_",
         )
         if endpoint.startswith(forbidden_prefixes):
             return _deny_system(json_response=json_response)
 
         if endpoint in {"representatives.add", "representatives.edit", "representatives.status"}:
             return _deny_system(json_response=json_response)
+
+        if endpoint == "representatives.save_assignment":
+            rep_id = int((request.view_args or {}).get("id") or 0)
+            if not _request_rep_allowed(rep_id):
+                return _deny_region(json_response=json_response)
+
+        if endpoint in {"representatives.territory_status", "representatives.territory_transfer"}:
+            assignment_id = int((request.view_args or {}).get("assignment_id") or 0)
+            assignment = db.session.get(RepresentativeBrickAssignment, assignment_id)
+            source = db.session.get(Representative, assignment.representative_id) if assignment else None
+            if not can_access_representative(current_user, source):
+                return _deny_region(json_response=json_response)
+            if endpoint == "representatives.territory_transfer":
+                target_id = request.form.get("target_representative_id", type=int)
+                target = db.session.get(Representative, target_id) if target_id else None
+                if not can_access_representative(current_user, target):
+                    return _deny_region(json_response=json_response)
 
         if endpoint == "regions.detail":
             if not can_access_region(current_user, (request.view_args or {}).get("region_key")):
