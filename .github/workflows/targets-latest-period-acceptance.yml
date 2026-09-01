@@ -1,4 +1,4 @@
-name: March Production Post Disconnect State
+name: Production Backup Inventory
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  inventory:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect production state read only
+      - name: Inventory backup directory read only
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -42,46 +42,23 @@ jobs:
           from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import (
-              IMSUpload, IMSFact, IMSSummary, Target,
-              ProductionResultUpload, ProductionResult, ProductionRepresentativeTotal,
-              ProductionNationalProductResult, ProductionNationalTotal,
-              ProductionRegionProductResult, ProductionRegionTotal,
-          )
-          from app.services.production_result_service import ProductionResultService
 
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
-              upload=db.session.get(ProductionResultUpload,3)
-              counts={
-                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
-                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
-                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
-                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
-                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
-                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
-              }
-              final=ProductionResultService.final_upload(2026,3)
-              vacancy=ProductionResult.query.filter_by(upload_id=3,representative_id=112).count()
-              departed=ProductionResult.query.filter_by(upload_id=3,representative_id=115).count()
-              latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              invariant={
-                  'targets': Target.query.filter_by(year=2026,month=3).count(),
-                  'facts': IMSFact.query.filter_by(upload_id=29).count(),
-                  'summary': IMSSummary.query.filter_by(upload_id=29).count(),
-              }
-              backups=sorted(Path(app.config['BACKUP_FOLDER']).glob('pre_march_stage2_apply_*.sqlite'), key=lambda p:p.stat().st_mtime)
-              last_backup=backups[-1] if backups else None
-              print(f"STATE|ims_jobs={active}|upload_status={getattr(upload,'status',None)}|counts={counts}|final={getattr(final,'id',None)}|final_stage={getattr(final,'production_stage',None)}|vacancy112={vacancy}|departed115={departed}")
-              print(f"INVARIANT|{invariant}|latest_ims={getattr(latest,'id',None)}|week={getattr(latest,'week_number',None)}")
-              print(f"BACKUP|count={len(backups)}|last={last_backup}|bytes={last_backup.stat().st_size if last_backup else 0}")
+              print(f"IMS_JOB_GATE|active={active}")
+              assert active == 0
+              backup_dir=Path(app.config['BACKUP_FOLDER'])
+              files=[p for p in backup_dir.rglob('*') if p.is_file()]
+              files.sort(key=lambda p:p.stat().st_mtime)
+              total=sum(p.stat().st_size for p in files)
+              print(f"BACKUP_DIR|{backup_dir}|files={len(files)}|bytes={total}")
+              for p in files:
+                  st=p.stat()
+                  print(f"BACKUP_FILE|mtime={int(st.st_mtime)}|bytes={st.st_size}|name={p.relative_to(backup_dir)}")
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}")
-              assert active==0
-              assert invariant=={'targets':791,'facts':791,'summary':791}
-              assert latest is not None and latest.id==29 and latest.week_number==14
               assert str(journal).lower()=='wal' and int(busy)==30000
           PY
           REMOTE
