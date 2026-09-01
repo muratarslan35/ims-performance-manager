@@ -1,4 +1,4 @@
-name: March Production Vacancy Identity Diagnostic
+name: March Production Ankara Succession Diagnostic
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Compare stale person to current vacancy read only
+      - name: Trace historical identity read only
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,75 +39,51 @@ jobs:
           cd "$IMS_PATH"
           test "$(git rev-parse HEAD)" = "9f410f1f361d16d3b4e624eb47b4cfc691b09ba5"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import hashlib
-          from pathlib import Path
-          from openpyxl import load_workbook
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload, Representative, Target
-          from app.services.alias_service import AliasService
-          from app.services.production_result_import_service import ProductionResultImportService
+          from app.models import Representative, RepresentativeAlias, Target, ProductionResultUpload, ProductionResult
 
           app=create_app()
           with app.app_context():
-              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
-              queued=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='QUEUED'")).scalar() or 0)
-              print(f"IMS_JOB_GATE|processing={processing}|queued={queued}")
-              assert processing==0 and queued==0
+              processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
+              print(f"IMS_JOB_GATE|active={processing}")
+              assert processing == 0
 
-              item=db.session.get(ProductionResultUpload,3)
-              path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
-              assert hashlib.sha256(path.read_bytes()).hexdigest()==item.source_hash
-              service=ProductionResultImportService(path,2026,3,production_stage=2)
-              service._load_master_maps()
-              wb=load_workbook(path,read_only=False,data_only=True)
-              unit_sheet=service._find_sheet(wb,'KUTU')
-              layout=service._layout(unit_sheet,'KUTU')
+              for rid in (105,112,115):
+                  r=db.session.get(Representative,rid)
+                  print(f"REP|id={rid}|name={getattr(r,'rep_name',None)}|code={getattr(r,'rep_code',None)}|ims={getattr(r,'ims_code',None)}|active={getattr(r,'active',None)}|region={getattr(r,'region',None)}|city={getattr(r,'city',None)}")
+                  aliases=RepresentativeAlias.query.filter_by(representative_id=rid).all()
+                  print(f"ALIASES|id={rid}|{[(a.id,a.alias_name) for a in aliases]}")
+                  for month in (1,2,3):
+                      rows=Target.query.filter_by(year=2026,month=month,representative_id=rid).order_by(Target.product_id).all()
+                      print(f"TARGET|id={rid}|month={month}|count={len(rows)}|tl={[(t.product_id,float(t.tl_target or 0)) for t in rows]}|unit={[(t.product_id,float(t.unit_target or 0)) for t in rows]}")
 
-              stale=None
-              for row_number in range(layout['header_row']+1,unit_sheet.max_row+1):
-                  raw_name=unit_sheet.cell(row_number,layout['name_column']).value
-                  if AliasService.normalize(raw_name)=='ILAYDA NUR VARSAK':
-                      raw_region=unit_sheet.cell(row_number,layout['region_column']).value
-                      vals=service._read_metric_values(unit_sheet,row_number,layout,'diagnostic')
-                      stale=(row_number,raw_name,raw_region,vals)
-                      break
-              assert stale is not None
-              row_number,raw_name,raw_region,vals=stale
-              print(f"STALE|row={row_number}|name={raw_name}|region={raw_region}|pids={vals['product_ids']}|targets={vals['targets']}|target_total={vals['total_target']}|actuals={vals['values']}|actual_total={vals['total_actual']}")
+              uploads=ProductionResultUpload.query.filter_by(year=2026,month=3).order_by(ProductionResultUpload.id).all()
+              for u in uploads:
+                  print(f"PROD_UPLOAD|id={u.id}|stage={u.production_stage}|status={u.status}|rows={u.row_count}|matched={u.matched_row_count}|file={u.file_name}")
+                  for rid in (105,112,115):
+                      rows=ProductionResult.query.filter_by(upload_id=u.id,representative_id=rid).order_by(ProductionResult.product_id).all()
+                      if rows:
+                          print(f"PROD_ROWS|upload={u.id}|rid={rid}|{[(x.product_id,float(x.target_tl or 0),float(x.target_unit or 0),float(x.actual_tl or 0),float(x.actual_unit or 0)) for x in rows]}")
 
-              vacancy=db.session.get(Representative,112)
-              print(f"VACANCY|id={vacancy.id}|name={vacancy.rep_name}|code={vacancy.rep_code}|active={vacancy.active}|region={vacancy.region}|city={vacancy.city}")
-              target_rows=Target.query.filter_by(year=2026,month=3,representative_id=112).all()
-              by_pid={int(t.product_id):t for t in target_rows}
-              ordered=[]
-              for pid in vals['product_ids']:
-                  t=by_pid[int(pid)]
-                  ordered.append((int(pid),float(t.unit_target or 0),float(t.tl_target or 0)))
-              print(f"VACANCY_TARGETS_ORDERED|{ordered}")
-              vacancy_units=[x[1] for x in ordered]
-              print(f"COMPARE|source_unit_targets={vals['targets']}|vacancy_unit_targets={vacancy_units}|source_total={vals['total_target']}|vacancy_total={sum(vacancy_units)}|diffs={[round(float(a)-float(b),6) for a,b in zip(vals['targets'],vacancy_units)]}")
-
-              # All same-region current vacancies: determine if target signature identifies exactly one slot.
-              candidates=[]
-              for rep in Representative.query.filter_by(active=True,region='501').all():
-                  code=str(rep.rep_code or '').upper()
-                  name=AliasService.normalize(rep.rep_name)
-                  if not (code.startswith('UNASSIGNED') or 'BOS' in name or 'BOŞ' in name or 'KADRO' in name):
+              # Raw DB history for these ids across IMS summary/facts, schema-safe via sqlite metadata.
+              tables={r[0] for r in db.session.execute(db.text("SELECT name FROM sqlite_master WHERE type='table'"))}
+              for table in ('ims_summary','ims_summaries','ims_facts'):
+                  if table not in tables:
                       continue
-                  rows=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).all()
-                  m={int(t.product_id):float(t.unit_target or 0) for t in rows}
-                  if not all(int(pid) in m for pid in vals['product_ids']):
-                      continue
-                  vector=[m[int(pid)] for pid in vals['product_ids']]
-                  diff=sum(abs(float(a)-float(b)) for a,b in zip(vals['targets'],vector))
-                  candidates.append((diff,rep.id,rep.rep_name,rep.rep_code,vector))
-              candidates.sort()
-              for c in candidates:
-                  print(f"VACANCY_CANDIDATE|diff={c[0]}|id={c[1]}|name={c[2]}|code={c[3]}|vector={c[4]}")
+                  cols=[r[1] for r in db.session.execute(db.text(f"PRAGMA table_info({table})"))]
+                  print(f"TABLE|{table}|cols={cols}")
+                  if 'representative_id' in cols:
+                      selected=[c for c in ('id','ims_upload_id','year','month','week_number','representative_id','product_id','tl','unit','metric_type','metric_value') if c in cols]
+                      if selected:
+                          sql=f"SELECT {','.join(selected)} FROM {table} WHERE representative_id IN (105,112,115) ORDER BY " + ("ims_upload_id," if 'ims_upload_id' in cols else "") + "representative_id" 
+                          rows=list(db.session.execute(db.text(sql)))
+                          print(f"HISTORY|{table}|rows={len(rows)}")
+                          for row in rows[-120:]: print(tuple(row))
 
-              old=db.session.get(Representative,115)
-              print(f"OLD_PERSON|id={old.id}|name={old.rep_name}|active={old.active}|region={old.region}|city={old.city}|code={old.rep_code}")
-              print(f"SQLITE|journal={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
+              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
+              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert str(journal).lower()=='wal' and int(busy)==30000
           PY
           REMOTE
