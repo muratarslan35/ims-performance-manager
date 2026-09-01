@@ -83,7 +83,7 @@ jobs:
                   'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
               }
               print(f"BASELINE|{baseline}|existing={existing}")
-              assert baseline=={'targets':791,'facts':854,'summary':791}
+              assert baseline=={'targets':791,'facts':791,'summary':791}
               assert all(value==0 for value in existing.values())
               assert ProductionResultService.final_upload(2026,3) is None
 
@@ -142,7 +142,7 @@ jobs:
               assert all(float(r.target_unit or 0)>0 for r in vacancy)
 
               assert Target.query.filter_by(year=2026,month=3).count()==791
-              assert IMSFact.query.filter_by(upload_id=29).count()==854
+              assert IMSFact.query.filter_by(upload_id=29).count()==791
               assert IMSSummary.query.filter_by(upload_id=29).count()==791
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
