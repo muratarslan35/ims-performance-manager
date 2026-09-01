@@ -1,4 +1,4 @@
-name: March Production Safe Apply
+name: March Production Post Disconnect State
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  apply:
+  inspect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -30,18 +30,15 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Backup and apply validated stage-2 source
+      - name: Inspect production state read only
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "0830cc4621b24b7c1b339b28d7e87903ae6e3d86"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import hashlib, sqlite3
-          from datetime import datetime
           from pathlib import Path
           from app import create_app
           from app.extensions import db
@@ -51,103 +48,40 @@ jobs:
               ProductionNationalProductResult, ProductionNationalTotal,
               ProductionRegionProductResult, ProductionRegionTotal,
           )
-          from app.services.production_result_import_service import ProductionResultImportService
           from app.services.production_result_service import ProductionResultService
 
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
-              print(f"IMS_JOB_GATE|active={active}")
-              assert active == 0
-
               upload=db.session.get(ProductionResultUpload,3)
-              assert upload is not None and upload.status=='FAILED'
-              assert upload.year==2026 and upload.month==3 and upload.production_stage==2
-              path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/upload.stored_file_name
-              digest=hashlib.sha256(path.read_bytes()).hexdigest()
-              assert path.exists() and digest==upload.source_hash=='cb05a56937b764a91bab69173a16962adc59f096439a6b985809650534a71560'
-
+              counts={
+                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
+                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
+                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
+                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
+                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
+                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
+              }
+              final=ProductionResultService.final_upload(2026,3)
+              vacancy=ProductionResult.query.filter_by(upload_id=3,representative_id=112).count()
+              departed=ProductionResult.query.filter_by(upload_id=3,representative_id=115).count()
               latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              assert latest is not None and latest.id==29 and latest.week_number==14
-              baseline={
+              invariant={
                   'targets': Target.query.filter_by(year=2026,month=3).count(),
                   'facts': IMSFact.query.filter_by(upload_id=29).count(),
                   'summary': IMSSummary.query.filter_by(upload_id=29).count(),
               }
-              existing={
-                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
-                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
-                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
-                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
-                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
-                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
-              }
-              print(f"BASELINE|{baseline}|existing={existing}")
-              assert baseline=={'targets':791,'facts':791,'summary':791}
-              assert all(value==0 for value in existing.values())
-              assert ProductionResultService.final_upload(2026,3) is None
-
-              report=ProductionResultImportService(path,2026,3,production_stage=2).parse()
-              rep_ids={int(row['representative_id']) for row in report.product_results}
-              assert report.matched_rows==113 and report.matched_result_count==791
-              assert len(report.representative_totals)==113 and len(report.region_totals)==11
-              assert len(report.region_product_results)==77 and len(report.national_product_results)==7
-              assert 112 in rep_ids and 115 not in rep_ids
-
-              db_path=Path(db.engine.url.database)
-              if not db_path.is_absolute():
-                  db_path=(Path.cwd()/db_path).resolve()
-              backup_dir=Path(app.config['BACKUP_FOLDER'])
-              backup_dir.mkdir(parents=True,exist_ok=True)
-              backup_path=backup_dir/f"pre_march_stage2_apply_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.sqlite"
-              src=sqlite3.connect(str(db_path),timeout=30)
-              dst=sqlite3.connect(str(backup_path),timeout=30)
-              try:
-                  src.backup(dst)
-                  integrity=dst.execute('PRAGMA integrity_check').fetchone()[0]
-              finally:
-                  dst.close(); src.close()
-              print(f"BACKUP|path={backup_path}|bytes={backup_path.stat().st_size}|integrity={integrity}")
-              assert integrity=='ok' and backup_path.stat().st_size>0
-
-              ProductionResultImportService.apply(upload,report)
-              upload.error_message=None
-              upload.warning_message=None
-              db.session.flush()
-
-              staged={
-                  'results': ProductionResult.query.filter_by(upload_id=3).count(),
-                  'rep_totals': ProductionRepresentativeTotal.query.filter_by(upload_id=3).count(),
-                  'national_products': ProductionNationalProductResult.query.filter_by(upload_id=3).count(),
-                  'national_totals': ProductionNationalTotal.query.filter_by(upload_id=3).count(),
-                  'region_products': ProductionRegionProductResult.query.filter_by(upload_id=3).count(),
-                  'region_totals': ProductionRegionTotal.query.filter_by(upload_id=3).count(),
-              }
-              print(f"STAGED|status={upload.status}|{staged}")
-              assert upload.status=='APPLIED'
-              assert staged=={'results':791,'rep_totals':113,'national_products':7,'national_totals':1,'region_products':77,'region_totals':11}
-              assert Target.query.filter_by(year=2026,month=3).count()==baseline['targets']
-              assert IMSFact.query.filter_by(upload_id=29).count()==baseline['facts']
-              assert IMSSummary.query.filter_by(upload_id=29).count()==baseline['summary']
-              db.session.commit()
-
-              final=ProductionResultService.final_upload(2026,3)
-              assert final is not None and final.id==3 and final.production_stage==2 and final.status=='APPLIED'
-              vacancy=ProductionResult.query.filter_by(upload_id=3,representative_id=112).all()
-              departed=ProductionResult.query.filter_by(upload_id=3,representative_id=115).count()
-              print(f"FINAL|upload={final.id}|stage={final.production_stage}|status={final.status}|vacancy112={len(vacancy)}|departed115={departed}")
-              print(f"VACANCY112|{[(r.product_id,float(r.target_tl or 0),float(r.target_unit or 0),float(r.actual_tl or 0),float(r.actual_unit or 0)) for r in vacancy]}")
-              assert len(vacancy)==7 and departed==0
-              assert all(float(r.actual_unit or 0)==0 for r in vacancy)
-              assert all(float(r.target_unit or 0)>0 for r in vacancy)
-
-              assert Target.query.filter_by(year=2026,month=3).count()==791
-              assert IMSFact.query.filter_by(upload_id=29).count()==791
-              assert IMSSummary.query.filter_by(upload_id=29).count()==791
+              backups=sorted(Path(app.config['BACKUP_FOLDER']).glob('pre_march_stage2_apply_*.sqlite'), key=lambda p:p.stat().st_mtime)
+              last_backup=backups[-1] if backups else None
+              print(f"STATE|ims_jobs={active}|upload_status={getattr(upload,'status',None)}|counts={counts}|final={getattr(final,'id',None)}|final_stage={getattr(final,'production_stage',None)}|vacancy112={vacancy}|departed115={departed}")
+              print(f"INVARIANT|{invariant}|latest_ims={getattr(latest,'id',None)}|week={getattr(latest,'week_number',None)}")
+              print(f"BACKUP|count={len(backups)}|last={last_backup}|bytes={last_backup.stat().st_size if last_backup else 0}")
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
               print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert active==0
+              assert invariant=={'targets':791,'facts':791,'summary':791}
+              assert latest is not None and latest.id==29 and latest.week_number==14
               assert str(journal).lower()=='wal' and int(busy)==30000
-              print('MARCH_STAGE2_SAFE_APPLY|PASS')
           PY
           REMOTE
