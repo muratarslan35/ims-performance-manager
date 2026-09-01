@@ -1,4 +1,4 @@
-name: March Production Scope Difference Diagnostic
+name: March Production Vacancy Identity Diagnostic
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Compare parsed representative scopes read only
+      - name: Compare stale person to current vacancy read only
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -45,6 +45,7 @@ jobs:
           from app import create_app
           from app.extensions import db
           from app.models import ProductionResultUpload, Representative, Target
+          from app.services.alias_service import AliasService
           from app.services.production_result_import_service import ProductionResultImportService
 
           app=create_app()
@@ -52,45 +53,61 @@ jobs:
               processing=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'")).scalar() or 0)
               queued=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='QUEUED'")).scalar() or 0)
               print(f"IMS_JOB_GATE|processing={processing}|queued={queued}")
-              assert processing == 0 and queued == 0
+              assert processing==0 and queued==0
+
               item=db.session.get(ProductionResultUpload,3)
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
-              digest=hashlib.sha256(path.read_bytes()).hexdigest()
-              assert digest == item.source_hash
-
+              assert hashlib.sha256(path.read_bytes()).hexdigest()==item.source_hash
               service=ProductionResultImportService(path,2026,3,production_stage=2)
               service._load_master_maps()
               wb=load_workbook(path,read_only=False,data_only=True)
-              tl_sheet=service._find_sheet(wb,'TL')
               unit_sheet=service._find_sheet(wb,'KUTU')
-              tl_rows=service._read_sheet(tl_sheet,'TL')
-              unit_rows=service._read_sheet(unit_sheet,'KUTU')
-              tl_ids=set(tl_rows)
-              unit_ids=set(unit_rows)
-              print(f"SCOPES|tl={len(tl_ids)}|kutu={len(unit_ids)}|intersection={len(tl_ids & unit_ids)}")
+              layout=service._layout(unit_sheet,'KUTU')
 
-              for label, ids in [('TL_ONLY',sorted(tl_ids-unit_ids)),('KUTU_ONLY',sorted(unit_ids-tl_ids))]:
-                  print(f"{label}_COUNT|{len(ids)}")
-                  for rid in ids:
-                      rep=db.session.get(Representative,rid)
-                      target_count=Target.query.filter_by(year=2026,month=3,representative_id=rid).count()
-                      row=(tl_rows if label=='TL_ONLY' else unit_rows)[rid]
-                      print(f"{label}|id={rid}|name={rep.rep_name if rep else None}|active={rep.active if rep else None}|region={rep.region if rep else None}|targets={target_count}|actual_total={row['total_actual']}|actuals={row['values']}|target_total={row['total_target']}")
+              stale=None
+              for row_number in range(layout['header_row']+1,unit_sheet.max_row+1):
+                  raw_name=unit_sheet.cell(row_number,layout['name_column']).value
+                  if AliasService.normalize(raw_name)=='ILAYDA NUR VARSAK':
+                      raw_region=unit_sheet.cell(row_number,layout['region_column']).value
+                      vals=service._read_metric_values(unit_sheet,row_number,layout,'diagnostic')
+                      stale=(row_number,raw_name,raw_region,vals)
+                      break
+              assert stale is not None
+              row_number,raw_name,raw_region,vals=stale
+              print(f"STALE|row={row_number}|name={raw_name}|region={raw_region}|pids={vals['product_ids']}|targets={vals['targets']}|target_total={vals['total_target']}|actuals={vals['values']}|actual_total={vals['total_actual']}")
 
-              # Also enumerate workbook roster rows that do not resolve to a current representative map.
-              for metric, sheet in [('TL',tl_sheet),('KUTU',unit_sheet)]:
-                  layout=service._layout(sheet,metric)
-                  for row_number in range(layout['header_row']+1,sheet.max_row+1):
-                      raw_name=sheet.cell(row_number,layout['name_column']).value
-                      raw_region=sheet.cell(row_number,layout['region_column']).value
-                      label=service._normalize(raw_name)
-                      if not label or label=='NATIONAL' or service._is_region(label):
-                          continue
-                      rep=service._match_representative(raw_name,raw_region)
-                      if rep is None:
-                          vals=service._read_metric_values(sheet,row_number,layout,'diagnostic')
-                          print(f"UNRESOLVED_RAW|metric={metric}|row={row_number}|name={raw_name!r}|region={raw_region!r}|actual_total={vals['total_actual']}|actuals={vals['values']}|target_total={vals['total_target']}")
+              vacancy=db.session.get(Representative,112)
+              print(f"VACANCY|id={vacancy.id}|name={vacancy.rep_name}|code={vacancy.rep_code}|active={vacancy.active}|region={vacancy.region}|city={vacancy.city}")
+              target_rows=Target.query.filter_by(year=2026,month=3,representative_id=112).all()
+              by_pid={int(t.product_id):t for t in target_rows}
+              ordered=[]
+              for pid in vals['product_ids']:
+                  t=by_pid[int(pid)]
+                  ordered.append((int(pid),float(t.unit_target or 0),float(t.tl_target or 0)))
+              print(f"VACANCY_TARGETS_ORDERED|{ordered}")
+              vacancy_units=[x[1] for x in ordered]
+              print(f"COMPARE|source_unit_targets={vals['targets']}|vacancy_unit_targets={vacancy_units}|source_total={vals['total_target']}|vacancy_total={sum(vacancy_units)}|diffs={[round(float(a)-float(b),6) for a,b in zip(vals['targets'],vacancy_units)]}")
 
+              # All same-region current vacancies: determine if target signature identifies exactly one slot.
+              candidates=[]
+              for rep in Representative.query.filter_by(active=True,region='501').all():
+                  code=str(rep.rep_code or '').upper()
+                  name=AliasService.normalize(rep.rep_name)
+                  if not (code.startswith('UNASSIGNED') or 'BOS' in name or 'BOŞ' in name or 'KADRO' in name):
+                      continue
+                  rows=Target.query.filter_by(year=2026,month=3,representative_id=rep.id).all()
+                  m={int(t.product_id):float(t.unit_target or 0) for t in rows}
+                  if not all(int(pid) in m for pid in vals['product_ids']):
+                      continue
+                  vector=[m[int(pid)] for pid in vals['product_ids']]
+                  diff=sum(abs(float(a)-float(b)) for a,b in zip(vals['targets'],vector))
+                  candidates.append((diff,rep.id,rep.rep_name,rep.rep_code,vector))
+              candidates.sort()
+              for c in candidates:
+                  print(f"VACANCY_CANDIDATE|diff={c[0]}|id={c[1]}|name={c[2]}|code={c[3]}|vector={c[4]}")
+
+              old=db.session.get(Representative,115)
+              print(f"OLD_PERSON|id={old.id}|name={old.rep_name}|active={old.active}|region={old.region}|city={old.city}|code={old.rep_code}")
               print(f"SQLITE|journal={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
           PY
           REMOTE
