@@ -120,6 +120,7 @@ def login():
             return render_template("login.html")
 
         session["portal"] = portal or ("manager" if is_manager(user) else "representative")
+        session["portal_explicit"] = bool(portal)
 
         login_user(
             user,
@@ -274,6 +275,8 @@ def profile():
     from app.services.alias_service import AliasService
     regions=db.session.query(Representative.region,Representative.city).filter(Representative.region.isnot(None),Representative.city.isnot(None)).distinct().order_by(Representative.region.asc(),Representative.city.asc()).all()
     representative=next((rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name)==AliasService.normalize(current_user.full_name)),None)
+    from app.region_manager import is_field_portal
+    field_portal = is_field_portal()
     if request.method=="POST":
         if request.form.get("action")=="password":
             current_password,password,confirm=request.form.get("current_password",""),request.form.get("password",""),request.form.get("password_confirm","")
@@ -285,6 +288,7 @@ def profile():
                 UserVaultService.sync_from_primary();flash("Şifreniz güncellendi.","success")
         else:
             full_name,email,phone,region=request.form.get("full_name","").strip(),request.form.get("email","").strip().lower(),request.form.get("phone","").strip(),request.form.get("region","").strip();duplicate=User.query.filter(User.email==email,User.id!=current_user.id).first()
+            if field_portal: region = ""
             if not full_name or not email: flash("Ad soyad ve e-posta zorunludur.","warning")
             elif duplicate: flash("Bu e-posta başka bir hesapta kullanılıyor.","danger")
             elif region and region not in {code for code,_ in regions}: flash("Geçerli bir bölge seçin.","warning")
@@ -296,7 +300,7 @@ def profile():
                 db.session.commit()
                 from app.services.user_vault_service import UserVaultService
                 UserVaultService.sync_from_primary();flash("Profil bilgileriniz güncellendi.","success")
-    return render_template("profile.html",regions=regions,representative=representative)
+    return render_template("profile.html",regions=regions,representative=representative,field_portal=field_portal)
 
 
 @auth_bp.route("/logout")
@@ -304,6 +308,7 @@ def profile():
 def logout():
 
     session.pop("portal", None)
+    session.pop("portal_explicit", None)
     logout_user()
 
     flash(
