@@ -1,4 +1,4 @@
-name: Verify Production Manager User
+name: Production Backup Inventory
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  verify-manager:
+  inventory:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -30,39 +30,38 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Verify manager account read only
+      - name: Inventory production backups read only
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import User
-          from app.access_control import is_manager
 
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
-              user=User.query.filter_by(email='mehmet.ozkocak@bilimilac.com').one_or_none()
               print(f"IMS_JOB_GATE|active={active}")
-              print(f"USER|exists={int(user is not None)}|id={getattr(user,'id',None)}|name={getattr(user,'full_name',None)}|role={getattr(user,'role',None)}|active={getattr(user,'active',None)}|manager={int(is_manager(user)) if user else 0}")
-              assert active==0
-              assert user is not None
-              assert user.full_name=='Mehmet Özkoçak'
-              assert user.role=='Manager'
-              assert user.active is True
-              assert is_manager(user)
-              assert User.query.filter_by(email='mehmet.ozkocak@bilimilac.com').count()==1
-              admin=User.query.filter_by(email='admin@ipm.local').one()
-              print(f"ADMIN|id={admin.id}|role={admin.role}|preserved=1")
-              assert admin.role=='Admin'
+              backup_dir=Path(app.config['BACKUP_FOLDER'])
+              print(f"BACKUP_DIR|{backup_dir}")
+              files=sorted((p for p in backup_dir.rglob('*') if p.is_file()), key=lambda p:(p.stat().st_mtime,p.name))
+              total=0
+              for p in files:
+                  st=p.stat(); total += st.st_size
+                  stamp=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+                  print(f"BACKUP_FILE|name={p.relative_to(backup_dir)}|bytes={st.st_size}|mtime={stamp}")
+              print(f"BACKUP_TOTAL|files={len(files)}|bytes={total}")
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
-              assert str(journal).lower()=='wal' and int(busy)==30000
-              print('MANAGER_USER_VERIFY|PASS')
+              quick=db.session.execute(db.text('PRAGMA quick_check')).scalar()
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}|quick_check={quick}")
+              assert str(journal).lower()=='wal' and int(busy)==30000 and quick=='ok'
           PY
+          df -h "$IMS_PATH" | tail -n 1 | sed 's/^/DISK|/'
           REMOTE
