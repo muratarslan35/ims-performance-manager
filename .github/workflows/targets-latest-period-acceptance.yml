@@ -1,4 +1,4 @@
-name: Create Production Manager User
+name: Verify Production Manager User
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  create-manager:
+  verify-manager:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -30,67 +30,39 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Create or update manager account
+      - name: Verify manager account read only
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
           from app.models import User
           from app.access_control import is_manager
 
-          EMAIL='mehmet.ozkocak@bilimilac.com'
-          FULL_NAME='Mehmet Özkoçak'
-          PASSWORD_HASH='pbkdf2:sha256:1000000$nN1MLeNW47crHJm5$9b48c54db4f4a6a49e5eaaa2d618eb19c7369644313ae64011044d3451d7f0a8'
-
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
+              user=User.query.filter_by(email='mehmet.ozkocak@bilimilac.com').one_or_none()
               print(f"IMS_JOB_GATE|active={active}")
-              assert active == 0
-
-              before=User.query.filter_by(email=EMAIL).all()
-              print(f"BEFORE|matches={len(before)}")
-              assert len(before) <= 1
-
-              user=before[0] if before else None
-              action='updated' if user else 'created'
-              if user is None:
-                  user=User(full_name=FULL_NAME,email=EMAIL,password=PASSWORD_HASH,role='Manager',active=True)
-                  db.session.add(user)
-              else:
-                  user.full_name=FULL_NAME
-                  user.password=PASSWORD_HASH
-                  user.role='Manager'
-                  user.active=True
-
-              db.session.commit()
-              db.session.expire_all()
-
-              user=User.query.filter_by(email=EMAIL).one()
-              print(f"MANAGER_USER|action={action}|id={user.id}|email={user.email}|name={user.full_name}|role={user.role}|active={user.active}")
-              assert user.full_name==FULL_NAME
-              assert user.email==EMAIL
+              print(f"USER|exists={int(user is not None)}|id={getattr(user,'id',None)}|name={getattr(user,'full_name',None)}|role={getattr(user,'role',None)}|active={getattr(user,'active',None)}|manager={int(is_manager(user)) if user else 0}")
+              assert active==0
+              assert user is not None
+              assert user.full_name=='Mehmet Özkoçak'
               assert user.role=='Manager'
               assert user.active is True
-              assert user.password==PASSWORD_HASH
               assert is_manager(user)
-              assert User.query.filter_by(email=EMAIL).count()==1
-
-              admin=User.query.filter_by(email='admin@ipm.local').first()
-              assert admin is not None and admin.role=='Admin'
-              print(f"EXISTING_ADMIN|id={admin.id}|role={admin.role}|preserved=1")
-
+              assert User.query.filter_by(email='mehmet.ozkocak@bilimilac.com').count()==1
+              admin=User.query.filter_by(email='admin@ipm.local').one()
+              print(f"ADMIN|id={admin.id}|role={admin.role}|preserved=1")
+              assert admin.role=='Admin'
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              quick=db.session.execute(db.text('PRAGMA quick_check')).scalar()
-              print(f"SQLITE|journal={journal}|busy_timeout={busy}|quick_check={quick}")
-              assert str(journal).lower()=='wal' and int(busy)==30000 and quick=='ok'
-              print('MANAGER_USER_CREATE|PASS')
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert str(journal).lower()=='wal' and int(busy)==30000
+              print('MANAGER_USER_VERIFY|PASS')
           PY
           REMOTE
