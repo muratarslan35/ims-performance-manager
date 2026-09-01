@@ -19,7 +19,7 @@ DENIED_SYSTEM = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazs�
 def _login_as(client, user_id):
     with client.session_transaction() as session:
         session["_user_id"] = str(user_id)
-        session["_fresh"] = True
+        session["_fresh"] = True\n        session["portal"] = "manager"
 
 
 def _check(condition, label, failures):
