@@ -1,9 +1,8 @@
-"""Region-scoped manager accounts and access enforcement.
+"""Unified manager administration and access enforcement.
 
-Regional managers can read the national dashboard but may only drill into their
-assigned region and representatives. They cannot mutate IMS/system/master data.
-Admin accounts, existing dual-portal accounts and explicitly preserved manager
-accounts retain their previous unrestricted manager behaviour.
+Regional managers are restricted to their assigned region. Functional managers
+(Tanitim/Urun/Pazarlama) keep full operational access but cannot open Settings.
+Admin and preserved special managers keep their existing unrestricted access.
 """
 
 from datetime import datetime
@@ -26,13 +25,22 @@ UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES = {
     "c14c76f05798cf3933ef16395d8f5afaf2179d37165c9801208de2d7c38a52ec",
 }
 
+MANAGER_TYPES = {
+    "region": "Bölge Müdürü",
+    "promotion": "Tanıtım Müdürü",
+    "product": "Ürün Müdürü",
+    "marketing": "Pazarlama Müdürü",
+}
+MANAGER_MUTATION_TYPES = {"promotion", "marketing"}
+
 
 class RegionManagerScope(db.Model):
     __tablename__ = "region_manager_scopes"
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), unique=True, nullable=False, index=True)
-    region_code = db.Column(db.String(20), nullable=False, index=True)
+    region_code = db.Column(db.String(20), nullable=True, index=True)
+    manager_type = db.Column(db.String(20), nullable=False, default="region", server_default="region", index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -61,21 +69,65 @@ def is_privileged_manager(user):
     )
 
 
+def _scope_for(user):
+    user_id = getattr(user, "id", None)
+    if not user_id:
+        return None
+    try:
+        return RegionManagerScope.query.filter_by(user_id=user_id).one_or_none()
+    except Exception:
+        return None
+
+
+def manager_type(user):
+    if not is_manager(user):
+        return None
+    if is_privileged_manager(user):
+        return "privileged"
+    scope = _scope_for(user)
+    value = str(getattr(scope, "manager_type", "") or "region").strip().casefold()
+    return value if value in MANAGER_TYPES else "region"
+
+
+def manager_type_label(user):
+    kind = manager_type(user)
+    if kind == "privileged":
+        role = str(getattr(user, "role", "") or "").strip().casefold()
+        return "Admin" if role in {"admin", "administrator"} else "Yönetici"
+    return MANAGER_TYPES.get(kind, "Yönetici")
+
+
 def is_regional_manager(user):
-    return bool(is_manager(user) and not is_privileged_manager(user))
+    return bool(is_manager(user) and not is_privileged_manager(user) and manager_type(user) == "region")
+
+
+def is_functional_manager(user):
+    return bool(manager_type(user) in {"promotion", "product", "marketing"})
+
+
+def can_view_manager_module(user):
+    return bool(is_manager(user))
+
+
+def can_manage_managers(user):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    role = str(getattr(user, "role", "") or "").strip().casefold()
+    if role in {"admin", "administrator"}:
+        return True
+    return manager_type(user) in MANAGER_MUTATION_TYPES
+
+
+def can_access_settings(user):
+    # Functional and regional managers intentionally cannot open Settings.
+    # Admin and preserved special managers keep their previous access.
+    return bool(is_privileged_manager(user))
 
 
 def assigned_region(user):
     if not is_regional_manager(user):
         return None
-    user_id = getattr(user, "id", None)
-    if not user_id:
-        return None
-    try:
-        scope = RegionManagerScope.query.filter_by(user_id=user_id).one_or_none()
-    except Exception:
-        # Fail closed if the scope store is unavailable/locked.
-        return None
+    scope = _scope_for(user)
     return region_code(scope.region_code) if scope else None
 
 
@@ -122,6 +174,14 @@ def _deny_region(json_response=False):
 
 def _deny_system(json_response=False):
     message = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız."
+    if json_response:
+        return jsonify({"success": False, "message": message}), 403
+    flash(message, "warning")
+    return redirect(url_for("dashboard.index"))
+
+
+def _deny_settings(json_response=False):
+    message = "Bu yönetici hesabıyla Ayarlar menüsüne erişemezsiniz."
     if json_response:
         return jsonify({"success": False, "message": message}), 403
     flash(message, "warning")
@@ -231,8 +291,6 @@ def _filter_search_response(response):
             if can_access_region(current_user, unquote(region_match.group(1))):
                 allowed.append(item)
             continue
-        # Unknown result kinds are withheld from regional managers rather than
-        # risking a cross-region detail leak.
     payload["results"] = allowed
     response.set_data(jsonify(payload).get_data())
     response.content_type = "application/json"
@@ -240,7 +298,7 @@ def _filter_search_response(response):
 
 
 def install_region_manager_scope(app):
-    """Install fail-closed regional manager restrictions after all blueprints."""
+    """Install manager role restrictions after all blueprints."""
     original_rep_index = app.view_functions.get("representatives.index")
     original_sim_index = app.view_functions.get("simulation.index")
     original_quarter = app.view_functions.get("main.quarter")
@@ -271,24 +329,26 @@ def install_region_manager_scope(app):
 
     @app.context_processor
     def regional_manager_context():
-        restricted = bool(current_user.is_authenticated and is_regional_manager(current_user))
+        regional = bool(current_user.is_authenticated and is_regional_manager(current_user))
         return {
-            "regional_manager_restricted": restricted,
-            "regional_manager_region": assigned_region(current_user) if restricted else None,
-            "can_manage_region_managers": bool(
-                current_user.is_authenticated and is_privileged_manager(current_user)
-            ),
-            # Preserve the existing portal-aware manager visibility contract.
+            "regional_manager_restricted": regional,
+            "regional_manager_region": assigned_region(current_user) if regional else None,
+            "manager_type_label": manager_type_label(current_user) if current_user.is_authenticated else None,
+            "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user)),
+            "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user)),
+            "settings_access": bool(current_user.is_authenticated and can_access_settings(current_user)),
+            # Backward-compatible key used by older templates.
+            "can_manage_region_managers": bool(current_user.is_authenticated and can_manage_managers(current_user)),
             "manager_access": bool(
                 current_user.is_authenticated
                 and has_manager_access(current_user)
-                and not restricted
+                and not regional
             ),
         }
 
     @app.before_request
-    def enforce_regional_manager_scope():
-        if not current_user.is_authenticated or not is_regional_manager(current_user):
+    def enforce_manager_scope():
+        if not current_user.is_authenticated or not is_manager(current_user):
             return None
 
         endpoint = request.endpoint or ""
@@ -298,9 +358,17 @@ def install_region_manager_scope(app):
             or (endpoint.startswith("simulation.") and request.method != "GET")
         )
 
+        if is_functional_manager(current_user):
+            if endpoint.startswith("settings."):
+                return _deny_settings(json_response=json_response)
+            return None
+
+        if not is_regional_manager(current_user):
+            return None
+
         forbidden_prefixes = (
             "ims.", "settings.", "targets.", "matching.", "products.",
-            "manager_users.", "representatives.territory_",
+            "representatives.territory_",
         )
         if endpoint.startswith(forbidden_prefixes):
             return _deny_system(json_response=json_response)
@@ -342,7 +410,6 @@ def install_region_manager_scope(app):
             )
             if rep_id and not _request_rep_allowed(int(rep_id)):
                 return _deny_region(json_response=True)
-
         return None
 
     @app.after_request
@@ -355,13 +422,24 @@ def install_region_manager_scope(app):
 manager_users_bp = Blueprint("manager_users", __name__, url_prefix="/manager-users")
 
 
-def privileged_manager_required(view):
+def manager_module_required(view):
     @wraps(view)
     @login_required
     def wrapped(*args, **kwargs):
-        if not is_privileged_manager(current_user):
-            flash("Bu alan yalnızca yetkili sistem yöneticisine açıktır.", "warning")
+        if not can_view_manager_module(current_user):
+            flash("Yönetici Modülü yalnızca yönetici hesaplarına açıktır.", "warning")
             return redirect(url_for("dashboard.index"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def manager_mutation_required(view):
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not can_manage_managers(current_user):
+            flash("Bu hesap yönetici ekleme veya düzenleme yetkisine sahip değildir.", "warning")
+            return redirect(url_for("manager_users.index"))
         return view(*args, **kwargs)
     return wrapped
 
@@ -370,10 +448,14 @@ def _manager_rows():
     managers = User.query.filter(db.func.lower(User.role) == "manager").order_by(User.full_name.asc()).all()
     rows = []
     for user in managers:
-        if is_privileged_manager(user):
-            continue
-        scope = RegionManagerScope.query.filter_by(user_id=user.id).one_or_none()
-        rows.append({"user": user, "region_code": scope.region_code if scope else None})
+        scope = _scope_for(user)
+        rows.append({
+            "user": user,
+            "manager_type": manager_type(user),
+            "manager_type_label": manager_type_label(user),
+            "region_code": scope.region_code if scope else None,
+            "editable": not is_privileged_manager(user),
+        })
     return rows
 
 
@@ -383,63 +465,67 @@ def _validate_region(value):
     return code if code in valid_codes else None
 
 
+def _validated_manager_type(value):
+    kind = str(value or "").strip().casefold()
+    return kind if kind in MANAGER_TYPES else None
+
+
 @manager_users_bp.route("/", methods=["GET"])
-@privileged_manager_required
+@manager_module_required
 def index():
     return render_template(
         "manager_users.html",
         managers=_manager_rows(),
         regions=available_regions(),
+        manager_types=MANAGER_TYPES,
+        can_edit=can_manage_managers(current_user),
     )
 
 
 @manager_users_bp.route("/create", methods=["POST"])
-@privileged_manager_required
+@manager_mutation_required
 def create():
     full_name = request.form.get("full_name", "").strip()
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
-    code = _validate_region(request.form.get("region_code", ""))
+    kind = _validated_manager_type(request.form.get("manager_type"))
+    code = _validate_region(request.form.get("region_code", "")) if kind == "region" else None
 
-    if len(full_name) < 3 or "@" not in email or len(password) < 8 or not code:
-        flash("Ad soyad, geçerli mail, en az 8 karakter şifre ve geçerli bölge zorunludur.", "warning")
+    if len(full_name) < 3 or "@" not in email or len(password) < 8 or not kind or (kind == "region" and not code):
+        flash("Ad soyad, geçerli mail, en az 8 karakter şifre ve geçerli yönetici tipi zorunludur.", "warning")
         return redirect(url_for("manager_users.index"))
     if User.query.filter(db.func.lower(User.email) == email).first():
         flash("Bu e-posta adresi zaten kayıtlı.", "danger")
         return redirect(url_for("manager_users.index"))
 
-    user = User(
-        full_name=full_name,
-        email=email,
-        password=generate_password_hash(password),
-        role="Manager",
-        active=True,
-    )
+    user = User(full_name=full_name, email=email, password=generate_password_hash(password), role="Manager", active=True)
     db.session.add(user)
     db.session.flush()
-    db.session.add(RegionManagerScope(user_id=user.id, region_code=code))
+    db.session.add(RegionManagerScope(user_id=user.id, region_code=code, manager_type=kind))
     db.session.commit()
     from app.services.user_vault_service import UserVaultService
     UserVaultService.sync_from_primary()
-    flash(f"{full_name} bölge müdürü olarak oluşturuldu ({code}).", "success")
+    suffix = f" ({code})" if code else ""
+    flash(f"{full_name} {MANAGER_TYPES[kind]} olarak oluşturuldu{suffix}.", "success")
     return redirect(url_for("manager_users.index"))
 
 
 @manager_users_bp.route("/<int:user_id>/update", methods=["POST"])
-@privileged_manager_required
+@manager_mutation_required
 def update(user_id):
     user = db.session.get(User, user_id)
     if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
-        flash("Bölge müdürü hesabı bulunamadı.", "danger")
+        flash("Düzenlenebilir yönetici hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
 
     full_name = request.form.get("full_name", "").strip()
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
-    code = _validate_region(request.form.get("region_code", ""))
+    kind = _validated_manager_type(request.form.get("manager_type"))
+    code = _validate_region(request.form.get("region_code", "")) if kind == "region" else None
     duplicate = User.query.filter(db.func.lower(User.email) == email, User.id != user.id).first()
-    if len(full_name) < 3 or "@" not in email or not code:
-        flash("Ad soyad, geçerli mail ve geçerli bölge zorunludur.", "warning")
+    if len(full_name) < 3 or "@" not in email or not kind or (kind == "region" and not code):
+        flash("Ad soyad, geçerli mail ve geçerli yönetici tipi zorunludur.", "warning")
         return redirect(url_for("manager_users.index"))
     if duplicate:
         flash("Bu e-posta adresi başka bir kullanıcıda kayıtlı.", "danger")
@@ -452,29 +538,30 @@ def update(user_id):
     user.email = email
     if password:
         user.password = generate_password_hash(password)
-    scope = RegionManagerScope.query.filter_by(user_id=user.id).one_or_none()
+    scope = _scope_for(user)
     if scope is None:
-        scope = RegionManagerScope(user_id=user.id, region_code=code)
+        scope = RegionManagerScope(user_id=user.id, region_code=code, manager_type=kind)
         db.session.add(scope)
     else:
         scope.region_code = code
+        scope.manager_type = kind
     db.session.commit()
     from app.services.user_vault_service import UserVaultService
     UserVaultService.sync_from_primary()
-    flash("Bölge müdürü bilgileri güncellendi.", "success")
+    flash("Yönetici bilgileri güncellendi.", "success")
     return redirect(url_for("manager_users.index"))
 
 
 @manager_users_bp.route("/<int:user_id>/toggle", methods=["POST"])
-@privileged_manager_required
+@manager_mutation_required
 def toggle(user_id):
     user = db.session.get(User, user_id)
     if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
-        flash("Bölge müdürü hesabı bulunamadı.", "danger")
+        flash("Düzenlenebilir yönetici hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
     user.active = not user.active
     db.session.commit()
     from app.services.user_vault_service import UserVaultService
     UserVaultService.sync_from_primary()
-    flash("Bölge müdürü hesap durumu güncellendi.", "success")
+    flash("Yönetici hesap durumu güncellendi.", "success")
     return redirect(url_for("manager_users.index"))
