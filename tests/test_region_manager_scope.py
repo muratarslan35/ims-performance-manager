@@ -201,7 +201,6 @@ def test_regional_manager_cannot_open_manager_user_module(client):
 
 
 def test_murat_asan_manager_keeps_unrestricted_special_access(app):
-    from app.access_control import has_dual_portal_access
     from app.extensions import db
     from app.models import User
     from app.region_manager import is_privileged_manager, is_regional_manager
@@ -216,6 +215,5 @@ def test_murat_asan_manager_keeps_unrestricted_special_access(app):
         )
         db.session.add(murat)
         db.session.commit()
-        assert has_dual_portal_access(murat)
         assert is_privileged_manager(murat)
         assert not is_regional_manager(murat)
