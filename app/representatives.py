@@ -465,10 +465,12 @@ def view(
 
     )
 
-    if session.get("portal") == "representative":
-        own_representative = _current_user_representative()
-        if own_representative is not None and own_representative.id != representative.id:
-            return redirect(url_for("representatives.view", id=own_representative.id, **request.args))
+    from app.region_manager import is_field_portal
+    if is_field_portal():
+        from app.region_manager import can_access_representative
+        if not can_access_representative(current_user, representative):
+            flash("Sadece kendi bölgenizdeki temsilcilere erişebilirsiniz.", "warning")
+            return redirect(url_for("dashboard.index"))
 
     active_period = PeriodService.get_active_period()
     year = request.args.get("year", type=int) or active_period["year"]
@@ -523,9 +525,13 @@ def view(
         competitive_intelligence=competitive_intelligence,
     )
     annual_realization = AnnualRealizationService.build(year, [representative.id])
-    representatives = [representative] if session.get("portal") == "representative" else Representative.query.filter(
-        Representative.active.is_(True), _visible_representative_filter()
-    ).order_by(Representative.rep_name.asc()).all()
+    if is_field_portal():
+        from app.region_manager import _scoped_representatives
+        representatives = _scoped_representatives(active_only=True)
+    else:
+        representatives = Representative.query.filter(
+            Representative.active.is_(True), _visible_representative_filter()
+        ).order_by(Representative.rep_name.asc()).all()
     return render_template(
         "representative_detail.html",
         representative=representative,
