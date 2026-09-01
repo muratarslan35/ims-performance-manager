@@ -98,6 +98,13 @@ def test_production_acceptance_session_respects_strong_protection(app, client):
     assert response.status_code == 200
 
 
+def test_field_portal_check_is_fail_closed_outside_request_context(app):
+    from app.region_manager import is_field_portal
+
+    with app.app_context():
+        assert is_field_portal() is False
+
+
 def login_admin(client):
     return client.post(
         "/login",
