@@ -1,17 +1,16 @@
 """Bound region-detail P2/P1/IMS reads to one request-local snapshot.
 
 The legacy region report calculates monthly/3-month/6-month/yearly windows from
-mostly the same representative/product periods.  Its aggregate loop historically
+mostly the same representative/product periods. Its aggregate loop historically
 called ``effective_product`` (and, for production rows, ``final_product_result``)
-for every cell.  That turns one region page into hundreds/thousands of repeated
-SQLite lookups.
+for every cell, and ``report`` repeated those overlapping windows independently.
 
 This optimizer keeps all business semantics in ``RegionPerformanceService`` but
-pre-resolves the exact target cells for the requested window with four bounded
-queries (targets, IMS summaries, production uploads, production rows).  During
-that aggregate call only, ContextVar-backed wrappers serve the existing service
-APIs from the snapshot.  There is no process-global stale data cache and no
-cross-request mutation, so P2 > P1 > IMS and numeric-zero semantics stay intact.
+pre-resolves the report year with four bounded source queries (targets, IMS
+summaries, production uploads, production rows). Monthly/3/6/yearly KPI windows
+and the annual chart then reuse that same request-local ContextVar snapshot.
+There is no process-global stale cache and no cross-request mutation, so
+P2 > P1 > IMS and numeric-zero semantics stay intact.
 """
 
 from collections import defaultdict
@@ -38,15 +37,20 @@ def _d(value):
     return Decimal(str(value or 0))
 
 
+def _empty_snapshot(months):
+    return {
+        "periods": set(months),
+        "effective": {},
+        "production_result": {},
+        "uploads_by_period": {},
+    }
+
+
 def _build_snapshot(service, months):
-    months = tuple((int(year), int(month)) for year, month in months)
+    months = tuple(sorted({(int(year), int(month)) for year, month in months}))
     rep_ids = tuple(int(item) for item in service.rep_ids)
     if not months or not rep_ids:
-        return {
-            "effective": {},
-            "production_result": {},
-            "uploads_by_period": {},
-        }
+        return _empty_snapshot(months)
 
     target_rows = db.session.query(
         Target.year,
@@ -69,23 +73,6 @@ def _build_snapshot(service, months):
         (int(year), int(month), int(rep_id), int(product_id)): (_d(target_tl), _d(target_unit))
         for year, month, rep_id, product_id, target_tl, target_unit in target_rows
     }
-    if not target_by_key:
-        return {
-            "effective": {},
-            "production_result": {},
-            "uploads_by_period": {},
-        }
-
-    product_ids = {key[3] for key in target_by_key}
-    summary_rows = IMSSummary.query.filter(
-        IMSSummary.representative_id.in_(rep_ids),
-        IMSSummary.product_id.in_(product_ids),
-        or_(*_month_conditions(IMSSummary, months)),
-    ).all()
-    summary_by_key = {
-        (int(row.year), int(row.month), int(row.representative_id), int(row.product_id)): row
-        for row in summary_rows
-    }
 
     uploads = ProductionResultUpload.query.filter(
         ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
@@ -100,6 +87,22 @@ def _build_snapshot(service, months):
     uploads_by_period = defaultdict(list)
     for upload in uploads:
         uploads_by_period[(int(upload.year), int(upload.month))].append(upload)
+
+    if not target_by_key:
+        snapshot = _empty_snapshot(months)
+        snapshot["uploads_by_period"] = dict(uploads_by_period)
+        return snapshot
+
+    product_ids = {key[3] for key in target_by_key}
+    summary_rows = IMSSummary.query.filter(
+        IMSSummary.representative_id.in_(rep_ids),
+        IMSSummary.product_id.in_(product_ids),
+        or_(*_month_conditions(IMSSummary, months)),
+    ).all()
+    summary_by_key = {
+        (int(row.year), int(row.month), int(row.representative_id), int(row.product_id)): row
+        for row in summary_rows
+    }
 
     upload_ids = [int(upload.id) for upload in uploads]
     production_rows = []
@@ -173,6 +176,7 @@ def _build_snapshot(service, months):
         }
 
     return {
+        "periods": set(months),
         "effective": effective,
         "production_result": selected_production,
         "uploads_by_period": dict(uploads_by_period),
@@ -180,17 +184,35 @@ def _build_snapshot(service, months):
 
 
 def install_region_performance_bulk_optimizer():
-    """Install request-local batch resolution without changing public APIs."""
+    """Install one bounded request-local source snapshot for every region report."""
     global _INSTALLED
     if _INSTALLED:
         return
 
+    original_report = RegionPerformanceService.report
     original_aggregate = RegionPerformanceService.aggregate
     original_effective_product = ProductionResultService.effective_product
     original_final_product_result = ProductionResultService.final_product_result
     original_applied_uploads = ProductionResultService.applied_uploads
 
+    def report(self):
+        # Include the full selected year because the same report renders a
+        # 12-month realization chart after its monthly/3/6/yearly KPI windows.
+        months = {(self.year, month) for month in range(1, 13)}
+        for _, _, length in self.PERIODS:
+            months.update(self.period_months(length))
+        snapshot = _build_snapshot(self, months)
+        token = _REGION_SNAPSHOT.set(snapshot)
+        try:
+            return original_report(self)
+        finally:
+            _REGION_SNAPSHOT.reset(token)
+
     def aggregate(self, months):
+        # report() already owns the widest snapshot. Keep direct aggregate()
+        # callers optimized too, but never rebuild inside the same report.
+        if _REGION_SNAPSHOT.get() is not None:
+            return original_aggregate(self, months)
         snapshot = _build_snapshot(self, months)
         token = _REGION_SNAPSHOT.set(snapshot)
         try:
@@ -217,15 +239,12 @@ def install_region_performance_bulk_optimizer():
 
     def applied_uploads(cls, year, month):
         snapshot = _REGION_SNAPSHOT.get()
-        if snapshot is not None:
-            period = (int(year), int(month))
-            if period in snapshot["uploads_by_period"]:
-                return list(snapshot["uploads_by_period"][period])
-            # The snapshot is authoritative for every requested report month;
-            # an absent period therefore means there is no applied production.
-            return []
+        period = (int(year), int(month))
+        if snapshot is not None and period in snapshot["periods"]:
+            return list(snapshot["uploads_by_period"].get(period, ()))
         return original_applied_uploads(year, month)
 
+    RegionPerformanceService.report = report
     RegionPerformanceService.aggregate = aggregate
     ProductionResultService.effective_product = classmethod(effective_product)
     ProductionResultService.final_product_result = classmethod(final_product_result)
