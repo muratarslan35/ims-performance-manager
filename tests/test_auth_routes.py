@@ -1316,7 +1316,7 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
     assert "Başka Temsilci" not in own_html
     redirected = client.get(f"/representatives/view/{outside_id}?year=2040&month=6", follow_redirects=False)
     assert redirected.status_code in (301, 302)
-    assert f"/representatives/view/{own_id}" in redirected.headers["Location"]
+    assert redirected.headers["Location"].endswith("/dashboard/")
 
     region_html = client.get("/regions/AI%20B%C3%96LGE?year=2040&month=6").get_data(as_text=True)
     assert "AI Performans Rehberi" in region_html
