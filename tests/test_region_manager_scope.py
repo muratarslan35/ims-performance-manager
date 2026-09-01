@@ -89,6 +89,18 @@ def login_manager(client):
     )
 
 
+def test_production_acceptance_session_respects_strong_protection(app, client):
+    from app.models import User
+    from verify_region_manager_production import _login_as
+
+    with app.app_context():
+        manager = User.query.filter_by(email="manager101@example.com").one()
+        manager_id = manager.id
+    _login_as(client, manager_id)
+    response = client.get("/dashboard/")
+    assert response.status_code == 200
+
+
 def login_admin(client):
     return client.post(
         "/login",
