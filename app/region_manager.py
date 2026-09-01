@@ -330,20 +330,17 @@ def install_region_manager_scope(app):
     @app.context_processor
     def regional_manager_context():
         regional = bool(current_user.is_authenticated and is_regional_manager(current_user))
+        portal_manager_access = bool(current_user.is_authenticated and has_manager_access(current_user))
         return {
             "regional_manager_restricted": regional,
             "regional_manager_region": assigned_region(current_user) if regional else None,
             "manager_type_label": manager_type_label(current_user) if current_user.is_authenticated else None,
-            "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user)),
-            "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user)),
-            "settings_access": bool(current_user.is_authenticated and can_access_settings(current_user)),
+            "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user) and portal_manager_access),
+            "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
+            "settings_access": bool(current_user.is_authenticated and can_access_settings(current_user) and portal_manager_access),
             # Backward-compatible key used by older templates.
-            "can_manage_region_managers": bool(current_user.is_authenticated and can_manage_managers(current_user)),
-            "manager_access": bool(
-                current_user.is_authenticated
-                and has_manager_access(current_user)
-                and not regional
-            ),
+            "can_manage_region_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
+            "manager_access": bool(portal_manager_access and not regional),
         }
 
     @app.before_request
@@ -426,7 +423,7 @@ def manager_module_required(view):
     @wraps(view)
     @login_required
     def wrapped(*args, **kwargs):
-        if not can_view_manager_module(current_user):
+        if not can_view_manager_module(current_user) or not has_manager_access(current_user):
             flash("Yönetici Modülü yalnızca yönetici hesaplarına açıktır.", "warning")
             return redirect(url_for("dashboard.index"))
         return view(*args, **kwargs)
@@ -437,7 +434,7 @@ def manager_mutation_required(view):
     @wraps(view)
     @login_required
     def wrapped(*args, **kwargs):
-        if not can_manage_managers(current_user):
+        if not has_manager_access(current_user) or not can_manage_managers(current_user):
             flash("Bu hesap yönetici ekleme veya düzenleme yetkisine sahip değildir.", "warning")
             return redirect(url_for("manager_users.index"))
         return view(*args, **kwargs)
