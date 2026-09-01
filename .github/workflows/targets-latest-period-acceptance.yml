@@ -1,4 +1,4 @@
-name: March Production Post Deploy Parse Acceptance
+name: March Production Scope Difference Diagnostic
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  acceptance:
+  diagnostic:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
@@ -30,21 +30,21 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Parse immutable March stage-2 source read only
+      - name: Compare parsed representative scopes read only
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD)" = "9f410f1f361d16d3b4e624eb47b4cfc691b09ba5"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import hashlib
           from pathlib import Path
+          from openpyxl import load_workbook
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, ProductionResultUpload, ProductionResult, Target
+          from app.models import ProductionResultUpload, Representative, Target
           from app.services.production_result_import_service import ProductionResultImportService
 
           app=create_app()
@@ -53,41 +53,44 @@ jobs:
               queued=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status='QUEUED'")).scalar() or 0)
               print(f"IMS_JOB_GATE|processing={processing}|queued={queued}")
               assert processing == 0 and queued == 0
-
               item=db.session.get(ProductionResultUpload,3)
-              assert item is not None and item.status=='FAILED'
               path=Path(app.config['UPLOAD_FOLDER'])/'production_results'/item.stored_file_name
               digest=hashlib.sha256(path.read_bytes()).hexdigest()
-              print(f"SOURCE|exists={path.exists()}|stored_sha={item.source_hash}|actual_sha={digest}")
-              assert digest == item.source_hash == 'cb05a56937b764a91bab69173a16962adc59f096439a6b985809650534a71560'
+              assert digest == item.source_hash
 
-              before_results=ProductionResult.query.filter_by(upload_id=3).count()
-              before_targets=Target.query.filter_by(year=2026,month=3).count()
-              latest_ims=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              print(f"BEFORE|prod_results={before_results}|march_targets={before_targets}|latest_ims_id={getattr(latest_ims,'id',None)}|week={getattr(latest_ims,'week_number',None)}")
-              assert before_results == 0 and before_targets == 791
+              service=ProductionResultImportService(path,2026,3,production_stage=2)
+              service._load_master_maps()
+              wb=load_workbook(path,read_only=False,data_only=True)
+              tl_sheet=service._find_sheet(wb,'TL')
+              unit_sheet=service._find_sheet(wb,'KUTU')
+              tl_rows=service._read_sheet(tl_sheet,'TL')
+              unit_rows=service._read_sheet(unit_sheet,'KUTU')
+              tl_ids=set(tl_rows)
+              unit_ids=set(unit_rows)
+              print(f"SCOPES|tl={len(tl_ids)}|kutu={len(unit_ids)}|intersection={len(tl_ids & unit_ids)}")
 
-              report=ProductionResultImportService(path,2026,3,production_stage=2).parse()
-              rep_ids={int(row['representative_id']) for row in report.product_results}
-              print(f"PARSE|rows_seen={report.rows_seen}|matched_rows={report.matched_rows}|product_results={report.matched_result_count}|rep_totals={len(report.representative_totals)}|regions={len(report.region_totals)}|target_mismatches={report.target_mismatch_count}")
-              print(f"PARSE_REPS|count={len(rep_ids)}|contains_departed_115={115 in rep_ids}")
-              assert report.matched_rows == 113
-              assert report.matched_result_count == 791
-              assert len(report.representative_totals) == 113
-              assert len(rep_ids) == 113
-              assert 115 not in rep_ids
-              assert report.national_total is not None
+              for label, ids in [('TL_ONLY',sorted(tl_ids-unit_ids)),('KUTU_ONLY',sorted(unit_ids-tl_ids))]:
+                  print(f"{label}_COUNT|{len(ids)}")
+                  for rid in ids:
+                      rep=db.session.get(Representative,rid)
+                      target_count=Target.query.filter_by(year=2026,month=3,representative_id=rid).count()
+                      row=(tl_rows if label=='TL_ONLY' else unit_rows)[rid]
+                      print(f"{label}|id={rid}|name={rep.rep_name if rep else None}|active={rep.active if rep else None}|region={rep.region if rep else None}|targets={target_count}|actual_total={row['total_actual']}|actuals={row['values']}|target_total={row['total_target']}")
 
-              # parse() must remain read-only
-              db.session.rollback()
-              assert ProductionResult.query.filter_by(upload_id=3).count() == 0
-              assert db.session.get(ProductionResultUpload,3).status == 'FAILED'
-              assert Target.query.filter_by(year=2026,month=3).count() == 791
+              # Also enumerate workbook roster rows that do not resolve to a current representative map.
+              for metric, sheet in [('TL',tl_sheet),('KUTU',unit_sheet)]:
+                  layout=service._layout(sheet,metric)
+                  for row_number in range(layout['header_row']+1,sheet.max_row+1):
+                      raw_name=sheet.cell(row_number,layout['name_column']).value
+                      raw_region=sheet.cell(row_number,layout['region_column']).value
+                      label=service._normalize(raw_name)
+                      if not label or label=='NATIONAL' or service._is_region(label):
+                          continue
+                      rep=service._match_representative(raw_name,raw_region)
+                      if rep is None:
+                          vals=service._read_metric_values(sheet,row_number,layout,'diagnostic')
+                          print(f"UNRESOLVED_RAW|metric={metric}|row={row_number}|name={raw_name!r}|region={raw_region!r}|actual_total={vals['total_actual']}|actuals={vals['values']}|target_total={vals['total_target']}")
 
-              journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
-              busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
-              assert str(journal).lower()=='wal' and int(busy)==30000
-              print('MARCH_PRODUCTION_PARSE_ACCEPTANCE|PASS')
+              print(f"SQLITE|journal={db.session.execute(db.text('PRAGMA journal_mode')).scalar()}|busy_timeout={db.session.execute(db.text('PRAGMA busy_timeout')).scalar()}")
           PY
           REMOTE
