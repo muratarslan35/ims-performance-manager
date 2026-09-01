@@ -11,7 +11,7 @@ import re
 from functools import wraps
 from urllib.parse import unquote
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, has_request_context, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from werkzeug.security import generate_password_hash
 
@@ -107,7 +107,8 @@ def is_functional_manager(user):
 
 def is_field_portal():
     return bool(
-        current_user.is_authenticated
+        has_request_context()
+        and getattr(current_user, "is_authenticated", False)
         and session.get("portal") == "representative"
         and session.get("portal_explicit", False)
     )
