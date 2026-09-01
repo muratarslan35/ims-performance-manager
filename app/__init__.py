@@ -49,6 +49,8 @@ from app.services.production_result_retry_ui import install_production_result_re
 from app.services.production_result_reconciliation_gate import install_production_result_reconciliation_gate
 from app.services.production_result_stale_zero_guard import install_production_result_stale_zero_guard
 from app.access_control import register_access_control
+from app.region_manager import install_region_manager_scope, manager_users_bp
+from app.region_manager_detail_scope import install_region_manager_detail_scope
 
 from app.routes import main_bp
 from app.auth import auth_bp
@@ -120,6 +122,7 @@ def register_blueprints(app):
     app.register_blueprint(representatives_bp)
     app.register_blueprint(simulation_bp)
     app.register_blueprint(regions_bp)
+    app.register_blueprint(manager_users_bp)
 
 
 def create_directories(app):
@@ -204,6 +207,8 @@ def create_app(config_object=Config):
     install_ims_failed_retry_ui(app)
     install_production_result_retry_ui(app)
     register_access_control(app)
+    install_region_manager_scope(app)
+    install_region_manager_detail_scope(app)
     register_error_handlers(app)
 
     if not app.config.get("TESTING", False):

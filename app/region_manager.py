@@ -1,0 +1,480 @@
+"""Region-scoped manager accounts and access enforcement.
+
+Regional managers can read the national dashboard but may only drill into their
+assigned region and representatives. They cannot mutate IMS/system/master data.
+Admin accounts, existing dual-portal accounts and explicitly preserved manager
+accounts retain their previous unrestricted manager behaviour.
+"""
+
+from datetime import datetime
+import hashlib
+import re
+from functools import wraps
+from urllib.parse import unquote
+
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+from werkzeug.security import generate_password_hash
+
+from app.access_control import has_dual_portal_access, has_manager_access, is_manager
+from app.extensions import db
+from app.models import Product, Representative, RepresentativeBrickAssignment, User
+
+
+UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES = {
+    # Existing murat.asan@bilimilac.com manager keeps its previously defined access.
+    "c14c76f05798cf3933ef16395d8f5afaf2179d37165c9801208de2d7c38a52ec",
+}
+
+
+class RegionManagerScope(db.Model):
+    __tablename__ = "region_manager_scopes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    region_code = db.Column(db.String(20), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = db.relationship("User", backref=db.backref("region_manager_scope", uselist=False))
+
+
+def region_code(value):
+    match = re.search(r"(?<!\d)(\d{3})(?!\d)", str(value or ""))
+    return match.group(1) if match else ""
+
+
+def _email_hash(user):
+    email = str(getattr(user, "email", "") or "").strip().casefold()
+    return hashlib.sha256(email.encode("utf-8")).hexdigest() if email else ""
+
+
+def is_privileged_manager(user):
+    role = str(getattr(user, "role", "") or "").strip().casefold()
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (
+            role in {"admin", "administrator"}
+            or has_dual_portal_access(user)
+            or _email_hash(user) in UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES
+        )
+    )
+
+
+def is_regional_manager(user):
+    return bool(is_manager(user) and not is_privileged_manager(user))
+
+
+def assigned_region(user):
+    if not is_regional_manager(user):
+        return None
+    user_id = getattr(user, "id", None)
+    if not user_id:
+        return None
+    try:
+        scope = RegionManagerScope.query.filter_by(user_id=user_id).one_or_none()
+    except Exception:
+        # Fail closed if the scope store is unavailable/locked.
+        return None
+    return region_code(scope.region_code) if scope else None
+
+
+def representative_in_region(representative, code):
+    return bool(representative is not None and code and region_code(representative.region) == code)
+
+
+def can_access_representative(user, representative):
+    if not is_regional_manager(user):
+        return True
+    return representative_in_region(representative, assigned_region(user))
+
+
+def can_access_region(user, candidate):
+    if not is_regional_manager(user):
+        return True
+    return bool(assigned_region(user) and region_code(candidate) == assigned_region(user))
+
+
+def available_regions():
+    rows = Representative.query.order_by(Representative.region.asc(), Representative.city.asc()).all()
+    choices = {}
+    for representative in rows:
+        code = region_code(representative.region)
+        if not code:
+            continue
+        label_parts = [code]
+        city = str(representative.city or "").strip()
+        region_value = str(representative.region or "").strip()
+        descriptive = city or re.sub(r"^\s*\d{3}\s*", "", region_value).strip()
+        if descriptive and descriptive.casefold() != code.casefold():
+            label_parts.append(descriptive)
+        choices.setdefault(code, " - ".join(label_parts))
+    return sorted(choices.items(), key=lambda item: int(item[0]))
+
+
+def _deny_region(json_response=False):
+    message = "Bu bölgenin yöneticisi değilsiniz."
+    if json_response:
+        return jsonify({"success": False, "message": message}), 403
+    flash(message, "warning")
+    return redirect(url_for("dashboard.index"))
+
+
+def _deny_system(json_response=False):
+    message = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız."
+    if json_response:
+        return jsonify({"success": False, "message": message}), 403
+    flash(message, "warning")
+    return redirect(url_for("dashboard.index"))
+
+
+def _json_rep_id():
+    data = request.get_json(silent=True) or {}
+    try:
+        return int(data.get("representative_id", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _request_rep_allowed(rep_id):
+    representative = db.session.get(Representative, rep_id) if rep_id else None
+    return can_access_representative(current_user, representative)
+
+
+def _regional_representatives(active_only=False):
+    code = assigned_region(current_user)
+    query = Representative.query
+    if active_only:
+        query = query.filter(Representative.active.is_(True))
+    rows = query.order_by(Representative.region.asc(), Representative.city.asc(), Representative.rep_name.asc()).all()
+    return [row for row in rows if representative_in_region(row, code)]
+
+
+def _restricted_representatives_index():
+    latest = RepresentativeBrickAssignment.query.order_by(
+        RepresentativeBrickAssignment.year.desc(), RepresentativeBrickAssignment.month.desc()
+    ).first()
+    assignments_by_rep = {}
+    representatives = _regional_representatives(active_only=False)
+    rep_ids = {row.id for row in representatives}
+    if latest and rep_ids:
+        assignments = RepresentativeBrickAssignment.query.filter_by(
+            year=latest.year, month=latest.month, active=True
+        ).order_by(RepresentativeBrickAssignment.brick.asc()).all()
+        for assignment in assignments:
+            if assignment.representative_id in rep_ids:
+                assignments_by_rep.setdefault(assignment.representative_id, []).append(assignment)
+    return render_template(
+        "representatives.html",
+        representatives=representatives,
+        assignments_by_rep=assignments_by_rep,
+        assignment_period=(latest.year, latest.month) if latest else None,
+    )
+
+
+def _restricted_simulation_index():
+    representatives = _regional_representatives(active_only=True)
+    representatives.sort(
+        key=lambda representative: (
+            str(representative.rep_name or "").strip().upper().startswith(("ATANMAMIŞ", "ATANMAMIS")),
+            str(representative.rep_name or "").strip().upper(),
+        )
+    )
+    products = Product.query.filter_by(is_active=True).order_by(Product.display_order.asc()).all()
+    return render_template("simulation.html", representatives=representatives, products=products)
+
+
+def _restricted_quarter():
+    from app.services.quarter_entitlement_service import QuarterEntitlementService
+
+    representatives = _regional_representatives(active_only=True)
+    year = request.args.get("year", type=int) or 2026
+    quarter = request.args.get("quarter", type=int) or 2
+    representative_id = request.args.get("representative_id", type=int)
+    report = None
+    selected_representative = None
+    if representative_id:
+        selected_representative = db.session.get(Representative, representative_id)
+        if not can_access_representative(current_user, selected_representative):
+            return _deny_region()
+        if selected_representative is None:
+            return _deny_region()
+        report = QuarterEntitlementService(representative_id, year, quarter).report()
+    return render_template(
+        "quarter.html",
+        representatives=representatives,
+        selected_representative=selected_representative,
+        report=report,
+        selected_year=year,
+        selected_quarter=quarter,
+    )
+
+
+def _filter_search_response(response):
+    if not is_regional_manager(current_user) or not response.is_json:
+        return response
+    payload = response.get_json(silent=True) or {}
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return response
+    allowed = []
+    for item in results:
+        target = str(item.get("url") or "")
+        rep_match = re.search(r"/representatives/view/(\d+)", target)
+        if rep_match:
+            representative = db.session.get(Representative, int(rep_match.group(1)))
+            if can_access_representative(current_user, representative):
+                allowed.append(item)
+            continue
+        region_match = re.search(r"/regions/([^?]+)", target)
+        if region_match:
+            if can_access_region(current_user, unquote(region_match.group(1))):
+                allowed.append(item)
+            continue
+        # Unknown result kinds are withheld from regional managers rather than
+        # risking a cross-region detail leak.
+    payload["results"] = allowed
+    response.set_data(jsonify(payload).get_data())
+    response.content_type = "application/json"
+    return response
+
+
+def install_region_manager_scope(app):
+    """Install fail-closed regional manager restrictions after all blueprints."""
+    original_rep_index = app.view_functions.get("representatives.index")
+    original_sim_index = app.view_functions.get("simulation.index")
+    original_quarter = app.view_functions.get("main.quarter")
+
+    if original_rep_index:
+        @wraps(original_rep_index)
+        def rep_index_wrapper(*args, **kwargs):
+            if is_regional_manager(current_user):
+                return _restricted_representatives_index()
+            return original_rep_index(*args, **kwargs)
+        app.view_functions["representatives.index"] = rep_index_wrapper
+
+    if original_sim_index:
+        @wraps(original_sim_index)
+        def simulation_index_wrapper(*args, **kwargs):
+            if is_regional_manager(current_user):
+                return _restricted_simulation_index()
+            return original_sim_index(*args, **kwargs)
+        app.view_functions["simulation.index"] = simulation_index_wrapper
+
+    if original_quarter:
+        @wraps(original_quarter)
+        def quarter_wrapper(*args, **kwargs):
+            if is_regional_manager(current_user):
+                return _restricted_quarter()
+            return original_quarter(*args, **kwargs)
+        app.view_functions["main.quarter"] = quarter_wrapper
+
+    @app.context_processor
+    def regional_manager_context():
+        restricted = bool(current_user.is_authenticated and is_regional_manager(current_user))
+        return {
+            "regional_manager_restricted": restricted,
+            "regional_manager_region": assigned_region(current_user) if restricted else None,
+            "can_manage_region_managers": bool(
+                current_user.is_authenticated and is_privileged_manager(current_user)
+            ),
+            # Preserve the existing portal-aware manager visibility contract.
+            "manager_access": bool(
+                current_user.is_authenticated
+                and has_manager_access(current_user)
+                and not restricted
+            ),
+        }
+
+    @app.before_request
+    def enforce_regional_manager_scope():
+        if not current_user.is_authenticated or not is_regional_manager(current_user):
+            return None
+
+        endpoint = request.endpoint or ""
+        json_response = (
+            request.is_json
+            or endpoint.startswith("competition.")
+            or (endpoint.startswith("simulation.") and request.method != "GET")
+        )
+
+        forbidden_prefixes = (
+            "ims.", "settings.", "targets.", "matching.", "products.",
+            "manager_users.", "representatives.territory_",
+        )
+        if endpoint.startswith(forbidden_prefixes):
+            return _deny_system(json_response=json_response)
+
+        if endpoint in {"representatives.add", "representatives.edit", "representatives.status"}:
+            return _deny_system(json_response=json_response)
+
+        if endpoint == "regions.detail":
+            if not can_access_region(current_user, (request.view_args or {}).get("region_key")):
+                return _deny_region()
+
+        if endpoint == "representatives.view":
+            rep_id = int((request.view_args or {}).get("id") or 0)
+            if not _request_rep_allowed(rep_id):
+                return _deny_region()
+
+        if endpoint == "simulation.representative_info":
+            rep_id = int((request.view_args or {}).get("rep_id") or 0)
+            if not _request_rep_allowed(rep_id):
+                return _deny_region(json_response=True)
+
+        if endpoint.startswith("simulation.") and request.method == "POST":
+            rep_id = _json_rep_id()
+            if rep_id and not _request_rep_allowed(rep_id):
+                return _deny_region(json_response=True)
+
+        if endpoint == "main.quarter":
+            rep_id = request.args.get("representative_id", type=int)
+            if rep_id and not _request_rep_allowed(rep_id):
+                return _deny_region()
+
+        if endpoint.startswith("competition."):
+            rep_id = (
+                (request.view_args or {}).get("representative_id")
+                or (request.view_args or {}).get("rep_id")
+                or request.args.get("representative_id", type=int)
+                or request.args.get("rep_id", type=int)
+                or _json_rep_id()
+            )
+            if rep_id and not _request_rep_allowed(int(rep_id)):
+                return _deny_region(json_response=True)
+
+        return None
+
+    @app.after_request
+    def filter_regional_search(response):
+        if request.endpoint == "representatives.search":
+            return _filter_search_response(response)
+        return response
+
+
+manager_users_bp = Blueprint("manager_users", __name__, url_prefix="/manager-users")
+
+
+def privileged_manager_required(view):
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not is_privileged_manager(current_user):
+            flash("Bu alan yalnızca yetkili sistem yöneticisine açıktır.", "warning")
+            return redirect(url_for("dashboard.index"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def _manager_rows():
+    managers = User.query.filter(db.func.lower(User.role) == "manager").order_by(User.full_name.asc()).all()
+    rows = []
+    for user in managers:
+        if is_privileged_manager(user):
+            continue
+        scope = RegionManagerScope.query.filter_by(user_id=user.id).one_or_none()
+        rows.append({"user": user, "region_code": scope.region_code if scope else None})
+    return rows
+
+
+def _validate_region(value):
+    code = region_code(value)
+    valid_codes = {item[0] for item in available_regions()}
+    return code if code in valid_codes else None
+
+
+@manager_users_bp.route("/", methods=["GET"])
+@privileged_manager_required
+def index():
+    return render_template(
+        "manager_users.html",
+        managers=_manager_rows(),
+        regions=available_regions(),
+    )
+
+
+@manager_users_bp.route("/create", methods=["POST"])
+@privileged_manager_required
+def create():
+    full_name = request.form.get("full_name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    code = _validate_region(request.form.get("region_code", ""))
+
+    if len(full_name) < 3 or "@" not in email or len(password) < 8 or not code:
+        flash("Ad soyad, geçerli mail, en az 8 karakter şifre ve geçerli bölge zorunludur.", "warning")
+        return redirect(url_for("manager_users.index"))
+    if User.query.filter(db.func.lower(User.email) == email).first():
+        flash("Bu e-posta adresi zaten kayıtlı.", "danger")
+        return redirect(url_for("manager_users.index"))
+
+    user = User(
+        full_name=full_name,
+        email=email,
+        password=generate_password_hash(password),
+        role="Manager",
+        active=True,
+    )
+    db.session.add(user)
+    db.session.flush()
+    db.session.add(RegionManagerScope(user_id=user.id, region_code=code))
+    db.session.commit()
+    from app.services.user_vault_service import UserVaultService
+    UserVaultService.sync_from_primary()
+    flash(f"{full_name} bölge müdürü olarak oluşturuldu ({code}).", "success")
+    return redirect(url_for("manager_users.index"))
+
+
+@manager_users_bp.route("/<int:user_id>/update", methods=["POST"])
+@privileged_manager_required
+def update(user_id):
+    user = db.session.get(User, user_id)
+    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
+        flash("Bölge müdürü hesabı bulunamadı.", "danger")
+        return redirect(url_for("manager_users.index"))
+
+    full_name = request.form.get("full_name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    code = _validate_region(request.form.get("region_code", ""))
+    duplicate = User.query.filter(db.func.lower(User.email) == email, User.id != user.id).first()
+    if len(full_name) < 3 or "@" not in email or not code:
+        flash("Ad soyad, geçerli mail ve geçerli bölge zorunludur.", "warning")
+        return redirect(url_for("manager_users.index"))
+    if duplicate:
+        flash("Bu e-posta adresi başka bir kullanıcıda kayıtlı.", "danger")
+        return redirect(url_for("manager_users.index"))
+    if password and len(password) < 8:
+        flash("Yeni şifre en az 8 karakter olmalıdır.", "warning")
+        return redirect(url_for("manager_users.index"))
+
+    user.full_name = full_name
+    user.email = email
+    if password:
+        user.password = generate_password_hash(password)
+    scope = RegionManagerScope.query.filter_by(user_id=user.id).one_or_none()
+    if scope is None:
+        scope = RegionManagerScope(user_id=user.id, region_code=code)
+        db.session.add(scope)
+    else:
+        scope.region_code = code
+    db.session.commit()
+    from app.services.user_vault_service import UserVaultService
+    UserVaultService.sync_from_primary()
+    flash("Bölge müdürü bilgileri güncellendi.", "success")
+    return redirect(url_for("manager_users.index"))
+
+
+@manager_users_bp.route("/<int:user_id>/toggle", methods=["POST"])
+@privileged_manager_required
+def toggle(user_id):
+    user = db.session.get(User, user_id)
+    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
+        flash("Bölge müdürü hesabı bulunamadı.", "danger")
+        return redirect(url_for("manager_users.index"))
+    user.active = not user.active
+    db.session.commit()
+    from app.services.user_vault_service import UserVaultService
+    UserVaultService.sync_from_primary()
+    flash("Bölge müdürü hesap durumu güncellendi.", "success")
+    return redirect(url_for("manager_users.index"))
