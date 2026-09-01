@@ -1,4 +1,4 @@
-name: Production Backup Inventory
+name: Region Performance Production Acceptance
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  inventory:
+  acceptance:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -30,7 +30,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inventory production backups read only
+      - name: Verify one normal region report read path
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,29 +39,53 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from datetime import datetime, timezone
-          from pathlib import Path
+          from sqlalchemy import event
           from app import create_app
           from app.extensions import db
+          from app.services.region_performance_service import RegionPerformanceService
 
+          EXPECTED='3da26505c226937fe63d7338ce78e7b2553b09d3'
           app=create_app()
           with app.app_context():
               active=int(db.session.execute(db.text("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('PROCESSING','QUEUED')")).scalar() or 0)
               print(f"IMS_JOB_GATE|active={active}")
-              backup_dir=Path(app.config['BACKUP_FOLDER'])
-              print(f"BACKUP_DIR|{backup_dir}")
-              files=sorted((p for p in backup_dir.rglob('*') if p.is_file()), key=lambda p:(p.stat().st_mtime,p.name))
-              total=0
-              for p in files:
-                  st=p.stat(); total += st.st_size
-                  stamp=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
-                  print(f"BACKUP_FILE|name={p.relative_to(backup_dir)}|bytes={st.st_size}|mtime={stamp}")
-              print(f"BACKUP_TOTAL|files={len(files)}|bytes={total}")
+              assert active == 0
+
+              statements=[]
+              def capture(conn, cursor, statement, parameters, context, executemany):
+                  if statement.lstrip().upper().startswith('SELECT'):
+                      statements.append(statement.lower())
+
+              event.listen(db.engine, 'before_cursor_execute', capture)
+              try:
+                  report=RegionPerformanceService('901', 2026, 3).report()
+              finally:
+                  event.remove(db.engine, 'before_cursor_execute', capture)
+
+              total=len(statements)
+              targets=sum('from targets' in sql for sql in statements)
+              summaries=sum('from ims_summary' in sql for sql in statements)
+              prod_results=sum('from production_results' in sql for sql in statements)
+              prod_uploads=sum('from production_result_uploads' in sql for sql in statements)
+              monthly=report['periods']['monthly']
+              print(f"REGION_REPORT|region={report['region_key']}|year={report['year']}|month={report['month']}|reps={report['representative_count']}|products={len(monthly['products'])}|complete={monthly['complete']}")
+              print(f"REGION_SELECTS|total={total}|targets={targets}|ims_summary={summaries}|production_results={prod_results}|production_uploads={prod_uploads}")
+              assert report['region_key']=='901'
+              assert report['year']==2026 and report['month']==3
+              assert set(report['periods'])=={'monthly','quarterly','half_year','yearly'}
+              assert report['representative_count'] > 0
+              assert len(monthly['products']) == 7
+              # Dominant N+1 source paths must stay bounded regardless of
+              # representative/product row count and overlapping KPI windows.
+              assert targets <= 20, targets
+              assert summaries <= 5, summaries
+              assert prod_results <= 3, prod_results
+              assert prod_uploads <= 5, prod_uploads
+              assert total <= 150, total
               journal=db.session.execute(db.text('PRAGMA journal_mode')).scalar()
               busy=db.session.execute(db.text('PRAGMA busy_timeout')).scalar()
-              quick=db.session.execute(db.text('PRAGMA quick_check')).scalar()
-              print(f"SQLITE|journal={journal}|busy_timeout={busy}|quick_check={quick}")
-              assert str(journal).lower()=='wal' and int(busy)==30000 and quick=='ok'
+              print(f"SQLITE|journal={journal}|busy_timeout={busy}")
+              assert str(journal).lower()=='wal' and int(busy)==30000
+              print('REGION_PERFORMANCE_PRODUCTION_ACCEPTANCE|PASS')
           PY
-          df -h "$IMS_PATH" | tail -n 1 | sed 's/^/DISK|/'
           REMOTE
