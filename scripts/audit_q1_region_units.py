@@ -142,7 +142,7 @@ def main():
 
         print("Q1_UNIT_DIYARBAKIR_BEGIN")
         for record in records:
-            if record["region"].upper().startswith("DIYARBAKIR"):
+            if "YARBAKIR" in record["region"].upper():
                 print("Q1_UNIT_DIYARBAKIR|" + json.dumps(record, ensure_ascii=False, sort_keys=True))
         print("Q1_UNIT_DIYARBAKIR_END")
         for failure in failures[:100]:
