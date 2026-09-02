@@ -82,13 +82,49 @@ class QuarterEntitlementService:
             })
         return rows
 
+    @staticmethod
+    def _q_topup(monthly_paid, cap, *, complete, total_success, product_success):
+        """Return only the unpaid Q base entitlement; never reapply monthly steps."""
+        if not (complete and total_success and product_success):
+            return 0.0
+        return round(max(0.0, float(cap) - float(monthly_paid)), 2)
+
     def report(self):
         monthly = [self._monthly_row(month) for month in self.months]
         total_target = sum(row["target_tl"] for row in monthly)
         total_actual = sum(row["actual_tl"] for row in monthly)
         total_percent = round(total_actual / total_target * 100, 2) if total_target else 0.0
-        paid = round(sum(row["gross_prime"] for row in monthly), 2)
+        monthly_paid = round(sum(row["gross_prime"] for row in monthly), 2)
         main_product_rows = [row for row in self._product_carry() if row["is_prime_product"]]
+        product_inputs = [
+            {
+                "product_name": row["product"],
+                "percent": row["percent"],
+                "include_in_prime": True,
+            }
+            for row in main_product_rows
+        ]
+        product_entitlement = self.engine.evaluate_monthly_entitlement(product_inputs)
+        required_total = self.engine.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
+        q_cap = round(self.engine.get_setting("MAIN_PRIME", 50000.0) * len(self.months), 2)
+        q_topup = self._q_topup(
+            monthly_paid,
+            q_cap,
+            complete=all(row["has_data"] for row in monthly),
+            total_success=total_percent >= required_total,
+            product_success=product_entitlement["product_success"],
+        )
+        if q_topup:
+            closing = monthly[-1]
+            closing["q_topup"] = q_topup
+            closing["gross_prime"] = round(closing["gross_prime"] + q_topup, 2)
+            closing["entitlement_type"] = (
+                "Q telafi hakkedişi" if not closing["main_prime"] and not closing["ciro_prime"]
+                else f'{closing["entitlement_type"]} + Q telafi'
+            )
+        for row in monthly:
+            row.setdefault("q_topup", 0.0)
+        gross_total = round(monthly_paid + q_topup, 2)
         return {
             "year": self.year,
             "quarter": self.quarter,
@@ -98,7 +134,12 @@ class QuarterEntitlementService:
                 "target_tl": round(total_target, 2),
                 "actual_tl": round(total_actual, 2),
                 "total_percent": total_percent,
-                "gross_prime": paid,
+                "gross_prime": gross_total,
+                "monthly_paid": monthly_paid,
+                "q_entitlement_cap": q_cap,
+                "q_topup": q_topup,
+                "q_total_success": total_percent >= required_total,
+                "q_product_success": product_entitlement["product_success"],
                 "main_prime_months": sum(1 for row in monthly if row["main_prime"] > 0),
                 "ciro_prime_months": sum(1 for row in monthly if row["ciro_prime"] > 0),
             },
