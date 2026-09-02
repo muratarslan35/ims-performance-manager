@@ -113,6 +113,10 @@ def main():
                         "ims_actual": float(ims_actuals.get(product_id, Decimal("0"))),
                         "production_target": float(dec(prod.target_unit)) if prod is not None else None,
                         "production_actual": float(dec(prod.actual_unit)) if prod is not None else None,
+                        "production_target_tl": float(dec(prod.target_tl)) if prod is not None else None,
+                        "production_actual_tl": float(dec(prod.actual_tl)) if prod is not None else None,
+                        "production_tl_percent": float(dec(prod.realization_percent)) if prod is not None else None,
+                        "production_unit_percent": float(dec(prod.unit_realization_percent)) if prod is not None else None,
                         "screen_target": float(dec(screen["target_unit"])) if screen else None,
                         "screen_actual": float(dec(screen["actual_unit"])) if screen and screen["actual_unit"] is not None else None,
                         "screen_difference": float(dec(screen["unit_difference"])) if screen and screen["unit_difference"] is not None else None,
@@ -146,6 +150,20 @@ def main():
             if record["region"] == "901":
                 print("Q1_UNIT_DIYARBAKIR|" + json.dumps(record, ensure_ascii=False, sort_keys=True))
         print("Q1_UNIT_DIYARBAKIR_END")
+        for record in records:
+            if record["region"] == "901" and record["month"] == 3 and record["product"] == "Monurol":
+                target_tl = dec(record["production_target_tl"])
+                actual_tl = dec(record["production_actual_tl"])
+                target_unit = dec(record["production_target"])
+                actual_unit = dec(record["production_actual"])
+                focused = {
+                    **record,
+                    "calculated_tl_difference": float(actual_tl - target_tl),
+                    "calculated_tl_percent": float(actual_tl * Decimal("100") / target_tl),
+                    "calculated_unit_difference": float(actual_unit - target_unit),
+                    "calculated_unit_percent": float(actual_unit * Decimal("100") / target_unit),
+                }
+                print("MONUROL_901_MARCH|" + json.dumps(focused, ensure_ascii=False, sort_keys=True))
         for failure in failures[:100]:
             print("Q1_UNIT_FAILURE|" + json.dumps(failure, ensure_ascii=False, sort_keys=True))
         print(
