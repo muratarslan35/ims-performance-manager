@@ -305,13 +305,17 @@ document.addEventListener(
         document
         .querySelectorAll(".datatable")
         .forEach(function(table){
+            const searchLabel = table.dataset.searchLabel;
+            const searchPlaceholder = table.dataset.searchPlaceholder;
             new DataTable(table, {
                 pageLength: 25,
                 responsive: true,
                 ordering: true,
                 searching: true,
                 language: {
-                    url: "https://cdn.datatables.net/plug-ins/2.3.2/i18n/tr.json"
+                    url: "https://cdn.datatables.net/plug-ins/2.3.2/i18n/tr.json",
+                    ...(searchLabel ? { search: searchLabel } : {}),
+                    ...(searchPlaceholder ? { searchPlaceholder: searchPlaceholder } : {})
                 }
             });
         });
