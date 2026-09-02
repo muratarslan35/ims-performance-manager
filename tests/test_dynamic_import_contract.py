@@ -178,6 +178,71 @@ def test_renamed_shifted_reordered_sources_keep_same_business_result(dynamic_env
     assert region[0]["actual_unit"] == pytest.approx(17.25)
 
 
+def test_later_tl_only_ims_keeps_unit_target_seen_in_any_prior_week(dynamic_env):
+    _temp, _app, upload, product, rep = dynamic_env
+    service = IMSImportService("unused.xlsx")
+    service.upload = upload
+    service.workbook = {
+        "MART HEDEF": pd.DataFrame([["MART HEDEF TL", "TRAVAZOL"]])
+    }
+    service._prior_month_unit_targets = {(rep.id, product.id): 123.0}
+    target = Target.query.filter_by(
+        year=2038, month=2, representative_id=rep.id, product_id=product.id
+    ).one()
+    target.unit_target = 0.0
+    summary = IMSSummary.query.filter_by(
+        upload_id=upload.id, representative_id=rep.id, product_id=product.id
+    ).one()
+    summary.target_unit = 0.0
+    db.session.flush()
+
+    assert service.restore_locked_monthly_unit_targets(2038, 2) == 1
+    assert target.unit_target == 123.0
+    assert summary.target_unit == 123.0
+
+
+def test_explicit_box_source_keeps_numeric_zero_as_real_value(dynamic_env):
+    _temp, _app, upload, product, rep = dynamic_env
+    service = IMSImportService("unused.xlsx")
+    service.upload = upload
+    service.workbook = {
+        "BAKİYE": pd.DataFrame([["MART KUTU BAKİYE", "TRAVAZOL"], [0, 0]])
+    }
+    service._prior_month_unit_targets = {(rep.id, product.id): 123.0}
+    target = Target.query.filter_by(
+        year=2038, month=2, representative_id=rep.id, product_id=product.id
+    ).one()
+    target.unit_target = 0.0
+    summary = IMSSummary.query.filter_by(
+        upload_id=upload.id, representative_id=rep.id, product_id=product.id
+    ).one()
+    summary.target_unit = 0.0
+    db.session.flush()
+
+    assert service.restore_locked_monthly_unit_targets(2038, 2) == 0
+    assert target.unit_target == 0.0
+    assert summary.target_unit == 0.0
+
+
+def test_unit_target_lock_does_not_resurrect_rows_absent_from_current_roster(dynamic_env):
+    _temp, _app, upload, product, rep = dynamic_env
+    service = IMSImportService("unused.xlsx")
+    service.upload = upload
+    service.workbook = {
+        "MART HEDEF": pd.DataFrame([["MART HEDEF TL", "TRAVAZOL"]])
+    }
+    service._prior_month_unit_targets = {(rep.id, product.id): 123.0}
+    Target.query.filter_by(
+        year=2038, month=2, representative_id=rep.id, product_id=product.id
+    ).delete()
+    db.session.flush()
+
+    assert service.restore_locked_monthly_unit_targets(2038, 2) == 0
+    assert Target.query.filter_by(
+        year=2038, month=2, representative_id=rep.id, product_id=product.id
+    ).count() == 0
+
+
 def test_equal_authoritative_sources_fail_closed(dynamic_env):
     _temp, _app, upload, _product, _rep = dynamic_env
     workbook = _shifted_semantic_workbook()
@@ -261,3 +326,4 @@ def test_competition_header_and_dimension_positions_can_move(dynamic_env):
     assert structure["subterritory_column"] == 5
     assert set(structure["product_columns"]) == {1, 3}
     assert structure["data_start_row"] == 26
+
