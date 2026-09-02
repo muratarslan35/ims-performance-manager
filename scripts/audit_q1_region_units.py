@@ -57,6 +57,7 @@ def main():
                 .filter_by(upload_id=upload.id).distinct().all()
         })
         products = {row.id: row.product_name for row in Product.query.all()}
+        # Exercise the currently deployed all-region quota floor classifier.
         quota_months = ProductionResultService.quota_product_months(
             [(YEAR, month) for month in MONTHS]
         )
