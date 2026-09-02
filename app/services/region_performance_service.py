@@ -335,6 +335,7 @@ class RegionPerformanceService:
             item.id: item
             for item in Product.query.filter(Product.id.in_(all_product_ids)).all()
         } if all_product_ids else {}
+        quota_months = ProductionResultService.quota_product_months(months)
         total_target = sum((vals[0] for vals in month_totals.values()), Decimal("0"))
         total_actual = sum((vals[1] for vals in month_totals.values()), Decimal("0"))
         complete = all(vals[2] for vals in month_totals.values()) if month_totals else False
@@ -360,6 +361,10 @@ class RegionPerformanceService:
                 "actual_unit": unit_actual if unit_complete else None,
                 "unit_difference": (unit_actual - unit_target) if unit_complete else None,
                 "unit_complete": unit_complete,
+                "quota_exit": bool(quota_months.get(pid)),
+                "quota_exit_months": [
+                    f"{month:02d}/{year}" for year, month in quota_months.get(pid, [])
+                ],
                 **result_row(vals),
             })
         product_rows.sort(key=lambda row: (-(row["actual_tl"] or Decimal("0")), row["product_name"]))
