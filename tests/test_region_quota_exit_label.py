@@ -53,10 +53,12 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
         db.session.add(upload)
         db.session.flush()
         for region_code in ("901", "801"):
+            monurol_percent = 100 if region_code == "901" else 120
             db.session.add(ProductionRegionProductResult(
                 upload_id=upload.id, region_code=region_code, product_id=monurol.id,
-                target_tl=1000, actual_tl=1000, target_unit=10, actual_unit=5,
-                realization_percent=100, unit_realization_percent=50,
+                target_tl=1000, actual_tl=1000 * monurol_percent / 100,
+                target_unit=10, actual_unit=5, realization_percent=monurol_percent,
+                unit_realization_percent=50,
             ))
             travazol_percent = 100 if region_code == "901" else 80
             db.session.add(ProductionRegionProductResult(
