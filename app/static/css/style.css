@@ -807,6 +807,38 @@ hr{
 
 }
 
+.representative-table-card .dt-search,
+.representative-table-card .dataTables_filter{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:14px 16px 8px;
+    color:var(--text);
+    font-weight:700;
+}
+
+.representative-table-card .dt-search input,
+.representative-table-card .dataTables_filter input{
+    min-width:min(360px, 62vw);
+    min-height:42px;
+    border:2px solid rgba(11,78,162,.3);
+    box-shadow:0 4px 14px rgba(11,78,162,.08);
+}
+
+@media (max-width: 576px){
+    .representative-table-card .dt-search,
+    .representative-table-card .dataTables_filter{
+        align-items:stretch;
+        flex-direction:column;
+    }
+    .representative-table-card .dt-search input,
+    .representative-table-card .dataTables_filter input{
+        width:100%;
+        min-width:0;
+        margin:0;
+    }
+}
+
 .dataTables_length select{
 
     border-radius:10px;

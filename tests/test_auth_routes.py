@@ -172,6 +172,18 @@ def test_representative_cannot_access_manager_areas_or_ai_panel(app):
     assert b'href="/ims/"' not in dashboard.data
 
 
+def test_representative_list_uses_single_working_search_and_no_manual_add_form():
+    template = Path("app/templates/representatives.html").read_text(encoding="utf-8")
+    base = Path("app/templates/base.html").read_text(encoding="utf-8")
+
+    assert "Yeni Temsilci" not in template
+    assert "representatives.add" not in template
+    assert template.count('data-search-label="Temsilci Ara"') == 1
+    assert 'data-search-placeholder="İsim, bölge veya takım yazın..."' in template
+    assert "table.dataset.searchLabel" in base
+    assert "table.dataset.searchPlaceholder" in base
+
+
 def test_manager_portal_keeps_full_management_access(app):
     promote_test_user_to_manager(app)
     client = app.test_client()
