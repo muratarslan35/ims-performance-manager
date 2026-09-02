@@ -157,6 +157,21 @@ def test_regional_manager_sees_only_own_representatives(app, client):
     assert "201 Temsilci" not in html
 
 
+def test_dashboard_heading_reflects_selected_portal(client):
+    login_manager(client)
+    manager_html = client.get("/dashboard/").get_data(as_text=True)
+    assert "101 Bölge Müdürü" in manager_html
+    assert "Yönetici Görünümü" in manager_html
+    assert "Türkiye geneli yönetici görünümü" not in manager_html
+
+    client.get("/logout")
+    login_representative(client)
+    representative_html = client.get("/dashboard/").get_data(as_text=True)
+    assert "101 Temsilci" in representative_html
+    assert "Temsilci Görünümü" in representative_html
+    assert "Türkiye geneli yönetici görünümü" not in representative_html
+
+
 def test_regional_manager_cannot_open_other_region_detail(client):
     login_manager(client)
     response = client.get("/regions/201", follow_redirects=True)
