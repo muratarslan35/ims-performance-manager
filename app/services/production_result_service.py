@@ -9,6 +9,7 @@ from app.models import (
     ProductionResultUpload,
     Target,
 )
+from app.services.alias_service import AliasService
 
 
 class ProductionResultService:
@@ -79,6 +80,24 @@ class ProductionResultService:
             for product_id, product_rows in by_product.items():
                 product_regions = {str(row.region_code) for row in product_rows}
                 if not expected_regions or product_regions != expected_regions:
+                    continue
+                source = AliasService.normalize(
+                    " ".join(filter(None, (upload.file_name, upload.stored_file_name)))
+                )
+                marker = next(
+                    (item for item in ("KOTA SATIS", "KOTA CIKIS") if item in source),
+                    None,
+                )
+                if marker is None:
+                    continue
+                quota_names = f" {source.split(marker, 1)[1]} "
+                product = product_rows[0].product
+                labels = {
+                    AliasService.normalize(value)
+                    for value in (product.product_name, product.product_code, product.ims_name)
+                    if value
+                }
+                if not any(f" {label} " in quota_names for label in labels if label):
                     continue
                 if all(
                     cls._d(row.realization_percent) >= Decimal("100") - tolerance
