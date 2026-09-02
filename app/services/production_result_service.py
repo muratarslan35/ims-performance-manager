@@ -2,7 +2,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
-from app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target
+from app.models import (
+    IMSSummary,
+    ProductionRegionProductResult,
+    ProductionResult,
+    ProductionResultUpload,
+    Target,
+)
 
 
 class ProductionResultService:
@@ -37,6 +43,50 @@ class ProductionResultService:
     def final_upload(cls, year, month):
         uploads = cls.applied_uploads(year, month)
         return uploads[0] if uploads else None
+
+    @classmethod
+    def quota_product_months(cls, months):
+        """Detect stock-quota exemptions from official production results.
+
+        A product is quota-exempt for a month only when the selected P2/P1
+        workbook sets that product to target TL and exactly 100% in every
+        region included by the workbook.  The marker is explanatory metadata;
+        it never changes target, actual, priority, or premium calculations.
+        """
+        periods = tuple(sorted({(int(year), int(month)) for year, month in months}))
+        uploads = {
+            (year, month): cls.final_upload(year, month)
+            for year, month in periods
+        }
+        selected = {period: upload for period, upload in uploads.items() if upload is not None}
+        if not selected:
+            return {}
+        rows = ProductionRegionProductResult.query.filter(
+            ProductionRegionProductResult.upload_id.in_([upload.id for upload in selected.values()])
+        ).all()
+        rows_by_upload = {}
+        for row in rows:
+            rows_by_upload.setdefault(int(row.upload_id), []).append(row)
+
+        result = {}
+        tolerance = Decimal("0.05")
+        for period, upload in selected.items():
+            upload_rows = rows_by_upload.get(int(upload.id), [])
+            expected_regions = {str(row.region_code) for row in upload_rows}
+            by_product = {}
+            for row in upload_rows:
+                by_product.setdefault(int(row.product_id), []).append(row)
+            for product_id, product_rows in by_product.items():
+                product_regions = {str(row.region_code) for row in product_rows}
+                if not expected_regions or product_regions != expected_regions:
+                    continue
+                if all(
+                    abs(cls._d(row.realization_percent) - Decimal("100")) <= tolerance
+                    and abs(cls._d(row.actual_tl) - cls._d(row.target_tl)) <= tolerance
+                    for row in product_rows
+                ):
+                    result.setdefault(product_id, []).append(period)
+        return result
 
     @classmethod
     def final_product_result(cls, year, month, representative_id, product_id):
