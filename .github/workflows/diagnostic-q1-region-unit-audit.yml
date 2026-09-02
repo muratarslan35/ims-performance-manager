@@ -44,3 +44,8 @@ jobs:
             -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
             "$IMS_USER@$IMS_HOST" \
             "cd '$IMS_PATH' && venv/bin/python scripts/audit_production_result_sources.py --year 2026 --month 3 --stage 2"
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" \
+            "cd '$IMS_PATH' && venv/bin/python -" \
+            < scripts/audit_monuroI_901_source_cells.py
