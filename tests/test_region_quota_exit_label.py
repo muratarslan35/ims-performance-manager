@@ -46,7 +46,8 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
                 product_id=product.id, tl_target=1000, unit_target=10,
             ))
         upload = ProductionResultUpload(
-            file_name="Mart_2_Uretim.xlsx", stored_file_name="2044-03-p2.xlsx",
+            file_name="Mart_2_Uretim_KOTA_SATIS_Monurol-Fentivag.xlsx",
+            stored_file_name="2044-03-p2.xlsx",
             source_hash="q" * 64, year=2044, month=3, production_stage=2,
             status=ProductionResultUpload.STATUS_APPLIED,
         )
@@ -60,7 +61,9 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
                 target_unit=10, actual_unit=5, realization_percent=monurol_percent,
                 unit_realization_percent=50,
             ))
-            travazol_percent = 100 if region_code == "901" else 80
+            # Natural all-region overperformance is not quota unless the
+            # product is explicitly named by the workbook quota marker.
+            travazol_percent = 120
             db.session.add(ProductionRegionProductResult(
                 upload_id=upload.id, region_code=region_code, product_id=travazol.id,
                 target_tl=1000, actual_tl=1000 * travazol_percent / 100,
