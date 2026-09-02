@@ -253,6 +253,12 @@ def test_admin_settings_has_role_access_panel(client):
     assert "Uygulanamaz" in html
 
 
+def test_manager_module_omits_obsolete_settings_warning(client):
+    login(client, "admin@ipm.local", "Admin12345")
+    html = client.get("/manager-users/").get_data(as_text=True)
+    assert "Ayarlar menüsüne erişemez" not in html
+
+
 def test_non_admin_cannot_change_access_matrix(app, client):
     login(client, "marketing.manager@example.com")
     response = client.post(

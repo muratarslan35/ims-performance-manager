@@ -33,6 +33,10 @@
 .dash-hero-title { margin: 0 0 2px; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
 .dash-hero,.dash-hero h1,.dash-hero h2,.dash-hero strong{color:#fff!important}
 .dash-hero-sub { margin: 0; font-size: 14px; opacity: .9; }
+.dash-hero-welcome { display:flex; flex-direction:column; align-items:flex-start; gap:9px; }
+.dash-portal-view { display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border:1px solid rgba(255,255,255,.45); border-radius:999px; background:rgba(255,255,255,.14); color:#fff; font-size:14px; line-height:1; box-shadow:0 6px 18px rgba(4,35,83,.12); }
+.dash-portal-view i { font-size:15px; color:#bff4ff; }
+.dash-portal-view strong { font-size:14px; font-weight:800; letter-spacing:.01em; }
 .dash-hero-meta { display: flex; gap: 10px; flex-wrap: wrap; }
 .dash-hero-badge {
   display: inline-flex;
