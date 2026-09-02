@@ -81,8 +81,8 @@ class ProductionResultService:
                 if not expected_regions or product_regions != expected_regions:
                     continue
                 if all(
-                    abs(cls._d(row.realization_percent) - Decimal("100")) <= tolerance
-                    and abs(cls._d(row.actual_tl) - cls._d(row.target_tl)) <= tolerance
+                    cls._d(row.realization_percent) >= Decimal("100") - tolerance
+                    and cls._d(row.actual_tl) >= cls._d(row.target_tl) - tolerance
                     for row in product_rows
                 ):
                     result.setdefault(product_id, []).append(period)
