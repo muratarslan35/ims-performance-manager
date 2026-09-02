@@ -10,6 +10,9 @@ from sqlalchemy import func
 from app import create_app
 from app.extensions import db
 from app.models import (
+    IMSImportJob,
+    IMSRawData,
+    IMSUpload,
     IMSSummary,
     Product,
     ProductionRegionProductResult,
@@ -39,6 +42,56 @@ def main():
     failures = []
     records = []
     with app.app_context():
+        print("MARCH_IMS_UPLOADS_BEGIN")
+        march_uploads = IMSUpload.query.filter_by(year=YEAR, month=3).order_by(
+            IMSUpload.week_number, IMSUpload.id
+        ).all()
+        for ims_upload in march_uploads:
+            raw_types = dict(
+                db.session.query(IMSRawData.sheet_type, func.count(IMSRawData.id))
+                .filter(IMSRawData.upload_id == ims_upload.id)
+                .group_by(IMSRawData.sheet_type)
+                .all()
+            )
+            jobs = IMSImportJob.query.filter_by(ims_upload_id=ims_upload.id).all()
+            target_metrics = IMSRawData.query.filter(
+                IMSRawData.upload_id == ims_upload.id,
+                IMSRawData.raw_json.like('%target_unit%'),
+            ).count()
+            balance_metrics = IMSRawData.query.filter(
+                IMSRawData.upload_id == ims_upload.id,
+                IMSRawData.raw_json.like('%balance_unit%'),
+            ).count()
+            print("MARCH_IMS_UPLOAD|" + json.dumps({
+                "id": ims_upload.id,
+                "week": ims_upload.week_number,
+                "file": ims_upload.file_name,
+                "status": ims_upload.status,
+                "sheets": ims_upload.sheet_count,
+                "raw": ims_upload.raw_record_count,
+                "summary": ims_upload.summary_record_count,
+                "raw_types": raw_types,
+                "target_unit_metrics": target_metrics,
+                "balance_unit_metrics": balance_metrics,
+                "jobs": [{
+                    "id": job.id,
+                    "stored_file": job.stored_file_name,
+                    "status": job.status,
+                    "source_hash": job.source_hash,
+                    "result_summary": job.result_summary,
+                } for job in jobs],
+            }, ensure_ascii=False, sort_keys=True))
+        current_march_targets = Target.query.filter_by(year=YEAR, month=3).all()
+        print("MARCH_CURRENT_TARGETS|" + json.dumps({
+            "rows": len(current_march_targets),
+            "nonzero_tl": sum(float(row.tl_target or 0) != 0 for row in current_march_targets),
+            "nonzero_unit": sum(float(row.unit_target or 0) != 0 for row in current_march_targets),
+            "zero_unit_with_nonzero_tl": sum(
+                float(row.unit_target or 0) == 0 and float(row.tl_target or 0) != 0
+                for row in current_march_targets
+            ),
+        }, sort_keys=True))
+        print("MARCH_IMS_UPLOADS_END")
         uploads = {}
         for month in MONTHS:
             upload = ProductionResultService.final_upload(YEAR, month)
@@ -184,3 +237,4 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
