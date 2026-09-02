@@ -84,3 +84,85 @@
   .auth-system-title { padding: 10px; font-size: 15px; margin-bottom: 10px; }
   .portal-selector-grid { grid-template-columns: 1fr; }
 }
+
+/* Login/register are viewport-contained on phone, tablet and desktop. */
+body.auth-viewport-locked {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body.auth-viewport-locked > .page,
+body.auth-viewport-locked .page-wrapper,
+body.auth-viewport-locked .page-body,
+body.auth-viewport-locked .page-body > .container-xl {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.auth-shell-login,
+.auth-shell-register {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  padding: clamp(8px, 2.4vh, 24px);
+  overflow: hidden;
+}
+
+.auth-shell-login .auth-layout,
+.auth-shell-register .auth-layout {
+  min-height: 0;
+  max-height: calc(100dvh - clamp(54px, 9vh, 82px));
+}
+
+.auth-shell-login .auth-identity-panel,
+.auth-shell-register .auth-identity-panel {
+  min-height: 0;
+}
+
+@media (max-width: 800px) {
+  .auth-shell-login,
+  .auth-shell-register { padding: 8px 12px; }
+  .auth-shell-login .auth-system-title,
+  .auth-shell-register .auth-system-title { margin: 0 0 6px; padding: 3px 8px 7px; font-size: 14px; }
+  .auth-shell-login .auth-system-title::after,
+  .auth-shell-register .auth-system-title::after { height: 2px; margin-top: 5px; }
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout { max-height: calc(100dvh - 48px); }
+  .auth-shell-login .auth-identity-panel,
+  .auth-shell-register .auth-identity-panel { min-height: clamp(68px, 12vh, 105px); }
+  .auth-shell-login .auth-layout .auth-card,
+  .auth-shell-register .auth-layout .auth-card { padding: clamp(12px, 2.3vh, 22px) 20px; }
+  .auth-shell-login .auth-welcome,
+  .auth-shell-register .auth-welcome { margin-bottom: 2px; font-size: 20px; }
+  .auth-shell-login .auth-subtitle,
+  .auth-shell-register .auth-subtitle { margin-bottom: 10px; font-size: 12px; }
+  .auth-shell-login .portal-selector { margin-bottom: 10px !important; }
+  .auth-shell-login .portal-selector-grid { grid-template-columns: 1fr 1fr; gap: 7px; }
+  .auth-shell-login .portal-option span { min-height: 58px; padding: 7px 9px; }
+  .auth-shell-login .portal-option i { margin-bottom: 2px; font-size: 15px; }
+  .auth-shell-login .auth-form .mb-3,
+  .auth-shell-register .auth-form .mb-3 { margin-bottom: 7px !important; }
+  .auth-shell-login .auth-form .form-control,
+  .auth-shell-register .auth-form .form-control,
+  .auth-shell-register .auth-form .form-select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
+  .auth-shell-login .auth-form > .d-flex { margin-bottom: 10px !important; }
+  .auth-shell-login .auth-footer,
+  .auth-shell-register .auth-footer { margin-top: 10px; font-size: 12px; }
+  .auth-shell-register .row > .col-md-6 { width: 50%; }
+  .auth-shell-register .form-hint { margin-bottom: 7px !important; font-size: 11px; }
+}
+
+@media (max-height: 680px) {
+  .auth-shell-login .auth-identity-panel,
+  .auth-shell-register .auth-identity-panel { min-height: 58px; }
+  .auth-shell-login .auth-layout .auth-card,
+  .auth-shell-register .auth-layout .auth-card { padding-top: 10px; padding-bottom: 10px; }
+  .auth-shell-login .portal-option small { display: none; }
+  .auth-shell-register .auth-subtitle { display: none; }
+}
