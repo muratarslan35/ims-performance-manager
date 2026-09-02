@@ -285,6 +285,34 @@ def test_regional_manager_assignment_scope_blocks_cross_region_mutation(app, cli
     assert "Bu bölgenin yöneticisi değilsiniz." in denied_transfer.get_data(as_text=True)
 
 
+def test_admin_toggle_allows_cross_region_assignment_mutation(app, client):
+    with app.app_context():
+        from app.extensions import db
+        from app.models import RepresentativeBrickAssignment, Setting
+        db.session.add(Setting(
+            setting_key="ACCESS.region.cross_region_assignments",
+            setting_value="1",
+            category="Erişim Yetkisi",
+            description="Farklı bölge brick ataması",
+        ))
+        db.session.commit()
+        foreign_id = RepresentativeBrickAssignment.query.filter_by(brick="201 BRICK").one().id
+
+    login_manager(client)
+    page = client.get("/representatives/territory-management?year=2026&month=1")
+    assert "201 BRICK" in page.get_data(as_text=True)
+
+    changed = client.post(
+        f"/representatives/territory-management/{foreign_id}/status",
+        data={"active": "0"},
+        follow_redirects=True,
+    )
+    assert "201 BRICK çalışma alanı pasife alındı" in changed.get_data(as_text=True)
+    with app.app_context():
+        from app.models import RepresentativeBrickAssignment
+        assert RepresentativeBrickAssignment.query.get(foreign_id).active is False
+
+
 def test_murat_asan_manager_keeps_unrestricted_special_access(app):
     from app.extensions import db
     from app.models import User

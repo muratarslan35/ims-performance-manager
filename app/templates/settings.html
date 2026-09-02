@@ -114,6 +114,61 @@ Sistem Ayarları
 
 </div>
 
+<div class="card shadow-sm mb-4" id="access-permissions">
+    <div class="card-header">
+        <div>
+            <h3 class="card-title mb-1"><i class="bi bi-shield-lock-fill me-2 text-primary"></i>Erişim Yetkileri</h3>
+            <div class="text-secondary small">Temsilci ve yönetici tiplerinin ekran ve kapsam yetkilerini yönetin. Değişiklikler menü ve backend erişimine birlikte uygulanır.</div>
+        </div>
+    </div>
+    <form method="POST" action="{{ url_for('settings.save_access_permissions') }}">
+        <div class="table-responsive">
+            <table class="table table-vcenter mb-0">
+                <thead>
+                    <tr>
+                        <th style="min-width:260px">Yetki</th>
+                        {% for subject, label in access_subjects.items() %}<th class="text-center" style="min-width:145px">{{ label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for permission, meta in access_catalog.items() %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ meta[0] }}</div>
+                            <div class="text-secondary small">{{ meta[1] }}</div>
+                        </td>
+                        {% for subject, label in access_subjects.items() %}
+                        <td class="text-center">
+                            {% if permission in access_applicable[subject] %}
+                            <label class="form-check form-switch d-inline-flex align-items-center m-0" title="{{ label }} · {{ meta[0] }}">
+                                <input class="form-check-input" type="checkbox" name="ACCESS.{{ subject }}.{{ permission }}" value="1" {% if access_matrix[subject][permission] %}checked{% endif %}>
+                                <span class="ms-2 small fw-semibold">{% if access_matrix[subject][permission] %}Aktif{% else %}Pasif{% endif %}</span>
+                            </label>
+                            {% else %}
+                            <span class="badge bg-secondary-lt" title="Bu yetki temsilci hesaplarına verilemez.">Uygulanamaz</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div class="small text-secondary"><i class="bi bi-info-circle me-1"></i>Ayarlar ekranı yalnızca Admin’e açıktır ve bu panelden kapatılamaz.</div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-shield-check me-2"></i>Yetkileri Kaydet</button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener("change", function (event) {
+    if (!event.target.matches("#access-permissions .form-check-input")) return;
+    const state = event.target.parentElement.querySelector("span");
+    if (state) state.textContent = event.target.checked ? "Aktif" : "Pasif";
+});
+</script>
+
 <div class="card shadow-sm">
 
     <div class="card-header">
