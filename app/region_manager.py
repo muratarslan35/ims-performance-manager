@@ -18,6 +18,7 @@ from werkzeug.security import generate_password_hash
 from app.access_control import has_dual_portal_access, has_manager_access, is_manager
 from app.extensions import db
 from app.models import Product, Representative, RepresentativeBrickAssignment, User
+from app.services.access_permission_service import enabled as access_enabled
 
 
 UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES = {
@@ -140,22 +141,22 @@ def field_region():
 
 
 def can_view_manager_module(user):
-    return bool(is_manager(user))
+    return bool(is_manager(user) and access_enabled(user, "manager_module"))
 
 
 def can_manage_managers(user):
     if not getattr(user, "is_authenticated", False):
         return False
-    role = str(getattr(user, "role", "") or "").strip().casefold()
-    if role in {"admin", "administrator"}:
-        return True
-    return manager_type(user) in MANAGER_MUTATION_TYPES
+    return bool(
+        is_manager(user)
+        and access_enabled(user, "manager_module")
+        and access_enabled(user, "manage_managers")
+    )
 
 
 def can_access_settings(user):
-    # Functional and regional managers intentionally cannot open Settings.
-    # Admin and preserved special managers keep their previous access.
-    return bool(is_privileged_manager(user))
+    role = str(getattr(user, "role", "") or "").strip().casefold()
+    return bool(getattr(user, "is_authenticated", False) and role in {"admin", "administrator"})
 
 
 def assigned_region(user):
@@ -170,6 +171,8 @@ def representative_in_region(representative, code):
 
 
 def can_access_representative(user, representative):
+    if access_enabled(user, "cross_region_details"):
+        return True
     if is_field_portal() and getattr(user, "id", None) == getattr(current_user, "id", None):
         return representative_in_region(representative, field_region())
     if not is_regional_manager(user):
@@ -178,6 +181,8 @@ def can_access_representative(user, representative):
 
 
 def can_access_region(user, candidate):
+    if access_enabled(user, "cross_region_details"):
+        return True
     if is_field_portal() and getattr(user, "id", None) == getattr(current_user, "id", None):
         code = field_region()
         return bool(code and _region_identity(candidate) == code)
@@ -233,6 +238,34 @@ def _deny_settings(json_response=False):
         return jsonify({"success": False, "message": message}), 403
     flash(message, "warning")
     return redirect(url_for("dashboard.index"))
+
+
+def _deny_permission(json_response=False):
+    if is_field_portal():
+        message = "Temsilci hesabınızla bu alana erişemezsiniz. Yetkiyi sistem yöneticiniz değiştirebilir."
+    elif is_regional_manager(current_user):
+        message = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız. Yetkiyi sistem yöneticiniz değiştirebilir."
+    else:
+        message = "Bu ekran için erişim yetkiniz aktif değildir. Yetkiyi sistem yöneticiniz değiştirebilir."
+    if json_response:
+        return jsonify({"success": False, "message": message}), 403
+    flash(message, "warning")
+    return redirect(url_for("dashboard.index"))
+
+
+def _endpoint_permission(endpoint):
+    exact = {
+        "main.market_analysis": "market_analysis", "main.prime": "prime_center",
+        "main.quarter": "q_analysis", "main.recovery": "recovery", "main.reports": "reports",
+    }
+    if endpoint in exact:
+        return exact[endpoint]
+    prefixes = (
+        ("ims.", "ims_center"), ("representatives.territory_", "region_assignments"),
+        ("products.", "products"), ("targets.", "targets"), ("matching.", "manual_matching"),
+        ("simulation.", "prime_simulation"), ("manager_users.", "manager_module"),
+    )
+    return next((permission for prefix, permission in prefixes if endpoint.startswith(prefix)), None)
 
 
 def _json_rep_id():
@@ -378,7 +411,7 @@ def install_region_manager_scope(app):
     if original_territory_index:
         @wraps(original_territory_index)
         def territory_index_wrapper(*args, **kwargs):
-            if is_regional_manager(current_user):
+            if is_regional_manager(current_user) and not access_enabled(current_user, "cross_region_assignments"):
                 from app.services.period_service import PeriodService
                 period = PeriodService.get_active_period()
                 year = request.args.get("year", type=int) or period["year"]
@@ -418,6 +451,15 @@ def install_region_manager_scope(app):
             # Backward-compatible key used by older templates.
             "can_manage_region_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
             "manager_access": bool(portal_manager_access and not regional),
+            "access_permissions": {
+                key: access_enabled(current_user, key)
+                for key in (
+                    "market_analysis", "ims_center", "region_assignments", "products", "targets",
+                    "manual_matching", "prime_center", "prime_simulation", "q_analysis", "recovery",
+                    "reports", "manager_module", "manage_managers", "cross_region_details",
+                    "cross_region_assignments",
+                )
+            } if current_user.is_authenticated else {},
         }
 
     @app.before_request
@@ -432,13 +474,14 @@ def install_region_manager_scope(app):
             or (endpoint.startswith("simulation.") and request.method != "GET")
         )
 
+        permission = _endpoint_permission(endpoint)
+        if permission and (is_field_portal() or is_manager(current_user)) and not access_enabled(current_user, permission):
+            return _deny_permission(json_response=json_response)
+
         if is_field_portal():
-            forbidden_prefixes = (
-                "ims.", "settings.", "targets.", "matching.", "products.",
-                "manager_users.", "representatives.territory_",
-            )
+            forbidden_prefixes = ("settings.",)
             if endpoint.startswith(forbidden_prefixes) or endpoint in {
-                "main.market_analysis", "representatives.add", "representatives.edit",
+                "representatives.add", "representatives.edit",
                 "representatives.status", "representatives.save_assignment",
             }:
                 return _deny_field(json_response=json_response)
@@ -484,7 +527,7 @@ def install_region_manager_scope(app):
             return None
 
         forbidden_prefixes = (
-            "ims.", "settings.", "targets.", "matching.", "products.",
+            "settings.",
         )
         if endpoint.startswith(forbidden_prefixes):
             return _deny_system(json_response=json_response)
@@ -494,19 +537,23 @@ def install_region_manager_scope(app):
 
         if endpoint == "representatives.save_assignment":
             rep_id = int((request.view_args or {}).get("id") or 0)
-            if not _request_rep_allowed(rep_id):
+            representative = db.session.get(Representative, rep_id) if rep_id else None
+            if not access_enabled(current_user, "cross_region_assignments") and not representative_in_region(
+                representative, assigned_region(current_user)
+            ):
                 return _deny_region(json_response=json_response)
 
         if endpoint in {"representatives.territory_status", "representatives.territory_transfer"}:
             assignment_id = int((request.view_args or {}).get("assignment_id") or 0)
             assignment = db.session.get(RepresentativeBrickAssignment, assignment_id)
             source = db.session.get(Representative, assignment.representative_id) if assignment else None
-            if not can_access_representative(current_user, source):
+            cross_assignment = access_enabled(current_user, "cross_region_assignments")
+            if not cross_assignment and not representative_in_region(source, assigned_region(current_user)):
                 return _deny_region(json_response=json_response)
             if endpoint == "representatives.territory_transfer":
                 target_id = request.form.get("target_representative_id", type=int)
                 target = db.session.get(Representative, target_id) if target_id else None
-                if not can_access_representative(current_user, target):
+                if not cross_assignment and not representative_in_region(target, assigned_region(current_user)):
                     return _deny_region(json_response=json_response)
 
         if endpoint == "regions.detail":

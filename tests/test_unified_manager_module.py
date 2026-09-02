@@ -92,6 +92,24 @@ def login(client, email, password="password123"):
     )
 
 
+def access_form(**overrides):
+    from app.services.access_permission_service import APPLICABLE, DEFAULTS, setting_key
+    values = {
+        setting_key(subject, permission): "1"
+        for subject, defaults in DEFAULTS.items()
+        for permission, enabled in defaults.items()
+        if enabled and permission in APPLICABLE[subject]
+    }
+    for dotted_key, enabled in overrides.items():
+        subject, permission = dotted_key.split("__", 1)
+        key = setting_key(subject, permission)
+        if enabled:
+            values[key] = "1"
+        else:
+            values.pop(key, None)
+    return values
+
+
 def test_manager_type_contract(app):
     from app.extensions import db
     from app.models import User
@@ -220,3 +238,72 @@ def test_region_manager_keeps_existing_scope_rules(client):
     assert "Bu bölgenin yöneticisi değilsiniz." in denied.get_data(as_text=True)
     ims = client.get("/ims/", follow_redirects=True)
     assert "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız." in ims.get_data(as_text=True)
+
+
+def test_admin_settings_has_role_access_panel(client):
+    login(client, "admin@ipm.local", "Admin12345")
+    response = client.get("/settings/")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Erişim Yetkileri" in html
+    assert "Temsilciler" in html
+    assert "Bölge Müdürleri" in html
+    assert "Farklı bölge detayları" in html
+    assert "Farklı bölge brick ataması" in html
+    assert "Uygulanamaz" in html
+
+
+def test_non_admin_cannot_change_access_matrix(app, client):
+    login(client, "marketing.manager@example.com")
+    response = client.post(
+        "/settings/access-permissions",
+        data=access_form(region__cross_region_details=True),
+        follow_redirects=True,
+    )
+    assert "Ayarlar menüsüne erişemezsiniz" in response.get_data(as_text=True)
+    with app.app_context():
+        from app.models import Setting
+        assert Setting.query.filter_by(setting_key="ACCESS.region.cross_region_details").count() == 0
+
+
+def test_admin_can_enable_cross_region_details_for_region_manager(client):
+    login(client, "admin@ipm.local", "Admin12345")
+    saved = client.post(
+        "/settings/access-permissions",
+        data=access_form(region__cross_region_details=True),
+        follow_redirects=True,
+    )
+    assert "Rol ve ekran erişim yetkileri güncellendi" in saved.get_data(as_text=True)
+
+    client.get("/logout")
+    login(client, "region.manager@example.com")
+    response = client.get("/regions/201", follow_redirects=True)
+    assert response.status_code == 200
+    assert "Bu bölgenin yöneticisi değilsiniz." not in response.get_data(as_text=True)
+
+
+def test_screen_permission_hides_menu_and_blocks_direct_url(client):
+    login(client, "admin@ipm.local", "Admin12345")
+    client.post(
+        "/settings/access-permissions",
+        data=access_form(product__products=False),
+    )
+
+    client.get("/logout")
+    login(client, "product.manager@example.com")
+    dashboard = client.get("/dashboard/")
+    assert 'href="/products/"' not in dashboard.get_data(as_text=True)
+    denied = client.get("/products/", follow_redirects=True)
+    assert "erişim yetkiniz aktif değildir" in denied.get_data(as_text=True)
+
+
+def test_representative_management_permissions_cannot_be_enabled(app, client):
+    login(client, "admin@ipm.local", "Admin12345")
+    client.post(
+        "/settings/access-permissions",
+        data=access_form(representative__products=True, representative__region_assignments=True),
+    )
+    with app.app_context():
+        from app.models import Setting
+        assert Setting.query.filter_by(setting_key="ACCESS.representative.products").one().setting_value == "0"
+        assert Setting.query.filter_by(setting_key="ACCESS.representative.region_assignments").one().setting_value == "0"

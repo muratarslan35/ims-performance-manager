@@ -6,11 +6,12 @@ from flask import render_template
 from flask import request
 from flask import url_for
 
-from flask_login import login_required
+from flask_login import current_user, login_required
 
 from app.extensions import db
 from app.models import Product, PrimeRule, Setting
 from app.services.alias_service import AliasService
+from app.services.access_permission_service import APPLICABLE, PERMISSIONS, SUBJECTS, matrix, save_matrix
 
 
 PRIME_SETTING_DEFAULTS = {
@@ -109,7 +110,7 @@ settings_bp = Blueprint(
 def index():
     ensure_prime_settings()
 
-    settings = Setting.query.order_by(
+    settings = Setting.query.filter(Setting.category != "Erişim Yetkisi").order_by(
 
         Setting.setting_key.asc()
 
@@ -129,9 +130,29 @@ def index():
 
         settings=settings,
         products=products,
+        access_subjects=SUBJECTS,
+        access_catalog=PERMISSIONS,
+        access_applicable=APPLICABLE,
+        access_matrix=matrix(),
         setting_catalog={key: {"label": value[0], "help": value[1], "unit": value[2]} for key, value in PRIME_SETTING_CATALOG.items()}
 
     )
+
+
+@settings_bp.route("/access-permissions", methods=["POST"])
+@login_required
+def save_access_permissions():
+    role = str(getattr(current_user, "role", "") or "").strip().casefold()
+    if role not in {"admin", "administrator"}:
+        flash("Erişim yetkilerini yalnızca Admin değiştirebilir.", "danger")
+        return redirect(url_for("dashboard.index"))
+    try:
+        save_matrix(request.form)
+        flash("Rol ve ekran erişim yetkileri güncellendi.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"Yetkiler kaydedilemedi: {exc}", "danger")
+    return redirect(url_for("settings.index") + "#access-permissions")
 
 
 @settings_bp.route(
@@ -204,7 +225,7 @@ def save():
 @login_required
 def api():
     ensure_prime_settings()
-    settings = Setting.query.order_by(
+    settings = Setting.query.filter(Setting.category != "Erişim Yetkisi").order_by(
 
         Setting.setting_key.asc()
 
