@@ -28,9 +28,6 @@
             {% if access_permissions.targets %}
             <li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('targets.') %}active{% endif %}" href="{{ url_for('targets.index') }}"><span class="sidebar-nav-icon"><i class="bi bi-bullseye"></i></span><span class="sidebar-nav-label">Hedefler</span></a></li>
             {% endif %}
-            {% if access_permissions.manual_matching %}
-            <li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('matching.') %}active{% endif %}" href="{{ url_for('matching.index') }}"><span class="sidebar-nav-icon"><i class="bi bi-diagram-3-fill"></i></span><span class="sidebar-nav-label">Manuel Eşleştirme</span></a></li>
-            {% endif %}
 
             <li class="sidebar-section-label">Analiz &amp; Prim</li>
             {% if access_permissions.prime_center %}<li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint == 'main.prime' %}active{% endif %}" href="{{ url_for('main.prime') }}"><span class="sidebar-nav-icon"><i class="bi bi-cash-stack"></i></span><span class="sidebar-nav-label">Prim Merkezi</span></a></li>{% endif %}

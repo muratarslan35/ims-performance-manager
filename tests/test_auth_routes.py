@@ -154,6 +154,41 @@ def test_login_portal_rejects_role_mismatch(client):
     assert b"Temsilci Giri\xc5\x9fi" in response.data
 
 
+def test_remember_me_controls_persistent_login_cookie(app):
+    remembered = app.test_client().post("/login", data={
+        "email": "test@example.com",
+        "password": "password123",
+        "portal": "representative",
+        "remember": "on",
+    })
+    remembered_cookies = remembered.headers.getlist("Set-Cookie")
+    assert any(cookie.startswith("remember_token=") for cookie in remembered_cookies)
+    assert any(cookie.startswith("session=") and "Expires=" in cookie for cookie in remembered_cookies)
+
+    session_only = app.test_client().post("/login", data={
+        "email": "test@example.com",
+        "password": "password123",
+        "portal": "representative",
+    })
+    session_cookies = session_only.headers.getlist("Set-Cookie")
+    assert not any(cookie.startswith("remember_token=") for cookie in session_cookies)
+    assert any(cookie.startswith("session=") and "Expires=" not in cookie for cookie in session_cookies)
+
+
+def test_login_register_are_locked_to_viewport_and_manual_matching_is_not_in_sidebar():
+    login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+    register_template = Path("app/templates/register.html").read_text(encoding="utf-8")
+    auth_css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
+    sidebar = Path("app/templates/partials/sidebar.html").read_text(encoding="utf-8")
+
+    assert "auth-viewport-locked" in login_template
+    assert "auth-viewport-locked" in register_template
+    assert "height: 100dvh" in auth_css
+    assert "overflow: hidden" in auth_css
+    assert "Manuel Eşleştirme" not in sidebar
+    assert "matching.index" not in sidebar
+
+
 def test_representative_cannot_access_manager_areas_or_ai_panel(app):
     client = app.test_client()
     client.post("/login", data={

@@ -59,6 +59,7 @@ def login():
         )
 
         portal = request.form.get("portal", "").strip().casefold()
+        remember = request.form.get("remember") == "on"
 
         if not email or not password:
 
@@ -121,10 +122,11 @@ def login():
 
         session["portal"] = portal or ("manager" if is_manager(user) else "representative")
         session["portal_explicit"] = bool(portal)
+        session.permanent = remember
 
         login_user(
             user,
-            remember=True
+            remember=remember
         )
 
         flash(
