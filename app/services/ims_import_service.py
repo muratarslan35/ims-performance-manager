@@ -205,6 +205,7 @@ class IMSImportService:
         self._raw_batch = []
         self._brick_assignment_cache = {}
         self._balance_unit_actual_keys = set()
+        self._prior_month_unit_targets = {}
 
     @staticmethod
     def extract_week_number(file_name):
@@ -2327,10 +2328,72 @@ class IMSImportService:
         # Replaying an older historical week must not erase the current
         # month-to-date snapshot published by a later completed week.
         if self._is_current_week_snapshot(year, month, week_number):
+            # Keep the last authoritative representative/product box targets
+            # in memory before replacing the mutable monthly snapshot.  A
+            # later compact IMS can legitimately carry fresh TL targets and
+            # actuals while omitting the MF'siz KUTU BAKİYE block entirely.
+            # In that case the month's already observed box targets must not
+            # be converted to synthetic zeroes.
+            self._prior_month_unit_targets = {
+                (int(row.representative_id), int(row.product_id)): float(row.unit_target or 0.0)
+                for row in Target.query.filter_by(year=year, month=month).all()
+            }
             IMSSummary.query.filter_by(year=year, month=month).delete(synchronize_session=False)
             Target.query.filter_by(year=year, month=month).delete(synchronize_session=False)
             RepresentativeBrickAssignment.query.filter_by(year=year, month=month).delete(synchronize_session=False)
         db.session.flush()
+
+    def _has_monthly_unit_target_source(self):
+        """Whether this workbook explicitly supplies the MF'siz box basis.
+
+        Numeric zero cells remain valid source values.  Source absence is
+        decided from the header structure, never from value truthiness.
+        """
+        for frame in (self.workbook or {}).values():
+            for row_index in range(min(20, len(frame.index))):
+                normalized = [AliasService.normalize(value) for value in frame.iloc[row_index]]
+                row_text = " ".join(value for value in normalized if value)
+                if "KUTU" in row_text and "BAKIYE" in row_text:
+                    return True
+        return False
+
+    def restore_locked_monthly_unit_targets(self, year, month):
+        """Restore prior monthly box targets only when this IMS omitted them."""
+        prior = getattr(self, "_prior_month_unit_targets", {}) or {}
+        if not prior or self._has_monthly_unit_target_source():
+            return 0
+
+        targets = {
+            (int(row.representative_id), int(row.product_id)): row
+            for row in Target.query.filter_by(year=year, month=month).all()
+        }
+        summaries = {
+            (int(row.representative_id), int(row.product_id)): row
+            for row in IMSSummary.query.filter_by(
+                upload_id=self.upload.id, year=year, month=month
+            ).all()
+            if row.representative_id is not None and row.product_id is not None
+        }
+        restored = 0
+        for key, target in targets.items():
+            if key not in prior:
+                continue
+            # A value derived by this week's own target-capable source is more
+            # recent evidence.  The lock only fills a structurally missing
+            # box target; it never overwrites a newly calculated value.
+            if float(target.unit_target or 0.0) != 0.0:
+                continue
+            if float(prior[key] or 0.0) == 0.0:
+                continue
+            target.unit_target = prior[key]
+            summary = summaries.get(key)
+            if summary is not None:
+                summary.target_unit = prior[key]
+            restored += 1
+        if restored:
+            self.statistics["locked_monthly_unit_targets_restored"] = restored
+            db.session.flush()
+        return restored
 
     def _upsert_auto_brick_assignment(self, representative_id, year, month, brick, territory=None, city=None):
         """Add one membership without replacing a manually maintained member row.
@@ -2453,6 +2516,7 @@ class IMSImportService:
             self.rebuild_summary(year, month)
             if publish_period_snapshot:
                 self.apply_balance_summary(year, month)
+                self.restore_locked_monthly_unit_targets(year, month)
                 self.apply_weekly_sales_summary(year, month)
                 self.persist_national_dashboard_metrics(year, month)
 
@@ -2593,6 +2657,11 @@ class IMSImportService:
                     )
                     month = detected_month
                 self.create_upload(year, month, week_number=week_number)
+                if self._is_current_week_snapshot(year, month, week_number):
+                    self._prior_month_unit_targets = {
+                        (int(row.representative_id), int(row.product_id)): float(row.unit_target or 0.0)
+                        for row in Target.query.filter_by(year=year, month=month).all()
+                    }
                 workbook_rows_read = sum(len(dataframe.index) for dataframe in self.workbook.values())
             self._log_stage_metrics("workbook_rows_read", workbook_rows_read=workbook_rows_read)
             if clear_before_import:
@@ -2652,3 +2721,4 @@ class IMSImportService:
     @classmethod
     def supported_reports(cls):
         return list(cls.REPORT_SHEETS.values())
+
