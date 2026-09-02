@@ -58,6 +58,7 @@ def main():
         })
         products = {row.id: row.product_name for row in Product.query.all()}
         print(f"Q1_UNIT_SCOPE|regions={len(region_codes)}|products={len(products)}|months=3")
+        print("Q1_UNIT_REGIONS|" + json.dumps(region_codes, ensure_ascii=False))
 
         for region in region_codes:
             service = RegionPerformanceService(region, YEAR, 3)
