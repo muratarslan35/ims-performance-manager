@@ -57,6 +57,13 @@ def main():
                 .filter_by(upload_id=upload.id).distinct().all()
         })
         products = {row.id: row.product_name for row in Product.query.all()}
+        quota_months = ProductionResultService.quota_product_months(
+            [(YEAR, month) for month in MONTHS]
+        )
+        print("Q1_QUOTA_PRODUCTS|" + json.dumps({
+            products[product_id]: [f"{month:02d}/{year}" for year, month in periods]
+            for product_id, periods in quota_months.items()
+        }, ensure_ascii=False, sort_keys=True))
         print(f"Q1_UNIT_SCOPE|regions={len(region_codes)}|products={len(products)}|months=3")
         print("Q1_UNIT_REGIONS|" + json.dumps(region_codes, ensure_ascii=False))
 
