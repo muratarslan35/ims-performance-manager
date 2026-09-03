@@ -736,6 +736,18 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 
 
+def test_mobile_map_tooltip_stays_inside_map_bounds():
+    dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+    dashboard_css = Path("app/static/css/dashboard.css").read_text(encoding="utf-8")
+
+    assert 'window.matchMedia("(max-width: 700px)")' in dashboard_js
+    assert "pointerY - tooltipBounds.height - gap" in dashboard_js
+    assert "bounds.width - tooltipBounds.width - gap" in dashboard_js
+    assert 'tooltip.style.display = "none"' in dashboard_js
+    assert ".turkey-map-wrapper .map-tooltip" in dashboard_css
+    assert "max-width:calc(100% - 20px)" in dashboard_css
+
+
 def test_user_visible_recovery_labels_are_turkish():
     visible_files = [
         Path("app/templates/simulation.html"), Path("app/templates/ims.html"),
