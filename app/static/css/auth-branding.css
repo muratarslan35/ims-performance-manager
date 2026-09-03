@@ -165,4 +165,12 @@ body.auth-viewport-locked .page-body > .container-xl {
   .auth-shell-register .auth-layout .auth-card { padding-top: 10px; padding-bottom: 10px; }
   .auth-shell-login .portal-option small { display: none; }
   .auth-shell-register .auth-subtitle { display: none; }
+  .auth-shell-login .auth-form .mb-3,
+  .auth-shell-register .auth-form .mb-3 { margin-bottom: 5px !important; }
+  .auth-shell-login .auth-form .form-control,
+  .auth-shell-register .auth-form .form-control,
+  .auth-shell-register .auth-form .form-select { min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
+  .auth-shell-register .form-hint { margin-bottom: 5px !important; }
+  .auth-shell-login .auth-footer,
+  .auth-shell-register .auth-footer { margin-top: 7px; }
 }
