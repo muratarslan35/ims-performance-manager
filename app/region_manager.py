@@ -438,12 +438,16 @@ def install_region_manager_scope(app):
     def regional_manager_context():
         regional = bool(current_user.is_authenticated and is_regional_manager(current_user))
         field_scoped = bool(current_user.is_authenticated and is_field_portal())
+        field_region_restricted = bool(
+            field_scoped and not access_enabled(current_user, "cross_region_details")
+        )
         portal_manager_access = bool(current_user.is_authenticated and has_manager_access(current_user))
         return {
             "regional_manager_restricted": regional,
             "regional_manager_region": assigned_region(current_user) if regional else None,
             "field_portal_scoped": field_scoped,
             "field_portal_region": field_region() if field_scoped else None,
+            "field_portal_region_restricted": field_region_restricted,
             "manager_type_label": manager_type_label(current_user) if current_user.is_authenticated else None,
             "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user) and portal_manager_access),
             "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
