@@ -183,8 +183,13 @@ def test_login_register_are_locked_to_viewport_and_manual_matching_is_not_in_sid
 
     assert "auth-viewport-locked" in login_template
     assert "auth-viewport-locked" in register_template
+    assert "Zaten hesabınız var mı?" in register_template
+    assert "Giriş Yapın" in register_template
     assert "height: 100dvh" in auth_css
     assert "overflow: hidden" in auth_css
+    assert ".auth-shell-register .auth-identity-logo" in auth_css
+    assert "object-fit: contain" in auth_css
+    assert ".auth-shell-register .btn-auth-submit" in auth_css
     assert "Manuel Eşleştirme" not in sidebar
     assert "matching.index" not in sidebar
 
