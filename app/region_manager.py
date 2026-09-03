@@ -448,6 +448,11 @@ def install_region_manager_scope(app):
             "can_view_manager_module": bool(current_user.is_authenticated and can_view_manager_module(current_user) and portal_manager_access),
             "can_manage_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
             "settings_access": bool(current_user.is_authenticated and can_access_settings(current_user) and portal_manager_access),
+            "can_reset_representative_passwords": bool(
+                current_user.is_authenticated
+                and portal_manager_access
+                and (is_privileged_manager(current_user) or is_regional_manager(current_user))
+            ),
             # Backward-compatible key used by older templates.
             "can_manage_region_managers": bool(current_user.is_authenticated and can_manage_managers(current_user) and portal_manager_access),
             "manager_access": bool(portal_manager_access and not regional),
@@ -483,6 +488,7 @@ def install_region_manager_scope(app):
             if endpoint.startswith(forbidden_prefixes) or endpoint in {
                 "representatives.add", "representatives.edit",
                 "representatives.status", "representatives.save_assignment",
+                "representatives.reset_password",
             }:
                 return _deny_field(json_response=json_response)
             if endpoint == "regions.detail" and not can_access_region(current_user, (request.view_args or {}).get("region_key")):

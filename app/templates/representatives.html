@@ -566,6 +566,19 @@ Temsilci Yönetimi
 
                 <div class="modal-footer">
 
+                    {% if can_reset_representative_passwords %}
+                    <button
+                        type="submit"
+                        class="btn btn-outline-warning me-auto"
+                        formaction="{{ url_for('representatives.reset_password', id=representative.id) }}"
+                        formmethod="post"
+                        onclick="return confirm('Bu temsilcinin şifresi Bilim12345 olarak sıfırlansın mı?')"
+                    >
+                        <i class="bi bi-key"></i>
+                        Şifreyi Sıfırla
+                    </button>
+                    {% endif %}
+
                     <button
 
                         type="button"
