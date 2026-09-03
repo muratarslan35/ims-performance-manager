@@ -175,6 +175,26 @@ def test_remember_me_controls_persistent_login_cookie(app):
     assert any(cookie.startswith("session=") and "Expires=" not in cookie for cookie in session_cookies)
 
 
+def test_public_password_reset_is_hidden_and_fail_closed(app):
+    login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
+    auth_source = Path("app/auth.py").read_text(encoding="utf-8")
+
+    assert "Şifremi Unuttum" not in login_template
+    assert "_password_reset_token" not in auth_source
+    assert "URLSafeTimedSerializer" not in auth_source
+
+    for method, path, data in (
+        ("get", "/forgot-password", None),
+        ("post", "/forgot-password", {"email": "test@example.com"}),
+        ("get", "/reset-password/legacy-token", None),
+        ("post", "/reset-password/legacy-token", {"password": "Changed123", "password_confirm": "Changed123"}),
+    ):
+        client = app.test_client()
+        response = getattr(client, method)(path, data=data, follow_redirects=False)
+        assert response.status_code in (301, 302)
+        assert response.headers["Location"].endswith("/login")
+
+
 def test_login_register_are_locked_to_viewport_and_manual_matching_is_not_in_sidebar():
     login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
     register_template = Path("app/templates/register.html").read_text(encoding="utf-8")
