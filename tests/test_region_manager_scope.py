@@ -157,6 +157,53 @@ def test_regional_manager_sees_only_own_representatives(app, client):
     assert "201 Temsilci" not in html
 
 
+def test_regional_manager_can_reset_only_own_representative_password(app, client):
+    login_manager(client)
+
+    own_id = app.config["TEST_REP_101"]
+    response = client.post(f"/representatives/reset-password/{own_id}", follow_redirects=True)
+    assert response.status_code == 200
+    assert "şifresi geçici şifre olarak sıfırlandı" in response.get_data(as_text=True)
+
+    with app.app_context():
+        from app.models import User
+        user = User.query.filter_by(email="rep101@example.com").one()
+        assert check_password_hash(user.password, "Bilim12345")
+
+    client.get("/logout")
+    login = client.post(
+        "/login",
+        data={"email": "rep101@example.com", "password": "Bilim12345", "portal": "representative"},
+    )
+    assert login.status_code == 302
+    changed = client.post(
+        "/profile",
+        data={
+            "action": "password",
+            "current_password": "Bilim12345",
+            "password": "YeniBilim12345",
+            "password_confirm": "YeniBilim12345",
+        },
+        follow_redirects=True,
+    )
+    assert "Şifreniz güncellendi" in changed.get_data(as_text=True)
+
+    client.get("/logout")
+    login_manager(client)
+    other_id = app.config["TEST_REP_201"]
+    response = client.post(f"/representatives/reset-password/{other_id}", follow_redirects=True)
+    assert response.status_code == 200
+    assert "şifresini sıfırlama yetkiniz yok" in response.get_data(as_text=True)
+
+
+def test_representative_cannot_reset_password_from_management_endpoint(app, client):
+    login_representative(client)
+    own_id = app.config["TEST_REP_101"]
+    response = client.post(f"/representatives/reset-password/{own_id}", follow_redirects=True)
+    assert response.status_code == 200
+    assert "Temsilci hesabınızla bu alana erişemezsiniz" in response.get_data(as_text=True)
+
+
 def test_dashboard_heading_reflects_selected_portal(client):
     login_manager(client)
     manager_html = client.get("/dashboard/").get_data(as_text=True)

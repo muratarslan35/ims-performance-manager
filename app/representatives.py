@@ -10,12 +10,13 @@ from flask import url_for
 from flask_login import login_required
 from flask_login import current_user
 from sqlalchemy import or_
+from werkzeug.security import generate_password_hash
 import unicodedata
 import re
 from datetime import datetime
 
 from app.extensions import db
-from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target
+from app.models import IMSSummary, Product, Representative, RepresentativeBrickAssignment, Target, User
 from app.services.period_service import PeriodService
 from app.services.representative_market_service import RepresentativeMarketService
 from app.services.annual_realization_service import AnnualRealizationService
@@ -83,6 +84,25 @@ def _current_user_representative():
 
 
 representatives_bp.add_app_template_filter(_representative_display_name, "representative_display_name")
+
+
+TEMPORARY_REPRESENTATIVE_PASSWORD = "Bilim12345"
+
+
+def _representative_login_user(representative):
+    """Resolve exactly one login account without fuzzy cross-user matching."""
+    email = str(representative.email or "").strip().casefold()
+    if email:
+        matches = User.query.filter(db.func.lower(User.email) == email).all()
+        if len(matches) == 1:
+            return matches[0]
+
+    normalized_name = _search_key(representative.rep_name)
+    matches = [
+        user for user in User.query.filter_by(role="Representative").all()
+        if _search_key(user.full_name) == normalized_name
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 @representatives_bp.route(
@@ -383,6 +403,49 @@ def edit(
         )
 
     )
+
+
+@representatives_bp.route("/reset-password/<int:id>", methods=["POST"])
+@login_required
+def reset_password(id):
+    representative = Representative.query.get_or_404(id)
+
+    from app.region_manager import (
+        can_access_representative,
+        is_privileged_manager,
+        is_regional_manager,
+    )
+
+    allowed = is_privileged_manager(current_user) or (
+        is_regional_manager(current_user)
+        and can_access_representative(current_user, representative)
+    )
+    if not allowed:
+        flash("Bu temsilcinin şifresini sıfırlama yetkiniz yok.", "danger")
+        return redirect(url_for("representatives.index"))
+
+    user = _representative_login_user(representative)
+    if user is None:
+        flash(
+            "Temsilciye bağlı tekil bir giriş hesabı bulunamadı; şifre değiştirilmedi.",
+            "warning",
+        )
+        return redirect(url_for("representatives.index"))
+
+    try:
+        user.password = generate_password_hash(TEMPORARY_REPRESENTATIVE_PASSWORD)
+        db.session.commit()
+        from app.services.user_vault_service import UserVaultService
+        UserVaultService.sync_from_primary()
+        flash(
+            f"{_representative_display_name(representative.rep_name)} şifresi geçici şifre olarak sıfırlandı.",
+            "success",
+        )
+    except Exception:
+        db.session.rollback()
+        flash("Şifre sıfırlanamadı. Lütfen yeniden deneyin.", "danger")
+
+    return redirect(url_for("representatives.index"))
 
 @representatives_bp.route(
 
