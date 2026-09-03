@@ -334,6 +334,35 @@ def test_representative_portal_is_region_scoped_and_management_is_fail_closed(ap
         assert denied.headers["Location"].endswith("/dashboard/")
 
 
+def test_representative_cross_region_setting_unlocks_map_and_routes_on_every_viewport(app, client):
+    from app.extensions import db
+    from app.models import Setting
+
+    with app.app_context():
+        db.session.add(Setting(
+            setting_key="ACCESS.representative.cross_region_details",
+            setting_value="true",
+            category="Erişim Yetkisi",
+            description="Farklı bölge detayları",
+        ))
+        db.session.commit()
+
+    login_representative(client)
+    dashboard = client.get("/dashboard/")
+    assert dashboard.status_code == 200
+    html = dashboard.get_data(as_text=True)
+    assert 'data-codes="101" data-allowed="true"' in html
+    assert 'data-codes="201" data-allowed="true"' in html
+    assert "field_portal_region_restricted" not in html
+
+    cross_region = client.get("/regions/201", follow_redirects=True)
+    assert cross_region.status_code == 200
+    assert "Bu bölgenin yöneticisi değilsiniz." not in cross_region.get_data(as_text=True)
+
+    search = client.get("/representatives/search?q=Temsilci").get_json()
+    assert "201 Temsilci" in [item["title"] for item in search["results"]]
+
+
 def test_regional_manager_assignment_scope_blocks_cross_region_mutation(app, client):
     login_manager(client)
     page = client.get("/representatives/territory-management?year=2026&month=1")
