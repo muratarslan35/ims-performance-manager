@@ -485,6 +485,8 @@ def install_region_manager_scope(app):
 
         if is_field_portal():
             forbidden_prefixes = ("settings.",)
+            if endpoint == "representatives.index" and not is_privileged_manager(current_user):
+                return _deny_field(json_response=json_response)
             if endpoint.startswith(forbidden_prefixes) or endpoint in {
                 "representatives.add", "representatives.edit",
                 "representatives.status", "representatives.save_assignment",

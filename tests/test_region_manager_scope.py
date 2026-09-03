@@ -204,6 +204,21 @@ def test_representative_cannot_reset_password_from_management_endpoint(app, clie
     assert "Temsilci hesabınızla bu alana erişemezsiniz" in response.get_data(as_text=True)
 
 
+def test_representative_portal_hides_and_blocks_representative_management(app, client):
+    login_representative(client)
+
+    dashboard = client.get("/dashboard/")
+    html = dashboard.get_data(as_text=True)
+    assert "Temsilciler</span>" not in html
+    assert "Uyarılar ve Aksiyonlar" not in html
+    assert "Hızlı İşlemler" not in html
+    assert "Hedef Yönetimi" not in html
+
+    response = client.get("/representatives/", follow_redirects=True)
+    assert response.status_code == 200
+    assert "Temsilci hesabınızla bu alana erişemezsiniz" in response.get_data(as_text=True)
+
+
 def test_dashboard_heading_reflects_selected_portal(client):
     login_manager(client)
     manager_html = client.get("/dashboard/").get_data(as_text=True)
