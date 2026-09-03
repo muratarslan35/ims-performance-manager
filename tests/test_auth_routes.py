@@ -745,7 +745,9 @@ def test_mobile_map_tooltip_stays_inside_map_bounds():
     assert "bounds.width - tooltipBounds.width - gap" in dashboard_js
     assert 'tooltip.style.display = "none"' in dashboard_js
     assert ".turkey-map-wrapper .map-tooltip" in dashboard_css
-    assert "max-width:calc(100% - 20px)" in dashboard_css
+    assert "width:min(220px,calc(100% - 24px))" in dashboard_css
+    assert "max-width:220px" in dashboard_css
+    assert "-webkit-line-clamp:2" in dashboard_css
 
 
 def test_user_visible_recovery_labels_are_turkish():
