@@ -127,6 +127,10 @@ body.auth-viewport-locked .page-body > .container-xl {
 
 @media (max-width: 800px) {
   .auth-shell-login,
+  .auth-shell-register {
+    justify-content: flex-start;
+  }
+  .auth-shell-login,
   .auth-shell-register { padding: 8px 12px; }
   .auth-shell-login .auth-system-title,
   .auth-shell-register .auth-system-title { margin: 0 0 6px; padding: 3px 8px 7px; font-size: 14px; }
@@ -135,7 +139,22 @@ body.auth-viewport-locked .page-body > .container-xl {
   .auth-shell-login .auth-layout,
   .auth-shell-register .auth-layout { max-height: calc(100dvh - 48px); }
   .auth-shell-login .auth-identity-panel,
-  .auth-shell-register .auth-identity-panel { min-height: clamp(68px, 12vh, 105px); }
+  .auth-shell-register .auth-identity-panel {
+    min-height: clamp(92px, 14vh, 112px);
+    background: #0a2456;
+  }
+  .auth-shell-login .auth-identity-logo,
+  .auth-shell-register .auth-identity-logo {
+    inset: auto;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: auto;
+    max-width: none;
+    object-fit: initial;
+    object-position: initial;
+    transform: translate(-50%, -50%);
+  }
   .auth-shell-login .auth-layout .auth-card,
   .auth-shell-register .auth-layout .auth-card { padding: clamp(12px, 2.3vh, 22px) 20px; }
   .auth-shell-login .auth-welcome,
@@ -168,12 +187,8 @@ body.auth-viewport-locked .page-body > .container-xl {
   .auth-shell-register .auth-system-title::after { width: 56px; margin-top: 4px; }
   .auth-shell-register .auth-layout { max-height: calc(100dvh - 38px); }
   .auth-shell-register .auth-identity-panel {
-    min-height: clamp(48px, 8vh, 68px);
+    min-height: clamp(92px, 14vh, 112px);
     background: #0a2456;
-  }
-  .auth-shell-register .auth-identity-logo {
-    object-fit: contain;
-    object-position: center;
   }
   .auth-shell-register .auth-layout .auth-card { padding: 8px 18px; }
   .auth-shell-register .auth-welcome { font-size: 18px; line-height: 1.15; }
@@ -215,7 +230,7 @@ body.auth-viewport-locked .page-body > .container-xl {
 
 @media (max-height: 680px) {
   .auth-shell-login .auth-identity-panel,
-  .auth-shell-register .auth-identity-panel { min-height: 58px; }
+  .auth-shell-register .auth-identity-panel { min-height: 82px; }
   .auth-shell-login .auth-layout .auth-card,
   .auth-shell-register .auth-layout .auth-card { padding-top: 10px; padding-bottom: 10px; }
   .auth-shell-login .portal-option small { display: none; }
