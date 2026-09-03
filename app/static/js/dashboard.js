@@ -365,6 +365,30 @@ function initTurkeyMap(regionRealization) {
   };
   let selectedRegion = null;
   const byCode = Object.fromEntries((regionRealization || []).map((item) => [String(item.code), item]));
+  const mobileMap = window.matchMedia("(max-width: 700px)");
+
+  function positionMapTooltip(event) {
+    const bounds = wrapper.getBoundingClientRect();
+    const pointerX = event.clientX - bounds.left;
+    const pointerY = event.clientY - bounds.top;
+    if (!mobileMap.matches) {
+      tooltip.style.left = `${pointerX + 12}px`;
+      tooltip.style.top = `${pointerY + 12}px`;
+      return;
+    }
+
+    const gap = 10;
+    const tooltipBounds = tooltip.getBoundingClientRect();
+    const maxLeft = Math.max(gap, bounds.width - tooltipBounds.width - gap);
+    const left = Math.min(Math.max(pointerX - (tooltipBounds.width / 2), gap), maxLeft);
+    const opensUpward = pointerY + gap + tooltipBounds.height > bounds.height - gap;
+    const preferredTop = opensUpward ? pointerY - tooltipBounds.height - gap : pointerY + gap;
+    const maxTop = Math.max(gap, bounds.height - tooltipBounds.height - gap);
+    const top = Math.min(Math.max(preferredTop, gap), maxTop);
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+    tooltip.classList.toggle("map-tooltip-above", opensUpward);
+  }
 
   regions.forEach((region, index) => {
     const regionName = region.dataset.region || "Bölge";
@@ -391,6 +415,7 @@ function initTurkeyMap(regionRealization) {
 
     region.addEventListener("click", () => {
       if (region.dataset.allowed === "false") {
+        if (tooltip && mobileMap.matches) tooltip.style.display = "none";
         if (selectedInfo) {
           selectedInfo.innerHTML = '<i class="bi bi-shield-lock-fill"></i> <strong>Sadece Kendi Bölgenize Erişim Mevcut</strong>';
         }
@@ -424,9 +449,7 @@ function initTurkeyMap(regionRealization) {
     });
 
     region.addEventListener("mousemove", (event) => {
-      const bounds = wrapper.getBoundingClientRect();
-      tooltip.style.left = `${event.clientX - bounds.left + 12}px`;
-      tooltip.style.top = `${event.clientY - bounds.top + 12}px`;
+      positionMapTooltip(event);
     });
 
     region.addEventListener("mouseleave", () => {
