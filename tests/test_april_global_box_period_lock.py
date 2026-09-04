@@ -40,6 +40,25 @@ def test_open_april_national_uses_tl_unit_price_for_every_product(monkeypatch):
     assert result["box_source"] == "IMS_TL_DIV_UNIT_PRICE"
 
 
+def test_missing_unit_price_preserves_legacy_unit_values(monkeypatch):
+    monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
+    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: None})
+    payload = {
+        "unit_target": 200,
+        "unit_actual": 150,
+        "unit_realization_percent": 75,
+        "products": [{"product_id": 1, "target_tl": 20000, "actual_tl": 12000, "unit_target": 200, "unit_actual": 150}],
+    }
+
+    result = lock._recalculate_national_payload(payload, 2031, 5)
+
+    assert result["unit_target"] == 200
+    assert result["unit_actual"] == 150
+    assert result["products"][0]["unit_target"] == 200
+    assert result["products"][0]["unit_actual"] == 150
+    assert "box_source" not in result
+
+
 def test_closed_production_period_is_not_recalculated(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: False)
     payload = {
@@ -65,6 +84,7 @@ def test_closed_production_period_is_not_recalculated(monkeypatch):
 
 def test_open_region_market_uses_canonical_representative_units(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
+    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: 100})
 
     class FakeService:
         year = 2026
@@ -92,6 +112,28 @@ def test_open_region_market_uses_canonical_representative_units(monkeypatch):
     assert row["market_company_unit"] == 90
     assert result["totals"]["effective_company_unit"] == 60
     assert result["company_box_source"] == "IMS_TL_DIV_UNIT_PRICE"
+
+
+def test_region_market_without_unit_price_keeps_existing_units(monkeypatch):
+    monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
+    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: None})
+
+    class FakeService:
+        year = 2042
+        month = 1
+        representative_ids = (10, 20)
+
+    payload = {
+        "rows": [{"product_id": 1, "target_unit": 300, "company_unit": 120, "market_company_unit": 120, "competitor_unit": 240}],
+        "totals": {"company_unit": 120, "effective_company_unit": 120, "competitor_unit": 240, "market_unit": 360},
+    }
+
+    result = lock._recalculate_region_market_payload(FakeService(), payload)
+
+    assert result["rows"][0]["target_unit"] == 300
+    assert result["rows"][0]["company_unit"] == 120
+    assert result["totals"]["effective_company_unit"] == 120
+    assert "company_box_source" not in result
 
 
 def test_lock_contract_declares_closed_period_import_guards():
