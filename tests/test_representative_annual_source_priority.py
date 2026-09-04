@@ -39,6 +39,10 @@ def _app(tmp_path):
     return application
 
 
+def _quarter(month):
+    return f"Q{((month - 1) // 3) + 1}"
+
+
 def test_representative_annual_chart_prefers_production_then_ims_and_never_tl_fallback(tmp_path):
     application = _app(tmp_path)
     with application.app_context():
@@ -49,7 +53,8 @@ def test_representative_annual_chart_prefers_production_then_ims_and_never_tl_fa
 
         for month in range(1, 6):
             db.session.add(Target(
-                year=2026, month=month, representative_id=rep.id, product_id=product.id,
+                year=2026, month=month, quarter=_quarter(month),
+                representative_id=rep.id, product_id=product.id,
                 tl_target=1000.0, tl_realization=400.0 if month == 5 else 999.0,
                 unit_target=10.0,
             ))
@@ -71,11 +76,11 @@ def test_representative_annual_chart_prefers_production_then_ims_and_never_tl_fa
             ))
 
         # April has no production yet: IMS is authoritative and must beat persisted TL=999.
-        ims_upload = IMSUpload(file_name="week16.xlsx", year=2026, month=4, status="COMPLETED")
+        ims_upload = IMSUpload(file_name="week16.xlsx", year=2026, month=4, quarter="Q2", status="COMPLETED")
         db.session.add(ims_upload)
         db.session.flush()
         db.session.add(IMSSummary(
-            upload_id=ims_upload.id, year=2026, month=4,
+            upload_id=ims_upload.id, year=2026, month=4, quarter="Q2",
             representative_id=rep.id, product_id=product.id,
             tl=600.0, unit=6.0, target_tl=1000.0, target_unit=10.0,
         ))
