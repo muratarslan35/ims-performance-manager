@@ -113,19 +113,23 @@ class ProductionResultService:
         year, month, representative_id = int(year), int(month), int(representative_id)
         product_filter = {int(item) for item in product_ids or ()}
 
-        target_query = Target.query.filter(
+        period_price = ProductUnitPriceService.period_price_expression(year, month)
+        target_query = db.session.query(Target, period_price).join(
+            Product, Product.id == Target.product_id
+        ).filter(
             Target.year == year,
             Target.month == month,
             Target.representative_id == representative_id,
         )
         if product_filter:
             target_query = target_query.filter(Target.product_id.in_(product_filter))
-        targets = target_query.all()
+        target_pairs = target_query.all()
+        targets = [row[0] for row in target_pairs]
         targets_by_product = {int(target.product_id): target for target in targets}
+        product_prices = {int(target.product_id): price for target, price in target_pairs}
         resolved_ids = product_filter or set(targets_by_product)
         if not resolved_ids:
             return {}
-        product_prices = ProductUnitPriceService.price_map(resolved_ids, year, month)
 
         summary_query = IMSSummary.query.filter_by(
             year=year, month=month, representative_id=representative_id,
