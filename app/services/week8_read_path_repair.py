@@ -14,7 +14,8 @@ from flask import g, has_request_context, request
 from sqlalchemy import exists
 
 from app.extensions import db
-from app.models import CompetitionData, IMSUpload, Target
+from app.models import CompetitionData, IMSUpload, Product, Target
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 _MONTH_DIMENSION = re.compile(
@@ -42,7 +43,14 @@ def _has_completed_ims(year: int, month: int) -> bool:
     ).limit(1).scalar() is not None
 
 
-def _apply_target_ims_actuals(rows, targets, *, has_completed_ims: bool):
+def _apply_target_ims_actuals(
+    rows,
+    targets,
+    *,
+    has_completed_ims: bool,
+    year: int | None = None,
+    month: int | None = None,
+):
     """Repair only IMS rows where target realization is the safer persisted source.
 
     Older fixtures/data can have a valid summary while target realization fields
@@ -50,10 +58,28 @@ def _apply_target_ims_actuals(rows, targets, *, has_completed_ims: bool):
     or a missing/zero summary for a completed IMS period, is safe to resolve from
     Target. This keeps genuine zero while avoiding Week-8's zero-TL/million-unit
     corrupted summaries.
+
+    From April 2026 onward the canonical IMS box authority is TL / unit price.
+    The Week-8 repair must therefore never restore the legacy persisted
+    ``Target.unit_realization`` value over a TL-derived box result.
     """
     if not has_completed_ims:
         return rows
     target_by_product = {int(item.product_id): item for item in targets}
+    use_tl_boxes = (
+        year is not None
+        and month is not None
+        and TLBoxCalculationService.applies(int(year), int(month))
+    )
+    product_prices = {}
+    if use_tl_boxes and target_by_product:
+        product_prices = {
+            int(product_id): unit_price
+            for product_id, unit_price in db.session.query(Product.id, Product.unit_price).filter(
+                Product.id.in_(target_by_product.keys())
+            ).all()
+        }
+
     for product_id, values in list((rows or {}).items()):
         if values.get("source") != "IMS":
             continue
@@ -75,11 +101,19 @@ def _apply_target_ims_actuals(rows, targets, *, has_completed_ims: bool):
             continue
 
         target_tl = Decimal(str(values.get("target_tl") or target.tl_target or 0))
+        repaired_actual_unit = (
+            TLBoxCalculationService.boxes_from_tl(
+                target_actual_tl,
+                product_prices.get(int(product_id)),
+            )
+            if use_tl_boxes
+            else target_actual_unit
+        )
         repaired = dict(values)
         repaired.update(
             complete=True,
             actual_tl=target_actual_tl,
-            actual_unit=target_actual_unit,
+            actual_unit=repaired_actual_unit,
             realization_percent=(target_actual_tl * Decimal("100") / target_tl) if target_tl else Decimal("0"),
         )
         rows[int(product_id)] = repaired
@@ -97,6 +131,7 @@ def install_week8_read_path_repair() -> None:
     from app.services.dashboard_service import DashboardService
     from app.services.production_result_service import ProductionResultService
     from app.services.region_market_service import RegionMarketService
+    from app.services.region_performance_service import RegionPerformanceService
     from app.services.representative_market_service import RepresentativeMarketService
 
     if getattr(ProductionResultService, "_week8_read_repair_installed", False):
@@ -120,6 +155,8 @@ def install_week8_read_path_repair() -> None:
             rows,
             targets,
             has_completed_ims=_has_completed_ims(year, month),
+            year=year,
+            month=month,
         )
 
     def effective_product(cls, year, month, representative_id, product_id):
@@ -140,6 +177,43 @@ def install_week8_read_path_repair() -> None:
     ProductionResultService.effective_products = classmethod(effective_products)
     ProductionResultService.effective_product = classmethod(effective_product)
 
+    # RegionPerformanceService historically accumulated Target.unit_target even
+    # after April IMS effective rows switched to TL / price. Correct only the
+    # target-unit contribution of April+ IMS cells; P2/P1 cells remain untouched.
+    # The later region bulk optimizer wraps this aggregate and supplies a bounded
+    # request-local effective-product snapshot, so these lookups do not re-open
+    # the old N+1 path.
+    original_region_aggregate = RegionPerformanceService.aggregate
+
+    def repaired_region_aggregate(self, months):
+        payload = original_region_aggregate(self, months)
+        corrections = {}
+        for year, month, rep_id, product_id, _target_tl, stored_target_unit in self._target_rows(months):
+            if not TLBoxCalculationService.applies(year, month):
+                continue
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if str(effective.get("source") or "").startswith("PRODUCTION_"):
+                continue
+            corrected_target = Decimal(str(effective.get("target_unit") or 0))
+            stored_target = Decimal(str(stored_target_unit or 0))
+            corrections[int(product_id)] = corrections.get(int(product_id), Decimal("0")) + corrected_target - stored_target
+
+        if not corrections:
+            return payload
+        for item in payload.get("products", []):
+            product_id = int(item.get("product_id"))
+            correction = corrections.get(product_id)
+            if correction is None:
+                continue
+            target_unit = Decimal(str(item.get("target_unit") or 0)) + correction
+            item["target_unit"] = target_unit
+            if item.get("actual_unit") is not None:
+                actual_unit = Decimal(str(item.get("actual_unit") or 0))
+                item["unit_difference"] = actual_unit - target_unit
+        return payload
+
+    RegionPerformanceService.aggregate = repaired_region_aggregate
+
     original_market_build = RepresentativeMarketService.build
 
     def repaired_market_build(self):
@@ -148,6 +222,7 @@ def install_week8_read_path_repair() -> None:
             return payload
 
         resolved = ProductionResultService.effective_products(self.year, self.month, self.representative.id)
+        use_tl_boxes = TLBoxCalculationService.applies(self.year, self.month)
         for item in payload.get("rows", []):
             product = item.get("product")
             product_id = getattr(product, "id", None)
@@ -155,12 +230,25 @@ def install_week8_read_path_repair() -> None:
             if not effective or effective.get("actual_unit") is None:
                 continue
             actual_unit = float(effective.get("actual_unit") or 0)
-            market_unit = float(item.get("market_unit") or 0)
-            competitor_unit = max(market_unit - actual_unit, 0.0)
+            old_market_unit = float(item.get("market_unit") or 0)
+            old_actual_unit = float(item.get("actual_unit") or 0)
+            old_competitor_unit = float(item.get("competitor_unit") or max(old_market_unit - old_actual_unit, 0.0))
+            if use_tl_boxes and not str(effective.get("source") or "").startswith("PRODUCTION_"):
+                # Rival UNIT values remain workbook-authoritative. Replace only
+                # our company side with the TL-derived box result, then rebuild
+                # the total market so a corrupt IMS unit cannot distort share.
+                competitor_unit = max(old_competitor_unit, 0.0)
+                market_unit = actual_unit + competitor_unit
+            else:
+                market_unit = old_market_unit
+                competitor_unit = max(market_unit - actual_unit, 0.0)
             item["actual_unit"] = round(actual_unit, 2)
+            item["market_unit"] = round(market_unit, 2)
             item["competitor_unit"] = round(competitor_unit, 2)
             item["share_percent"] = round(actual_unit * 100.0 / market_unit, 1) if market_unit else 0.0
             item["gap_unit"] = round(competitor_unit - actual_unit, 2)
+            if effective.get("target_unit") is not None:
+                item["target_unit"] = round(float(effective.get("target_unit") or 0), 2)
             item["realization_percent"] = float(effective.get("realization_percent") or 0)
             item["realization_source"] = effective.get("source", "IMS")
             item["attention"] = (
