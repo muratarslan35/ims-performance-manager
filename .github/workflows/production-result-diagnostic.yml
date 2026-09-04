@@ -102,22 +102,35 @@ jobs:
                       f"product={products[item.product_id].product_name}|sheet={item.sheet_name}|"
                       f"row={item.source_row}|unit={item.unit}|tl={item.tl}|raw={item.raw_json}"
                   )
-              for region_code in ("101", "201", "301", "401", "501", "601", "602", "701", "801", "802", "901"):
-                  region_service = RegionPerformanceService(region_code, 2026, 4)
-                  region_report = region_service.aggregate([(2026, 4)])
-                  region_balances = region_balance_units(balances_upload_id, region_code) if balances_upload_id else {}
-                  for row in region_report["products"]:
-                      if row["product_name"] not in {"Brimoder", "Fentivag"}:
-                          continue
-                      product_id = int(row["product_id"])
-                      print(
-                          "ALL_REGION_PRODUCT|"
-                          f"region={region_code}|product={row['product_name']}|"
-                          f"target_tl={row['target_tl']}|actual_tl={row['actual_tl']}|"
-                          f"realization={row['realization_percent']}|target_unit={row['target_unit']}|"
-                          f"actual_unit={row['actual_unit']}|unit_difference={row['unit_difference']}|"
-                          f"mf_siz_balance={region_balances.get(product_id)}|quota_exit={row['quota_exit']}"
-                      )
+              murat = Representative.query.filter(Representative.rep_name == "MURAT ARSLAN").first()
+              print(f"UNIT_PRICE_TEST_REP|id={getattr(murat, 'id', None)}|name={getattr(murat, 'rep_name', None)}")
+              region_target_rows = db.session.query(
+                  Target.product_id,
+                  db.func.sum(Target.tl_target),
+                  db.func.sum(Target.unit_target),
+              ).filter(
+                  Target.year == 2026,
+                  Target.month == 4,
+                  Target.representative_id.in_(service.rep_ids),
+              ).group_by(Target.product_id).all()
+              region_targets = {int(pid): (float(tl or 0), float(unit or 0)) for pid, tl, unit in region_target_rows}
+              rep_targets = {
+                  int(row.product_id): row
+                  for row in Target.query.filter_by(year=2026, month=4, representative_id=murat.id).all()
+              } if murat else {}
+              for product_id, product in products.items():
+                  region_tl, stored_region_unit = region_targets.get(int(product_id), (0.0, 0.0))
+                  rep_row = rep_targets.get(int(product_id))
+                  rep_tl = float(rep_row.tl_target or 0) if rep_row else 0.0
+                  stored_rep_unit = float(rep_row.unit_target or 0) if rep_row else 0.0
+                  price = float(product.unit_price or 0)
+                  print(
+                      "UNIT_PRICE_TARGET|"
+                      f"product={product.product_name}|unit_price={price}|"
+                      f"region_target_tl={region_tl}|region_calc_unit={(region_tl / price) if price else None}|"
+                      f"region_stored_unit={stored_region_unit}|rep_target_tl={rep_tl}|"
+                      f"rep_calc_unit={(rep_tl / price) if price else None}|rep_stored_unit={stored_rep_unit}"
+                  )
           PY
           echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
           sudo journalctl -u ims-performance-manager.service \
