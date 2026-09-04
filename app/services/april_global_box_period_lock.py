@@ -38,15 +38,30 @@ def _prices(product_ids):
     }
 
 
+def _has_valid_price(value):
+    try:
+        return Decimal(str(value or 0)) > 0
+    except (TypeError, ValueError, ArithmeticError):
+        return False
+
+
 def _recalculate_national_payload(payload, year, month):
-    """Align NATIONAL box target/actual with the same TL formula as rep/region."""
+    """Align NATIONAL box target/actual with the same TL formula as rep/region.
+
+    Managed April+ products always have a positive unit price. A historical or
+    synthetic unit-only row without a price is deliberately left untouched
+    rather than being converted to a false zero.
+    """
     if not payload or not _open_april_period(year, month):
         return payload
     products = list(payload.get("products") or [])
     prices = _prices(item.get("product_id") for item in products)
+    recalculated = False
     for item in products:
         product_id = int(item.get("product_id") or 0)
         price = prices.get(product_id)
+        if not _has_valid_price(price):
+            continue
         target_unit = TLBoxCalculationService.boxes_from_tl(item.get("target_tl") or 0, price)
         actual_unit = TLBoxCalculationService.boxes_from_tl(item.get("actual_tl") or 0, price)
         item["unit_target"] = float(target_unit)
@@ -54,22 +69,33 @@ def _recalculate_national_payload(payload, year, month):
         item["unit_realization_percent"] = (
             round(float(actual_unit * Decimal("100") / target_unit), 1) if target_unit else 0.0
         )
+        recalculated = True
     target = sum(Decimal(str(item.get("unit_target") or 0)) for item in products)
     actual = sum(Decimal(str(item.get("unit_actual") or 0)) for item in products)
     payload["unit_target"] = float(target)
     payload["unit_actual"] = float(actual)
     payload["unit_realization_percent"] = round(float(actual * Decimal("100") / target), 2) if target else 0.0
-    payload["box_source"] = "IMS_TL_DIV_UNIT_PRICE"
+    if recalculated:
+        payload["box_source"] = "IMS_TL_DIV_UNIT_PRICE"
     return payload
 
 
 def _region_effective_units(service, rows):
-    """Aggregate the already-canonical representative read path for a region."""
+    """Aggregate the already-canonical representative read path for a region.
+
+    Only products with a real unit price participate. This prevents a legacy
+    unit-only row from being overwritten with zero while all managed April+
+    products continue through the canonical TL calculation.
+    """
     product_ids = {int(row.get("product_id")) for row in rows if row.get("product_id") is not None}
-    totals = {product_id: [Decimal("0"), Decimal("0")] for product_id in product_ids}
+    prices = _prices(product_ids)
+    eligible = {product_id for product_id in product_ids if _has_valid_price(prices.get(product_id))}
+    totals = {product_id: [Decimal("0"), Decimal("0")] for product_id in eligible}
+    if not eligible:
+        return totals
     for representative_id in service.representative_ids:
         effective = ProductionResultService.effective_products(
-            service.year, service.month, representative_id, product_ids
+            service.year, service.month, representative_id, eligible
         )
         for product_id, values in effective.items():
             if product_id not in totals:
@@ -85,18 +111,23 @@ def _recalculate_region_market_payload(service, payload):
         return payload
     rows = list(payload.get("rows") or [])
     effective = _region_effective_units(service, rows)
+    recalculated = False
     for row in rows:
         product_id = int(row.get("product_id") or 0)
-        target_unit, company_unit = effective.get(product_id, (Decimal("0"), Decimal("0")))
+        if product_id not in effective:
+            continue
+        target_unit, company_unit = effective[product_id]
         row["target_unit"] = float(target_unit)
         row["company_unit"] = float(company_unit)
         row["realization_percent"] = (
             round(float(company_unit * Decimal("100") / target_unit), 1) if target_unit else 0.0
         )
+        recalculated = True
     totals = payload.get("totals") or {}
     totals["effective_company_unit"] = round(sum(float(row.get("company_unit") or 0) for row in rows), 2)
     payload["totals"] = totals
-    payload["company_box_source"] = "IMS_TL_DIV_UNIT_PRICE"
+    if recalculated:
+        payload["company_box_source"] = "IMS_TL_DIV_UNIT_PRICE"
     return payload
 
 
