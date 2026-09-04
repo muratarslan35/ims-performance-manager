@@ -47,24 +47,41 @@ jobs:
           venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
+          from app.models import IMSUpload, Product
+          from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE
+          from app.services.production_result_service import ProductionResultService
+          from app.services.region_balance_unit_service import region_balance_units
+          from app.services.region_performance_service import RegionPerformanceService
 
           app = create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
+              uploads = IMSUpload.query.filter_by(year=2026, month=4, status="COMPLETED").order_by(
+                  IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc()
+              ).limit(5).all()
+              print(f"APRIL_IMS_MATCH_COUNT|{len(uploads)}")
+              for item in uploads:
+                  print(f"APRIL_IMS|id={item.id}|week={item.week_number}|file={item.file_name}|completed={item.completed_at}")
+
+              service = RegionPerformanceService("901", 2026, 4)
+              report = service.aggregate([(2026, 4)])
+              balances_upload_id = OfficialAggregateService.latest_upload_id(2026, 4, TARGET_TYPE)
+              balances = region_balance_units(balances_upload_id, "901") if balances_upload_id else {}
+              quota_months = ProductionResultService.quota_product_months([(2026, 4)])
+              final_production = ProductionResultService.final_upload(2026, 4)
+              print(
+                  f"DIYARBAKIR_SOURCE|target_upload_id={balances_upload_id}|"
+                  f"production_upload_id={getattr(final_production, 'id', None)}|rep_count={len(service.rep_ids)}"
               )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
+              products = {item.id: item for item in Product.query.all()}
+              for row in report["products"]:
+                  product_id = int(row["product_id"])
                   print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
+                      "DIYARBAKIR_PRODUCT|"
+                      f"product={row['product_name']}|target_tl={row['target_tl']}|actual_tl={row['actual_tl']}|"
+                      f"realization={row['realization_percent']}|target_unit={row['target_unit']}|"
+                      f"actual_unit={row['actual_unit']}|unit_difference={row['unit_difference']}|"
+                      f"mf_siz_balance={balances.get(product_id)}|unit_complete={row['unit_complete']}|"
+                      f"quota_exit={row['quota_exit']}|quota_months={row['quota_exit_months']}"
                   )
           PY
           echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
