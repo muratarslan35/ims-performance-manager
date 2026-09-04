@@ -20,9 +20,10 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_
 
 from app.extensions import db
-from app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target
+from app.models import IMSSummary, Product, ProductionResult, ProductionResultUpload, Target
 from app.services.production_result_service import ProductionResultService
 from app.services.region_performance_service import RegionPerformanceService
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 _REGION_SNAPSHOT = ContextVar("region_performance_source_snapshot", default=None)
@@ -103,6 +104,10 @@ def _build_snapshot(service, months):
         (int(row.year), int(row.month), int(row.representative_id), int(row.product_id)): row
         for row in summary_rows
     }
+    product_prices = {
+        int(row.id): row.unit_price
+        for row in Product.query.filter(Product.id.in_(product_ids)).all()
+    }
 
     upload_ids = [int(upload.id) for upload in uploads]
     production_rows = []
@@ -162,7 +167,11 @@ def _build_snapshot(service, months):
 
         summary = summary_by_key.get(key)
         actual_tl = _d(summary.tl if summary else 0)
-        actual_unit = _d(summary.unit if summary else 0)
+        if TLBoxCalculationService.applies(year, month):
+            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, product_prices.get(product_id))
+            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, product_prices.get(product_id))
+        else:
+            actual_unit = _d(summary.unit if summary else 0)
         effective[key] = {
             "source": "IMS",
             "complete": summary is not None,

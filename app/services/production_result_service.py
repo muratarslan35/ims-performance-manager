@@ -2,14 +2,17 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
+from app.extensions import db
 from app.models import (
     IMSSummary,
     ProductionRegionProductResult,
     ProductionResult,
     ProductionResultUpload,
     Target,
+    Product,
 )
 from app.services.alias_service import AliasService
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 class ProductionResultService:
@@ -129,13 +132,19 @@ class ProductionResultService:
         year, month, representative_id = int(year), int(month), int(representative_id)
         product_filter = {int(item) for item in product_ids or ()}
 
-        target_query = Target.query.filter_by(
-            year=year, month=month, representative_id=representative_id,
+        target_query = db.session.query(Target, Product.unit_price).join(
+            Product, Product.id == Target.product_id
+        ).filter(
+            Target.year == year,
+            Target.month == month,
+            Target.representative_id == representative_id,
         )
         if product_filter:
             target_query = target_query.filter(Target.product_id.in_(product_filter))
-        targets = target_query.all()
+        target_pairs = target_query.all()
+        targets = [row[0] for row in target_pairs]
         targets_by_product = {int(target.product_id): target for target in targets}
+        product_prices = {int(target.product_id): price for target, price in target_pairs}
         resolved_ids = product_filter or set(targets_by_product)
         if not resolved_ids:
             return {}
@@ -191,7 +200,11 @@ class ProductionResultService:
 
             summary = summaries_by_product.get(product_id)
             actual_tl = cls._d(summary.tl if summary else 0)
-            actual_unit = cls._d(summary.unit if summary else 0)
+            if TLBoxCalculationService.applies(year, month):
+                target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, product_prices.get(product_id))
+                actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, product_prices.get(product_id))
+            else:
+                actual_unit = cls._d(summary.unit if summary else 0)
             percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")
             resolved[product_id] = {
                 "source": "IMS",
@@ -256,7 +269,12 @@ class ProductionResultService:
             year=year, month=month, representative_id=representative_id, product_id=product_id,
         ).first()
         actual_tl = cls._d(summary.tl if summary else 0)
-        actual_unit = cls._d(summary.unit if summary else 0)
+        if TLBoxCalculationService.applies(year, month):
+            product = Product.query.get(product_id)
+            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, product.unit_price if product else 0)
+            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, product.unit_price if product else 0)
+        else:
+            actual_unit = cls._d(summary.unit if summary else 0)
         percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")
         return {
             "source": "IMS",
