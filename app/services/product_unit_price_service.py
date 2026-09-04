@@ -1,16 +1,30 @@
 """Period-aware product unit prices.
 
 A price edited during a calendar month becomes effective on the first day of
-next month. The price used by an IMS period is therefore immutable for the
-whole month and historical calculations never follow the mutable Product.unit_price.
+next month. The price used by an IMS period is immutable for the whole month,
+and historical calculations never follow the mutable Product.unit_price.
 """
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
+from sqlalchemy import and_, or_, select
 
 from app.extensions import db
 from app.models import Product
+
+
+product_unit_price_history = db.Table(
+    "product_unit_price_history",
+    db.Column("id", db.Integer, primary_key=True),
+    db.Column("product_id", db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False),
+    db.Column("effective_year", db.Integer, nullable=False),
+    db.Column("effective_month", db.Integer, nullable=False),
+    db.Column("unit_price", db.Float, nullable=False),
+    db.Column("created_at", db.DateTime, nullable=False, default=datetime.utcnow),
+    db.UniqueConstraint("product_id", "effective_year", "effective_month", name="uq_product_price_period"),
+    db.Index("ix_product_price_history_lookup", "product_id", "effective_year", "effective_month"),
+    extend_existing=True,
+)
 
 
 class ProductUnitPriceService:
@@ -34,19 +48,20 @@ class ProductUnitPriceService:
     @classmethod
     def _ensure_baseline(cls, product_id, old_price):
         exists = db.session.execute(
-            text("SELECT 1 FROM product_unit_price_history WHERE product_id=:product_id LIMIT 1"),
-            {"product_id": int(product_id)},
+            select(product_unit_price_history.c.id)
+            .where(product_unit_price_history.c.product_id == int(product_id))
+            .limit(1)
         ).first()
         if exists:
             return
         year, month = cls.START_PERIOD
         db.session.execute(
-            text(
-                "INSERT INTO product_unit_price_history "
-                "(product_id, effective_year, effective_month, unit_price) "
-                "VALUES (:product_id, :year, :month, :price)"
-            ),
-            {"product_id": int(product_id), "year": year, "month": month, "price": float(old_price or 0)},
+            product_unit_price_history.insert().values(
+                product_id=int(product_id),
+                effective_year=year,
+                effective_month=month,
+                unit_price=float(old_price or 0),
+            )
         )
 
     @classmethod
@@ -58,25 +73,26 @@ class ProductUnitPriceService:
         cls._ensure_baseline(product_id, old_price)
         year, month = cls.next_effective_period()
         existing = db.session.execute(
-            text(
-                "SELECT id FROM product_unit_price_history "
-                "WHERE product_id=:product_id AND effective_year=:year AND effective_month=:month"
-            ),
-            {"product_id": int(product_id), "year": year, "month": month},
+            select(product_unit_price_history.c.id).where(
+                product_unit_price_history.c.product_id == int(product_id),
+                product_unit_price_history.c.effective_year == year,
+                product_unit_price_history.c.effective_month == month,
+            )
         ).first()
         if existing:
             db.session.execute(
-                text("UPDATE product_unit_price_history SET unit_price=:price WHERE id=:id"),
-                {"price": new_price, "id": int(existing[0])},
+                product_unit_price_history.update()
+                .where(product_unit_price_history.c.id == int(existing[0]))
+                .values(unit_price=new_price)
             )
         else:
             db.session.execute(
-                text(
-                    "INSERT INTO product_unit_price_history "
-                    "(product_id, effective_year, effective_month, unit_price) "
-                    "VALUES (:product_id, :year, :month, :price)"
-                ),
-                {"product_id": int(product_id), "year": year, "month": month, "price": new_price},
+                product_unit_price_history.insert().values(
+                    product_id=int(product_id),
+                    effective_year=year,
+                    effective_month=month,
+                    unit_price=new_price,
+                )
             )
         return year, month
 
@@ -91,16 +107,28 @@ class ProductUnitPriceService:
             int(product_id): float(unit_price or 0)
             for product_id, unit_price in db.session.query(Product.id, Product.unit_price).filter(Product.id.in_(ids)).all()
         }
-        placeholders = ",".join(str(item) for item in ids)
         rows = db.session.execute(
-            text(
-                "SELECT product_id, effective_year, effective_month, unit_price "
-                "FROM product_unit_price_history "
-                f"WHERE product_id IN ({placeholders}) "
-                "AND (effective_year < :year OR (effective_year = :year AND effective_month <= :month)) "
-                "ORDER BY product_id, effective_year DESC, effective_month DESC"
-            ),
-            {"year": year, "month": month},
+            select(
+                product_unit_price_history.c.product_id,
+                product_unit_price_history.c.effective_year,
+                product_unit_price_history.c.effective_month,
+                product_unit_price_history.c.unit_price,
+            )
+            .where(
+                product_unit_price_history.c.product_id.in_(ids),
+                or_(
+                    product_unit_price_history.c.effective_year < year,
+                    and_(
+                        product_unit_price_history.c.effective_year == year,
+                        product_unit_price_history.c.effective_month <= month,
+                    ),
+                ),
+            )
+            .order_by(
+                product_unit_price_history.c.product_id,
+                product_unit_price_history.c.effective_year.desc(),
+                product_unit_price_history.c.effective_month.desc(),
+            )
         ).all()
         seen = set()
         for product_id, _effective_year, _effective_month, unit_price in rows:
