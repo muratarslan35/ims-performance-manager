@@ -62,6 +62,43 @@ def _summary(upload, representative, product, tl):
     )
 
 
+def _weekly_fact(upload, representative, product, tl):
+    from app.extensions import db
+    from app.models import IMSFact, IMSRawData
+
+    raw = IMSRawData(
+        upload_id=upload.id,
+        year=upload.year,
+        month=upload.month,
+        quarter="Q2",
+        week_number=upload.week_number,
+        sheet_name="TTS",
+        sheet_type="brick_sales",
+        source_row=1,
+        representative_id=representative.id,
+        product_id=product.id,
+        representative=representative.rep_name,
+        product=product.product_name,
+        raw_json="{}",
+    )
+    db.session.add(raw)
+    db.session.flush()
+    return IMSFact(
+        upload_id=upload.id,
+        raw_data_id=raw.id,
+        representative_id=representative.id,
+        product_id=product.id,
+        year=upload.year,
+        month=upload.month,
+        quarter="Q2",
+        week_number=upload.week_number,
+        report_type="brick_sales",
+        unit=10,
+        tl=tl,
+        metrics_json="{}",
+    )
+
+
 def test_current_week_deduplicates_same_company_product():
     app, temp = _app()
     try:
@@ -111,7 +148,7 @@ def test_missing_current_competition_falls_back_to_previous_week_as_one_snapshot
             week17 = IMSUpload(file_name="17.xlsx", year=2026, month=4, week_number=17, status="COMPLETED", completed_at=datetime(2026, 4, 30))
             db.session.add_all([week16, week17]); db.session.flush()
             db.session.add_all([
-                _summary(week16, representative, product, 20_000_000),
+                _weekly_fact(week16, representative, product, 20_000_000),
                 _competition(week16, "MONUROL GRUBU", 100_000_000),
                 _summary(week17, representative, product, 27_000_000),
             ])
