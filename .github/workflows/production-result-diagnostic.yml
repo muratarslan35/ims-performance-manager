@@ -124,12 +124,15 @@ jobs:
                   rep_tl = float(rep_row.tl_target or 0) if rep_row else 0.0
                   stored_rep_unit = float(rep_row.unit_target or 0) if rep_row else 0.0
                   price = float(product.unit_price or 0)
+                  rep_effective = ProductionResultService.effective_product(2026, 4, murat.id, product_id) if murat else {}
+                  rep_actual_tl = float(rep_effective.get("actual_tl") or 0)
                   print(
                       "UNIT_PRICE_TARGET|"
                       f"product={product.product_name}|unit_price={price}|"
                       f"region_target_tl={region_tl}|region_calc_unit={(region_tl / price) if price else None}|"
                       f"region_stored_unit={stored_region_unit}|rep_target_tl={rep_tl}|"
-                      f"rep_calc_unit={(rep_tl / price) if price else None}|rep_stored_unit={stored_rep_unit}"
+                      f"rep_calc_unit={(rep_tl / price) if price else None}|rep_stored_unit={stored_rep_unit}|"
+                      f"rep_actual_tl={rep_actual_tl}|rep_actual_calc_unit={(rep_actual_tl / price) if price else None}"
                   )
           PY
           echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
