@@ -73,13 +73,12 @@ class AnnualRealizationService:
 
     @classmethod
     def build_representative(cls, year, representative_id):
-        """Build one representative's chart from the strongest source per product/month.
+        """Build one representative's chart from authoritative product/month sources.
 
-        Source authority is product scoped and automatic:
-        P2 > P1 > IMS summary > persisted TL fallback.
-        Completed historical months therefore follow accepted production files,
-        while an open month follows IMS until an accepted production result arrives.
-        If IMS is not available yet, Target.tl_realization is the read-only TL fallback.
+        Source authority is product scoped and automatic: P2 > P1 > IMS.
+        Completed historical months follow accepted production files. An open month
+        follows IMS until an accepted production result arrives. There is deliberately
+        no TL fallback: a month without production or IMS is not exposed in the chart.
         """
         year = int(year)
         representative_id = int(representative_id)
@@ -123,8 +122,6 @@ class AnnualRealizationService:
             month = int(target.month)
             product_id = int(target.product_id)
             target_tl = Decimal(str(target.tl_target or 0))
-            bucket = month_totals[month]
-            bucket["target"] += target_tl
 
             selected_result = selected_upload = None
             for upload in uploads_by_month.get(month, ()):
@@ -139,13 +136,15 @@ class AnnualRealizationService:
                 source = f"PRODUCTION_{int(selected_upload.production_stage)}"
             else:
                 summary = summary_by_key.get((month, product_id))
-                if summary is not None:
-                    actual_tl = Decimal(str(summary.tl or 0))
-                    source = "IMS"
-                else:
-                    actual_tl = Decimal(str(target.tl_realization or 0))
-                    source = "TL_FALLBACK"
+                if summary is None:
+                    # The representative screen advances only with a real IMS/production source.
+                    # Do not manufacture an annual-chart point from persisted Target realization.
+                    continue
+                actual_tl = Decimal(str(summary.tl or 0))
+                source = "IMS"
 
+            bucket = month_totals[month]
+            bucket["target"] += target_tl
             bucket["actual"] += actual_tl
             bucket["sources"].add(source)
 
@@ -162,7 +161,7 @@ class AnnualRealizationService:
                 "target_tl": round(target, 2),
                 "actual_tl": round(actual, 2),
                 "percent": round(actual * 100.0 / target, 1) if target else None,
-                "has_data": bool(target),
+                "has_data": bool(sources),
                 "source": source,
             })
         return rows
