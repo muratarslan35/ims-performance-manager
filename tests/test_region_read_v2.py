@@ -91,7 +91,7 @@ def test_representative_period_preserves_legacy_summary_when_target_actual_unset
         assert monthly["realization_percent"] == 60.0
 
 
-def test_annual_realization_prefers_persisted_target_actual(tmp_path):
+def test_annual_realization_uses_ims_zero_as_real_value(tmp_path):
     app = _app(tmp_path)
     from app.extensions import db
     from app.models import IMSSummary, IMSUpload, Product, Representative, Target
@@ -108,8 +108,9 @@ def test_annual_realization_prefers_persisted_target_actual(tmp_path):
         db.session.add(IMSSummary(upload_id=upload.id, year=2026, month=2, representative_id=rep.id, product_id=product.id, tl=0, unit=9999))
         db.session.commit()
         february = AnnualRealizationService.build(2026, [rep.id])[1]
-        assert february["actual_tl"] == 400.0
-        assert february["percent"] == 40.0
+        assert february["actual_tl"] == 0.0
+        assert february["percent"] == 0.0
+        assert february["source"] == "IMS"
 
 
 def test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_selection(monkeypatch):
