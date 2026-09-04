@@ -7,7 +7,7 @@ and historical calculations never follow the mutable Product.unit_price.
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.extensions import db
 from app.models import Product
@@ -44,6 +44,32 @@ class ProductUnitPriceService:
     @classmethod
     def next_effective_period(cls):
         return cls._next_period(*cls.current_period())
+
+    @classmethod
+    def period_price_expression(cls, year, month):
+        """SQL expression resolving the latest period price, falling back to master."""
+        year, month = int(year), int(month)
+        latest = (
+            select(product_unit_price_history.c.unit_price)
+            .where(
+                product_unit_price_history.c.product_id == Product.id,
+                or_(
+                    product_unit_price_history.c.effective_year < year,
+                    and_(
+                        product_unit_price_history.c.effective_year == year,
+                        product_unit_price_history.c.effective_month <= month,
+                    ),
+                ),
+            )
+            .order_by(
+                product_unit_price_history.c.effective_year.desc(),
+                product_unit_price_history.c.effective_month.desc(),
+            )
+            .limit(1)
+            .correlate(Product)
+            .scalar_subquery()
+        )
+        return func.coalesce(latest, Product.unit_price)
 
     @classmethod
     def _ensure_baseline(cls, product_id, old_price):
@@ -98,46 +124,17 @@ class ProductUnitPriceService:
 
     @classmethod
     def price_map(cls, product_ids, year, month):
-        """Return the last price effective on or before the requested IMS month."""
+        """Return the price effective for the requested IMS month in one query."""
         ids = sorted({int(item) for item in product_ids if item is not None})
         if not ids:
             return {}
-        year, month = int(year), int(month)
-        fallback = {
+        expression = cls.period_price_expression(year, month)
+        return {
             int(product_id): float(unit_price or 0)
-            for product_id, unit_price in db.session.query(Product.id, Product.unit_price).filter(Product.id.in_(ids)).all()
+            for product_id, unit_price in db.session.query(Product.id, expression)
+            .filter(Product.id.in_(ids))
+            .all()
         }
-        rows = db.session.execute(
-            select(
-                product_unit_price_history.c.product_id,
-                product_unit_price_history.c.effective_year,
-                product_unit_price_history.c.effective_month,
-                product_unit_price_history.c.unit_price,
-            )
-            .where(
-                product_unit_price_history.c.product_id.in_(ids),
-                or_(
-                    product_unit_price_history.c.effective_year < year,
-                    and_(
-                        product_unit_price_history.c.effective_year == year,
-                        product_unit_price_history.c.effective_month <= month,
-                    ),
-                ),
-            )
-            .order_by(
-                product_unit_price_history.c.product_id,
-                product_unit_price_history.c.effective_year.desc(),
-                product_unit_price_history.c.effective_month.desc(),
-            )
-        ).all()
-        seen = set()
-        for product_id, _effective_year, _effective_month, unit_price in rows:
-            product_id = int(product_id)
-            if product_id in seen:
-                continue
-            fallback[product_id] = float(unit_price or 0)
-            seen.add(product_id)
-        return fallback
 
     @classmethod
     def price_for_period(cls, product_id, year, month):
