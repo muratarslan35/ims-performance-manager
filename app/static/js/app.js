@@ -557,6 +557,112 @@ function formatPercent(
 
 }
 
+function representativeDisplayName(value){
+
+    let text=String(value??"");
+
+    text=text.replace(/^\s*ATANMAMI[ŞS]\s*(?:[·\-–—:]\s*)?/iu,"").trim();
+
+    const vacancyMatch=text.match(/^\s*(\d+)\s+([^·]+?)\s*·\s*(.+)$/u);
+
+    if(vacancyMatch){
+
+        return `${vacancyMatch[1]} ${vacancyMatch[3].trim()}`;
+
+    }
+
+    return text;
+
+}
+
+function initializeRepresentativeDisplayNames(){
+
+    const sanitizeRoot=root=>{
+
+        if(!root){return;}
+
+        const walker=document.createTreeWalker(
+
+            root,
+
+            NodeFilter.SHOW_TEXT,
+
+            {
+
+                acceptNode(node){
+
+                    const parent=node.parentElement;
+
+                    if(!parent||["SCRIPT","STYLE","TEXTAREA"].includes(parent.tagName)){
+
+                        return NodeFilter.FILTER_REJECT;
+
+                    }
+
+                    return /^\s*ATANMAMI[ŞS](?:\s|[·\-–—:])/iu.test(node.nodeValue||"")
+
+                        ?NodeFilter.FILTER_ACCEPT
+
+                        :NodeFilter.FILTER_REJECT;
+
+                }
+
+            }
+
+        );
+
+        const nodes=[];
+
+        while(walker.nextNode()){
+
+            nodes.push(walker.currentNode);
+
+        }
+
+        nodes.forEach(node=>{
+
+            node.nodeValue=representativeDisplayName(node.nodeValue);
+
+        });
+
+    };
+
+    sanitizeRoot(document.body);
+
+    const observer=new MutationObserver(mutations=>{
+
+        mutations.forEach(mutation=>{
+
+            mutation.addedNodes.forEach(node=>{
+
+                if(node.nodeType===Node.TEXT_NODE){
+
+                    if(/^\s*ATANMAMI[ŞS](?:\s|[·\-–—:])/iu.test(node.nodeValue||"")){
+
+                        node.nodeValue=representativeDisplayName(node.nodeValue);
+
+                    }
+
+                    return;
+
+                }
+
+                if(node.nodeType===Node.ELEMENT_NODE){
+
+                    sanitizeRoot(node);
+
+                }
+
+            });
+
+        });
+
+    });
+
+    observer.observe(document.body,{childList:true,subtree:true});
+
+}
+
 /* PARÇA 2 BİTTİ */
 /* PARÇA 3 BAŞLANGICI */
 
@@ -979,6 +1085,8 @@ document.addEventListener(
 
         initializeNumbers();
 
+        initializeRepresentativeDisplayNames();
+
     }
 
 );
@@ -994,6 +1102,8 @@ window.apiRequest=apiRequest;
 window.formatCurrency=formatCurrency;
 
 window.formatPercent=formatPercent;
+
+window.representativeDisplayName=representativeDisplayName;
 
 window.refreshPage=refreshPage;
 
