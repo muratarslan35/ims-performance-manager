@@ -16,7 +16,9 @@ from app.models import (
     Product,
     IMSSummary
 )
+from app.services.product_unit_price_service import ProductUnitPriceService
 from app.services.target_box_calculation_service import TargetBoxCalculationService
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 targets_bp = Blueprint(
@@ -91,14 +93,14 @@ def index():
 @targets_bp.route("/recalculate-box-targets", methods=["POST"])
 @login_required
 def recalculate_box_targets():
-    """Apply TL target / current unit price to every stored target record."""
+    """Synchronize authoritative stored box targets into summaries."""
     try:
         changed = TargetBoxCalculationService.synchronize()
         db.session.commit()
-        flash(f"Kutu hedefleri ürün birim fiyatlarına göre güncellendi ({changed} hedef kaydı).", "success")
+        flash(f"Kutu hedefleri resmi hedef kayıtlarıyla eşitlendi ({changed} hedef kaydı).", "success")
     except Exception as exc:
         db.session.rollback()
-        flash(f"Kutu hedefi hesaplanamadı: {exc}", "danger")
+        flash(f"Kutu hedefi eşitlenemedi: {exc}", "danger")
     return redirect(url_for("targets.index"))
 
 @targets_bp.route("/analysis")
@@ -114,10 +116,21 @@ def analysis():
     if region: query = query.filter(Representative.region == region)
     if search: query = query.filter(Representative.rep_name.ilike(f"%{search}%"))
     rows = query.order_by(Representative.region.asc(), Representative.city.asc(), Representative.rep_name.asc(), Product.display_order.asc()).all()
+    product_prices = (
+        ProductUnitPriceService.price_map({product.id for _, _, product, _ in rows}, year, month)
+        if year is not None and month is not None and TLBoxCalculationService.applies(year, month)
+        else {}
+    )
     details, totals = [], {"unit_target": 0.0, "unit_actual": 0.0, "tl_target": 0.0, "tl_actual": 0.0}
     for target, representative, product, summary in rows:
-        unit_actual, tl_actual = float(summary.unit or 0) if summary else 0.0, float(summary.tl or 0) if summary else 0.0
-        unit_target = float(round(float(target.unit_target or 0) or (float(target.tl_target or 0) / float(product.unit_price or 1))))
+        tl_actual = float(summary.tl or 0) if summary else 0.0
+        if year is not None and month is not None and TLBoxCalculationService.applies(year, month):
+            price = product_prices.get(int(product.id))
+            unit_target = float(TLBoxCalculationService.boxes_from_tl(target.tl_target or 0, price))
+            unit_actual = float(TLBoxCalculationService.boxes_from_tl(tl_actual, price))
+        else:
+            unit_target = float(target.unit_target or 0)
+            unit_actual = float(summary.unit or 0) if summary else 0.0
         details.append({"target": target, "representative": representative, "product": product, "unit_target": unit_target, "unit_actual": unit_actual, "tl_actual": tl_actual, "unit_percent": round(unit_actual * 100 / unit_target, 1) if unit_target else 0.0, "tl_percent": round(tl_actual * 100 / target.tl_target, 1) if target.tl_target else 0.0})
         totals["unit_target"] += unit_target; totals["unit_actual"] += unit_actual; totals["tl_target"] += float(target.tl_target or 0); totals["tl_actual"] += tl_actual
     totals["unit_percent"] = round(totals["unit_actual"] * 100 / totals["unit_target"], 1) if totals["unit_target"] else 0.0; totals["tl_percent"] = round(totals["tl_actual"] * 100 / totals["tl_target"], 1) if totals["tl_target"] else 0.0
