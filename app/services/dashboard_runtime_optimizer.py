@@ -17,6 +17,7 @@ from app.models import CompetitionData, IMSUpload
 def install_dashboard_runtime_optimizer() -> None:
     """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
+    from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
     from app.services.week8_read_path_repair import install_week8_read_path_repair
 
@@ -64,6 +65,9 @@ def install_dashboard_runtime_optimizer() -> None:
         DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
         DashboardQuery._bounded_competition_lookup_installed = True
 
+    # Partial weekly TL-only IMS imports must derive boxes from the price frozen
+    # for that business month, even when the master price is edited mid-month.
+    install_partial_ims_period_price_guard()
     install_week8_read_path_repair()
     # Week-8 keeps its source-selection behavior, but the final TL->box repair
     # must use the price frozen for the requested IMS month rather than today's
