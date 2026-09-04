@@ -5,16 +5,7 @@ JOIN + GROUP BY over ``ims_competition_data``. As the table grows into millions
 of rows that discovery becomes proportional to historical data volume and is
 executed more than once during one cold dashboard render.
 
-This installer preserves the existing business rule exactly:
-- same requested year/month,
-- COMPLETED upload only,
-- newest week/completion/id wins,
-- upload must contain at least one non-zero TL competition row.
-
-The implementation changes only the access path: a correlated EXISTS probe uses
-the existing upload/metric index and stops on the first qualifying row. The
-resolved upload id is memoized per DashboardQuery instance so one dashboard
-request performs the lookup only once.
+The implementation changes only the access path and preserves business rules.
 """
 from __future__ import annotations
 
@@ -26,6 +17,7 @@ from app.models import CompetitionData, IMSUpload
 def install_dashboard_runtime_optimizer() -> None:
     """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
+    from app.services.period_price_read_guard import install_period_price_read_guard
     from app.services.week8_read_path_repair import install_week8_read_path_repair
 
     if not getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
@@ -72,7 +64,8 @@ def install_dashboard_runtime_optimizer() -> None:
         DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
         DashboardQuery._bounded_competition_lookup_installed = True
 
-    # Do not reinstall the broad PR-285 field monkeypatches. The representative
-    # SQL-scope optimizer remains installed by CompetitiveIntelligenceService;
-    # this repair changes only the proven Week-8 source-selection regressions.
     install_week8_read_path_repair()
+    # Week-8 keeps its source-selection behavior, but the final TL->box repair
+    # must use the price frozen for the requested IMS month rather than today's
+    # mutable product master price.
+    install_period_price_read_guard()
