@@ -47,7 +47,10 @@ jobs:
           venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import IMSRawData, IMSUpload, Product
+          import os
+          from openpyxl import load_workbook
+          from app.models import IMSRawData, IMSUpload, Product, Representative, Target
+          from app.services.alias_service import AliasService
           from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE
           from app.services.production_result_service import ProductionResultService
           from app.services.region_balance_unit_service import region_balance_units
@@ -99,6 +102,40 @@ jobs:
                       f"product={products[item.product_id].product_name}|sheet={item.sheet_name}|"
                       f"row={item.source_row}|unit={item.unit}|tl={item.tl}|raw={item.raw_json}"
                   )
+              target_rows = Target.query.filter(
+                  Target.year == 2026,
+                  Target.month == 4,
+                  Target.representative_id.in_(service.rep_ids),
+                  Target.product_id.in_(product_ids),
+              ).order_by(Target.product_id.asc(), Target.representative_id.asc()).all()
+              for item in target_rows:
+                  print(
+                      "DIYARBAKIR_PERSON_TARGET|"
+                      f"product={products[item.product_id].product_name}|"
+                      f"representative={item.representative.rep_name}|unit_target={item.unit_target}|tl_target={item.tl_target}"
+                  )
+
+              archive = os.path.join(app.config["UPLOAD_FOLDER"], "ims_archive", f"upload-{balances_upload_id}.xlsx")
+              workbook = load_workbook(archive, read_only=True, data_only=True)
+              try:
+                  sheet = next(ws for ws in workbook.worksheets if "BAKIYE" in AliasService.normalize(ws.title))
+                  wanted = {"STIDERM", "BRIMODER", "FENTIVAG"}
+                  for column in range(1, sheet.max_column + 1):
+                      headers = [sheet.cell(row, column).value for row in range(1, min(12, sheet.max_row) + 1)]
+                      normalized = " | ".join(AliasService.normalize(value) for value in headers if value is not None)
+                      if not any(name in normalized for name in wanted):
+                          continue
+                      for row in range(13, sheet.max_row + 1):
+                          left, right = sheet.cell(row, 1).value, sheet.cell(row, 2).value
+                          digits = "".join(ch for ch in str(left or "") if ch.isdigit())[:3]
+                          if digits == "901" and AliasService.normalize(left) == AliasService.normalize(right):
+                              print(
+                                  "DIYARBAKIR_ARCHIVE_CELL|"
+                                  f"sheet={sheet.title}|row={row}|column={column}|headers={headers}|"
+                                  f"left={left}|right={right}|value={sheet.cell(row, column).value}"
+                              )
+              finally:
+                  workbook.close()
           PY
           echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
           sudo journalctl -u ims-performance-manager.service \
