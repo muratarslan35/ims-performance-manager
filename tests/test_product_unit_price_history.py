@@ -26,6 +26,24 @@ def _app():
     return app
 
 
+def test_price_edit_follows_active_ims_period_not_wall_clock():
+    app = _app()
+    with app.app_context():
+        product = Product(product_code="ACTIVE-PRICE", product_name="Active Price", unit_price=100, is_active=True)
+        db.session.add(product)
+        db.session.flush()
+        db.session.add(IMSUpload(file_name="april-week.xlsx", year=2026, month=4, week_number=2, status="COMPLETED"))
+        db.session.commit()
+
+        effective = ProductUnitPriceService.schedule_price_change(product.id, 100, 125)
+        product.unit_price = 125
+        db.session.commit()
+
+        assert effective == (2026, 5)
+        assert ProductUnitPriceService.price_for_period(product.id, 2026, 4) == 100
+        assert ProductUnitPriceService.price_for_period(product.id, 2026, 5) == 125
+
+
 def test_price_edit_becomes_effective_next_month_and_preserves_history(monkeypatch):
     app = _app()
     with app.app_context():
