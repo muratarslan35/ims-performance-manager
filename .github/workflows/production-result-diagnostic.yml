@@ -47,7 +47,7 @@ jobs:
           venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, Product
+          from app.models import IMSRawData, IMSUpload, Product
           from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE
           from app.services.production_result_service import ProductionResultService
           from app.services.region_balance_unit_service import region_balance_units
@@ -82,6 +82,22 @@ jobs:
                       f"actual_unit={row['actual_unit']}|unit_difference={row['unit_difference']}|"
                       f"mf_siz_balance={balances.get(product_id)}|unit_complete={row['unit_complete']}|"
                       f"quota_exit={row['quota_exit']}|quota_months={row['quota_exit_months']}"
+                  )
+              product_ids = [
+                  product_id for product_id, item in products.items()
+                  if item.product_name in {"Stiderm", "Brimoder", "Fentivag"}
+              ]
+              source_rows = IMSRawData.query.filter(
+                  IMSRawData.upload_id == balances_upload_id,
+                  IMSRawData.sheet_type == "dashboard_balance_region",
+                  IMSRawData.territory == "901",
+                  IMSRawData.product_id.in_(product_ids),
+              ).order_by(IMSRawData.product_id.asc(), IMSRawData.source_row.asc()).all()
+              for item in source_rows:
+                  print(
+                      "DIYARBAKIR_RAW_BALANCE|"
+                      f"product={products[item.product_id].product_name}|sheet={item.sheet_name}|"
+                      f"row={item.source_row}|unit={item.unit}|tl={item.tl}|raw={item.raw_json}"
                   )
           PY
           echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
