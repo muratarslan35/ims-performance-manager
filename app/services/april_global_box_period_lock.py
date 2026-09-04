@@ -2,8 +2,8 @@
 
 Rules:
 - April 2026+ open IMS periods calculate company target/actual boxes from
-  authoritative TL / product unit price everywhere that still exposes an
-  independent national/region-market box path.
+  authoritative TL / period-effective product unit price everywhere that still
+  exposes an independent national/region-market box path.
 - Once an applied production result exists for a period, that period is closed:
   the stored P2/P1 production values remain authoritative and this adapter does
   not recalculate historical boxes.
@@ -13,8 +13,7 @@ Rules:
 
 from decimal import Decimal
 
-from app.extensions import db
-from app.models import Product
+from app.services.product_unit_price_service import ProductUnitPriceService
 from app.services.production_result_service import ProductionResultService
 from app.services.tl_box_calculation_service import TLBoxCalculationService
 
@@ -28,14 +27,8 @@ def _open_april_period(year, month):
     return TLBoxCalculationService.applies(int(year), int(month)) and not is_production_locked(year, month)
 
 
-def _prices(product_ids):
-    ids = sorted({int(item) for item in product_ids if item is not None})
-    if not ids:
-        return {}
-    return {
-        int(product_id): unit_price
-        for product_id, unit_price in db.session.query(Product.id, Product.unit_price).filter(Product.id.in_(ids)).all()
-    }
+def _prices(product_ids, year, month):
+    return ProductUnitPriceService.price_map(product_ids, year, month)
 
 
 def _has_valid_price(value):
@@ -46,16 +39,11 @@ def _has_valid_price(value):
 
 
 def _recalculate_national_payload(payload, year, month):
-    """Align NATIONAL box target/actual with the same TL formula as rep/region.
-
-    Managed April+ products always have a positive unit price. A historical or
-    synthetic unit-only row without a price is deliberately left untouched
-    rather than being converted to a false zero.
-    """
+    """Align NATIONAL box target/actual with the same TL formula as rep/region."""
     if not payload or not _open_april_period(year, month):
         return payload
     products = list(payload.get("products") or [])
-    prices = _prices(item.get("product_id") for item in products)
+    prices = _prices((item.get("product_id") for item in products), year, month)
     recalculated = False
     for item in products:
         product_id = int(item.get("product_id") or 0)
@@ -76,19 +64,14 @@ def _recalculate_national_payload(payload, year, month):
     payload["unit_actual"] = float(actual)
     payload["unit_realization_percent"] = round(float(actual * Decimal("100") / target), 2) if target else 0.0
     if recalculated:
-        payload["box_source"] = "IMS_TL_DIV_UNIT_PRICE"
+        payload["box_source"] = "IMS_TL_DIV_PERIOD_UNIT_PRICE"
     return payload
 
 
 def _region_effective_units(service, rows):
-    """Aggregate the already-canonical representative read path for a region.
-
-    Only products with a real unit price participate. This prevents a legacy
-    unit-only row from being overwritten with zero while all managed April+
-    products continue through the canonical TL calculation.
-    """
+    """Aggregate the already-canonical representative read path for a region."""
     product_ids = {int(row.get("product_id")) for row in rows if row.get("product_id") is not None}
-    prices = _prices(product_ids)
+    prices = _prices(product_ids, service.year, service.month)
     eligible = {product_id for product_id in product_ids if _has_valid_price(prices.get(product_id))}
     totals = {product_id: [Decimal("0"), Decimal("0")] for product_id in eligible}
     if not eligible:
@@ -127,7 +110,7 @@ def _recalculate_region_market_payload(service, payload):
     totals["effective_company_unit"] = round(sum(float(row.get("company_unit") or 0) for row in rows), 2)
     payload["totals"] = totals
     if recalculated:
-        payload["company_box_source"] = "IMS_TL_DIV_UNIT_PRICE"
+        payload["company_box_source"] = "IMS_TL_DIV_PERIOD_UNIT_PRICE"
     return payload
 
 
