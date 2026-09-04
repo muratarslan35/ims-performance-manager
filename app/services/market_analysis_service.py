@@ -16,13 +16,12 @@ aliases of the same company product.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Dict, Iterable, Optional
 
 from sqlalchemy import case, desc, func
 
 from app.extensions import db
-from app.models import CompetitionData, IMSSummary, IMSUpload, Product
+from app.models import CompetitionData, IMSFact, IMSSummary, IMSUpload, Product
 
 
 class MarketAnalysisService:
@@ -119,8 +118,34 @@ class MarketAnalysisService:
         )
 
     def _company_tl_by_product(self, upload_id: Optional[int]) -> Dict[int, float]:
+        """Read company TL from the exact IMS upload used by the market snapshot.
+
+        ``IMSSummary`` is intentionally monthly-unique and is rebuilt to the newest
+        weekly snapshot, so it cannot preserve an older week's company values after
+        a later IMS arrives. ``IMSFact`` is upload-scoped and therefore remains the
+        authoritative historical source for a fallback week. Legacy/test data that
+        has no facts still falls back to its upload-linked summary.
+        """
         if not upload_id:
             return {}
+        fact_rows = (
+            self.session.query(
+                IMSFact.product_id,
+                func.coalesce(func.sum(IMSFact.tl), 0.0),
+            )
+            .filter(
+                IMSFact.upload_id == int(upload_id),
+                IMSFact.report_type == "brick_sales",
+            )
+            .group_by(IMSFact.product_id)
+            .all()
+        )
+        if fact_rows:
+            return {
+                int(product_id): float(value or 0.0)
+                for product_id, value in fact_rows
+                if product_id is not None
+            }
         rows = (
             self.session.query(
                 IMSSummary.product_id,
@@ -152,9 +177,6 @@ class MarketAnalysisService:
     def _choose_market_row(candidates):
         if not candidates:
             return None
-        # Duplicate aliases must never be added together. Prefer an actually
-        # populated TL market; when more than one alias is populated, the
-        # broader/larger market row is the safest non-duplicating source.
         return max(
             candidates,
             key=lambda row: (
