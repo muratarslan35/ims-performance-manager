@@ -71,7 +71,7 @@ Hedef Yönetimi
                     <select class="form-select" name="representative_id" required>
                         <option value="">Seçiniz</option>
                         {% for representative in representatives %}
-                        <option value="{{ representative.id }}">{{ representative.rep_name }}</option>
+                        <option value="{{ representative.id }}">{{ representative.rep_name|representative_display_name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -131,7 +131,7 @@ Hedef Yönetimi
         <div class="accordion-item">
             <h2 class="accordion-header">
                 <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#targetRep{{ rep.id }}">
-                    <span class="fw-bold">{{ rep.rep_name }}</span>
+                    <span class="fw-bold">{{ rep.rep_name|representative_display_name }}</span>
                     <span class="ms-3 text-secondary">{{ rep.region or '-' }} {{ rep.city or '' }} · {{ group_targets|length }} ürün</span>
                 </button>
             </h2>
@@ -176,7 +176,7 @@ Hedef Yönetimi
             <tbody>
                 {% for target in active_targets %}
                 <tr>
-                    <td>{{ target.representative.rep_name }}</td>
+                    <td>{{ target.representative.rep_name|representative_display_name }}</td>
                     <td>{{ target.product.product_name }}</td>
                     <td>{{ target.year }}</td>
                     <td>{{ target.month }}</td>
@@ -209,7 +209,7 @@ Hedef Yönetimi
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label">Temsilci</label>
-                        <input class="form-control" value="{{ target.representative.rep_name }}" readonly>
+                        <input class="form-control" value="{{ target.representative.rep_name|representative_display_name }}" readonly>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Ürün</label>
