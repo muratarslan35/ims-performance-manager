@@ -140,3 +140,31 @@ def test_batch_context_eliminates_per_product_query_fanout(tmp_path):
         assert prefetch_count <= 4
         assert after_context_count == prefetch_count
         assert [row["source"] for row in results[:3]] == ["PRODUCTION_2", "PRODUCTION_1", "IMS"]
+
+
+def test_april_onward_ims_uses_tl_price_boxes_and_half_down_rounding(tmp_path):
+    application = _app(tmp_path)
+    with application.app_context():
+        rep = Representative(rep_code="TLBOX", rep_name="TL KUTU", active=True)
+        product = Product(
+            product_code="TRV", product_name="Travazol", unit_price=128.31, is_active=True
+        )
+        db.session.add_all([rep, product]); db.session.flush()
+        upload = IMSUpload(file_name="week16.xlsx", year=2026, month=4, status="COMPLETED")
+        db.session.add(upload); db.session.flush()
+        db.session.add(Target(
+            year=2026, month=4, quarter="Q2", representative_id=rep.id, product_id=product.id,
+            tl_target=1068003.3058255836, unit_target=999999,
+        ))
+        db.session.add(IMSSummary(
+            upload_id=upload.id, year=2026, month=4,
+            quarter="Q2",
+            representative_id=rep.id, product_id=product.id,
+            tl=416109.33, unit=-999999,
+        ))
+        db.session.commit()
+
+        result = ProductionResultService.effective_product(2026, 4, rep.id, product.id)
+        assert result["source"] == "IMS"
+        assert result["target_unit"] == Decimal("8324")
+        assert result["actual_unit"] == Decimal("3243")

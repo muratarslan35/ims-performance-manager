@@ -9,6 +9,7 @@ from app.services.annual_realization_service import AnnualRealizationService
 from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
 from app.services.production_result_service import ProductionResultService
 from app.services.region_balance_unit_service import region_balance_units
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 class RegionPerformanceService:
@@ -209,6 +210,12 @@ class RegionPerformanceService:
                     ]
                     for row in rows
                 }
+
+        # From April 2026 onward IMS boxes are derived per representative from
+        # TL / product unit price. Returning no official unit override lets
+        # aggregate() use those effective rows while TL subtotals remain official.
+        if TLBoxCalculationService.applies(year, month):
+            return {}
 
         target_units = {
             product_id: Decimal(str(value or 0))
