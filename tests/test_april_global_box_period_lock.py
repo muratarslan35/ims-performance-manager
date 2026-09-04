@@ -5,7 +5,7 @@ import app.services.april_global_box_period_lock as lock
 
 def test_open_april_national_uses_tl_unit_price_for_every_product(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
-    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: 100, 2: 250})
+    monkeypatch.setattr(lock, "_prices", lambda product_ids, year, month: {1: 100, 2: 250})
     payload = {
         "unit_target": 9999,
         "unit_actual": 8888,
@@ -37,12 +37,12 @@ def test_open_april_national_uses_tl_unit_price_for_every_product(monkeypatch):
     assert result["unit_target"] == 20
     assert result["unit_actual"] == 10
     assert result["unit_realization_percent"] == 50
-    assert result["box_source"] == "IMS_TL_DIV_UNIT_PRICE"
+    assert result["box_source"] == "IMS_TL_DIV_PERIOD_UNIT_PRICE"
 
 
 def test_missing_unit_price_preserves_legacy_unit_values(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
-    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: None})
+    monkeypatch.setattr(lock, "_prices", lambda product_ids, year, month: {1: None})
     payload = {
         "unit_target": 200,
         "unit_actual": 150,
@@ -84,7 +84,7 @@ def test_closed_production_period_is_not_recalculated(monkeypatch):
 
 def test_open_region_market_uses_canonical_representative_units(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
-    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: 100})
+    monkeypatch.setattr(lock, "_prices", lambda product_ids, year, month: {1: 100})
 
     class FakeService:
         year = 2026
@@ -111,12 +111,12 @@ def test_open_region_market_uses_canonical_representative_units(monkeypatch):
     # Competition market denominator stays on the IMS competition chain.
     assert row["market_company_unit"] == 90
     assert result["totals"]["effective_company_unit"] == 60
-    assert result["company_box_source"] == "IMS_TL_DIV_UNIT_PRICE"
+    assert result["company_box_source"] == "IMS_TL_DIV_PERIOD_UNIT_PRICE"
 
 
 def test_region_market_without_unit_price_keeps_existing_units(monkeypatch):
     monkeypatch.setattr(lock, "_open_april_period", lambda year, month: True)
-    monkeypatch.setattr(lock, "_prices", lambda product_ids: {1: None})
+    monkeypatch.setattr(lock, "_prices", lambda product_ids, year, month: {1: None})
 
     class FakeService:
         year = 2042

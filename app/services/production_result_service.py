@@ -12,6 +12,7 @@ from app.models import (
     Product,
 )
 from app.services.alias_service import AliasService
+from app.services.product_unit_price_service import ProductUnitPriceService
 from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
@@ -50,18 +51,9 @@ class ProductionResultService:
 
     @classmethod
     def quota_product_months(cls, months):
-        """Detect stock-quota exemptions from official production results.
-
-        A product is quota-exempt for a month only when the selected P2/P1
-        workbook sets that product to target TL and exactly 100% in every
-        region included by the workbook.  The marker is explanatory metadata;
-        it never changes target, actual, priority, or premium calculations.
-        """
+        """Detect stock-quota exemptions from official production results."""
         periods = tuple(sorted({(int(year), int(month)) for year, month in months}))
-        uploads = {
-            (year, month): cls.final_upload(year, month)
-            for year, month in periods
-        }
+        uploads = {(year, month): cls.final_upload(year, month) for year, month in periods}
         selected = {period: upload for period, upload in uploads.items() if upload is not None}
         if not selected:
             return {}
@@ -84,13 +76,8 @@ class ProductionResultService:
                 product_regions = {str(row.region_code) for row in product_rows}
                 if not expected_regions or product_regions != expected_regions:
                     continue
-                source = AliasService.normalize(
-                    " ".join(filter(None, (upload.file_name, upload.stored_file_name)))
-                )
-                marker = next(
-                    (item for item in ("KOTA SATIS", "KOTA CIKIS") if item in source),
-                    None,
-                )
+                source = AliasService.normalize(" ".join(filter(None, (upload.file_name, upload.stored_file_name))))
+                marker = next((item for item in ("KOTA SATIS", "KOTA CIKIS") if item in source), None)
                 if marker is None:
                     continue
                 quota_names = f" {source.split(marker, 1)[1]} "
@@ -122,17 +109,12 @@ class ProductionResultService:
 
     @classmethod
     def effective_products(cls, year, month, representative_id, product_ids=None):
-        """Resolve a whole representative period in a bounded query set.
-
-        This is the batch equivalent of ``effective_product``.  It preserves
-        product-specific P2 > P1 > IMS fallback, including the case where a P2
-        upload exists but does not contain every product.  Production
-        percentages are never capped at 100.
-        """
+        """Resolve a whole representative period in a bounded query set."""
         year, month, representative_id = int(year), int(month), int(representative_id)
         product_filter = {int(item) for item in product_ids or ()}
 
-        target_query = db.session.query(Target, Product.unit_price).join(
+        period_price = ProductUnitPriceService.period_price_expression(year, month)
+        target_query = db.session.query(Target, period_price).join(
             Product, Product.id == Target.product_id
         ).filter(
             Target.year == year,
@@ -164,9 +146,7 @@ class ProductionResultService:
                 ProductionResult.representative_id == representative_id,
                 ProductionResult.product_id.in_(resolved_ids),
             ).all()
-            production_by_key = {
-                (int(row.upload_id), int(row.product_id)): row for row in rows
-            }
+            production_by_key = {(int(row.upload_id), int(row.product_id)): row for row in rows}
 
         resolved = {}
         for product_id in resolved_ids:
@@ -182,8 +162,6 @@ class ProductionResultService:
                     break
 
             if selected_result is not None:
-                # IMS/BAKİYE targets remain the approved target master. A
-                # production file contributes final outputs, never a target revision.
                 percent = cls._d(selected_result.actual_tl) * Decimal("100") / target_tl if target_tl and selected_result.actual_tl is not None else cls._d(selected_result.realization_percent)
                 actual_tl = cls._d(selected_result.actual_tl) if selected_result.actual_tl is not None else target_tl * percent / Decimal("100")
                 actual_unit = cls._d(selected_result.actual_unit) if selected_result.actual_unit is not None else target_unit * percent / Decimal("100")
@@ -220,11 +198,7 @@ class ProductionResultService:
     @classmethod
     @contextmanager
     def use_effective_batch(cls, year, month, representative_id, rows):
-        """Expose one pre-resolved batch only inside the current execution context."""
-        payload = {
-            "key": (int(year), int(month), int(representative_id)),
-            "rows": rows,
-        }
+        payload = {"key": (int(year), int(month), int(representative_id)), "rows": rows}
         token = cls._effective_batch_override.set(payload)
         try:
             yield rows
@@ -270,9 +244,9 @@ class ProductionResultService:
         ).first()
         actual_tl = cls._d(summary.tl if summary else 0)
         if TLBoxCalculationService.applies(year, month):
-            product = Product.query.get(product_id)
-            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, product.unit_price if product else 0)
-            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, product.unit_price if product else 0)
+            unit_price = ProductUnitPriceService.price_for_period(product_id, year, month)
+            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, unit_price)
+            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, unit_price)
         else:
             actual_unit = cls._d(summary.unit if summary else 0)
         percent = (actual_tl / target_tl * Decimal("100")) if target_tl else Decimal("0")

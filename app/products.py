@@ -10,6 +10,7 @@ from flask_login import login_required
 
 from app.extensions import db
 from app.models import Product
+from app.services.product_unit_price_service import ProductUnitPriceService
 
 
 products_bp = Blueprint(
@@ -248,7 +249,8 @@ def edit(
 
         )
 
-        product.unit_price = float(
+        old_price = float(product.unit_price or 0)
+        new_price = float(
 
             request.form.get(
 
@@ -259,6 +261,13 @@ def edit(
             ) or 0
 
         )
+        effective_period = ProductUnitPriceService.schedule_price_change(
+            product.id, old_price, new_price
+        )
+        # Product.unit_price is the newest configured master price. IMS reads
+        # never use it directly after a history row exists; they resolve the
+        # price that was effective for the requested year/month.
+        product.unit_price = new_price
 
         if "required_percent" in request.form:
             product.required_percent = float(request.form.get("required_percent") or 0)
@@ -287,13 +296,20 @@ def edit(
 
         db.session.commit()
 
-        flash(
+        if effective_period:
+            year, month = effective_period
+            flash(
+                f"Ürün bilgileri güncellendi. Yeni birim fiyat {month:02d}/{year} IMS döneminden itibaren geçerli olacak; mevcut ve geçmiş ayların fiyatı korunacak.",
+                "success",
+            )
+        else:
+            flash(
 
-            "Ürün bilgileri güncellendi.",
+                "Ürün bilgileri güncellendi.",
 
-            "success"
+                "success"
 
-        )
+            )
 
     except Exception as exc:
 
