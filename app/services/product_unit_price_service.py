@@ -1,11 +1,11 @@
 """Period-aware product unit prices.
 
-A price edited during a calendar month becomes effective on the first day of
-next month. The price used by an IMS period is immutable for the whole month,
-and historical calculations never follow the mutable Product.unit_price.
+A price edited while an IMS business month is active becomes effective from the
+next IMS month. The active month keeps the price it started with even if later
+weekly IMS files arrive after a master-price edit. Historical calculations never
+follow the mutable ``Product.unit_price``.
 """
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 
@@ -29,7 +29,6 @@ product_unit_price_history = db.Table(
 
 class ProductUnitPriceService:
     START_PERIOD = (2026, 4)
-    TZ = ZoneInfo("Europe/Istanbul")
 
     @staticmethod
     def _next_period(year, month):
@@ -38,8 +37,11 @@ class ProductUnitPriceService:
 
     @classmethod
     def current_period(cls):
-        now = datetime.now(cls.TZ)
-        return now.year, now.month
+        """Use the application's active IMS business period, not wall-clock month."""
+        from app.services.period_service import PeriodService
+
+        period = PeriodService.get_active_period()
+        return int(period["year"]), int(period["month"])
 
     @classmethod
     def next_effective_period(cls):
@@ -92,7 +94,7 @@ class ProductUnitPriceService:
 
     @classmethod
     def schedule_price_change(cls, product_id, old_price, new_price):
-        """Record a master price edit for next month without touching this month."""
+        """Record a master-price edit for the month after the active IMS month."""
         old_price, new_price = float(old_price or 0), float(new_price or 0)
         if old_price == new_price:
             return None
