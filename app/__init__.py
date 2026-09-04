@@ -12,6 +12,7 @@ from config import Config
 from app.extensions import db
 from app.extensions import migrate
 from app.extensions import login_manager
+from app.presentation import representative_display_name
 
 import app.login_manager
 
@@ -70,6 +71,8 @@ from app.regions import regions_bp
 
 def register_template_context(app):
     """Expose current IMS period and compact import audit report consistently."""
+    app.add_template_filter(representative_display_name, "representative_display_name")
+
     @app.template_filter("istanbul_datetime")
     def istanbul_datetime(value, format_string="%d.%m.%Y %H:%M"):
         """Render UTC database timestamps in the application's local timezone."""
