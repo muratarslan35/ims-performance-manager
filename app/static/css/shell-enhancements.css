@@ -60,6 +60,9 @@ body.sidebar-collapsed .navbar-collapsed-brand {
 .global-search-item small { display: block; color: var(--text-light); }
 .global-search-empty { padding: 12px; color: var(--text-light); font-size: 13px; }
 
+/* Pazar ve Rakip Analizi yalnız yöneticilerin Türkiye Pazar Analizi ekranında gösterilir. */
+.executive-market-panel { display: none !important; }
+
 /* Global dark-mode compatibility layer. Keep page-specific light styling intact,
    but neutralise Bootstrap's per-cell white backgrounds and fixed light panels. */
 [data-theme="dark"] .table {
