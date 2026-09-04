@@ -1,0 +1,87 @@
+name: Locked Canonical Contracts
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: locked-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Locked contract approval and regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      APP_ENV: testing
+      SECRET_KEY: ci-test-secret-not-for-production
+      DATABASE_URL: sqlite:////tmp/ims-locked-contracts.db
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce explicit approval for locked paths
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          changed="$(git diff --name-only "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+          locked="false"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              app/services/production_result_service.py|\
+              app/services/tl_box_calculation_service.py|\
+              app/services/week8_read_path_repair.py|\
+              app/services/region_performance_service.py|\
+              app/services/representative_period_snapshot_service.py|\
+              app/services/annual_realization_service.py|\
+              app/services/representative_market_service.py|\
+              app/services/competitive_intelligence_service.py|\
+              app/services/actual_sales_resolution_service.py|\
+              app/representatives.py|\
+              app/region_manager.py|\
+              .github/workflows/deploy.yml|\
+              .github/workflows/locked-contracts.yml|\
+              CANONICAL_LOCKS.md)
+                echo "LOCKED_CHANGE|$file"
+                locked="true"
+                ;;
+            esac
+          done <<< "$changed"
+
+          if [ "$locked" = "true" ]; then
+            if ! printf '%s' "${PR_BODY:-}" | grep -Fq 'LOCKED-CONTRACT-APPROVED: YES'; then
+              echo 'ERROR: Kilitli kanonik alan değişiyor ancak kullanıcı ön onay işareti yok.'
+              echo 'Değişiklikten önce kullanıcıya kapsam sunulmalı; açık onay sonrası PR gövdesine LOCKED-CONTRACT-APPROVED: YES eklenmelidir.'
+              exit 1
+            fi
+            echo 'LOCKED_APPROVAL|present'
+          else
+            echo 'LOCKED_CHANGE|none'
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install locked regression dependencies
+        run: python -m pip install -q -r requirements.txt pytest
+
+      - name: Run canonical locked regression suite
+        run: |
+          python -m pytest -q \
+            tests/test_production_result_batch_service.py \
+            tests/test_april_tl_box_read_overlay.py \
+            tests/test_representative_market_read_consistency.py \
+            tests/test_representative_annual_source_priority.py \
+            tests/test_region_read_v2.py \
+            tests/test_region_manager_scope.py
