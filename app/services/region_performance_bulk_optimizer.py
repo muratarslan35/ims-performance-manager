@@ -6,9 +6,8 @@ called ``effective_product`` (and, for production rows, ``final_product_result``
 for every cell, and ``report`` repeated those overlapping windows independently.
 
 This optimizer keeps all business semantics in ``RegionPerformanceService`` but
-pre-resolves the report year with four bounded source queries (targets, IMS
-summaries, production uploads, production rows). Monthly/3/6/yearly KPI windows
-and the annual chart then reuse that same request-local ContextVar snapshot.
+pre-resolves the report year with bounded source queries. Monthly/3/6/yearly KPI
+windows and the annual chart reuse that same request-local ContextVar snapshot.
 There is no process-global stale cache and no cross-request mutation, so
 P2 > P1 > IMS and numeric-zero semantics stay intact.
 """
@@ -21,6 +20,7 @@ from sqlalchemy import and_, func, or_
 
 from app.extensions import db
 from app.models import IMSSummary, Product, ProductionResult, ProductionResultUpload, Target
+from app.services.product_unit_price_service import product_unit_price_history
 from app.services.production_result_service import ProductionResultService
 from app.services.region_performance_service import RegionPerformanceService
 from app.services.tl_box_calculation_service import TLBoxCalculationService
@@ -104,10 +104,36 @@ def _build_snapshot(service, months):
         (int(row.year), int(row.month), int(row.representative_id), int(row.product_id)): row
         for row in summary_rows
     }
-    product_prices = {
-        int(row.id): row.unit_price
-        for row in Product.query.filter(Product.id.in_(product_ids)).all()
-    }
+
+    # One bounded product-price query serves every month in the report. Each IMS
+    # cell then resolves the last price effective on or before its own year/month.
+    price_rows = db.session.query(
+        Product.id,
+        Product.unit_price,
+        product_unit_price_history.c.effective_year,
+        product_unit_price_history.c.effective_month,
+        product_unit_price_history.c.unit_price,
+    ).outerjoin(
+        product_unit_price_history,
+        product_unit_price_history.c.product_id == Product.id,
+    ).filter(Product.id.in_(product_ids)).all()
+    master_prices = {}
+    price_history = defaultdict(list)
+    for product_id, master_price, effective_year, effective_month, historical_price in price_rows:
+        product_id = int(product_id)
+        master_prices[product_id] = float(master_price or 0)
+        if effective_year is not None and effective_month is not None:
+            price_history[product_id].append(
+                (int(effective_year), int(effective_month), float(historical_price or 0))
+            )
+    for rows in price_history.values():
+        rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+    def period_price(product_id, year, month):
+        for effective_year, effective_month, price in price_history.get(int(product_id), ()):
+            if (effective_year, effective_month) <= (int(year), int(month)):
+                return price
+        return master_prices.get(int(product_id), 0.0)
 
     upload_ids = [int(upload.id) for upload in uploads]
     production_rows = []
@@ -168,8 +194,9 @@ def _build_snapshot(service, months):
         summary = summary_by_key.get(key)
         actual_tl = _d(summary.tl if summary else 0)
         if TLBoxCalculationService.applies(year, month):
-            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, product_prices.get(product_id))
-            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, product_prices.get(product_id))
+            price = period_price(product_id, year, month)
+            target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, price)
+            actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
         else:
             actual_unit = _d(summary.unit if summary else 0)
         effective[key] = {
@@ -258,4 +285,3 @@ def install_region_performance_bulk_optimizer():
     ProductionResultService.effective_product = classmethod(effective_product)
     ProductionResultService.final_product_result = classmethod(final_product_result)
     ProductionResultService.applied_uploads = classmethod(applied_uploads)
-    _INSTALLED = True
