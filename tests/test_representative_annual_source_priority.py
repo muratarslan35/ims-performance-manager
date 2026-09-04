@@ -39,7 +39,7 @@ def _app(tmp_path):
     return application
 
 
-def test_representative_annual_chart_prefers_production_then_ims_then_tl_fallback(tmp_path):
+def test_representative_annual_chart_prefers_production_then_ims_and_never_tl_fallback(tmp_path):
     application = _app(tmp_path)
     with application.app_context():
         rep = Representative(rep_code="ANNUAL1", rep_name="YILLIK TEMSILCI", active=True)
@@ -70,7 +70,7 @@ def test_representative_annual_chart_prefers_production_then_ims_then_tl_fallbac
                 product_id=product.id, realization_percent=realization,
             ))
 
-        # April has no production yet: latest IMS is authoritative and must beat persisted TL=999.
+        # April has no production yet: IMS is authoritative and must beat persisted TL=999.
         ims_upload = IMSUpload(file_name="week16.xlsx", year=2026, month=4, status="COMPLETED")
         db.session.add(ims_upload)
         db.session.flush()
@@ -89,5 +89,11 @@ def test_representative_annual_chart_prefers_production_then_ims_then_tl_fallbac
         assert rows[2]["actual_tl"] == 800.0 and rows[2]["source"] == "PRODUCTION_2"
         assert rows[3]["actual_tl"] == 600.0 and rows[3]["percent"] == 60.0
         assert rows[3]["source"] == "IMS"
-        assert rows[4]["actual_tl"] == 400.0 and rows[4]["percent"] == 40.0
-        assert rows[4]["source"] == "TL_FALLBACK"
+
+        # May has a Target row but no IMS or production source. It must stay absent
+        # instead of using Target.tl_realization as a fabricated fallback point.
+        assert rows[4]["actual_tl"] == 0.0
+        assert rows[4]["target_tl"] == 0.0
+        assert rows[4]["percent"] is None
+        assert rows[4]["has_data"] is False
+        assert rows[4]["source"] is None
