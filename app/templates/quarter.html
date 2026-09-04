@@ -30,11 +30,11 @@
     <h2 class="mb-1">Q Dönem Analizi</h2>
     <p>Aylık ciro, ana prim ve üç aylık ürün telafisini tek görünümde yönetin.</p>
   </div>
-  {% if selected_representative %}<div class="text-end"><div class="small opacity-75">Seçili temsilci</div><strong>{{ selected_representative.rep_name }}</strong></div>{% endif %}
+  {% if selected_representative %}<div class="text-end"><div class="small opacity-75">Seçili temsilci</div><strong>{{ selected_representative.rep_name|representative_display_name }}</strong></div>{% endif %}
 </div>
 
 <div class="card quarter-card mb-4"><div class="card-body"><form class="row g-3 align-items-end" method="get">
-  <div class="col-md-5"><label class="form-label">Temsilci <span class="text-muted fw-normal">({{ representatives|length }} aktif)</span></label><select class="form-select" name="representative_id" required><option value="">Temsilci seçiniz</option>{% for rep in representatives %}<option value="{{ rep.id }}" {% if selected_representative and selected_representative.id == rep.id %}selected{% endif %}>{{ rep.rep_name }}{% if rep.region %} · {{ rep.region }}{% endif %}</option>{% endfor %}</select></div>
+  <div class="col-md-5"><label class="form-label">Temsilci <span class="text-muted fw-normal">({{ representatives|length }} aktif)</span></label><select class="form-select" name="representative_id" required><option value="">Temsilci seçiniz</option>{% for rep in representatives %}<option value="{{ rep.id }}" {% if selected_representative and selected_representative.id == rep.id %}selected{% endif %}>{{ rep.rep_name|representative_display_name }}{% if rep.region %} · {{ rep.region }}{% endif %}</option>{% endfor %}</select></div>
   <div class="col-md-2"><label class="form-label">Yıl</label><input class="form-control" type="number" name="year" value="{{ selected_year }}" min="2020" max="2100"></div>
   <div class="col-md-2"><label class="form-label">Dönem</label><select class="form-select" name="quarter">{% for q in range(1,5) %}<option value="{{ q }}" {% if q == selected_quarter %}selected{% endif %}>Q{{ q }}</option>{% endfor %}</select></div>
   <div class="col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-calculator me-1"></i>Q Hesabını Göster</button></div>
