@@ -285,3 +285,4 @@ def install_region_performance_bulk_optimizer():
     ProductionResultService.effective_product = classmethod(effective_product)
     ProductionResultService.final_product_result = classmethod(final_product_result)
     ProductionResultService.applied_uploads = classmethod(applied_uploads)
+    _INSTALLED = True
