@@ -17,9 +17,12 @@ class AnnualRealizationService:
 
     @classmethod
     def build(cls, year, representative_ids):
-        """Legacy aggregate read path retained for region consumers."""
+        """Use the production-aware path for one representative; keep region aggregate unchanged."""
         year = int(year)
         representative_ids = [int(item) for item in representative_ids]
+        if len(representative_ids) == 1:
+            return cls.build_representative(year, representative_ids[0])
+
         totals = defaultdict(lambda: {
             "target": 0.0, "target_actual": 0.0,
             "summary_actual": 0.0, "summary_count": 0,
@@ -74,30 +77,17 @@ class AnnualRealizationService:
 
         Source authority is product scoped and automatic:
         P2 > P1 > IMS summary > persisted TL fallback.
-        Therefore completed historical months follow accepted production files,
-        while the open month follows the latest IMS until an accepted production
-        result arrives. If IMS is not available yet, Target.tl_realization is the
-        read-only TL fallback and the chart percentage remains actual TL / target TL.
+        Completed historical months therefore follow accepted production files,
+        while an open month follows IMS until an accepted production result arrives.
+        If IMS is not available yet, Target.tl_realization is the read-only TL fallback.
         """
         year = int(year)
         representative_id = int(representative_id)
-
-        targets = Target.query.filter_by(
-            year=year, representative_id=representative_id
-        ).all()
+        targets = Target.query.filter_by(year=year, representative_id=representative_id).all()
         if not targets:
-            return [
-                {
-                    "month": month,
-                    "label": label,
-                    "target_tl": 0.0,
-                    "actual_tl": 0.0,
-                    "percent": None,
-                    "has_data": False,
-                    "source": None,
-                }
-                for month, label in enumerate(cls.MONTHS, start=1)
-            ]
+            return [{"month": month, "label": label, "target_tl": 0.0, "actual_tl": 0.0,
+                     "percent": None, "has_data": False, "source": None}
+                    for month, label in enumerate(cls.MONTHS, start=1)]
 
         product_ids = sorted({int(target.product_id) for target in targets})
         summaries = IMSSummary.query.filter(
@@ -105,9 +95,7 @@ class AnnualRealizationService:
             IMSSummary.representative_id == representative_id,
             IMSSummary.product_id.in_(product_ids),
         ).all()
-        summary_by_key = {
-            (int(item.month), int(item.product_id)): item for item in summaries
-        }
+        summary_by_key = {(int(item.month), int(item.product_id)): item for item in summaries}
 
         uploads = ProductionResultUpload.query.filter(
             ProductionResultUpload.year == year,
@@ -123,23 +111,14 @@ class AnnualRealizationService:
             uploads_by_month[int(upload.month)].append(upload)
 
         upload_ids = [int(upload.id) for upload in uploads]
-        production_rows = []
-        if upload_ids:
-            production_rows = ProductionResult.query.filter(
-                ProductionResult.upload_id.in_(upload_ids),
-                ProductionResult.representative_id == representative_id,
-                ProductionResult.product_id.in_(product_ids),
-            ).all()
-        production_by_key = {
-            (int(item.upload_id), int(item.product_id)): item
-            for item in production_rows
-        }
+        production_rows = ProductionResult.query.filter(
+            ProductionResult.upload_id.in_(upload_ids),
+            ProductionResult.representative_id == representative_id,
+            ProductionResult.product_id.in_(product_ids),
+        ).all() if upload_ids else []
+        production_by_key = {(int(item.upload_id), int(item.product_id)): item for item in production_rows}
 
-        month_totals = defaultdict(lambda: {
-            "target": Decimal("0"),
-            "actual": Decimal("0"),
-            "sources": set(),
-        })
+        month_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "sources": set()})
         for target in targets:
             month = int(target.month)
             product_id = int(target.product_id)
@@ -147,13 +126,11 @@ class AnnualRealizationService:
             bucket = month_totals[month]
             bucket["target"] += target_tl
 
-            selected_result = None
-            selected_upload = None
+            selected_result = selected_upload = None
             for upload in uploads_by_month.get(month, ()):
                 result = production_by_key.get((int(upload.id), product_id))
                 if result is not None:
-                    selected_result = result
-                    selected_upload = upload
+                    selected_result, selected_upload = result, upload
                     break
 
             if selected_result is not None:
@@ -178,12 +155,7 @@ class AnnualRealizationService:
             target = float(bucket["target"])
             actual = float(bucket["actual"])
             sources = bucket["sources"]
-            if not sources:
-                source = None
-            elif len(sources) == 1:
-                source = next(iter(sources))
-            else:
-                source = "MIXED"
+            source = None if not sources else next(iter(sources)) if len(sources) == 1 else "MIXED"
             rows.append({
                 "month": month,
                 "label": label,
