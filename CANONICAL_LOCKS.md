@@ -17,7 +17,7 @@ Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, 
 2. **Temsilci 12 aylık grafik:** Ürün/ay bazında yalnız `P2 > P1 > IMS`. `Target.tl_realization` veya başka bir TL fallback yoktur. IMS/üretim olmayan ay için yapay nokta üretilmez. IMS içindeki gerçek sayısal `0` geçerli veridir.
 3. **Nisan 2026+ kutu hesabı:** Açık IMS dönemlerinde temsilci, bölge ve Türkiye dahil tüm şirket kutu hedefi ve şirket kutu gerçekleşeni, ilgili resmi TL değeri / o IMS dönemi için geçerli ürün birim fiyatı üzerinden merkezi hesaplanır. Yuvarlama `ROUND_HALF_DOWN`: tam `.50` aşağıda kalır, `.50` üzeri yukarı çıkar. Eski/negatif MF'siz kutu bakiyesi, competition unit veya persisted unit alanı bu sonucu ezemez.
 4. **Üretimle kapanan dönem kilidi:** Bir ay için kabul edilmiş P1 veya P2 üretim sonucu oluştuğunda dönem kapanır. O ayın P2/P1 ile kesinleşmiş TL/kutu sonuçları geçmiş ekranlarda yeniden hesaplanmaz; sonraki formül/bug düzeltmeleri yalnız açık mevcut dönem ve ileri dönemlere uygulanır. Kapalı döneme sonradan IMS veya hedef importu yapılamaz.
-5. **Aylık birim fiyat kilidi:** Ürün birim fiyatı ay içinde değiştirildiğinde yeni fiyat aynı ayın hiçbir IMS hesabına uygulanmaz. Değişiklik bir sonraki takvim ayının IMS döneminden itibaren geçerli olur. Aynı ay içinde kaç kez fiyat güncellenirse güncellensin, mevcut ay kendi başlangıç fiyatını korur; yalnız sonraki ay için planlanan fiyat son değerle güncellenir. Geçmiş aylar her zaman kendi dönemsel fiyatını kullanır ve güncel `Product.unit_price` değişikliği geçmiş hedef/kutu/realizasyon sonuçlarını değiştiremez.
+5. **Aylık birim fiyat kilidi:** Ürün birim fiyatı **aktif IMS ayı** devam ederken değiştirildiğinde yeni fiyat o ayın hiçbir IMS hesabına uygulanmaz; aynı ay daha sonra gelen haftalık IMS dosyaları da ayın kilitli eski fiyatını kullanır. Değişiklik aktif IMS ayını izleyen bir sonraki IMS döneminden itibaren geçerli olur. Aynı aktif ay içinde kaç kez fiyat güncellenirse güncellensin, mevcut ay kendi başlangıç fiyatını korur; yalnız sonraki ay için planlanan fiyat son değerle güncellenir. Geçmiş aylar her zaman kendi dönemsel fiyatını kullanır ve güncel `Product.unit_price` değişikliği geçmiş hedef/kutu/realizasyon sonuçlarını değiştiremez. Fiyat geçişinde duvar saati/takvim ayı değil, merkezi `PeriodService` tarafından belirlenen aktif IMS iş dönemi esas alınır.
 6. **TL otoritesi:** Açık IMS döneminde TL hedef ve TL gerçekleşen resmi IMS kaynağından; P1/P2 geldiğinde resmi üretim kaynağından alınır. Kutu/bakiye alanlarından TL türetilmez.
 7. **Temsilci rekabet tutarlılığı:** Ürün bazlı rakip toplamı, seçili ürün rakip detayları, toplam kutu pazarı, pazar payı ve aylık rakip değişimi aynı DB veri zincirini kullanır. Önceki ay verisi önceki ayın kendi temsilci-brick kapsamından okunur.
 8. **Sayı gösterimi:** Kutu adetlerinde Türkçe binlik ayırıcı `.` kullanılır; ör. `9.360 kutu` = dokuz bin üç yüz altmış. Kutu farkı ve yüzde değişimi ayrı anlamlarla gösterilir.
@@ -34,9 +34,11 @@ Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 - `app/services/tl_box_calculation_service.py`
 - `app/services/april_global_box_period_lock.py`
 - `app/services/product_unit_price_service.py`
+- `app/services/partial_ims_period_price_guard.py`
 - `app/services/period_price_read_guard.py`
 - `app/services/week8_read_path_repair.py`
 - `app/services/region_performance_service.py`
+- `app/services/region_performance_bulk_optimizer.py`
 - `app/services/representative_period_snapshot_service.py`
 - `app/services/annual_realization_service.py`
 - `app/services/representative_market_service.py`
