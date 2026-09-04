@@ -131,6 +131,7 @@ def install_week8_read_path_repair() -> None:
     from app.services.dashboard_service import DashboardService
     from app.services.production_result_service import ProductionResultService
     from app.services.region_market_service import RegionMarketService
+    from app.services.region_performance_service import RegionPerformanceService
     from app.services.representative_market_service import RepresentativeMarketService
 
     if getattr(ProductionResultService, "_week8_read_repair_installed", False):
@@ -175,6 +176,43 @@ def install_week8_read_path_repair() -> None:
 
     ProductionResultService.effective_products = classmethod(effective_products)
     ProductionResultService.effective_product = classmethod(effective_product)
+
+    # RegionPerformanceService historically accumulated Target.unit_target even
+    # after April IMS effective rows switched to TL / price. Correct only the
+    # target-unit contribution of April+ IMS cells; P2/P1 cells remain untouched.
+    # The later region bulk optimizer wraps this aggregate and supplies a bounded
+    # request-local effective-product snapshot, so these lookups do not re-open
+    # the old N+1 path.
+    original_region_aggregate = RegionPerformanceService.aggregate
+
+    def repaired_region_aggregate(self, months):
+        payload = original_region_aggregate(self, months)
+        corrections = {}
+        for year, month, rep_id, product_id, _target_tl, stored_target_unit in self._target_rows(months):
+            if not TLBoxCalculationService.applies(year, month):
+                continue
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if str(effective.get("source") or "").startswith("PRODUCTION_"):
+                continue
+            corrected_target = Decimal(str(effective.get("target_unit") or 0))
+            stored_target = Decimal(str(stored_target_unit or 0))
+            corrections[int(product_id)] = corrections.get(int(product_id), Decimal("0")) + corrected_target - stored_target
+
+        if not corrections:
+            return payload
+        for item in payload.get("products", []):
+            product_id = int(item.get("product_id"))
+            correction = corrections.get(product_id)
+            if correction is None:
+                continue
+            target_unit = Decimal(str(item.get("target_unit") or 0)) + correction
+            item["target_unit"] = target_unit
+            if item.get("actual_unit") is not None:
+                actual_unit = Decimal(str(item.get("actual_unit") or 0))
+                item["unit_difference"] = actual_unit - target_unit
+        return payload
+
+    RegionPerformanceService.aggregate = repaired_region_aggregate
 
     original_market_build = RepresentativeMarketService.build
 
