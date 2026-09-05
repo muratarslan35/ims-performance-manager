@@ -69,6 +69,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
 sudo systemctl enable "$worker_service_name"
 
+# Import/heavy releases must not expose the all-region cockpit until the latest
+# completed IMS generation has a complete durable snapshot set. The import gate
+# has already verified that no PROCESSING job is active before this script runs.
+if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+  echo "REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation"
+  "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
+fi
+
 # The first managed deployment may replace the legacy `python run.py`
 # process. Stop only the verified process owned by this application path.
 if ! sudo systemctl is-active --quiet "$service_name"; then
