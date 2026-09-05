@@ -1,1 +1,78 @@
-{% extends "base.html" %}{% block title %}Türkiye Pazar Analizi{% endblock %}{% block page_title %}Türkiye Pazar Analizi{% endblock %}{% block styles %}<link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">{% endblock %}{% block content %}{% set market=payload.competition_analysis|default({},true) %}{% set regions=payload.region_realization|default([],true) %}<div class="market-analysis-hero mb-4"><div><span>TÜRKİYE GENELİ · YÖNETİCİ ANALİZİ</span><h1>Pazar, Satış ve Bölge Karşılaştırması</h1><p>Aktif dönem IMS özetini, rekabet TL/PP verisini ve bölgesel realizasyonu birleştirir.</p></div><a class="btn btn-light" href="{{ url_for('dashboard.index') }}"><i class="bi bi-speedometer2"></i> Dashboard</a></div><div class="market-analysis-kpis mb-4"><div><span>Şirket IMS</span><strong>{{ "{:,.0f}".format(payload.overall_realization_tl|default(0,true)) }} ₺</strong></div><div><span>Pazar toplamı</span><strong>{{ "{:,.0f}".format(market.market_total_tl|default(0,true)) }} ₺</strong></div><div><span>Şirket / pazar</span><strong>%{{ market.company_share_percent|default(0,true) }}</strong></div><div><span>TL realizasyonu</span><strong>%{{ payload.overall_percent|default(0,true) }}</strong></div></div><div class="row g-4 mb-4"><div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Ürün Bazında Pazar Karşılaştırması</h3></div><div class="table-responsive"><table class="table market-analysis-table mb-0"><thead><tr><th>Ürün</th><th>Şirket IMS</th><th>Pazar TL</th><th>Rakip alanı</th><th>Şirket payı</th></tr></thead><tbody>{% for item in market.groups|default([],true) %}<tr><td class="fw-bold">{{ item.display_product|default(item.product_group) }}</td><td>{{ "{:,.0f}".format(item.company_sales_tl|default(0,true)) }} ₺</td><td>{{ "{:,.0f}".format(item.market_sales_tl|default(0,true)) }} ₺</td><td>{{ "{:,.0f}".format(item.competitor_sales_tl|default(0,true)) }} ₺</td><td><span class="share-pill">%{{ item.company_share_percent|default(0,true) }}</span></td></tr>{% else %}<tr><td colspan="5" class="text-center text-secondary py-4">Aktif dönem rekabet verisi bulunmuyor.</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Bölgesel Realizasyon Durumu</h3></div><div class="region-analysis-list">{% for region in regions %}<div class="region-analysis-row"><div><strong>{{ region.code }} {{ region.city }}</strong><span>{{ "{:,.0f}".format(region.tl_actual) }} ₺ IMS · {{ "{:,.0f}".format(region.unit_actual) }} kutu</span></div><b class="{% if region.percent>=70 %}good{% else %}risk{% endif %}">%{{ region.percent }}</b></div>{% else %}<div class="empty-state"><p>Bölgesel veri bulunmuyor.</p></div>{% endfor %}</div></div></div></div><div class="card shadow-sm"><div class="card-header"><h3 class="card-title">Yönetici Okuma Notu</h3></div><div class="card-body text-secondary">Bu ekran yalnızca aktif IMS döneminin gerçek satış, hedef, kutu çıkışı ve rekabet tablolarını kullanır.</div></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Türkiye Pazar Analizi{% endblock %}
+{% block page_title %}Türkiye Pazar Analizi{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">{% endblock %}
+{% block content %}
+{% set market=payload.competition_analysis|default({},true) %}
+{% set regions=payload.region_realization|default([],true) %}
+
+<div class="market-analysis-hero mb-4">
+  <div>
+    <span>TÜRKİYE GENELİ · YÖNETİCİ ANALİZİ</span>
+    <h1>Türkiye Pazar ve Rakip Analizi</h1>
+    <p>Şirket IMS satışı ile aynı haftaya ait kullanılabilir rekabet/pazar verisini tek ürün satırında karşılaştırır.</p>
+  </div>
+  <a class="btn btn-light" href="{{ url_for('dashboard.index') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
+</div>
+
+<div class="market-source-banner {{ 'is-current' if market.is_current else 'is-fallback' if market.is_fallback else 'is-missing' }} mb-4">
+  <div class="market-source-icon"><i class="bi {{ 'bi-check-circle-fill' if market.is_current else 'bi-clock-history' if market.is_fallback else 'bi-exclamation-triangle-fill' }}"></i></div>
+  <div class="market-source-copy">
+    <strong>{% if market.is_current %}Güncel rekabet verisi{% elif market.is_fallback %}Önceki haftanın doğrulanmış rekabet verisi kullanılıyor{% else %}Rekabet verisi bekleniyor{% endif %}</strong>
+    <span>{{ market.source_message }}</span>
+    {% if market.source_file %}<small>Kaynak: {{ market.source_file }}</small>{% endif %}
+  </div>
+  <div class="market-source-week">
+    <span>Tablo haftası</span>
+    <b>{% if market.source_week %}{{ market.source_week }}. Hafta{% elif market.latest_week %}{{ market.latest_week }}. Hafta{% else %}—{% endif %}</b>
+  </div>
+</div>
+
+<div class="market-analysis-kpis mb-4">
+  <div><span>Şirket IMS</span><strong>{{ "{:,.0f}".format(market.company_total_tl|default(0,true)) }} ₺</strong><small>Tablo kaynak haftası</small></div>
+  <div><span>Toplam pazar</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.market_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Rekabet verisi bulunan ürünler</small></div>
+  <div><span>Rakip alanı</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.competitor_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Toplam pazar − şirket IMS</small></div>
+  <div><span>Şirket / pazar</span><strong>{% if market.has_competition %}%{{ market.company_share_percent|default(0,true) }}{% else %}—{% endif %}</strong><small>Aynı kaynak haftasında</small></div>
+</div>
+
+<div class="card shadow-sm market-main-card mb-4">
+  <div class="card-header market-main-head">
+    <div>
+      <span class="market-section-kicker">ÜRÜN BAZINDA · TEKİL GÖRÜNÜM</span>
+      <h3 class="card-title">Şirket ve Rakip Pazar Karşılaştırması</h3>
+      <p>Her şirket ürünü yalnız bir kez gösterilir. Aynı ürüne ait eski/tekrarlı pazar grup adları toplanmaz; kullanılabilir gerçek pazar satırı seçilir.</p>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table market-analysis-table mb-0">
+      <thead><tr><th>Ürün</th><th>Şirket IMS</th><th>Rakip alanı</th><th>Toplam pazar</th><th>Görsel dağılım</th><th>Şirket payı</th><th>Veri durumu</th></tr></thead>
+      <tbody>
+      {% for item in market.groups|default([],true) %}
+        <tr>
+          <td><strong>{{ item.company_product }}</strong>{% if item.product_group %}<small>{{ item.product_group }}</small>{% endif %}</td>
+          <td><b>{{ "{:,.0f}".format(item.company_sales_tl|default(0,true)) }} ₺</b></td>
+          <td>{% if item.market_available %}{{ "{:,.0f}".format(item.competitor_sales_tl|default(0,true)) }} ₺{% else %}<span class="market-na">—</span>{% endif %}</td>
+          <td>{% if item.market_available %}{{ "{:,.0f}".format(item.market_sales_tl|default(0,true)) }} ₺{% else %}<span class="market-na">—</span>{% endif %}</td>
+          <td>
+            {% if item.market_available %}
+            <div class="market-composition" aria-label="Şirket payı yüzde {{ item.company_share_percent|default(0,true) }}"><span style="width:{{ item.company_share_percent|default(0,true) }}%"></span><em style="width:{{ 100-(item.company_share_percent|default(0,true)) }}%"></em></div>
+            <div class="composition-label"><span>Şirket</span><span>Rakip</span></div>
+            {% else %}<span class="market-waiting">Rekabet verisi bekleniyor</span>{% endif %}
+          </td>
+          <td>{% if item.market_available %}<span class="share-pill">%{{ item.company_share_percent|default(0,true) }}</span>{% else %}<span class="market-na">—</span>{% endif %}</td>
+          <td><span class="data-status {{ 'ready' if item.market_available else 'ims-only' }}">{{ item.data_status }}</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="text-center text-secondary py-4">Seçili dönem için şirket IMS verisi bulunmuyor.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="market-table-note"><i class="bi bi-shield-check"></i><span>Kaynak haftası değiştiğinde bilgi bandı otomatik güncellenir. Güncel IMS haftasında rekabet verisi yoksa son kullanılabilir aynı ay haftası gösterilir; veri yokluğu sıfır pazar olarak yorumlanmaz.</span></div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Bölgesel Realizasyon Durumu</h3></div><div class="region-analysis-list">{% for region in regions %}<div class="region-analysis-row"><div><strong>{{ region.code }} {{ region.city }}</strong><span>{{ "{:,.0f}".format(region.tl_actual) }} ₺ IMS · {{ "{:,.0f}".format(region.unit_actual) }} kutu</span></div><b class="{% if region.percent>=70 %}good{% else %}risk{% endif %}">%{{ region.percent }}</b></div>{% else %}<div class="empty-state"><p>Bölgesel veri bulunmuyor.</p></div>{% endfor %}</div></div></div>
+  <div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Yönetici Okuma Notu</h3></div><div class="card-body market-manager-note"><i class="bi bi-info-circle"></i><p>Bu alan karar verirken veri haftasını görünür tutar. Güncel rekabet dosyası geldiyse güncel hafta kullanılır; gelmediyse aynı ay içindeki son gerçek rekabet haftası korunur. Her ürün tek satırdır ve eksik rekabet verisi yapay sıfırla doldurulmaz.</p></div></div></div>
+</div>
+{% endblock %}

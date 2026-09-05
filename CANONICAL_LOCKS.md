@@ -25,6 +25,7 @@ Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, 
 10. **Özel kimlik kuralları:** `BOS` ve `BOŞ` ayrı kimliklerdir; `BOSTANCI` normal değerdir. Gerçek sayısal `0` boş/verisiz sayılamaz.
 11. **Yetki ve güvenlik:** Bölge müdürü kapsamı fail-closed kalır; yetkisiz bölge/temsilci erişimi açılamaz. Admin/özel yetki kuralları mevcut merkezi yetki servisinden okunur.
 12. **Dağıtım güvenliği:** İlgili CI PASS olmadan merge yoktur. Production acceptance PASS olmadan tamamlandı denmez. Aktif `PROCESSING` IMS import işi varken deploy/restart yapılmaz. SQLite `WAL` ve `busy_timeout=30000` korunur.
+13. **Türkiye Pazar Analizi kaynak ve tekillik kilidi:** `Pazar ve Rakip Analizi` yönetici/temsilci dashboardlarında gösterilmez; yalnız yetkili yöneticilerin `Türkiye Pazar Analizi` ekranında yer alır. Seçili ayın en güncel tamamlanmış IMS haftasında gerçek rekabet TL verisi varsa aynı hafta kullanılır. Güncel haftada rekabet verisi yoksa aynı ay içindeki son kullanılabilir gerçek rekabet haftası kullanılır ve ekranda hem güncel haftanın rekabet verisi taşımadığı hem de kullanılan kaynak hafta açıkça yazılır. Aynı ayda hiç rekabet verisi yoksa ekran tamamen boş dönmez; güncel şirket IMS satışları gösterilir fakat rakip/toplam pazar alanları yapay `0` ile doldurulmaz. Her şirket ürünü tabloda en fazla bir kez yer alır; aynı ürüne ait alias/eski pazar grup satırları toplanarak çift sayım üretmez.
 
 ## Kilitli kritik kod yolları
 

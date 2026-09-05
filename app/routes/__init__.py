@@ -7,6 +7,7 @@ from flask import request
 from flask_login import current_user
 from flask_login import login_required
 from app.services.dashboard_service import DashboardService
+from app.services.market_analysis_service import MarketAnalysisService
 from app.models import Representative
 from app.services.quarter_entitlement_service import QuarterEntitlementService
 
@@ -36,7 +37,13 @@ def dashboard():
 @main_bp.route("/market-analysis")
 @login_required
 def market_analysis():
-    return render_template("market_analysis.html", payload=DashboardService().run())
+    dashboard_service = DashboardService()
+    payload = dashboard_service.run()
+    payload["competition_analysis"] = MarketAnalysisService(
+        dashboard_service.year,
+        dashboard_service.month,
+    ).build()
+    return render_template("market_analysis.html", payload=payload)
 
 
 @main_bp.route("/prime")
