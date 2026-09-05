@@ -1,4 +1,9 @@
-"""Single-process worker for persistent IMS import jobs."""
+"""Single-process worker for persistent IMS import jobs.
+
+Worker restarts also re-run the latest durable region-snapshot warm-up. This is
+intentional: import-mode production activation is the recovery path after a
+snapshot persistence fix, while queued IMS imports still keep priority.
+"""
 import signal
 import time
 
