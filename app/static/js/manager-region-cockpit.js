@@ -136,6 +136,13 @@
     return regionPackPromise;
   }
 
+  // Compatibility name retained for the existing cockpit contract. Prefetching
+  // now means warming the single all-region pack, never one request per region.
+  function prefetchRegion(button) {
+    if (!button) return;
+    ensureRegionPack();
+  }
+
   function renderRegion(target, html) {
     target.innerHTML = html;
     applyPeriod(target);
@@ -173,12 +180,12 @@
 
   document.addEventListener("pointerenter", event => {
     const button = event.target.closest && event.target.closest("[data-manager-region-button]");
-    if (button) ensureRegionPack();
+    if (button) prefetchRegion(button);
   }, true);
 
   document.addEventListener("focusin", event => {
     const button = event.target.closest && event.target.closest("[data-manager-region-button]");
-    if (button) ensureRegionPack();
+    if (button) prefetchRegion(button);
   });
 
   document.addEventListener("click", event => {
@@ -230,7 +237,6 @@
     }
     applyPeriod(host);
     initAnnualChart(host);
-    // One background request warms every region. No per-region prefetch fan-out.
     ensureRegionPack();
   });
 })();
