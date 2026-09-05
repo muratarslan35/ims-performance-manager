@@ -10,6 +10,7 @@
 
 /* Targeted fixes from mobile production review. */
 .market-analysis-hero h1{color:#fff!important;text-shadow:0 1px 1px rgba(0,0,0,.18)}
+.market-analysis-table th:last-child,.market-analysis-table td:last-child{display:none}
 .exec-summary-card h3{font-size:20px!important;color:#123a55!important;font-weight:800!important}
 .exec-cockpit .exec-summary-card>div>span{color:#0b6fa7!important;font-weight:800!important}
 .exec-cockpit .exec-summary-items p{font-size:12px!important;line-height:1.55!important;color:#2d4d63!important;font-weight:600!important}
