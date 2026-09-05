@@ -41,7 +41,11 @@ class FakePerformance:
             "region_name": f"Region {self.region_key}",
             "year": self.year,
             "month": self.month,
-            "periods": {},
+            "periods": {
+                "monthly": {
+                    "source_by_month": {(self.year, self.month): "OFFICIAL_REGION_SUBTOTAL"}
+                }
+            },
             "annual_realization": [],
         }
 
@@ -84,6 +88,9 @@ def test_complete_set_is_persisted_and_reused(monkeypatch):
         payload = PersistentRegionSnapshotService.get_active("102", 2026, 4)
         assert payload["report"]["region_key"] == "102"
         assert payload["market_analysis"]["region"] == "102"
+        assert payload["report"]["periods"]["monthly"]["source_by_month"] == {
+            "2026|4": "OFFICIAL_REGION_SUBTOTAL"
+        }
 
         pack = PersistentRegionSnapshotService.get_active_all(2026, 4)
         assert set(pack) == {"101", "102"}
