@@ -23,6 +23,12 @@ def test_executive_cockpit_is_below_region_workspace_and_dynamic():
     assert "Seçili dönem realizasyonu" in partial
     assert "Şirket kutu çıkışı" in partial
     assert "Bölgesel AI Yönetim İçgörüleri" in partial
+    assert "GERÇEK VERİ + DİNAMİK YAPAY ZEKA" in partial
+    assert "Dönem hedefi" in partial
+    assert "Dönem gerçekleşen" in partial
+    assert "Rakip kutu" in partial
+    assert "Toplam kutu pazar" in partial
+    assert "AI yönetim yorumu" in partial
     assert "data-exec-ai-panel" in partial
     assert "region.share_gap_to_national" not in partial
     assert "region.unit_share_gap_to_national" in partial
@@ -54,6 +60,11 @@ def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_querie
     assert "national_market_unit" in service
     assert "_regional_ai_insights" in service
     assert '"ai_insights"' in service
+    assert '"target_tl": round(target_tl, 2)' in service
+    assert '"actual_tl": actual_tl' in service
+    assert '"company_unit": round(company_unit, 2)' in service
+    assert '"competitor_unit": round(competitor_unit, 2)' in service
+    assert '"market_unit": round(market_unit, 2)' in service
 
 
 def test_market_analysis_loads_clarity_layer_last_and_removes_status_column():
@@ -73,6 +84,7 @@ def test_market_analysis_loads_clarity_layer_last_and_removes_status_column():
     assert ".exec-cockpit .exec-hero h2" in clarity
     assert ".exec-metric-guide" in clarity
     assert ".exec-ai-section" in clarity
+    assert ".exec-ai-facts" in readability
 
 
 def test_snapshot_backfill_has_application_root_on_python_path():
