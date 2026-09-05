@@ -25,6 +25,14 @@ def test_executive_cockpit_is_below_region_workspace_and_dynamic():
     assert "Chart.getChart" in javascript
 
 
+def test_executive_trend_renders_monthly_realization_labels():
+    javascript = (ROOT / "app/static/js/executive-market-cockpit.js").read_text(encoding="utf-8")
+    assert 'id: "execTrendValueLabels"' in javascript
+    assert 'ctx.fillText(`%${Number(value).toLocaleString("tr-TR"' in javascript
+    assert "plugins: [trendValueLabels]" in javascript
+    assert "layout: {padding: {top: 18}}" in javascript
+
+
 def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_queries():
     service = (ROOT / "app/services/executive_market_cockpit_service.py").read_text(encoding="utf-8")
     routes = (ROOT / "app/routes/__init__.py").read_text(encoding="utf-8")
@@ -48,6 +56,9 @@ def test_market_analysis_loads_readability_layer_last():
     assert ".manager-region-button span" in css
     assert ".exec-cockpit .exec-region-foot" in css
     assert '[data-theme="dark"]' in css
+    assert ".market-analysis-hero h1{color:#fff!important" in css
+    assert ".market-analysis-table th:last-child,.market-analysis-table td:last-child{display:none}" in css
+    assert ".exec-cockpit .exec-summary-items p{font-size:12px!important" in css
 
 
 def test_snapshot_backfill_has_application_root_on_python_path():
