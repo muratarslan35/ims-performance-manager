@@ -40,10 +40,11 @@ class ExecutiveMarketCockpitService:
 
     @classmethod
     def _regional_ai_insights(cls, period_key, region_cards):
-        """Create deterministic region management insights from the same snapshot metrics.
+        """Expose real snapshot values and a deterministic management interpretation.
 
-        This is deliberately a read-model interpretation layer: it does not query the
-        database, predict missing values, or change target/actual/share calculations.
+        Every numeric value below is copied from the already-built region snapshot
+        read model. No value is predicted, inferred from missing data, or recalculated
+        from another source inside the AI section.
         """
         period_label = cls.PERIOD_LABELS.get(period_key, period_key)
         insights = []
@@ -51,6 +52,12 @@ class ExecutiveMarketCockpitService:
             realization = row.get("realization_percent")
             share = cls._number(row.get("share_percent"))
             gap = cls._number(row.get("unit_share_gap_to_national"))
+            target_tl = cls._number(row.get("target_tl"))
+            actual_tl = row.get("actual_tl")
+            company_unit = cls._number(row.get("company_unit"))
+            competitor_unit = cls._number(row.get("competitor_unit"))
+            market_unit = cls._number(row.get("market_unit"))
+
             if realization is None:
                 signal = "Veri bekleniyor"
                 tone = "neutral"
@@ -80,19 +87,20 @@ class ExecutiveMarketCockpitService:
                 tone = "neutral"
                 action = "Realizasyon ve rekabet payını birlikte izle; belirgin sapmada ürün/brick detayına in."
 
-            insight_text = (
-                f"{period_label} realizasyon %{realization:.1f}; " if realization is not None else f"{period_label} realizasyon —; "
-            )
-            insight_text += (
-                f"güncel IMS rekabet haftasında kutu pazar payı %{share:.1f}; "
-                f"Türkiye ağırlıklı kutu payına göre {gap:+.1f} puan."
-            )
             insights.append({
                 "region_key": row.get("region_key"),
                 "region_name": row.get("region_name"),
+                "period_label": period_label,
                 "signal": signal,
                 "tone": tone,
-                "metrics": insight_text,
+                "target_tl": round(target_tl, 2),
+                "actual_tl": actual_tl,
+                "realization_percent": realization,
+                "company_unit": round(company_unit, 2),
+                "competitor_unit": round(competitor_unit, 2),
+                "market_unit": round(market_unit, 2),
+                "share_percent": round(share, 1),
+                "unit_share_gap_to_national": round(gap, 1),
                 "action": action,
             })
         insights.sort(key=lambda item: str(item.get("region_key") or ""))
@@ -152,9 +160,6 @@ class ExecutiveMarketCockpitService:
                 else:
                     bucket["complete"] = False
 
-        # Region market share is unit-based in RegionMarketService. Compare it
-        # only with the weighted national unit share derived from those same
-        # regional snapshots; never mix it with the national TL share.
         national_market_unit = sum(row["market_unit"] for row in region_cards)
         national_company_unit = sum(row["company_unit"] for row in region_cards)
         national_unit_share = (
