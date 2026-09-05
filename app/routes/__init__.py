@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import jsonify
 from flask import redirect
 from flask import render_template
 from flask import url_for
@@ -41,14 +42,10 @@ def _region_snapshot_key(region_key, year, month):
 
 
 def _region_manager_snapshot(region_key, year, month):
-    # First choice: durable snapshot prepared once after the IMS import. This
-    # survives worker restarts and is shared by every manager session/process.
     persistent = PersistentRegionSnapshotService.get_active(region_key, year, month)
     if persistent is not None:
         return persistent
 
-    # Safe compatibility path for old periods, a failed snapshot build, or a
-    # production result that changed after the IMS snapshot was published.
     key = _region_snapshot_key(region_key, year, month)
 
     def loader():
@@ -111,6 +108,37 @@ def market_analysis():
         selected_year=dashboard_service.year,
         selected_month=dashboard_service.month,
     )
+
+
+@main_bp.route("/market-analysis/regions-pack")
+@login_required
+def market_analysis_regions_pack():
+    """Return the complete manager region cockpit from one durable snapshot read."""
+    active = PeriodService.get_active_period()
+    year = request.args.get("year", active["year"], type=int)
+    month = request.args.get("month", active["month"], type=int)
+    snapshots = PersistentRegionSnapshotService.get_active_all(year, month)
+    if not snapshots:
+        return jsonify({"ready": False, "regions": {}}), 409
+
+    regions = {}
+    for region_key, snapshot in snapshots.items():
+        regions[str(region_key)] = render_template(
+            "partials/market_region_workspace.html",
+            report=snapshot["report"],
+            market_analysis=snapshot["market_analysis"],
+        )
+    ims_id, production_id = PersistentRegionSnapshotService.source_identity(year, month)
+    response = jsonify({
+        "ready": True,
+        "year": year,
+        "month": month,
+        "ims_upload_id": ims_id,
+        "production_upload_id": production_id,
+        "regions": regions,
+    })
+    response.headers["Cache-Control"] = "private, no-cache"
+    return response
 
 
 @main_bp.route("/market-analysis/region/<path:region_key>")
