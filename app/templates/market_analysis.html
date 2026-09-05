@@ -4,6 +4,7 @@
 {% block styles %}
 <link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/manager-region-cockpit.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/executive-market-cockpit.css') }}" rel="stylesheet">
 {% endblock %}
 {% block content %}
 {% set market=payload.competition_analysis|default({},true) %}
@@ -115,8 +116,11 @@
     </main>
   </div>
 </section>
+
+{% include "partials/executive_market_cockpit.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/manager-region-cockpit.js') }}"></script>
+<script src="{{ url_for('static', filename='js/executive-market-cockpit.js') }}"></script>
 {% endblock %}

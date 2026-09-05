@@ -13,6 +13,7 @@ from app.cache.region_manager_snapshot_cache import RegionManagerSnapshotCache
 from app.extensions import db
 from app.models import IMSUpload, Representative
 from app.services.dashboard_service import DashboardService
+from app.services.executive_market_cockpit_service import ExecutiveMarketCockpitService
 from app.services.market_analysis_service import MarketAnalysisService
 from app.services.period_service import PeriodService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
@@ -100,8 +101,8 @@ def market_analysis():
     )
 
     # Read the entire durable ACTIVE generation once while the main page is
-    # being rendered. This removes the second network round-trip and guarantees
-    # that region switches are already client-side when the user scrolls down.
+    # being rendered. The executive cockpit and the region workspace consume
+    # this exact same immutable source so no duplicate heavy market query is run.
     durable_snapshots = PersistentRegionSnapshotService.get_active_all(
         dashboard_service.year, dashboard_service.month
     ) or {}
@@ -109,6 +110,11 @@ def market_analysis():
         str(region_key): _render_region_snapshot(snapshot)
         for region_key, snapshot in durable_snapshots.items()
     }
+    executive_cockpit = ExecutiveMarketCockpitService.build(
+        payload.get("competition_analysis") or {},
+        durable_snapshots,
+        region_rows,
+    )
 
     initial_region_snapshot = durable_snapshots.get(str(selected_region)) if selected_region else None
     if selected_region and initial_region_snapshot is None:
@@ -126,6 +132,7 @@ def market_analysis():
         selected_region=selected_region,
         initial_region_snapshot=initial_region_snapshot,
         embedded_region_html=embedded_region_html,
+        executive_cockpit=executive_cockpit,
         selected_year=dashboard_service.year,
         selected_month=dashboard_service.month,
     )
