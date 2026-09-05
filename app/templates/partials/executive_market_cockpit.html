@@ -100,15 +100,25 @@
   </div>
 
   <section class="exec-ai-section" aria-label="Dinamik bölgesel yapay zeka yönetim içgörüleri">
-    <div class="exec-ai-head"><div><span>DİNAMİK YAPAY ZEKA · BÖLGESEL YÖNETİM</span><h3>Bölgesel AI Yönetim İçgörüleri</h3><p>Aktif snapshot içindeki doğrulanmış realizasyon ve rekabet metriklerinden otomatik üretilir. Eksik veri tahmin edilmez; hedef, gerçekleşen veya pazar hesabı değiştirilmez.</p></div><i class="bi bi-stars"></i></div>
+    <div class="exec-ai-head"><div><span>GERÇEK VERİ + DİNAMİK YAPAY ZEKA · BÖLGESEL YÖNETİM</span><h3>Bölgesel AI Yönetim İçgörüleri</h3><p>Her kart önce aktif bölge snapshotındaki gerçek hedef, gerçekleşen, kutu pazar ve rekabet değerlerini gösterir; AI yorumu yalnız bu değerlerin yönetim anlamını açıklar. Eksik veri tahmin edilmez.</p></div><i class="bi bi-stars"></i></div>
     {% for period_key, period in cockpit.periods.items() %}
     <div class="exec-ai-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-ai-panel="{{ period_key }}">
       <div class="exec-ai-grid">
         {% for insight in period.ai_insights %}
         <button type="button" class="exec-ai-card {{ insight.tone }}" data-exec-region-key="{{ insight.region_key }}">
           <div class="exec-ai-card-head"><strong>{{ insight.region_key }} {{ insight.region_name }}</strong><span>{{ insight.signal }}</span></div>
-          <p>{{ insight.metrics }}</p>
-          <small><i class="bi bi-lightbulb-fill"></i>{{ insight.action }}</small>
+          <div class="exec-ai-source"><span>{{ insight.period_label }} gerçek performans verisi</span><span>{% if cockpit.source_week %}{{ cockpit.source_week }}. hafta gerçek rekabet/kutu verisi{% else %}Rekabet haftası bekleniyor{% endif %}</span></div>
+          <div class="exec-ai-facts">
+            <div><small>Dönem hedefi</small><b>{{ "{:,.0f}".format(insight.target_tl) }} ₺</b></div>
+            <div><small>Dönem gerçekleşen</small><b>{% if insight.actual_tl is not none %}{{ "{:,.0f}".format(insight.actual_tl) }} ₺{% else %}—{% endif %}</b></div>
+            <div><small>Realizasyon</small><b>{% if insight.realization_percent is not none %}%{{ insight.realization_percent }}{% else %}—{% endif %}</b></div>
+            <div><small>Şirket kutu</small><b>{{ "{:,.0f}".format(insight.company_unit) }}</b></div>
+            <div><small>Rakip kutu</small><b>{{ "{:,.0f}".format(insight.competitor_unit) }}</b></div>
+            <div><small>Toplam kutu pazar</small><b>{{ "{:,.0f}".format(insight.market_unit) }}</b></div>
+            <div><small>Kutu pazar payı</small><b>%{{ insight.share_percent }}</b></div>
+            <div><small>TR kutu payı farkı</small><b>{{ '+' if insight.unit_share_gap_to_national >= 0 else '' }}{{ insight.unit_share_gap_to_national }} puan</b></div>
+          </div>
+          <small class="exec-ai-action"><i class="bi bi-lightbulb-fill"></i><b>AI yönetim yorumu:</b> {{ insight.action }}</small>
         </button>
         {% endfor %}
       </div>
