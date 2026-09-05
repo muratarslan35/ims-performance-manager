@@ -13,6 +13,7 @@ from app.extensions import db
 from app.models import IMSUpload, Representative
 from app.services.dashboard_service import DashboardService
 from app.services.market_analysis_service import MarketAnalysisService
+from app.services.period_service import PeriodService
 from app.services.production_result_service import ProductionResultService
 from app.services.quarter_entitlement_service import QuarterEntitlementService
 from app.services.region_market_service import RegionMarketService
@@ -106,9 +107,9 @@ def market_analysis():
 @main_bp.route("/market-analysis/region/<path:region_key>")
 @login_required
 def market_analysis_region(region_key):
-    active = DashboardService()
-    year = request.args.get("year", active.year, type=int)
-    month = request.args.get("month", active.month, type=int)
+    active = PeriodService.get_active_period()
+    year = request.args.get("year", active["year"], type=int)
+    month = request.args.get("month", active["month"], type=int)
     try:
         snapshot = _region_manager_snapshot(region_key, year, month)
     except ValueError as exc:
