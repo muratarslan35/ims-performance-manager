@@ -2,18 +2,19 @@
 
 The dashboard's business calculations remain owned by ``DashboardService``.
 This service only persists an already-built payload and serves it back when the
-latest IMS / production source identity is still identical.  A small atomic
-JSON file is used instead of process-local RAM so all Gunicorn workers reuse the
-same ready payload after an import.
+latest IMS / production source identity is still identical. A small atomic JSON
+file is used instead of process-local RAM so all Gunicorn workers reuse the same
+ready payload after an import.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from flask import current_app
 from sqlalchemy import desc
@@ -44,6 +45,10 @@ class PersistentDashboardSnapshotService:
     def _path(cls, year: int, month: int) -> Path:
         root = Path(current_app.instance_path) / "dashboard_snapshots"
         return root / f"dashboard-{int(year):04d}-{int(month):02d}.json"
+
+    @classmethod
+    def _lock_path(cls, year: int, month: int) -> Path:
+        return cls._path(year, month).with_suffix(".lock")
 
     @classmethod
     def _json_ready(cls, value: Any) -> Any:
@@ -114,3 +119,30 @@ class PersistentDashboardSnapshotService:
             "production_upload_id": production_id,
             "path": str(path),
         }
+
+    @classmethod
+    def get_or_build(cls, year: int, month: int, builder: Callable[[], dict]) -> tuple[dict, bool]:
+        """Return a ready payload; allow only one process to perform a cold rebuild.
+
+        The first caller after an IMS/source identity change owns the file lock.
+        Other Gunicorn workers wait on that same lock, then read the newly
+        published payload instead of launching duplicate OLAP/AI/prime queries.
+        ``built`` is True only for the process that executed ``builder``.
+        """
+        active = cls.get_active(year, month)
+        if active is not None:
+            return active, False
+
+        lock_path = cls._lock_path(year, month)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                active = cls.get_active(year, month)
+                if active is not None:
+                    return active, False
+                payload = builder()
+                cls.publish(year, month, payload)
+                return payload, True
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
