@@ -19,6 +19,7 @@ from app.services.import_coordinator import ImportCoordinator
 from app.services.ims_import_service import IMSImportService
 from app.services.ims_progress_store import IMSProgressStore
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
+from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
 
 _PROGRESS_STAGES = {
@@ -201,6 +202,50 @@ class IMSImportQueue:
                     upload.file_name = job.file_name
                     upload.warning_message = "\n".join(warnings) or None
 
+                # Finalize the IMS source first, then build the read-only region
+                # set without holding the import write transaction. The worker is
+                # already a single consumer, so this adds no concurrent DB storm.
+                db.session.commit()
+                snapshot_result = {"status": "NOT_BUILT", "regions": 0}
+                try:
+                    set_progress(
+                        99,
+                        "region_snapshots",
+                        "Bölge analizleri hazırlanıyor",
+                        "Yeni IMS için kalıcı snapshot seti oluşturuluyor",
+                    )
+
+                    def snapshot_progress(done, total, region_name):
+                        current_job = db.session.get(IMSImportJob, job.id)
+                        if current_job is not None:
+                            current_job.heartbeat_at = datetime.utcnow()
+                            db.session.commit()
+                        set_progress(
+                            99,
+                            "region_snapshots",
+                            "Bölge analizleri hazırlanıyor",
+                            f"{done}/{total} · {region_name}",
+                        )
+
+                    snapshot_result = PersistentRegionSnapshotService.build_for_period(
+                        job.year,
+                        job.month,
+                        progress=snapshot_progress,
+                    )
+                except Exception as snapshot_exc:
+                    # Snapshot acceleration must never turn a valid IMS import
+                    # into a failed business-data import. The previous ACTIVE set
+                    # remains intact and runtime calculation is the safe fallback.
+                    current_app.logger.exception(
+                        "region_snapshot_build_failed upload_id=%s",
+                        result["upload_id"],
+                    )
+                    snapshot_result = {
+                        "status": "FAILED",
+                        "regions": 0,
+                        "error": str(snapshot_exc)[:500],
+                    }
+
                 completed_at = datetime.utcnow()
                 stats = dict(result.get("statistics") or {})
                 stats["competition_bulk_chunk_size"] = effective_chunk_size
@@ -208,11 +253,14 @@ class IMSImportQueue:
                 stats["detected_week_number"] = detected_week_number
                 stats["official_brick_spread_records"] = spread["records"]
                 stats["official_brick_spread_representatives"] = spread["representatives"]
+                stats["manager_region_snapshot_status"] = snapshot_result.get("status")
+                stats["manager_region_snapshot_regions"] = snapshot_result.get("regions", 0)
                 stats["background_job_seconds"] = (
                     round((completed_at - job.started_at).total_seconds(), 3)
                     if job.started_at is not None
                     else None
                 )
+                job = db.session.get(IMSImportJob, job.id)
                 job.ims_upload_id = result["upload_id"]
                 job.status = IMSImportJob.STATUS_COMPLETED
                 job.result_summary = json.dumps(stats, ensure_ascii=False, default=str)
