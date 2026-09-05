@@ -85,6 +85,11 @@ def test_complete_set_is_persisted_and_reused(monkeypatch):
         assert payload["report"]["region_key"] == "102"
         assert payload["market_analysis"]["region"] == "102"
 
+        pack = PersistentRegionSnapshotService.get_active_all(2026, 4)
+        assert set(pack) == {"101", "102"}
+        assert pack["101"]["report"]["region_key"] == "101"
+        assert pack["102"]["market_analysis"]["region"] == "102"
+
         reused = PersistentRegionSnapshotService.build_for_period(2026, 4)
         assert reused["status"] == "REUSED"
         assert reused["set_id"] == result["set_id"]
@@ -115,6 +120,8 @@ def test_previous_active_stays_visible_while_new_generation_is_building(monkeypa
 
         visible = PersistentRegionSnapshotService.get_active("101", 2026, 4)
         assert visible["report"]["region_key"] == "101"
+        pack = PersistentRegionSnapshotService.get_active_all(2026, 4)
+        assert set(pack) == {"101", "102"}
 
         db.session.execute(
             region_snapshot_sets.update().where(region_snapshot_sets.c.id == building_id).values(
@@ -123,6 +130,7 @@ def test_previous_active_stays_visible_while_new_generation_is_building(monkeypa
         )
         db.session.commit()
         assert PersistentRegionSnapshotService.get_active("101", 2026, 4) is None
+        assert PersistentRegionSnapshotService.get_active_all(2026, 4) == {}
 
 
 def test_failed_new_build_never_supersedes_previous_active(monkeypatch):
