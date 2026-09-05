@@ -127,26 +127,38 @@ class PersistentRegionSnapshotService:
         return json.loads(raw) if raw else None
 
     @classmethod
-    def get_active(cls, region_key, year, month):
-        """Return a durable snapshot without exposing a half-built generation.
+    def _payloads_from_set(cls, set_id):
+        """Read an entire published region generation in one SQL query."""
+        rows = db.session.execute(
+            sa.select(region_snapshots.c.region_key, region_snapshots.c.payload_json).where(
+                region_snapshots.c.set_id == int(set_id)
+            ).order_by(region_snapshots.c.region_key.asc())
+        ).all()
+        result = {}
+        for region_key, raw in rows:
+            try:
+                result[str(region_key)] = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        return result
 
-        Exact current-source ACTIVE is preferred. While that source is BUILDING,
-        the prior ACTIVE generation remains visible. If the current generation
-        failed (or has never been started), return None so the existing runtime
-        calculation path can provide current data rather than silently serving
-        stale content indefinitely.
+    @classmethod
+    def _visible_set_id(cls, year, month):
+        """Resolve the one complete generation that readers may use.
+
+        Exact current-source ACTIVE is preferred. If the current source is still
+        BUILDING, the prior ACTIVE generation remains visible. FAILED/missing
+        current sources return None so callers can use the compatibility path.
         """
         year, month = int(year), int(month)
         ims_id, production_id = cls.source_identity(year, month)
         if not ims_id:
             return None
-
         current = cls._existing_set(year, month, ims_id, production_id)
         if current and current.status == cls.STATUS_ACTIVE:
-            return cls._payload_from_set(current.id, region_key)
+            return int(current.id)
         if not current or current.status != cls.STATUS_BUILDING:
             return None
-
         previous = db.session.execute(
             sa.select(region_snapshot_sets.c.id).where(
                 region_snapshot_sets.c.year == year,
@@ -155,7 +167,23 @@ class PersistentRegionSnapshotService:
                 region_snapshot_sets.c.id != int(current.id),
             ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
         ).scalar()
-        return cls._payload_from_set(previous, region_key) if previous else None
+        return int(previous) if previous else None
+
+    @classmethod
+    def get_active(cls, region_key, year, month):
+        set_id = cls._visible_set_id(year, month)
+        return cls._payload_from_set(set_id, region_key) if set_id else None
+
+    @classmethod
+    def get_active_all(cls, year, month):
+        """Return every region from the visible generation with one payload query.
+
+        This powers the manager cockpit pack endpoint: after the page opens, all
+        region HTML can be rendered from durable snapshots without any region
+        performance/competition recomputation or one-request-per-region pattern.
+        """
+        set_id = cls._visible_set_id(year, month)
+        return cls._payloads_from_set(set_id) if set_id else {}
 
     @classmethod
     def build_for_period(
@@ -229,8 +257,6 @@ class PersistentRegionSnapshotService:
                 if progress:
                     progress(index, len(keys), str(report.get("region_name") or region_key))
 
-            # Atomic publication: readers keep the previous ACTIVE set until all
-            # regions for the new source have been persisted successfully.
             db.session.execute(
                 region_snapshot_sets.update().where(
                     region_snapshot_sets.c.year == year,

@@ -5,6 +5,8 @@
   let loadSequence = 0;
   const regionHtmlCache = new Map();
   const regionInflight = new Map();
+  let regionPackPromise = null;
+  let regionPackReady = false;
 
   function initAnnualChart(root) {
     if (typeof Chart === "undefined") return;
@@ -102,17 +104,43 @@
     return request;
   }
 
-  function canPrefetch() {
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (!connection) return true;
-    if (connection.saveData) return false;
-    return !/2g/.test(connection.effectiveType || "");
+  function hydratePack(pack) {
+    if (!pack || !pack.ready || !pack.regions) return false;
+    document.querySelectorAll("[data-manager-region-button]").forEach(button => {
+      const regionKey = button.dataset.managerRegionButton;
+      const html = pack.regions[regionKey];
+      if (html && button.dataset.url) regionHtmlCache.set(button.dataset.url, html);
+    });
+    regionPackReady = true;
+    document.documentElement.dataset.managerRegionPack = "ready";
+    return true;
   }
 
+  function ensureRegionPack() {
+    if (regionPackReady) return Promise.resolve(true);
+    if (regionPackPromise) return regionPackPromise;
+    const cockpit = document.querySelector(".manager-region-cockpit[data-region-pack-url]");
+    if (!cockpit || !cockpit.dataset.regionPackUrl) return Promise.resolve(false);
+
+    regionPackPromise = fetch(cockpit.dataset.regionPackUrl, {
+      headers: {"X-Requested-With": "fetch"},
+      credentials: "same-origin",
+      cache: "no-store"
+    }).then(async response => {
+      if (!response.ok) return false;
+      const pack = await response.json();
+      return hydratePack(pack);
+    }).catch(() => false).finally(() => {
+      if (!regionPackReady) regionPackPromise = null;
+    });
+    return regionPackPromise;
+  }
+
+  // Compatibility name retained for the existing cockpit contract. Prefetching
+  // now means warming the single all-region pack, never one request per region.
   function prefetchRegion(button) {
-    if (!button || !button.dataset.url || !canPrefetch()) return;
-    if (button.classList.contains("active") || regionHtmlCache.has(button.dataset.url)) return;
-    fetchRegionHtml(button.dataset.url).catch(() => {});
+    if (!button) return;
+    ensureRegionPack();
   }
 
   function renderRegion(target, html) {
@@ -128,7 +156,12 @@
     document.querySelectorAll("[data-manager-region-button]").forEach(item => item.classList.remove("active"));
     button.classList.add("active");
 
-    const cached = regionHtmlCache.get(button.dataset.url);
+    let cached = regionHtmlCache.get(button.dataset.url);
+    if (!cached) {
+      await ensureRegionPack();
+      cached = regionHtmlCache.get(button.dataset.url);
+    }
+    if (sequence !== loadSequence) return;
     if (cached) {
       renderRegion(target, cached);
       return;
@@ -204,5 +237,6 @@
     }
     applyPeriod(host);
     initAnnualChart(host);
+    ensureRegionPack();
   });
 })();
