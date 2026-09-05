@@ -129,3 +129,15 @@ else
   echo "SERVICE_ACTIVATION|worker=preserved|mode=$release_mode"
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
+
+# A runtime deploy is not accepted until the shared dashboard read model is
+# proven ready for the exact current IMS/production source identity. Import and
+# heavy modes wait for the restarted worker warm-up; backend mode verifies the
+# already-running worker/shared snapshot. UI-only releases do not touch the
+# dashboard data path and therefore keep the fast UI deploy behavior.
+if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+  echo "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
+  PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+    "$ims_path/venv/bin/python" "$ims_path/verify_dashboard_snapshot_production.py" \
+    --wait-seconds 120 --poll-seconds 1 --reads 5 --max-read-seconds 2.0
+fi
