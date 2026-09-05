@@ -1,8 +1,8 @@
 """Single-process worker for persistent IMS import jobs.
 
-Worker restarts also re-run the latest durable region-snapshot warm-up. This is
-intentional: import-mode production activation is the recovery path after a
-snapshot persistence fix, while queued IMS imports still keep priority.
+Worker restarts also re-run durable read-model warm-ups. Import jobs still keep
+priority; once a workbook finishes, the national dashboard is rebuilt once and
+atomically shared with every Gunicorn worker.
 """
 import signal
 import time
@@ -10,9 +10,13 @@ import time
 from sqlalchemy import desc
 
 from app import create_app
+from app.cache.dashboard_cache import DashboardCache
+from app.constants.dashboard_constants import DashboardConstants
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
+from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
+from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
 
@@ -22,6 +26,41 @@ stopping = False
 def _stop(*_args):
     global stopping
     stopping = True
+
+
+def _warm_dashboard_snapshot(app, year, month):
+    """Build/reuse one canonical dashboard payload across all processes."""
+    started = time.monotonic()
+    try:
+        service = DashboardService(year=int(year), month=int(month))
+        cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
+            year=int(year), month=int(month), rep_id=None
+        )
+
+        def rebuild():
+            DashboardCache().invalidate(cache_key)
+            return service.run()
+
+        _payload, built = PersistentDashboardSnapshotService.get_or_build(
+            year, month, rebuild
+        )
+        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+        result = {
+            "status": "ACTIVE" if built else "REUSED",
+            "ims_upload_id": ims_id,
+            "production_upload_id": production_id,
+        }
+        app.logger.info(
+            "dashboard_snapshot_warm status=%s year=%s month=%s ims_upload_id=%s seconds=%.3f",
+            result["status"], year, month, ims_id, time.monotonic() - started,
+        )
+        return result
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("dashboard_snapshot_warm_failed year=%s month=%s", year, month)
+        return {"status": "FAILED"}
+    finally:
+        db.session.remove()
 
 
 def _backfill_latest_region_snapshots(app):
@@ -55,6 +94,7 @@ def _backfill_latest_region_snapshots(app):
             result.get("status"), latest.year, latest.month,
             result.get("regions", 0), result.get("set_id", 0),
         )
+        _warm_dashboard_snapshot(app, latest.year, latest.month)
     except Exception:
         db.session.rollback()
         app.logger.exception(
@@ -78,7 +118,13 @@ def main():
                 db.session.remove()
                 time.sleep(2)
                 continue
+            job_id = job.id
+            job_year = job.year
+            job_month = job.month
             IMSImportQueue.process(job)
+            completed = db.session.get(IMSImportJob, job_id)
+            if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
+                _warm_dashboard_snapshot(app, job_year, job_month)
             db.session.remove()
 
 
