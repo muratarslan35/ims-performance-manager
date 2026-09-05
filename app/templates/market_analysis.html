@@ -6,6 +6,7 @@
 <link href="{{ url_for('static', filename='css/manager-region-cockpit.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/executive-market-cockpit.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/market-analysis-readability.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/market-analysis-exec-clarity.css') }}" rel="stylesheet">
 {% endblock %}
 {% block content %}
 {% set market=payload.competition_analysis|default({},true) %}
@@ -49,7 +50,7 @@
   </div>
   <div class="table-responsive">
     <table class="table market-analysis-table mb-0">
-      <thead><tr><th>Ürün</th><th>Şirket IMS</th><th>Rakip alanı</th><th>Toplam pazar</th><th>Görsel dağılım</th><th>Şirket payı</th><th>Veri durumu</th></tr></thead>
+      <thead><tr><th>Ürün</th><th>Şirket IMS</th><th>Rakip alanı</th><th>Toplam pazar</th><th>Görsel dağılım</th><th>Şirket payı</th></tr></thead>
       <tbody>
       {% for item in market.groups|default([],true) %}
         <tr>
@@ -64,10 +65,9 @@
             {% else %}<span class="market-waiting">Rekabet verisi bekleniyor</span>{% endif %}
           </td>
           <td>{% if item.market_available %}<span class="share-pill">%{{ item.company_share_percent|default(0,true) }}</span>{% else %}<span class="market-na">—</span>{% endif %}</td>
-          <td><span class="data-status {{ 'ready' if item.market_available else 'ims-only' }}">{{ item.data_status }}</span></td>
         </tr>
       {% else %}
-        <tr><td colspan="7" class="text-center text-secondary py-4">Seçili dönem için şirket IMS verisi bulunmuyor.</td></tr>
+        <tr><td colspan="6" class="text-center text-secondary py-4">Seçili dönem için şirket IMS verisi bulunmuyor.</td></tr>
       {% endfor %}
       </tbody>
     </table>
