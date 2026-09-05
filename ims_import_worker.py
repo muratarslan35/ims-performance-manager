@@ -54,6 +54,18 @@ def _warm_dashboard_snapshot(app, year, month):
             "dashboard_snapshot_warm status=%s year=%s month=%s ims_upload_id=%s seconds=%.3f",
             result["status"], year, month, ims_id, time.monotonic() - started,
         )
+
+        read_started = time.perf_counter()
+        verified = PersistentDashboardSnapshotService.get_active(year, month)
+        read_seconds = time.perf_counter() - read_started
+        if not isinstance(verified, dict) or not verified:
+            raise RuntimeError("dashboard snapshot warm-up completed but active payload is unavailable")
+        app.logger.info(
+            "dashboard_snapshot_acceptance status=PASS year=%s month=%s ims_upload_id=%s "
+            "production_upload_id=%s read_seconds=%.4f",
+            year, month, ims_id, production_id, read_seconds,
+        )
+        result["read_seconds"] = read_seconds
         return result
     except Exception:
         db.session.rollback()
