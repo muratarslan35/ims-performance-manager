@@ -104,6 +104,26 @@
     return request;
   }
 
+  function markPackReadyIfComplete() {
+    const buttons = Array.from(document.querySelectorAll("[data-manager-region-button]"));
+    if (!buttons.length) return false;
+    const ready = buttons.every(button => button.dataset.url && regionHtmlCache.has(button.dataset.url));
+    if (ready) {
+      regionPackReady = true;
+      document.documentElement.dataset.managerRegionPack = "ready";
+    }
+    return ready;
+  }
+
+  function hydrateEmbeddedRegions() {
+    document.querySelectorAll("template[data-manager-region-preloaded]").forEach(template => {
+      const regionKey = template.dataset.managerRegionPreloaded;
+      const button = document.querySelector(`[data-manager-region-button="${regionKey}"]`);
+      if (button && button.dataset.url) regionHtmlCache.set(button.dataset.url, template.innerHTML);
+    });
+    return markPackReadyIfComplete();
+  }
+
   function hydratePack(pack) {
     if (!pack || !pack.ready || !pack.regions) return false;
     document.querySelectorAll("[data-manager-region-button]").forEach(button => {
@@ -111,9 +131,7 @@
       const html = pack.regions[regionKey];
       if (html && button.dataset.url) regionHtmlCache.set(button.dataset.url, html);
     });
-    regionPackReady = true;
-    document.documentElement.dataset.managerRegionPack = "ready";
-    return true;
+    return markPackReadyIfComplete();
   }
 
   function ensureRegionPack() {
@@ -128,18 +146,15 @@
       cache: "no-store"
     }).then(async response => {
       if (!response.ok) return false;
-      const pack = await response.json();
-      return hydratePack(pack);
+      return hydratePack(await response.json());
     }).catch(() => false).finally(() => {
       if (!regionPackReady) regionPackPromise = null;
     });
     return regionPackPromise;
   }
 
-  // Compatibility name retained for the existing cockpit contract. Prefetching
-  // now means warming the single all-region pack, never one request per region.
   function prefetchRegion(button) {
-    if (!button) return;
+    if (!button || regionPackReady) return;
     ensureRegionPack();
   }
 
@@ -231,12 +246,15 @@
   document.addEventListener("DOMContentLoaded", () => {
     const host = document.getElementById("managerRegionSnapshotHost");
     if (!host) return;
+
+    hydrateEmbeddedRegions();
     const activeButton = document.querySelector("[data-manager-region-button].active");
     if (activeButton && activeButton.dataset.url && host.querySelector(".manager-region-snapshot")) {
       regionHtmlCache.set(activeButton.dataset.url, host.innerHTML);
     }
+    markPackReadyIfComplete();
     applyPeriod(host);
     initAnnualChart(host);
-    ensureRegionPack();
+    if (!regionPackReady) ensureRegionPack();
   });
 })();

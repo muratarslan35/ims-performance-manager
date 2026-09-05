@@ -74,6 +74,9 @@
 </div>
 
 <section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi" data-region-pack-url="{{ url_for('main.market_analysis_regions_pack', year=selected_year, month=selected_month) }}">
+  {% for region_key, region_html in embedded_region_html|default({}, true)|dictsort %}
+    <template data-manager-region-preloaded="{{ region_key }}">{{ region_html|safe }}</template>
+  {% endfor %}
   <div class="manager-section-head mb-3">
     <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3><p>Tüm bölge sayfalarındaki mevcut performans ve rekabet verilerini tek ekranda açar. Yeni IMS geldiğinde hazır bölge snapshot paketi otomatik yenilenir.</p></div>
     <span>{{ region_rows|length }} bölge</span>

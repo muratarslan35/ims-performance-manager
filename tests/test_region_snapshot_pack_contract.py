@@ -4,17 +4,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_manager_region_cockpit_uses_single_snapshot_pack():
+def test_manager_region_cockpit_uses_preloaded_snapshot_pack():
     template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
     javascript = (ROOT / "app/static/js/manager-region-cockpit.js").read_text(encoding="utf-8")
     routes = (ROOT / "app/routes/__init__.py").read_text(encoding="utf-8")
+
+    assert "data-manager-region-preloaded" in template
+    assert "embedded_region_html" in template
+    assert "hydrateEmbeddedRegions" in javascript
+    assert "markPackReadyIfComplete" in javascript
+    assert "get_active_all" in routes
+    assert "embedded_region_html" in routes
+    assert 'route("/market-analysis/regions-pack")' in routes
+
+
+def test_single_pack_endpoint_remains_safe_fallback():
+    template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
+    javascript = (ROOT / "app/static/js/manager-region-cockpit.js").read_text(encoding="utf-8")
 
     assert "data-region-pack-url" in template
     assert "market_analysis_regions_pack" in template
     assert "ensureRegionPack" in javascript
     assert "regionPackReady" in javascript
-    assert "get_active_all" in routes
-    assert 'route("/market-analysis/regions-pack")' in routes
+    assert "fetchRegionHtml" in javascript
+    assert "prefetchRegion" in javascript
 
 
 def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
@@ -22,3 +35,11 @@ def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
     assert "_backfill_latest_region_snapshots" in worker
     assert "STATUS_QUEUED" in worker
     assert "PersistentRegionSnapshotService.build_for_period" in worker
+
+
+def test_import_and_heavy_deploy_build_snapshot_before_web_activation():
+    installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
+    backfill_pos = installer.index("scripts/backfill_active_region_snapshots.py")
+    web_activation_pos = installer.index("if sudo systemctl is-active --quiet \"$service_name\"")
+    assert backfill_pos < web_activation_pos
+    assert 'REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation' in installer
