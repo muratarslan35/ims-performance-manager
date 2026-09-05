@@ -11,25 +11,23 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 @dashboard_bp.route("/")
 @login_required
 def index():
-    """Serve the ready dashboard snapshot shared by every Gunicorn worker.
-
-    Business calculations remain inside DashboardService.  A durable snapshot
-    created after IMS import lets login traffic read the same ready payload
-    instead of making each worker rebuild the national dashboard independently.
-    """
+    """Serve one durable dashboard read-model across all Gunicorn workers."""
     service = DashboardService()
-    payload = PersistentDashboardSnapshotService.get_active(service.year, service.month)
-    if payload is None:
-        # A source-identity change means an old per-process memory entry must not
-        # win the fallback. Rebuild once from canonical services and atomically
-        # publish it for all workers and following users.
-        cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
-            year=service.year,
-            month=service.month,
-            rep_id=service.rep_id,
-        )
-        DashboardCache().invalidate(cache_key)
-        payload = service.run()
-        PersistentDashboardSnapshotService.publish(service.year, service.month, payload)
+    cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
+        year=service.year,
+        month=service.month,
+        rep_id=service.rep_id,
+    )
 
+    def rebuild():
+        # Source identity changed, therefore a process-local payload with the old
+        # data must not win the fallback. Canonical calculations stay untouched.
+        DashboardCache().invalidate(cache_key)
+        return service.run()
+
+    payload, _built = PersistentDashboardSnapshotService.get_or_build(
+        service.year,
+        service.month,
+        rebuild,
+    )
     return render_template("dashboard.html", payload=payload)
