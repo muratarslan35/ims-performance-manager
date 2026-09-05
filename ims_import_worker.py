@@ -1,8 +1,8 @@
 """Single-process worker for persistent IMS import jobs.
 
 Worker restarts also re-run durable read-model warm-ups. Import jobs still keep
-priority; once a workbook finishes, the national dashboard is rebuilt once in
-the worker and atomically shared with every Gunicorn worker.
+priority; once a workbook finishes, the national dashboard is rebuilt once and
+atomically shared with every Gunicorn worker.
 """
 import signal
 import time
@@ -29,19 +29,30 @@ def _stop(*_args):
 
 
 def _warm_dashboard_snapshot(app, year, month):
-    """Build one canonical dashboard payload and publish it cross-worker."""
+    """Build/reuse one canonical dashboard payload across all processes."""
     started = time.monotonic()
     try:
+        service = DashboardService(year=int(year), month=int(month))
         cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
             year=int(year), month=int(month), rep_id=None
         )
-        DashboardCache().invalidate(cache_key)
-        payload = DashboardService(year=int(year), month=int(month)).run()
-        result = PersistentDashboardSnapshotService.publish(year, month, payload)
+
+        def rebuild():
+            DashboardCache().invalidate(cache_key)
+            return service.run()
+
+        _payload, built = PersistentDashboardSnapshotService.get_or_build(
+            year, month, rebuild
+        )
+        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+        result = {
+            "status": "ACTIVE" if built else "REUSED",
+            "ims_upload_id": ims_id,
+            "production_upload_id": production_id,
+        }
         app.logger.info(
             "dashboard_snapshot_warm status=%s year=%s month=%s ims_upload_id=%s seconds=%.3f",
-            result.get("status"), year, month, result.get("ims_upload_id", 0),
-            time.monotonic() - started,
+            result["status"], year, month, ims_id, time.monotonic() - started,
         )
         return result
     except Exception:
