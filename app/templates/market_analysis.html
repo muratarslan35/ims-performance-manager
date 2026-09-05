@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Türkiye Pazar Analizi{% endblock %}
 {% block page_title %}Türkiye Pazar Analizi{% endblock %}
-{% block styles %}<link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">{% endblock %}
+{% block styles %}
+<link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/manager-region-cockpit.css') }}" rel="stylesheet">
+{% endblock %}
 {% block content %}
 {% set market=payload.competition_analysis|default({},true) %}
-{% set regions=payload.region_realization|default([],true) %}
 
 <div class="market-analysis-hero mb-4">
   <div>
@@ -71,8 +73,47 @@
   <div class="market-table-note"><i class="bi bi-shield-check"></i><span>Kaynak haftası değiştiğinde bilgi bandı otomatik güncellenir. Güncel IMS haftasında rekabet verisi yoksa son kullanılabilir aynı ay haftası gösterilir; veri yokluğu sıfır pazar olarak yorumlanmaz.</span></div>
 </div>
 
-<div class="row g-4 mb-4">
-  <div class="col-xl-7"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Bölgesel Realizasyon Durumu</h3></div><div class="region-analysis-list">{% for region in regions %}<div class="region-analysis-row"><div><strong>{{ region.code }} {{ region.city }}</strong><span>{{ "{:,.0f}".format(region.tl_actual) }} ₺ IMS · {{ "{:,.0f}".format(region.unit_actual) }} kutu</span></div><b class="{% if region.percent>=70 %}good{% else %}risk{% endif %}">%{{ region.percent }}</b></div>{% else %}<div class="empty-state"><p>Bölgesel veri bulunmuyor.</p></div>{% endfor %}</div></div></div>
-  <div class="col-xl-5"><div class="card shadow-sm h-100"><div class="card-header"><h3 class="card-title">Yönetici Okuma Notu</h3></div><div class="card-body market-manager-note"><i class="bi bi-info-circle"></i><p>Bu alan karar verirken veri haftasını görünür tutar. Güncel rekabet dosyası geldiyse güncel hafta kullanılır; gelmediyse aynı ay içindeki son gerçek rekabet haftası korunur. Her ürün tek satırdır ve eksik rekabet verisi yapay sıfırla doldurulmaz.</p></div></div></div>
-</div>
+<section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi">
+  <div class="manager-section-head mb-3">
+    <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3><p>Tüm bölge sayfalarındaki mevcut performans ve rekabet verilerini tek ekranda açar. Yeni IMS geldiğinde snapshot anahtarı otomatik değişir.</p></div>
+    <span>{{ region_rows|length }} bölge</span>
+  </div>
+  <div class="manager-period-toolbar" role="tablist" aria-label="Dönem seçimi">
+    <button type="button" class="manager-period-button active" data-manager-period-button="monthly">1 Aylık</button>
+    <button type="button" class="manager-period-button" data-manager-period-button="quarterly">3 Aylık</button>
+    <button type="button" class="manager-period-button" data-manager-period-button="half_year">6 Aylık</button>
+    <button type="button" class="manager-period-button" data-manager-period-button="yearly">12 Aylık</button>
+  </div>
+
+  <div class="manager-region-toolbar">
+    <aside class="manager-region-sidebar">
+      <h3>Bölgeler</h3>
+      <div class="manager-region-list">
+      {% for region in region_rows %}
+        {% set code=region.code|string %}
+        <button type="button" class="manager-region-button {% if code == selected_region|string %}active{% endif %}" data-manager-region-button="{{ code }}" data-url="{{ url_for('main.market_analysis_region', region_key=code, year=selected_year, month=selected_month) }}">
+          {{ region.code }} {{ region.city }}
+          <span>%{{ region.percent }} · {{ "{:,.0f}".format(region.tl_actual) }} ₺ IMS</span>
+        </button>
+      {% else %}
+        <div class="manager-region-empty"><span>Bölge listesi bulunmuyor.</span></div>
+      {% endfor %}
+      </div>
+    </aside>
+
+    <main class="manager-region-main" id="managerRegionSnapshotHost">
+      {% if initial_region_snapshot %}
+        {% set report=initial_region_snapshot.report %}
+        {% set market_analysis=initial_region_snapshot.market_analysis %}
+        {% include "partials/market_region_workspace.html" %}
+      {% else %}
+        <div class="manager-region-empty"><i class="bi bi-map"></i><strong>Bölge seçin</strong><span>Soldaki listeden bir bölge seçildiğinde mevcut bölge ekranı burada açılır.</span></div>
+      {% endif %}
+    </main>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/manager-region-cockpit.js') }}"></script>
 {% endblock %}
