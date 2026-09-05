@@ -1,0 +1,121 @@
+<div class="manager-region-snapshot" data-region-snapshot="{{ report.region_key }}">
+  <div class="manager-region-titlebar">
+    <div>
+      <span>BÖLGESEL GÜNCEL DURUM · AYNI KAYNAK SERVİSLERİ</span>
+      <h2>{{ report.region_name }} Bölge Görünümü</h2>
+      <p>{{ "%02d"|format(report.month) }}/{{ report.year }} aktif dönem · {{ report.active_count }} çalışan{% if report.vacant_count %} · {{ report.vacant_count }} boş kadro{% endif %}</p>
+    </div>
+    <div class="manager-region-badge"><i class="bi bi-database-check"></i><span>IMS snapshot</span></div>
+  </div>
+
+  <section class="manager-region-card manager-annual-card">
+    <div class="manager-section-head">
+      <div><h3><i class="bi bi-graph-up"></i> 12 Aylık Bölge Realizasyonu</h3><p>Bölge değiştiğinde aynı resmi bölge kaynağından otomatik yenilenir.</p></div>
+      <span>Ay bazında %</span>
+    </div>
+    <div class="manager-annual-chart"><canvas data-manager-annual-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div>
+  </section>
+
+  {% for key in ['monthly','quarterly','half_year','yearly'] %}
+  {% set period=report.periods[key] %}
+  <section class="manager-period-panel {% if loop.first %}active{% endif %}" data-manager-period-panel="{{ key }}">
+    <div class="manager-region-kpis">
+      <div class="manager-kpi target"><span>{{ period.label|upper }} HEDEF</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>{{ period.month_count }} aylık hedef toplamı</small></div>
+      <div class="manager-kpi actual"><span>{{ period.label|upper }} GERÇEKLEŞEN</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>IMS gerçekleşen satış toplamı</small></div>
+      <div class="manager-kpi realization"><span>{{ period.label|upper }} REALİZASYON</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none %}{{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {% if period.gap_tl > 0 %}hedef açığı{% else %}hedef üstü{% endif %}{% else %}Veri bekleniyor{% endif %}</small></div>
+    </div>
+
+    <div class="manager-region-card manager-product-card">
+      <div class="manager-section-head"><div><h3><i class="bi bi-capsule-pill"></i> Ürün Bazlı {{ period.label }} Realizasyon</h3><p>Bölge sayfasındaki resmi hedef ve gerçekleşen kaynakları birebir kullanır.</p></div><span>{{ period.products|length }} ürün</span></div>
+      <div class="table-responsive">
+        <table class="table manager-product-table mb-0">
+          <thead><tr><th>Ürün</th><th>Hedef ₺</th><th>Gerçekleşen ₺</th><th>Kutu farkı</th><th>₺ farkı</th><th>Realizasyon</th></tr></thead>
+          <tbody>
+          {% for item in period.products %}
+            <tr>
+              <td><strong>{{ item.product_name }}</strong>{% if item.quota_exit %}<small class="quota-note">Kota çıkışı</small>{% endif %}</td>
+              <td>{{ "{:,.0f}".format(item.target_tl) }} ₺</td>
+              <td><b>{% if item.actual_tl is not none %}{{ "{:,.0f}".format(item.actual_tl) }} ₺{% else %}—{% endif %}</b></td>
+              <td>{% if item.unit_difference is not none %}{{ "{:,.0f}".format(item.unit_difference|abs) }} kutu{% else %}—{% endif %}</td>
+              <td>{% if item.gap_tl is not none %}{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺{% else %}—{% endif %}</td>
+              <td>{% if item.realization_percent is not none %}<span class="manager-realization-pill">%{{ item.realization_percent }}</span>{% else %}—{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün verisi bulunmuyor.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="manager-region-market">
+    <div class="manager-market-head">
+      <div><span>BÖLGESEL REKABET VE PAZAR MERKEZİ</span><h3>{{ report.region_name }} Bölgesi Ürün ve Rakip Analizi</h3><p>Mevcut RegionMarketService verisi değiştirilmeden gösterilir.</p></div>
+      <div class="manager-market-period">{{ "%02d"|format(report.month) }}/{{ report.year }}</div>
+    </div>
+    {% if market_analysis.has_data %}
+    <div class="manager-market-kpis">
+      <div><span>Bölgesel şirket toplam kutu çıkışı</span><strong>{{ "{:,.0f}".format(market_analysis.totals.effective_company_unit) }}</strong></div>
+      <div><span>Bölgesel rakip toplam kutu çıkışı</span><strong>{{ "{:,.0f}".format(market_analysis.totals.competitor_unit) }}</strong></div>
+      <div><span>Bölgesel toplam kutu pazarı</span><strong>{{ "{:,.0f}".format(market_analysis.totals.market_unit) }}</strong></div>
+      <div><span>Bölgesel şirket pazar payı</span><strong>%{{ market_analysis.totals.share_percent }}</strong></div>
+    </div>
+
+    <div class="manager-market-products">
+      <nav class="manager-product-nav">
+        {% for row in market_analysis.rows %}
+        <button type="button" class="manager-market-product-tab {% if loop.first %}active{% endif %}" data-market-product-tab="{{ row.product_id }}">{{ row.product_name }} <span>· %{{ row.share_percent }}</span></button>
+        {% endfor %}
+      </nav>
+      <div class="manager-product-panes">
+        {% for row in market_analysis.rows %}
+        <div class="manager-market-product-pane {% if loop.first %}active{% endif %}" data-market-product-pane="{{ row.product_id }}">
+          <div class="manager-market-metrics">
+            <div><span>Hedef kutu</span><b>{{ "{:,.0f}".format(row.target_unit) }}</b></div>
+            <div><span>Şirket çıkışı</span><b>{{ "{:,.0f}".format(row.company_unit) }}</b></div>
+            <div><span>Rakip çıkışı</span><b>{{ "{:,.0f}".format(row.competitor_unit) }}</b></div>
+            <div><span>Hedef realizasyonu</span><b>%{{ row.realization_percent }}</b></div>
+            <div><span>Pazar payı</span><b>%{{ row.share_percent }}</b></div>
+          </div>
+          <div class="table-responsive manager-rival-table-wrap">
+            <table class="table mb-0"><thead><tr><th>Rakip ürün</th><th>Kutu çıkışı</th><th>Toplam pazardaki payı</th></tr></thead><tbody>
+            {% for rival in row.rivals %}<tr><td>{{ rival.name }}</td><td>{{ "{:,.0f}".format(rival.unit) }} adet</td><td>%{{ rival.market_share_percent }}</td></tr>{% else %}<tr><td colspan="3" class="text-secondary">Rakip ürün kaydı yok.</td></tr>{% endfor %}
+            </tbody></table>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="manager-rival-city-card">
+      <div class="manager-section-head"><div><h3><i class="bi bi-geo-alt-fill"></i> Rakip Ürünlerin İl Bazlı Çıkış Analizi</h3><p>Ürün grubu ve rakip seçimine göre mevcut il kırılımı.</p></div></div>
+      <div class="manager-rival-grid">
+        <nav class="manager-rival-group-nav">
+          {% for group in market_analysis.rival_groups %}
+          <button type="button" class="manager-rival-group-tab {% if group.product_id == market_analysis.default_rival_group_id %}active{% endif %}" data-rival-group-tab="{{ group.product_id }}">{{ group.product_name }}<span>{{ group.rivals|length }} rakip · {{ "{:,.0f}".format(group.total_unit) }} kutu</span></button>
+          {% endfor %}
+        </nav>
+        <div class="manager-rival-product-lists">
+          {% for group in market_analysis.rival_groups %}
+          <nav class="manager-rival-product-nav {% if group.product_id == market_analysis.default_rival_group_id %}active{% endif %}" data-rival-product-nav="{{ group.product_id }}">
+            {% for rival in group.rivals %}<button type="button" class="manager-rival-product-tab {% if rival.pane_key == market_analysis.default_rival_key %}active{% endif %}" data-rival-product-tab="{{ rival.pane_key }}">{{ rival.name }}<span>{{ "{:,.0f}".format(rival.unit) }} kutu</span></button>{% else %}<span class="manager-rival-empty">Rakip kayıt yok.</span>{% endfor %}
+          </nav>
+          {% endfor %}
+        </div>
+        <div class="manager-rival-panes">
+          {% for rival in market_analysis.rival_rows %}
+          <div class="manager-rival-pane {% if rival.pane_key == market_analysis.default_rival_key %}active{% endif %}" data-rival-pane="{{ rival.pane_key }}">
+            <div class="manager-rival-summary"><div><span>{{ rival.name }} · bölgesel toplam çıkış</span><strong>{{ "{:,.0f}".format(rival.unit) }} kutu</strong></div><div><span>{{ rival.product_name }} grubu pazar payı</span><strong>%{{ rival.share_percent }}</strong></div></div>
+            <div class="table-responsive"><table class="table mb-0"><thead><tr><th>İl</th><th>Rakip ürün kutu çıkışı</th><th>İldeki ürün grubu pazarı</th><th>Pay</th></tr></thead><tbody>{% for city in rival.cities %}<tr><td><b>{{ city.city }}</b></td><td>{{ "{:,.0f}".format(city.unit) }} kutu</td><td>{{ "{:,.0f}".format(city.market_unit) }} kutu</td><td>%{{ city.share_percent }}</td></tr>{% else %}<tr><td colspan="4" class="text-secondary">İl kırılımı bulunmuyor.</td></tr>{% endfor %}</tbody></table></div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+      <div class="manager-region-empty"><i class="bi bi-database-exclamation"></i><strong>Bu bölge için rekabet verisi bulunmuyor</strong><span>Yeni IMS rekabet verisi geldiğinde snapshot otomatik yenilenecektir.</span></div>
+    {% endif %}
+  </section>
+</div>
