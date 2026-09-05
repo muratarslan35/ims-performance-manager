@@ -33,12 +33,12 @@
           <tbody>
           {% for item in period.products %}
             <tr>
-              <td><strong>{{ item.product_name }}</strong>{% if item.quota_exit %}<small class="quota-note">Kota çıkışı</small>{% endif %}</td>
+              <td><strong>{{ item.product_name }}</strong>{% if key == 'monthly' and item.quota_exit %}<small class="quota-note">Kota çıkışı</small>{% endif %}</td>
               <td>{{ "{:,.0f}".format(item.target_tl) }} ₺</td>
               <td><b>{% if item.actual_tl is not none %}{{ "{:,.0f}".format(item.actual_tl) }} ₺{% else %}—{% endif %}</b></td>
-              <td>{% if item.unit_difference is not none %}{{ "{:,.0f}".format(item.unit_difference|abs) }} kutu{% else %}—{% endif %}</td>
-              <td>{% if item.gap_tl is not none %}{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺{% else %}—{% endif %}</td>
-              <td>{% if item.realization_percent is not none %}<span class="manager-realization-pill">%{{ item.realization_percent }}</span>{% else %}—{% endif %}</td>
+              <td>{% if item.unit_difference is not none %}<span class="manager-delta {% if item.unit_difference > 0 %}positive{% elif item.unit_difference < 0 %}negative{% else %}neutral{% endif %}">{{ "{:,.0f}".format(item.unit_difference|abs) }} kutu</span>{% else %}—{% endif %}</td>
+              <td>{% if item.gap_tl is not none %}<span class="manager-delta {% if item.gap_tl < 0 %}positive{% elif item.gap_tl > 0 %}negative{% else %}neutral{% endif %}">{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺</span>{% else %}—{% endif %}</td>
+              <td>{% if item.realization_percent is not none %}<span class="manager-realization-pill {% if item.realization_percent >= 90 %}good{% elif item.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ item.realization_percent }}</span>{% else %}—{% endif %}</td>
             </tr>
           {% else %}
             <tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün verisi bulunmuyor.</td></tr>

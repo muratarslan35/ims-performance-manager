@@ -27,11 +27,40 @@ def test_region_workspace_reuses_existing_region_performance_and_market_shapes()
     assert "market_analysis.rival_groups" in partial
 
 
-def test_region_cockpit_switches_period_locally_and_region_with_one_fetch():
+def test_quota_badge_is_visible_only_in_monthly_panel_without_changing_values():
+    partial = Path("app/templates/partials/market_region_workspace.html").read_text(encoding="utf-8")
+
+    assert "key == 'monthly' and item.quota_exit" in partial
+    assert "item.target_tl" in partial
+    assert "item.actual_tl" in partial
+    assert "item.unit_difference" in partial
+    assert "item.gap_tl" in partial
+
+
+def test_product_realization_and_deltas_use_region_status_colors():
+    partial = Path("app/templates/partials/market_region_workspace.html").read_text(encoding="utf-8")
+    css = Path("app/static/css/manager-region-cockpit.css").read_text(encoding="utf-8")
+
+    assert "item.realization_percent >= 90" in partial
+    assert "item.realization_percent >= 70" in partial
+    assert "item.unit_difference > 0" in partial
+    assert "item.gap_tl < 0" in partial
+    assert ".manager-realization-pill.good" in css
+    assert ".manager-realization-pill.watch" in css
+    assert ".manager-realization-pill.risk" in css
+    assert ".manager-delta.positive" in css
+    assert ".manager-delta.negative" in css
+
+
+def test_region_cockpit_switches_period_locally_and_reuses_browser_snapshot_cache():
     script = Path("app/static/js/manager-region-cockpit.js").read_text(encoding="utf-8")
 
     assert "activePeriod" in script
-    assert "fetch(button.dataset.url" in script
+    assert "regionHtmlCache" in script
+    assert "regionInflight" in script
+    assert "fetchRegionHtml" in script
+    assert "prefetchRegion" in script
+    assert "loadSequence" in script
     assert "data-manager-period-panel" in script
     assert "initAnnualChart" in script
     assert "Chart.getChart" in script
