@@ -1,6 +1,6 @@
 """Executive Türkiye market cockpit assembled from already-built region snapshots.
 
-This service intentionally performs no database queries.  It consumes the durable
+This service intentionally performs no database queries. It consumes the durable
 ACTIVE region snapshot generation plus the existing national MarketAnalysisService
 payload and converts those canonical read models into a general-manager view.
 No target, production, IMS or competition precedence is recalculated here.
@@ -17,6 +17,7 @@ class ExecutiveMarketCockpitService:
         ("half_year", "6 Aylık"),
         ("yearly", "12 Aylık"),
     )
+    PERIOD_LABELS = dict(PERIODS)
 
     @staticmethod
     def _number(value):
@@ -36,6 +37,66 @@ class ExecutiveMarketCockpitService:
             for row in (market or {}).get("groups", [])
             if row.get("company_product")
         }
+
+    @classmethod
+    def _regional_ai_insights(cls, period_key, region_cards):
+        """Create deterministic region management insights from the same snapshot metrics.
+
+        This is deliberately a read-model interpretation layer: it does not query the
+        database, predict missing values, or change target/actual/share calculations.
+        """
+        period_label = cls.PERIOD_LABELS.get(period_key, period_key)
+        insights = []
+        for row in region_cards:
+            realization = row.get("realization_percent")
+            share = cls._number(row.get("share_percent"))
+            gap = cls._number(row.get("unit_share_gap_to_national"))
+            if realization is None:
+                signal = "Veri bekleniyor"
+                tone = "neutral"
+                action = "Seçili dönem gerçekleşmesi tamamlandığında bölgesel yorum otomatik güncellenecek."
+            elif realization >= 100 and gap >= 0:
+                signal = "Hedef üstü · pay avantajlı"
+                tone = "strong"
+                action = "Mevcut üstünlüğü korurken yüksek payın sürdürülebilirliğini rakip baskısıyla birlikte takip et."
+            elif realization >= 90 and gap >= 0:
+                signal = "Güçlü performans"
+                tone = "strong"
+                action = "Hedef kapanışını koru; Türkiye ortalamasının üzerindeki kutu payını savun."
+            elif realization < 75 and gap < 0:
+                signal = "Öncelikli toparlanma"
+                tone = "risk"
+                action = "Hem realizasyon hem kutu payı zayıf; ürün ve brick detayında kayıp alanları önceliklendir."
+            elif realization < 90 and gap >= 0:
+                signal = "Pay güçlü · hedef geride"
+                tone = "watch"
+                action = "Pazar payı avantajını satış gerçekleşmesine çevirecek ürün/brick aksiyonlarına odaklan."
+            elif realization >= 90 and gap < 0:
+                signal = "Hedef güçlü · pay gelişebilir"
+                tone = "watch"
+                action = "Realizasyon korunurken Türkiye kutu payına göre geride kalan rekabet alanlarını büyüt."
+            else:
+                signal = "Dengeli takip"
+                tone = "neutral"
+                action = "Realizasyon ve rekabet payını birlikte izle; belirgin sapmada ürün/brick detayına in."
+
+            insight_text = (
+                f"{period_label} realizasyon %{realization:.1f}; " if realization is not None else f"{period_label} realizasyon —; "
+            )
+            insight_text += (
+                f"güncel IMS rekabet haftasında kutu pazar payı %{share:.1f}; "
+                f"Türkiye ağırlıklı kutu payına göre {gap:+.1f} puan."
+            )
+            insights.append({
+                "region_key": row.get("region_key"),
+                "region_name": row.get("region_name"),
+                "signal": signal,
+                "tone": tone,
+                "metrics": insight_text,
+                "action": action,
+            })
+        insights.sort(key=lambda item: str(item.get("region_key") or ""))
+        return insights
 
     @classmethod
     def _aggregate_period(cls, period_key, snapshots, market):
@@ -168,6 +229,7 @@ class ExecutiveMarketCockpitService:
             "products": products,
             "opportunities": opportunities,
             "risks": risks,
+            "ai_insights": cls._regional_ai_insights(period_key, region_cards),
         }
 
     @classmethod
