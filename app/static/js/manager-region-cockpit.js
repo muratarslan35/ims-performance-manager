@@ -2,6 +2,9 @@
   "use strict";
 
   let activePeriod = "monthly";
+  let loadSequence = 0;
+  const regionHtmlCache = new Map();
+  const regionInflight = new Map();
 
   function initAnnualChart(root) {
     if (typeof Chart === "undefined") return;
@@ -81,23 +84,76 @@
     });
   }
 
+  function fetchRegionHtml(url) {
+    if (regionHtmlCache.has(url)) return Promise.resolve(regionHtmlCache.get(url));
+    if (regionInflight.has(url)) return regionInflight.get(url);
+
+    const request = fetch(url, {
+      headers: {"X-Requested-With": "fetch"},
+      credentials: "same-origin"
+    }).then(async response => {
+      const html = await response.text();
+      if (!response.ok) throw new Error(html || "Bölge verisi yüklenemedi");
+      regionHtmlCache.set(url, html);
+      return html;
+    }).finally(() => regionInflight.delete(url));
+
+    regionInflight.set(url, request);
+    return request;
+  }
+
+  function canPrefetch() {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!connection) return true;
+    if (connection.saveData) return false;
+    return !/2g/.test(connection.effectiveType || "");
+  }
+
+  function prefetchRegion(button) {
+    if (!button || !button.dataset.url || !canPrefetch()) return;
+    if (button.classList.contains("active") || regionHtmlCache.has(button.dataset.url)) return;
+    fetchRegionHtml(button.dataset.url).catch(() => {});
+  }
+
+  function renderRegion(target, html) {
+    target.innerHTML = html;
+    applyPeriod(target);
+    initAnnualChart(target);
+  }
+
   async function loadRegion(button) {
     const target = document.getElementById("managerRegionSnapshotHost");
     if (!target || button.classList.contains("active")) return;
+    const sequence = ++loadSequence;
     document.querySelectorAll("[data-manager-region-button]").forEach(item => item.classList.remove("active"));
     button.classList.add("active");
-    target.innerHTML = '<div class="manager-region-loading"><span class="spinner-border spinner-border-sm me-2"></span>Bölge snapshot yükleniyor…</div>';
+
+    const cached = regionHtmlCache.get(button.dataset.url);
+    if (cached) {
+      renderRegion(target, cached);
+      return;
+    }
+
+    target.innerHTML = '<div class="manager-region-loading"><span class="spinner-border spinner-border-sm me-2"></span>Bölge verisi hazırlanıyor…</div>';
     try {
-      const response = await fetch(button.dataset.url, {headers: {"X-Requested-With": "fetch"}});
-      const html = await response.text();
-      if (!response.ok) throw new Error(html || "Bölge verisi yüklenemedi");
-      target.innerHTML = html;
-      applyPeriod(target);
-      initAnnualChart(target);
+      const html = await fetchRegionHtml(button.dataset.url);
+      if (sequence !== loadSequence) return;
+      renderRegion(target, html);
     } catch (error) {
+      if (sequence !== loadSequence) return;
       target.innerHTML = '<div class="manager-region-empty"><i class="bi bi-exclamation-triangle"></i><strong>Bölge verisi yüklenemedi</strong><span>Tekrar deneyin.</span></div>';
     }
   }
+
+  document.addEventListener("pointerenter", event => {
+    const button = event.target.closest && event.target.closest("[data-manager-region-button]");
+    if (button) prefetchRegion(button);
+  }, true);
+
+  document.addEventListener("focusin", event => {
+    const button = event.target.closest && event.target.closest("[data-manager-region-button]");
+    if (button) prefetchRegion(button);
+  });
 
   document.addEventListener("click", event => {
     const regionButton = event.target.closest("[data-manager-region-button]");
@@ -142,6 +198,10 @@
   document.addEventListener("DOMContentLoaded", () => {
     const host = document.getElementById("managerRegionSnapshotHost");
     if (!host) return;
+    const activeButton = document.querySelector("[data-manager-region-button].active");
+    if (activeButton && activeButton.dataset.url && host.querySelector(".manager-region-snapshot")) {
+      regionHtmlCache.set(activeButton.dataset.url, host.innerHTML);
+    }
     applyPeriod(host);
     initAnnualChart(host);
   });
