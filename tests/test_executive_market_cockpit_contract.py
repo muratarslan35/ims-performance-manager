@@ -19,7 +19,8 @@ def test_executive_cockpit_is_below_region_workspace_and_dynamic():
     assert "GENEL MÜDÜR YÖNETİM ÖZETİ" in partial
     assert "Türkiye gerçekleşen" in partial
     assert "TR kutu payı farkı" in partial
-    assert "share_gap_to_national" not in partial
+    assert "region.share_gap_to_national" not in partial
+    assert "region.unit_share_gap_to_national" in partial
     assert "openRegion" in javascript
     assert "Chart.getChart" in javascript
 
