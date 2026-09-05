@@ -28,18 +28,39 @@ def test_snapshot_is_shared_and_rejected_when_source_identity_changes(tmp_path, 
         assert PersistentDashboardSnapshotService.get_active(2026, 4) is None
 
 
-def test_dashboard_route_prefers_durable_snapshot_before_orchestrator():
+def test_get_or_build_executes_builder_once_for_same_source(tmp_path, monkeypatch):
+    app = Flask(__name__, instance_path=str(tmp_path / "instance"))
+    monkeypatch.setattr(
+        PersistentDashboardSnapshotService,
+        "source_identity",
+        classmethod(lambda cls, year, month: (32, 7)),
+    )
+    calls = {"count": 0}
+
+    def builder():
+        calls["count"] += 1
+        return {"overall_percent": 77.0}
+
+    with app.app_context():
+        first, first_built = PersistentDashboardSnapshotService.get_or_build(2026, 4, builder)
+        second, second_built = PersistentDashboardSnapshotService.get_or_build(2026, 4, builder)
+
+    assert first == second == {"overall_percent": 77.0}
+    assert first_built is True
+    assert second_built is False
+    assert calls["count"] == 1
+
+
+def test_dashboard_route_uses_cross_worker_get_or_build():
     source = Path("app/dashboard.py").read_text(encoding="utf-8")
-    assert "PersistentDashboardSnapshotService.get_active" in source
-    get_pos = source.index("PersistentDashboardSnapshotService.get_active")
-    run_pos = source.index("payload = service.run()")
-    assert get_pos < run_pos
+    assert "PersistentDashboardSnapshotService.get_or_build" in source
     assert "DashboardCache().invalidate(cache_key)" in source
+    assert "return service.run()" in source
 
 
 def test_worker_warms_dashboard_after_successful_import_and_startup_backfill():
     source = Path("ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_dashboard_snapshot" in source
-    assert "PersistentDashboardSnapshotService.publish" in source
+    assert "PersistentDashboardSnapshotService.get_or_build" in source
     assert "completed.status == IMSImportJob.STATUS_COMPLETED" in source
     assert "_warm_dashboard_snapshot(app, latest.year, latest.month)" in source
