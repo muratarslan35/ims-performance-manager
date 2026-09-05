@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Callable
 
 import sqlalchemy as sa
-from sqlalchemy import desc, func
+from sqlalchemy import desc
 
 from app.extensions import db
 from app.models import IMSUpload, Representative, Target
@@ -117,26 +117,45 @@ class PersistentRegionSnapshotService:
         ).first()
 
     @classmethod
-    def get_active(cls, region_key, year, month):
-        ims_id, production_id = cls.source_identity(year, month)
-        if not ims_id:
-            return None
-        row = db.session.execute(
-            sa.select(region_snapshots.c.payload_json).select_from(
-                region_snapshots.join(
-                    region_snapshot_sets,
-                    region_snapshots.c.set_id == region_snapshot_sets.c.id,
-                )
-            ).where(
-                region_snapshot_sets.c.year == int(year),
-                region_snapshot_sets.c.month == int(month),
-                region_snapshot_sets.c.source_upload_id == ims_id,
-                region_snapshot_sets.c.production_upload_id == production_id,
-                region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+    def _payload_from_set(cls, set_id, region_key):
+        raw = db.session.execute(
+            sa.select(region_snapshots.c.payload_json).where(
+                region_snapshots.c.set_id == int(set_id),
                 region_snapshots.c.region_key == str(region_key).strip(),
             ).limit(1)
         ).scalar()
-        return json.loads(row) if row else None
+        return json.loads(raw) if raw else None
+
+    @classmethod
+    def get_active(cls, region_key, year, month):
+        """Return a durable snapshot without exposing a half-built generation.
+
+        Exact current-source ACTIVE is preferred. While that source is BUILDING,
+        the prior ACTIVE generation remains visible. If the current generation
+        failed (or has never been started), return None so the existing runtime
+        calculation path can provide current data rather than silently serving
+        stale content indefinitely.
+        """
+        year, month = int(year), int(month)
+        ims_id, production_id = cls.source_identity(year, month)
+        if not ims_id:
+            return None
+
+        current = cls._existing_set(year, month, ims_id, production_id)
+        if current and current.status == cls.STATUS_ACTIVE:
+            return cls._payload_from_set(current.id, region_key)
+        if not current or current.status != cls.STATUS_BUILDING:
+            return None
+
+        previous = db.session.execute(
+            sa.select(region_snapshot_sets.c.id).where(
+                region_snapshot_sets.c.year == year,
+                region_snapshot_sets.c.month == month,
+                region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                region_snapshot_sets.c.id != int(current.id),
+            ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
+        ).scalar()
+        return cls._payload_from_set(previous, region_key) if previous else None
 
     @classmethod
     def build_for_period(
