@@ -73,9 +73,9 @@
   <div class="market-table-note"><i class="bi bi-shield-check"></i><span>Kaynak haftası değiştiğinde bilgi bandı otomatik güncellenir. Güncel IMS haftasında rekabet verisi yoksa son kullanılabilir aynı ay haftası gösterilir; veri yokluğu sıfır pazar olarak yorumlanmaz.</span></div>
 </div>
 
-<section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi">
+<section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi" data-region-pack-url="{{ url_for('main.market_analysis_regions_pack', year=selected_year, month=selected_month) }}">
   <div class="manager-section-head mb-3">
-    <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3><p>Tüm bölge sayfalarındaki mevcut performans ve rekabet verilerini tek ekranda açar. Yeni IMS geldiğinde snapshot anahtarı otomatik değişir.</p></div>
+    <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3><p>Tüm bölge sayfalarındaki mevcut performans ve rekabet verilerini tek ekranda açar. Yeni IMS geldiğinde hazır bölge snapshot paketi otomatik yenilenir.</p></div>
     <span>{{ region_rows|length }} bölge</span>
   </div>
   <div class="manager-period-toolbar" role="tablist" aria-label="Dönem seçimi">
