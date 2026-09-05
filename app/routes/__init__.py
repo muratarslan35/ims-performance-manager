@@ -14,6 +14,7 @@ from app.models import IMSUpload, Representative
 from app.services.dashboard_service import DashboardService
 from app.services.market_analysis_service import MarketAnalysisService
 from app.services.period_service import PeriodService
+from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.production_result_service import ProductionResultService
 from app.services.quarter_entitlement_service import QuarterEntitlementService
 from app.services.region_market_service import RegionMarketService
@@ -40,6 +41,14 @@ def _region_snapshot_key(region_key, year, month):
 
 
 def _region_manager_snapshot(region_key, year, month):
+    # First choice: durable snapshot prepared once after the IMS import. This
+    # survives worker restarts and is shared by every manager session/process.
+    persistent = PersistentRegionSnapshotService.get_active(region_key, year, month)
+    if persistent is not None:
+        return persistent
+
+    # Safe compatibility path for old periods, a failed snapshot build, or a
+    # production result that changed after the IMS snapshot was published.
     key = _region_snapshot_key(region_key, year, month)
 
     def loader():
