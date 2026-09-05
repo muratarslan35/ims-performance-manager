@@ -13,10 +13,14 @@ def test_executive_cockpit_is_below_region_workspace_and_dynamic():
     assert "data-exec-period-button" in partial
     assert "11 Bölge Rekabet Haritası" in partial
     assert "Türkiye Ürün Portföy Matrisi" in partial
-    assert "En Yüksek 5 Rakip Hareketi" in partial
+    assert "En Yüksek 5 Rakip Baskısı" in partial
     assert "Fırsat ve Risk Bölgeleri" in partial
     assert "Türkiye Realizasyon Trendi" in partial
     assert "GENEL MÜDÜR YÖNETİM ÖZETİ" in partial
+    assert "Türkiye gerçekleşen" in partial
+    assert "TR kutu payı farkı" in partial
+    assert "region.share_gap_to_national" not in partial
+    assert "region.unit_share_gap_to_national" in partial
     assert "openRegion" in javascript
     assert "Chart.getChart" in javascript
 
@@ -31,6 +35,19 @@ def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_querie
     assert "RegionPerformanceService(" not in service
     assert "RegionMarketService(" not in service
     assert "db.session" not in service
+    assert "unit_share_gap_to_national" in service
+    assert "national_company_unit" in service
+    assert "national_market_unit" in service
+
+
+def test_market_analysis_loads_readability_layer_last():
+    template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
+    css = (ROOT / "app/static/css/market-analysis-readability.css").read_text(encoding="utf-8")
+    assert template.index("executive-market-cockpit.css") < template.index("market-analysis-readability.css")
+    assert ".market-source-copy span" in css
+    assert ".manager-region-button span" in css
+    assert ".exec-cockpit .exec-region-foot" in css
+    assert '[data-theme="dark"]' in css
 
 
 def test_snapshot_backfill_has_application_root_on_python_path():

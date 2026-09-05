@@ -19,15 +19,15 @@
   {% for period_key, period in cockpit.periods.items() %}
   <div class="exec-period-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-period-panel="{{ period_key }}">
     <div class="exec-kpis">
-      <article><span>Türkiye şirket IMS</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>{{ period_key|replace('monthly','1 aylık')|replace('quarterly','3 aylık')|replace('half_year','6 aylık')|replace('yearly','12 aylık') }} resmi gerçekleşen</small></article>
+      <article><span>Türkiye gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>{{ period_key|replace('monthly','1 aylık')|replace('quarterly','3 aylık')|replace('half_year','6 aylık')|replace('yearly','12 aylık') }} kabul edilen gerçekleşme</small></article>
       <article><span>Türkiye toplam pazar</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(cockpit.market.market_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Güncel doğrulanmış rekabet haftası</small></article>
       <article><span>Türkiye pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>Şirket / toplam pazar</small></article>
       <article><span>Türkiye realizasyonu</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none %}{{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {{ 'hedef açığı' if period.gap_tl > 0 else 'hedef üstü' }}{% else %}Tamamlanmamış dönem{% endif %}</small></article>
-      <article><span>Rakip alanı</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(cockpit.market.competitor_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Güncel pazar − şirket IMS</small></article>
+      <article><span>Rakip alanı</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(cockpit.market.competitor_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Güncel pazar − şirket gerçekleşen</small></article>
     </div>
 
     <div class="exec-section-head">
-      <div><span>COĞRAFİ YÖNETİM</span><h3>11 Bölge Rekabet Haritası</h3><p>Bölge realizasyonu seçilen döneme, pazar payı ise güncel doğrulanmış IMS rekabet haftasına aittir.</p></div>
+      <div><span>COĞRAFİ YÖNETİM</span><h3>11 Bölge Rekabet Haritası</h3><p>Bölge realizasyonu seçilen döneme, pazar payı ise güncel doğrulanmış IMS rekabet haftasına aittir. TR farkı aynı kutu bazlı bölge paylarının ağırlıklı Türkiye ortalamasına göre hesaplanır.</p></div>
       <button type="button" class="exec-action-btn" data-exec-jump-regions><i class="bi bi-arrow-up-right-square"></i> Bölge detayına git</button>
     </div>
     <div class="exec-region-grid">
@@ -36,7 +36,7 @@
       <button type="button" class="exec-region-card {{ tone }}" data-exec-region-key="{{ region.region_key }}">
         <div><span>{{ region.region_key }}</span><strong>{{ region.region_name }}</strong></div>
         <div class="exec-region-metrics"><b>%{{ region.share_percent }}</b><small>Pazar payı</small><b>{% if region.realization_percent is not none %}%{{ region.realization_percent }}{% else %}—{% endif %}</b><small>Realizasyon</small></div>
-        <div class="exec-region-foot"><span>{{ "{:,.0f}".format(region.company_unit) }} kutu şirket</span><em class="{{ 'positive' if region.share_gap_to_national >= 0 else 'negative' }}">{{ '+' if region.share_gap_to_national >= 0 else '' }}{{ region.share_gap_to_national }} puan TR farkı</em></div>
+        <div class="exec-region-foot"><span>{{ "{:,.0f}".format(region.company_unit) }} kutu şirket</span><em class="{{ 'positive' if region.unit_share_gap_to_national >= 0 else 'negative' }}">{{ '+' if region.unit_share_gap_to_national >= 0 else '' }}{{ region.unit_share_gap_to_national }} puan TR kutu payı farkı</em></div>
       </button>
       {% endfor %}
     </div>
@@ -59,7 +59,7 @@
       <div class="exec-card">
         <div class="exec-card-head"><div><span>AKSİYON ÖNCELİĞİ</span><h3>Fırsat ve Risk Bölgeleri</h3></div><i class="bi bi-radar"></i></div>
         <div class="exec-split-list">
-          <div><h4><i class="bi bi-arrow-up-circle-fill"></i> Güçlü / fırsat</h4>{% for row in period.opportunities %}<button type="button" data-exec-region-key="{{ row.region_key }}"><strong>{{ row.region_key }} {{ row.region_name }}</strong><span>%{{ row.realization_percent }} realizasyon · %{{ row.share_percent }} pay</span></button>{% endfor %}</div>
+          <div><h4><i class="bi bi-arrow-up-circle-fill"></i> Öne çıkan bölgeler</h4>{% for row in period.opportunities %}<button type="button" data-exec-region-key="{{ row.region_key }}"><strong>{{ row.region_key }} {{ row.region_name }}</strong><span>%{{ row.realization_percent }} realizasyon · %{{ row.share_percent }} pay</span></button>{% endfor %}</div>
           <div><h4><i class="bi bi-exclamation-diamond-fill"></i> Kritik takip</h4>{% for row in period.risks %}<button type="button" data-exec-region-key="{{ row.region_key }}"><strong>{{ row.region_key }} {{ row.region_name }}</strong><span>%{{ row.realization_percent }} realizasyon · %{{ row.share_percent }} pay</span></button>{% endfor %}</div>
         </div>
       </div>
@@ -69,7 +69,7 @@
 
   <div class="exec-two-col">
     <div class="exec-card">
-      <div class="exec-card-head"><div><span>RAKİP BASKISI · TÜRKİYE</span><h3>En Yüksek 5 Rakip Hareketi</h3></div><i class="bi bi-activity"></i></div>
+      <div class="exec-card-head"><div><span>RAKİP BASKISI · TÜRKİYE</span><h3>En Yüksek 5 Rakip Baskısı</h3></div><i class="bi bi-activity"></i></div>
       <div class="exec-rival-list">
         {% for rival in cockpit.rival_pressure %}
         <article><div class="exec-rank">{{ loop.index }}</div><div><strong>{{ rival.name }}</strong><span>{{ rival.product_name }} · {{ rival.region_count }} bölgede aktif</span></div><div><b>{{ "{:,.0f}".format(rival.unit) }} kutu</b><small>En güçlü: {{ rival.strongest_region }}</small></div></article>

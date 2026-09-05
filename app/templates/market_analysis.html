@@ -5,6 +5,7 @@
 <link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/manager-region-cockpit.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/executive-market-cockpit.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/market-analysis-readability.css') }}" rel="stylesheet">
 {% endblock %}
 {% block content %}
 {% set market=payload.competition_analysis|default({},true) %}
