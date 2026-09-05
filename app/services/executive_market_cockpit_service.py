@@ -50,7 +50,6 @@ class ExecutiveMarketCockpitService:
             "complete": True,
         })
         region_cards = []
-        national_share = cls._number((market or {}).get("company_share_percent"))
 
         for region_key, snapshot in snapshots.items():
             report = (snapshot or {}).get("report") or {}
@@ -78,7 +77,6 @@ class ExecutiveMarketCockpitService:
                 "competitor_unit": cls._number(totals.get("competitor_unit")),
                 "company_unit": cls._number(totals.get("effective_company_unit", totals.get("company_unit"))),
                 "share_percent": round(region_share, 1),
-                "share_gap_to_national": round(region_share - national_share, 1),
             })
 
             for product in period.get("products") or []:
@@ -92,6 +90,20 @@ class ExecutiveMarketCockpitService:
                     bucket["actual_tl"] += cls._number(product.get("actual_tl"))
                 else:
                     bucket["complete"] = False
+
+        # Region market share is unit-based in RegionMarketService. Compare it
+        # only with the weighted national unit share derived from those same
+        # regional snapshots; never mix it with the national TL share.
+        national_market_unit = sum(row["market_unit"] for row in region_cards)
+        national_company_unit = sum(row["company_unit"] for row in region_cards)
+        national_unit_share = (
+            national_company_unit * 100.0 / national_market_unit
+            if national_market_unit else 0.0
+        )
+        for row in region_cards:
+            row["unit_share_gap_to_national"] = round(
+                row["share_percent"] - national_unit_share, 1
+            )
 
         market_by_product = cls._product_market_map(market)
         products = []
@@ -151,6 +163,7 @@ class ExecutiveMarketCockpitService:
             "realization_percent": round(realization, 1) if realization is not None else None,
             "gap_tl": round(target - actual, 2) if complete else None,
             "complete": complete,
+            "national_unit_share_percent": round(national_unit_share, 1),
             "regions": region_cards,
             "products": products,
             "opportunities": opportunities,
