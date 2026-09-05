@@ -59,6 +59,14 @@ def _region_manager_snapshot(region_key, year, month):
     return RegionManagerSnapshotCache.get_or_compute(key, loader)
 
 
+def _render_region_snapshot(snapshot):
+    return render_template(
+        "partials/market_region_workspace.html",
+        report=snapshot["report"],
+        market_analysis=snapshot["market_analysis"],
+    )
+
+
 @main_bp.route("/")
 @login_required
 def home():
@@ -90,8 +98,20 @@ def market_analysis():
     selected_region = request.args.get("region") or (
         str(region_rows[0].get("code")) if region_rows else None
     )
-    initial_region_snapshot = None
-    if selected_region:
+
+    # Read the entire durable ACTIVE generation once while the main page is
+    # being rendered. This removes the second network round-trip and guarantees
+    # that region switches are already client-side when the user scrolls down.
+    durable_snapshots = PersistentRegionSnapshotService.get_active_all(
+        dashboard_service.year, dashboard_service.month
+    ) or {}
+    embedded_region_html = {
+        str(region_key): _render_region_snapshot(snapshot)
+        for region_key, snapshot in durable_snapshots.items()
+    }
+
+    initial_region_snapshot = durable_snapshots.get(str(selected_region)) if selected_region else None
+    if selected_region and initial_region_snapshot is None:
         try:
             initial_region_snapshot = _region_manager_snapshot(
                 selected_region, dashboard_service.year, dashboard_service.month
@@ -105,6 +125,7 @@ def market_analysis():
         region_rows=region_rows,
         selected_region=selected_region,
         initial_region_snapshot=initial_region_snapshot,
+        embedded_region_html=embedded_region_html,
         selected_year=dashboard_service.year,
         selected_month=dashboard_service.month,
     )
@@ -121,13 +142,10 @@ def market_analysis_regions_pack():
     if not snapshots:
         return jsonify({"ready": False, "regions": {}}), 409
 
-    regions = {}
-    for region_key, snapshot in snapshots.items():
-        regions[str(region_key)] = render_template(
-            "partials/market_region_workspace.html",
-            report=snapshot["report"],
-            market_analysis=snapshot["market_analysis"],
-        )
+    regions = {
+        str(region_key): _render_region_snapshot(snapshot)
+        for region_key, snapshot in snapshots.items()
+    }
     ims_id, production_id = PersistentRegionSnapshotService.source_identity(year, month)
     response = jsonify({
         "ready": True,
@@ -151,11 +169,7 @@ def market_analysis_region(region_key):
         snapshot = _region_manager_snapshot(region_key, year, month)
     except ValueError as exc:
         return render_template("partials/market_region_workspace_error.html", message=str(exc)), 404
-    return render_template(
-        "partials/market_region_workspace.html",
-        report=snapshot["report"],
-        market_analysis=snapshot["market_analysis"],
-    )
+    return _render_region_snapshot(snapshot)
 
 
 @main_bp.route("/prime")
