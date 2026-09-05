@@ -74,6 +74,31 @@ class PersistentRegionSnapshotService:
         raise TypeError(f"Unsupported snapshot value: {type(value).__name__}")
 
     @classmethod
+    def _json_ready(cls, value):
+        """Convert nested payload keys/containers to JSON-safe equivalents.
+
+        Region performance read models legitimately use tuple keys internally
+        (for example ``source_by_month[(year, month)]``). JSON's ``default``
+        hook is never called for mapping keys, so those payloads must be made
+        key-safe before ``json.dumps``. This changes persistence representation
+        only; live calculation services remain untouched.
+        """
+        if isinstance(value, dict):
+            ready = {}
+            for key, item in value.items():
+                if isinstance(key, tuple):
+                    key = "|".join(str(part) for part in key)
+                elif key is not None and not isinstance(key, (str, int, float, bool)):
+                    key = str(key)
+                ready[key] = cls._json_ready(item)
+            return ready
+        if isinstance(value, (list, tuple)):
+            return [cls._json_ready(item) for item in value]
+        if isinstance(value, set):
+            return [cls._json_ready(item) for item in sorted(value, key=str)]
+        return value
+
+    @classmethod
     def source_identity(cls, year, month):
         ims_id = db.session.query(IMSUpload.id).filter(
             IMSUpload.year == int(year),
@@ -237,7 +262,7 @@ class PersistentRegionSnapshotService:
                     report["region_key"], performance.rep_ids, year, month
                 ).build()
                 payload = json.dumps(
-                    {"report": report, "market_analysis": market},
+                    cls._json_ready({"report": report, "market_analysis": market}),
                     ensure_ascii=False,
                     separators=(",", ":"),
                     default=cls._json_default,
