@@ -1,6 +1,29 @@
 (function () {
   "use strict";
 
+  const trendValueLabels = {
+    id: "execTrendValueLabels",
+    afterDatasetsDraw(chart) {
+      const ctx = chart.ctx;
+      const dataset = chart.data.datasets[0];
+      const meta = chart.getDatasetMeta(0);
+      if (!dataset || !meta || meta.hidden) return;
+
+      ctx.save();
+      ctx.font = "700 11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      ctx.fillStyle = "#173a55";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+
+      meta.data.forEach((point, index) => {
+        const value = dataset.data[index];
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return;
+        ctx.fillText(`%${Number(value).toLocaleString("tr-TR", {maximumFractionDigits: 1})}`, point.x, point.y - 8);
+      });
+      ctx.restore();
+    }
+  };
+
   function initTrend(root) {
     if (!root || typeof Chart === "undefined") return;
     const canvas = root.querySelector("[data-exec-trend]");
@@ -24,9 +47,11 @@
           fill: true
         }]
       },
+      plugins: [trendValueLabels],
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: {padding: {top: 18}},
         interaction: {mode: "index", intersect: false},
         plugins: {legend: {display: false}, tooltip: {callbacks: {label: context => `%${context.parsed.y}`}}},
         scales: {
