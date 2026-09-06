@@ -9,9 +9,11 @@ from flask_login import current_user, login_required
 
 from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.models import Product, Representative, RepresentativeBrickAssignment, Target
+from app.presentation import representative_display_name
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
 from app.services.period_service import PeriodService
+from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 from app.services.production_result_service import ProductionResultService
 from app.services.realization_rounding import realization_percent
 from app.services.representative_market_service import RepresentativeMarketService
@@ -156,12 +158,7 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
 
 
 def _market_source_cache_key(representative, year, month):
-    """Key the exact existing market read by immutable source/scope identity.
-
-    No formula or source precedence changes here: the loader remains
-    RepresentativeMarketService.build(). This only prevents the same completed
-    IMS/production/scope combination from being rebuilt on every page request.
-    """
+    """Key the exact existing market read by immutable source/scope identity."""
     year, month = int(year), int(month)
     previous_year, previous_month = _shift_month(year, month, -1)
     upload_id = RepresentativeMarketService._latest_upload_id(year, month) or 0
@@ -189,7 +186,8 @@ def _market_source_cache_key(representative, year, month):
 
 def _aggregate_market(representative, months, market_cache=None):
     if not months:
-        return _empty_market(PeriodService.get_active_period()["year"], PeriodService.get_active_period()["month"])
+        active = PeriodService.get_active_period()
+        return _empty_market(active["year"], active["month"])
 
     market_cache = market_cache if market_cache is not None else {}
     monthly = []
@@ -296,8 +294,66 @@ def _source_label(months, sources):
     return "Seçili IMS dönemine kadar"
 
 
+def build_representative_workspace_payload(representative, year, month):
+    """Build the exact existing representative read model once.
+
+    This function intentionally contains the same calculation path the route used
+    before persistent snapshots. The snapshot layer only stores this result.
+    """
+    year, month = int(year), int(month)
+    sales_cache = {}
+    assignment_cache = {}
+    market_cache = {}
+    competitive_intelligence = CompetitiveIntelligenceService(
+        representative.id, year, month
+    ).build()
+    annual_realization = AnnualRealizationService.build(year, [representative.id])
+    snapshots = {}
+
+    for key, label, _kind in PERIOD_OPTIONS:
+        months = _period_months(year, month, key)
+        product_rows, totals, assignments, sources = _aggregate_sales(
+            representative.id,
+            months,
+            sales_cache=sales_cache,
+            assignment_cache=assignment_cache,
+        )
+        has_production_result = any(source.startswith("PRODUCTION_") for source in sources)
+        result_source_label = _source_label(months, sources)
+        market_analysis = (
+            _aggregate_market(representative, months, market_cache=market_cache)
+            if months else _empty_market(year, month)
+        )
+        ai_report = ScopedAIInsightService.build(
+            scope_type="representative",
+            scope_name=representative_display_name(representative.rep_name),
+            periods={key: _ai_period(key, label, product_rows, totals, len(months))},
+            market_analysis=market_analysis,
+            competitive_intelligence=competitive_intelligence,
+        )
+        snapshots[key] = {
+            "key": key,
+            "label": label,
+            "months": months,
+            "products": product_rows,
+            "totals": totals,
+            "assignments": assignments,
+            "market_analysis": market_analysis,
+            "has_production_result": has_production_result,
+            "result_source_label": result_source_label,
+            "ai_report": ai_report,
+        }
+
+    return {
+        "year": year,
+        "month": month,
+        "annual_realization": annual_realization,
+        "snapshots": snapshots,
+    }
+
+
 def install_representative_period_workspace(app):
-    from app.representatives import _representative_display_name, _visible_representative_filter
+    from app.representatives import _visible_representative_filter
     from app.region_manager import is_field_portal
 
     @login_required
@@ -317,43 +373,15 @@ def install_representative_period_workspace(app):
         if selected not in PERIOD_LABELS:
             selected = "monthly"
 
-        sales_cache = {}
-        assignment_cache = {}
-        market_cache = {}
-        competitive_intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
-        annual_realization = AnnualRealizationService.build(year, [representative.id])
-        snapshots = {}
-
-        for key, label, _kind in PERIOD_OPTIONS:
-            months = _period_months(year, month, key)
-            product_rows, totals, assignments, sources = _aggregate_sales(
-                representative.id,
-                months,
-                sales_cache=sales_cache,
-                assignment_cache=assignment_cache,
-            )
-            has_production_result = any(source.startswith("PRODUCTION_") for source in sources)
-            result_source_label = _source_label(months, sources)
-            market_analysis = _aggregate_market(representative, months, market_cache=market_cache) if months else _empty_market(year, month)
-            ai_report = ScopedAIInsightService.build(
-                scope_type="representative",
-                scope_name=_representative_display_name(representative.rep_name),
-                periods={key: _ai_period(key, label, product_rows, totals, len(months))},
-                market_analysis=market_analysis,
-                competitive_intelligence=competitive_intelligence,
-            )
-            snapshots[key] = {
-                "key": key,
-                "label": label,
-                "months": months,
-                "products": product_rows,
-                "totals": totals,
-                "assignments": assignments,
-                "market_analysis": market_analysis,
-                "has_production_result": has_production_result,
-                "result_source_label": result_source_label,
-                "ai_report": ai_report,
-            }
+        workspace = PersistentRepresentativeSnapshotService.get_active(
+            representative.id, year, month
+        )
+        if workspace is None:
+            # Safe compatibility path only. Normal production flow builds durable
+            # snapshots automatically in the background before a user needs them.
+            workspace = build_representative_workspace_payload(representative, year, month)
+        snapshots = workspace["snapshots"]
+        annual_realization = workspace["annual_realization"]
 
         if is_field_portal():
             from app.region_manager import _scoped_representatives
