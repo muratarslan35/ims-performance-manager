@@ -72,8 +72,8 @@ sudo systemctl enable "$worker_service_name"
 # Snapshot policy:
 # - import: a new IMS identity naturally creates a fresh generation;
 # - backend/heavy: calculation/read-model code may have changed while the IMS id
-#   stayed the same, therefore the current generation is force-invalidated and
-#   rebuilt before new web workers are activated;
+#   stayed the same, therefore the current region generation is rebuilt before
+#   new web workers are activated;
 # - ui: payload calculations are unchanged, so no expensive rebuild is needed.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
   echo "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change"
@@ -137,6 +137,19 @@ else
   echo "SERVICE_ACTIVATION|worker=preserved|mode=$release_mode"
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
+
+# Representative pages use an atomic persistent snapshot generation just like
+# the region cockpit. Backend/heavy releases build a fresh generation in the
+# background while the previous ACTIVE generation remains readable. Therefore
+# no user's first representative click is responsible for warming the cache and
+# deploy does not block for all representatives to finish.
+if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
+  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild"
+  nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
+    >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
+  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|pid=$!"
+fi
 
 # A runtime deploy is not accepted until the shared dashboard read model is
 # proven ready for the exact current IMS/production source identity. Import and
