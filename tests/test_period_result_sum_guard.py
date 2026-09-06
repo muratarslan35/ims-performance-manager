@@ -32,9 +32,6 @@ def _month(year, month, *, target_tl, actual_tl, target_unit, actual_unit, unit_
 
 
 def test_multi_month_product_uses_sum_of_finalized_month_results():
-    # March and April intentionally represent different price regimes. The
-    # period result must add their already-finalized box/TL values; it must not
-    # divide the combined TL by either month's unit price.
     march = _month(2026, 3, target_tl="1000", actual_tl="900", target_unit="10", actual_unit="9", unit_difference="-1")
     april = _month(2026, 4, target_tl="2200", actual_tl="1980", target_unit="11", actual_unit="9", unit_difference="-2")
 
@@ -70,3 +67,27 @@ def test_incomplete_month_keeps_period_actuals_incomplete():
     assert row["complete"] is False
     assert row["actual_tl"] is None
     assert row["gap_tl"] is None
+
+
+def test_empty_pre_history_month_does_not_invalidate_period():
+    empty = {
+        "target_tl": Decimal("0"),
+        "actual_tl": None,
+        "realization_percent": None,
+        "gap_tl": None,
+        "complete": False,
+        "products": [],
+        "representatives": [],
+        "months": [{"year": 2025, "month": 12, "label": "12/2025", "complete": True}],
+        "source_by_month": {(2025, 12): "REPRESENTATIVE_AGGREGATE"},
+    }
+    january = _month(2026, 1, target_tl="1000", actual_tl="900", target_unit="10", actual_unit="9", unit_difference="-1")
+
+    result = _merge_monthly_payloads([(2025, 12), (2026, 1)], [empty, january])
+
+    assert result["complete"] is True
+    assert result["target_tl"] == Decimal("1000")
+    assert result["actual_tl"] == Decimal("900")
+    assert result["gap_tl"] == Decimal("100")
+    assert result["products"][0]["unit_difference"] == Decimal("-1")
+    assert len(result["months"]) == 2
