@@ -144,11 +144,13 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
         assert monthly["complete"] is True
         assert monthly["target_tl"] == Decimal("200.0")
         assert monthly["actual_tl"] == Decimal("235.500")
-        assert monthly["realization_percent"] == 117.8
+        # 235.5 / 200 * 100 = 117.75 -> 118 with canonical whole-percent rounding.
+        assert monthly["realization_percent"] == 118
         assert product_rows["Product A"]["actual_tl"] == Decimal("125.500")
-        assert product_rows["Product A"]["realization_percent"] == 125.5
+        # Exact .50000 tie stays at the lower integer.
+        assert product_rows["Product A"]["realization_percent"] == 125
         assert product_rows["Product B"]["actual_tl"] == Decimal("110.0")
-        assert product_rows["Product B"]["realization_percent"] == 110.0
+        assert product_rows["Product B"]["realization_percent"] == 110
 
         # Earlier months have no production result and therefore stay on IMS.
         half_year = periods["half_year"]
@@ -275,7 +277,7 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
         finally:
             event.remove(db.engine, "before_cursor_execute", capture)
 
-        assert periods["monthly"]["realization_percent"] == 108.0
+        assert periods["monthly"]["realization_percent"] == 108
         assert periods["half_year"]["complete"] is True
         # One extra SELECT fetches all ProductionResult rows for all selected
         # uploads; count does not scale with 42/70 target evaluations.

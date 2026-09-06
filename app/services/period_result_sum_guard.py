@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.services.realization_rounding import realization_percent
+
 
 _INSTALLED = False
 _MISSING = object()
@@ -19,8 +21,7 @@ def _d(value):
 
 
 def _percent(actual, target):
-    target = _d(target)
-    return (_d(actual) * Decimal("100") / target) if target else Decimal("0")
+    return realization_percent(actual, target)
 
 
 def _merge_products(monthly_payloads):

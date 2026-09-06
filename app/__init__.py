@@ -45,6 +45,7 @@ from app.services.manager_import_report_alignment import install_manager_import_
 from app.services.dashboard_runtime_optimizer import install_dashboard_runtime_optimizer
 from app.services.region_performance_bulk_optimizer import install_region_performance_bulk_optimizer
 from app.services.period_result_sum_guard import install_period_result_sum_guard
+from app.services.realization_rounding_guard import install_realization_rounding_guard
 from app.services.ims_upload_lifecycle_hooks import install_ims_upload_lifecycle
 from app.services.ims_upload_lifecycle_ui import install_ims_upload_lifecycle_ui
 from app.services.ims_failed_retry_ui import install_ims_failed_retry_ui
@@ -205,6 +206,7 @@ def create_app(config_object=Config):
     install_dashboard_runtime_optimizer()
     install_region_performance_bulk_optimizer()
     install_period_result_sum_guard()
+    install_realization_rounding_guard()
     install_ims_upload_lifecycle()
     install_production_result_reconciliation_gate()
     install_production_result_stale_zero_guard()
