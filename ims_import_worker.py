@@ -109,12 +109,13 @@ def _warm_representative_snapshots(app, year, month, *, force=False):
         db.session.remove()
 
 
-def _backfill_latest_snapshots(app):
+def _backfill_latest_region_snapshots(app):
+    """Preserve the region startup contract and warm representative snapshots too."""
     queued = IMSImportJob.query.filter(
         IMSImportJob.status == IMSImportJob.STATUS_QUEUED
     ).first()
     if queued is not None:
-        app.logger.info("snapshot_startup_backfill skipped=queued_import job_id=%s", queued.id)
+        app.logger.info("region_snapshot_startup_backfill skipped=queued_import job_id=%s", queued.id)
         return
 
     latest = IMSUpload.query.filter_by(status="COMPLETED").order_by(
@@ -138,7 +139,7 @@ def _backfill_latest_snapshots(app):
     except Exception:
         db.session.rollback()
         app.logger.exception(
-            "snapshot_startup_backfill_failed year=%s month=%s upload_id=%s",
+            "region_snapshot_startup_backfill_failed year=%s month=%s upload_id=%s",
             latest.year, latest.month, latest.id,
         )
     finally:
@@ -151,7 +152,7 @@ def main():
     app = create_app()
     with app.app_context():
         IMSImportQueue.recover_stale()
-        _backfill_latest_snapshots(app)
+        _backfill_latest_region_snapshots(app)
         while not stopping:
             job = IMSImportQueue.claim_next()
             if job is None:
