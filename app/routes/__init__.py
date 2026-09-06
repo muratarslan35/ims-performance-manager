@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import current_app
 from flask import jsonify
 from flask import redirect
 from flask import render_template
@@ -42,22 +43,24 @@ def _region_snapshot_key(region_key, year, month):
     return f"manager-region:{region_key}:{year}:{month}:{latest_ims_id or 0}:{production_id}:v1"
 
 
+def _build_region_snapshot(region_key, year, month):
+    performance = RegionPerformanceService(region_key, year, month)
+    report = performance.report()
+    market = RegionMarketService(
+        report["region_key"], performance.rep_ids, year, month
+    ).build()
+    return {"report": report, "market_analysis": market}
+
+
 def _region_manager_snapshot(region_key, year, month):
     persistent = PersistentRegionSnapshotService.get_active(region_key, year, month)
     if persistent is not None:
         return persistent
 
     key = _region_snapshot_key(region_key, year, month)
-
-    def loader():
-        performance = RegionPerformanceService(region_key, year, month)
-        report = performance.report()
-        market = RegionMarketService(
-            report["region_key"], performance.rep_ids, year, month
-        ).build()
-        return {"report": report, "market_analysis": market}
-
-    return RegionManagerSnapshotCache.get_or_compute(key, loader)
+    return RegionManagerSnapshotCache.get_or_compute(
+        key, lambda: _build_region_snapshot(region_key, year, month)
+    )
 
 
 def _render_region_snapshot(snapshot):
@@ -66,6 +69,26 @@ def _render_region_snapshot(snapshot):
         report=snapshot["report"],
         market_analysis=snapshot["market_analysis"],
     )
+
+
+def _empty_market_analysis(year, month, message):
+    return {
+        "year": int(year),
+        "month": int(month),
+        "latest_week": None,
+        "source_week": None,
+        "source_state": MarketAnalysisService.SOURCE_IMS_ONLY,
+        "is_current": False,
+        "is_fallback": False,
+        "has_competition": False,
+        "source_message": message,
+        "source_file": None,
+        "market_total_tl": 0.0,
+        "company_total_tl": 0.0,
+        "competitor_total_tl": 0.0,
+        "company_share_percent": 0.0,
+        "groups": [],
+    }
 
 
 @main_bp.route("/")
@@ -90,40 +113,90 @@ def dashboard():
 def market_analysis():
     dashboard_service = DashboardService()
     payload = dashboard_service.run()
-    payload["competition_analysis"] = MarketAnalysisService(
-        dashboard_service.year,
-        dashboard_service.month,
-    ).build()
+
+    try:
+        payload["competition_analysis"] = MarketAnalysisService(
+            dashboard_service.year,
+            dashboard_service.month,
+        ).build()
+    except Exception:
+        current_app.logger.exception(
+            "Türkiye Pazar Analizi national market read failed for %s/%s",
+            dashboard_service.year,
+            dashboard_service.month,
+        )
+        payload["competition_analysis"] = _empty_market_analysis(
+            dashboard_service.year,
+            dashboard_service.month,
+            "Pazar verisi okunurken geçici bir hata oluştu. Bölgesel performans ekranı kullanılmaya devam edebilir.",
+        )
 
     region_rows = payload.get("region_realization") or []
     selected_region = request.args.get("region") or (
         str(region_rows[0].get("code")) if region_rows else None
     )
 
-    # Read the entire durable ACTIVE generation once while the main page is
-    # being rendered. The executive cockpit and the region workspace consume
-    # this exact same immutable source so no duplicate heavy market query is run.
-    durable_snapshots = PersistentRegionSnapshotService.get_active_all(
-        dashboard_service.year, dashboard_service.month
-    ) or {}
-    embedded_region_html = {
-        str(region_key): _render_region_snapshot(snapshot)
-        for region_key, snapshot in durable_snapshots.items()
-    }
-    executive_cockpit = ExecutiveMarketCockpitService.build(
-        payload.get("competition_analysis") or {},
-        durable_snapshots,
-        region_rows,
-    )
+    try:
+        durable_snapshots = PersistentRegionSnapshotService.get_active_all(
+            dashboard_service.year, dashboard_service.month
+        ) or {}
+    except Exception:
+        current_app.logger.exception(
+            "Türkiye Pazar Analizi durable region pack read failed for %s/%s",
+            dashboard_service.year,
+            dashboard_service.month,
+        )
+        durable_snapshots = {}
 
-    initial_region_snapshot = durable_snapshots.get(str(selected_region)) if selected_region else None
+    embedded_region_html = {}
+    usable_snapshots = {}
+    for region_key, snapshot in durable_snapshots.items():
+        try:
+            embedded_region_html[str(region_key)] = _render_region_snapshot(snapshot)
+            usable_snapshots[str(region_key)] = snapshot
+        except Exception:
+            current_app.logger.exception(
+                "Türkiye Pazar Analizi stale/invalid cached region snapshot skipped: region=%s period=%s/%s",
+                region_key,
+                dashboard_service.year,
+                dashboard_service.month,
+            )
+
+    try:
+        executive_cockpit = ExecutiveMarketCockpitService.build(
+            payload.get("competition_analysis") or {},
+            usable_snapshots,
+            region_rows,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Türkiye Pazar Analizi executive cockpit build failed for %s/%s",
+            dashboard_service.year,
+            dashboard_service.month,
+        )
+        executive_cockpit = ExecutiveMarketCockpitService.build(
+            payload.get("competition_analysis") or {}, {}, region_rows
+        )
+
+    initial_region_snapshot = usable_snapshots.get(str(selected_region)) if selected_region else None
     if selected_region and initial_region_snapshot is None:
         try:
-            initial_region_snapshot = _region_manager_snapshot(
+            initial_region_snapshot = _build_region_snapshot(
                 selected_region, dashboard_service.year, dashboard_service.month
             )
+            _render_region_snapshot(initial_region_snapshot)
         except ValueError:
             selected_region = None
+            initial_region_snapshot = None
+        except Exception:
+            current_app.logger.exception(
+                "Türkiye Pazar Analizi initial region build failed: region=%s period=%s/%s",
+                selected_region,
+                dashboard_service.year,
+                dashboard_service.month,
+            )
+            selected_region = None
+            initial_region_snapshot = None
 
     return render_template(
         "market_analysis.html",
@@ -149,10 +222,18 @@ def market_analysis_regions_pack():
     if not snapshots:
         return jsonify({"ready": False, "regions": {}}), 409
 
-    regions = {
-        str(region_key): _render_region_snapshot(snapshot)
-        for region_key, snapshot in snapshots.items()
-    }
+    regions = {}
+    for region_key, snapshot in snapshots.items():
+        try:
+            regions[str(region_key)] = _render_region_snapshot(snapshot)
+        except Exception:
+            current_app.logger.exception(
+                "Türkiye Pazar Analizi region pack skipped invalid snapshot: region=%s period=%s/%s",
+                region_key, year, month,
+            )
+    if not regions:
+        return jsonify({"ready": False, "regions": {}}), 409
+
     ims_id, production_id = PersistentRegionSnapshotService.source_identity(year, month)
     response = jsonify({
         "ready": True,
@@ -174,9 +255,26 @@ def market_analysis_region(region_key):
     month = request.args.get("month", active["month"], type=int)
     try:
         snapshot = _region_manager_snapshot(region_key, year, month)
+        return _render_region_snapshot(snapshot)
     except ValueError as exc:
         return render_template("partials/market_region_workspace_error.html", message=str(exc)), 404
-    return _render_region_snapshot(snapshot)
+    except Exception:
+        current_app.logger.exception(
+            "Türkiye Pazar Analizi region detail failed: region=%s period=%s/%s",
+            region_key, year, month,
+        )
+        try:
+            snapshot = _build_region_snapshot(region_key, year, month)
+            return _render_region_snapshot(snapshot)
+        except Exception:
+            current_app.logger.exception(
+                "Türkiye Pazar Analizi fresh region fallback failed: region=%s period=%s/%s",
+                region_key, year, month,
+            )
+            return render_template(
+                "partials/market_region_workspace_error.html",
+                message="Bölge verisi geçici olarak hazırlanamadı. Ana Türkiye Pazar Analizi ekranı kullanılabilir.",
+            ), 503
 
 
 @main_bp.route("/prime")
