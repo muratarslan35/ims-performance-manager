@@ -12,6 +12,7 @@ from decimal import Decimal
 
 
 _INSTALLED = False
+_MISSING = object()
 
 
 def _d(value):
@@ -153,20 +154,46 @@ def install_period_result_sum_guard():
 
     from app.services.region_performance_service import RegionPerformanceService
 
+    original_report = RegionPerformanceService.report
     original_aggregate = RegionPerformanceService.aggregate
+
+    def finalized_month(self, period):
+        normalized = (int(period[0]), int(period[1]))
+        # report() owns a short-lived cache because its 1/3/6/12 windows overlap.
+        # Direct aggregate() callers remain uncached, so no stale data survives a
+        # report/request boundary. This also keeps the existing bounded-query
+        # performance contract instead of re-reading the same month repeatedly.
+        cache = getattr(self, "_period_result_sum_month_cache", None)
+        if cache is None:
+            return original_aggregate(self, [normalized])
+        if normalized not in cache:
+            cache[normalized] = original_aggregate(self, [normalized])
+        return cache[normalized]
 
     def monthly_sum_aggregate(self, months):
         normalized = [(int(year), int(month)) for year, month in months]
-        if len(normalized) <= 1:
+        if not normalized:
             return original_aggregate(self, normalized)
+        if len(normalized) == 1:
+            return finalized_month(self, normalized[0])
 
-        # Intentionally call the fully-installed one-month read path. It already
-        # contains source precedence, price history, approved box rounding and
-        # all production/IMS read repairs. Multi-month periods only add results.
-        monthly_payloads = [original_aggregate(self, [period]) for period in normalized]
+        monthly_payloads = [finalized_month(self, period) for period in normalized]
         return _merge_monthly_payloads(normalized, monthly_payloads)
 
+    def report(self):
+        previous = getattr(self, "_period_result_sum_month_cache", _MISSING)
+        self._period_result_sum_month_cache = {}
+        try:
+            return original_report(self)
+        finally:
+            if previous is _MISSING:
+                delattr(self, "_period_result_sum_month_cache")
+            else:
+                self._period_result_sum_month_cache = previous
+
+    RegionPerformanceService._pre_period_sum_report = original_report
     RegionPerformanceService._pre_period_sum_aggregate = original_aggregate
+    RegionPerformanceService.report = report
     RegionPerformanceService.aggregate = monthly_sum_aggregate
     RegionPerformanceService._period_result_sum_guard_installed = True
     _INSTALLED = True
