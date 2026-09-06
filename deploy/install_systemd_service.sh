@@ -69,12 +69,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
 sudo systemctl enable "$worker_service_name"
 
-# Import/heavy releases must not expose the all-region cockpit until the latest
-# completed IMS generation has a complete durable snapshot set. The import gate
-# has already verified that no PROCESSING job is active before this script runs.
-if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+# Snapshot policy:
+# - import: a new IMS identity naturally creates a fresh generation;
+# - backend/heavy: calculation/read-model code may have changed while the IMS id
+#   stayed the same, therefore the current generation is force-invalidated and
+#   rebuilt before new web workers are activated;
+# - ui: payload calculations are unchanged, so no expensive rebuild is needed.
+if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
+  echo "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change"
+  PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py" --force
+elif [ "$release_mode" = "import" ]; then
   echo "REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation"
-  PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
+  PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
 fi
 
 # The first managed deployment may replace the legacy `python run.py`
@@ -133,8 +141,8 @@ sudo systemctl --no-pager --full status "$worker_service_name"
 # A runtime deploy is not accepted until the shared dashboard read model is
 # proven ready for the exact current IMS/production source identity. Import and
 # heavy modes wait for the restarted worker warm-up; backend mode verifies the
-# already-running worker/shared snapshot. UI-only releases do not touch the
-# dashboard data path and therefore keep the fast UI deploy behavior.
+# freshly rebuilt shared snapshot. UI-only releases do not touch the dashboard
+# data path and therefore keep the fast UI deploy behavior.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   echo "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
