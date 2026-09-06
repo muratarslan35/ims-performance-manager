@@ -82,6 +82,8 @@ IMS Performans Yönetim Sistemi
 
 {% endblock %}
 
+<link href="{{ url_for('static', filename='css/responsive-shell-contract.css') }}" rel="stylesheet">
+
 </head>
 
 <body class="{{ 'authenticated' if current_user.is_authenticated else 'anonymous' }} {% block body_class %}{% endblock %}">

@@ -1,0 +1,123 @@
+/* Responsive shell contract: three intentional layouts without touching data or calculations.
+   Mobile <= 767.98px, desktop/tablet 768-1199.98px, PC >= 1200px. */
+
+/* Global navigation loader must stay in the visual viewport centre on every page. */
+#globalPageLoader{
+  position:fixed!important;
+  inset:0!important;
+  width:100vw!important;
+  height:100dvh!important;
+  min-height:100vh!important;
+  margin:0!important;
+  padding:0!important;
+  display:grid!important;
+  place-items:center!important;
+  transform:none!important;
+}
+#globalPageLoader .global-page-loader-card{
+  position:fixed!important;
+  left:50vw!important;
+  top:50dvh!important;
+  transform:translate(-50%,-50%)!important;
+  margin:0!important;
+  max-width:calc(100vw - 28px)!important;
+  max-height:calc(100dvh - 28px)!important;
+}
+
+/* PC: preserve the existing wide layouts. */
+@media (min-width:1200px){
+  .manager-region-cockpit,.exec-cockpit{width:100%;max-width:100%;min-width:0}
+}
+
+/* Desktop/tablet: keep the page full-width while reducing dense grids. */
+@media (min-width:768px) and (max-width:1199.98px){
+  .page-body:has(.manager-region-cockpit)>.container-xl{width:100%;max-width:100%;min-width:0}
+  .manager-region-cockpit,.manager-region-main,.exec-cockpit{width:100%;max-width:100%;min-width:0}
+  .exec-kpis{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .exec-region-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .exec-two-col{grid-template-columns:1fr!important}
+  .manager-region-toolbar{grid-template-columns:190px minmax(0,1fr)}
+  .manager-market-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+
+/* Mobile: page content occupies the phone width; only tables/nav strips may scroll internally. */
+@media (max-width:767.98px){
+  html,body{max-width:100%;overflow-x:hidden}
+  .page-wrapper,.page-body{width:100%;max-width:100%;min-width:0}
+  .page-body:has(.manager-region-cockpit){padding-left:10px!important;padding-right:10px!important;overflow-x:clip}
+  .page-body:has(.manager-region-cockpit)>.container-xl{width:100%!important;max-width:100%!important;min-width:0!important;padding-left:0!important;padding-right:0!important;margin-left:0!important;margin-right:0!important}
+
+  .market-analysis-hero,.market-source-banner,.market-analysis-kpis,.market-main-card,
+  .manager-region-cockpit,.manager-region-main,.manager-region-card,.manager-region-titlebar,
+  .manager-region-market,.exec-cockpit,.exec-card,.exec-summary-card{
+    width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;
+  }
+
+  .market-analysis-hero{padding:18px!important;border-radius:16px!important}
+  .market-analysis-hero h1{font-size:22px!important;line-height:1.15}
+  .market-source-banner{padding:13px!important}
+  .market-analysis-kpis{grid-template-columns:1fr!important;gap:9px!important}
+  .market-analysis-kpis>div{padding:14px!important}
+  .market-main-head{padding:14px!important}
+  .market-main-card .table-responsive,.manager-region-card .table-responsive,.exec-card .table-responsive{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+  .manager-section-head{align-items:flex-start!important;flex-direction:column!important;padding:12px!important}
+  .manager-section-head>span{align-self:flex-start}
+  .manager-period-toolbar{width:100%;max-width:100%;overflow:hidden!important;padding:5px!important}
+  .manager-period-row{width:100%;min-width:0;display:grid!important;gap:5px!important}
+  .manager-period-row-wide{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .manager-period-row-compact{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+  .manager-period-button{min-width:0!important;width:100%;padding:9px 4px!important;font-size:10px!important;white-space:nowrap}
+
+  .manager-region-toolbar{display:block!important;width:100%;max-width:100%;min-width:0}
+  .manager-region-sidebar{position:static!important;width:100%;max-width:100%;min-width:0;margin-bottom:12px;overflow:hidden}
+  .manager-region-list{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;width:100%;overflow:visible!important}
+  .manager-region-button{width:100%;min-width:0!important;max-width:100%;padding:9px!important;white-space:normal;overflow-wrap:anywhere}
+  .manager-region-button span{white-space:normal;overflow-wrap:anywhere}
+  .manager-region-titlebar{align-items:flex-start!important;flex-direction:column!important;padding:15px!important}
+  .manager-region-titlebar h2{font-size:20px!important}
+  .manager-region-badge{align-self:flex-start}
+  .manager-region-kpis{grid-template-columns:1fr!important;gap:9px!important}
+  .manager-kpi{padding:14px!important}
+  .manager-market-head{align-items:flex-start!important;flex-direction:column!important;padding:15px!important}
+  .manager-market-period{align-self:flex-start}
+  .manager-market-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important;padding:12px!important}
+  .manager-market-products{display:block!important;padding:0 12px 12px!important}
+  .manager-product-nav{display:flex!important;flex-direction:row!important;width:100%;max-width:100%;overflow-x:auto!important;padding-bottom:4px}
+  .manager-market-product-tab{flex:0 0 auto!important}
+  .manager-market-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .manager-rival-city-card{margin:0 12px 12px!important}
+  .manager-rival-grid{display:block!important;min-width:0}
+  .manager-rival-group-nav,.manager-rival-product-nav{display:flex;flex-direction:row;max-width:100%;overflow-x:auto!important}
+
+  .exec-cockpit{margin-top:18px!important;padding:14px!important;border-radius:18px!important;overflow:hidden!important}
+  .exec-hero{display:flex!important;flex-direction:column!important;gap:12px!important;width:100%;min-width:0}
+  .exec-hero>div{width:100%;min-width:0}
+  .exec-hero h2{font-size:21px!important;line-height:1.15;overflow-wrap:anywhere}
+  .exec-hero p{max-width:100%!important;font-size:12px!important;overflow-wrap:anywhere}
+  .exec-live-badge{width:100%!important;min-width:0!important;box-sizing:border-box}
+  .exec-period-switch{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:5px!important;width:100%;max-width:100%;overflow:hidden!important}
+  .exec-period-btn{min-width:0!important;width:100%;padding:9px 6px!important;font-size:11px!important;white-space:normal}
+  .exec-kpis{grid-template-columns:1fr!important;gap:8px!important}
+  .exec-kpis article{min-width:0!important;min-height:auto!important;padding:13px!important}
+  .exec-region-grid{grid-template-columns:1fr!important;gap:8px!important}
+  .exec-region-card{width:100%;min-width:0;padding:12px!important}
+  .exec-region-metrics{grid-template-columns:repeat(2,minmax(0,1fr))!important;min-width:0}
+  .exec-region-metrics b{font-size:17px!important;overflow-wrap:anywhere}
+  .exec-region-foot{flex-wrap:wrap!important}
+  .exec-two-col{grid-template-columns:1fr!important}
+  .exec-card{padding:14px!important}
+  .exec-card-head{flex-direction:column!important;gap:8px!important}
+  .exec-product-row{grid-template-columns:minmax(0,1fr) minmax(0,.7fr)!important;gap:7px!important}
+  .exec-product-row>div:nth-child(3){grid-column:2}
+  .exec-split-list{grid-template-columns:1fr!important}
+  .exec-rival-list article{grid-template-columns:30px minmax(0,1fr)!important}
+  .exec-rival-list article>div:last-child{grid-column:2!important;text-align:left!important}
+  .exec-summary-card{grid-template-columns:40px minmax(0,1fr)!important;padding:14px!important;gap:10px!important}
+  .exec-summary-icon{width:40px!important;height:40px!important}
+  .exec-summary-items{grid-template-columns:1fr!important}
+  .exec-chart-wrap{width:100%;max-width:100%;overflow:hidden}
+  .exec-chart-wrap canvas{max-width:100%!important}
+
+  #globalPageLoader .global-page-loader-card{left:50vw!important;top:50dvh!important;transform:translate(-50%,-50%)!important;min-width:160px!important;padding:22px 24px!important}
+}
