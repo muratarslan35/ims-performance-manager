@@ -33,7 +33,6 @@ worker_unit_tmp=$(mktemp)
 runtime_env_tmp=$(mktemp)
 trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$runtime_env_tmp"' EXIT
 
-# Preserve the same stable production secret across reloads/restarts.
 if ! grep -Eq '^[[:space:]]*SECRET_KEY[[:space:]]*=' "$ims_path/.env" 2>/dev/null; then
   secret_path="$ims_path/instance/.secret_key"
   if [ ! -s "$secret_path" ]; then
@@ -85,8 +84,17 @@ elif [ "$release_mode" = "import" ]; then
     "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
 fi
 
-# The first managed deployment may replace the legacy `python run.py`
-# process. Stop only the verified process owned by this application path.
+# Bootstrap rule for representative snapshots:
+# ensure at least one ACTIVE durable generation exists before the new web code
+# is exposed. On normal later deploys this is a quick REUSED no-op. On the first
+# rollout it performs the one-time build here, so the first user never becomes
+# the cache warmer and never pays the 30-35 second representative build cost.
+if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+  echo "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web"
+  PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py"
+fi
+
 if ! sudo systemctl is-active --quiet "$service_name"; then
   legacy_pid=$(ss -ltnp | sed -n 's/.*:8000.*pid=\([0-9]*\).*/\1/p' | head -1)
   if [ -n "$legacy_pid" ]; then
@@ -101,10 +109,6 @@ if ! sudo systemctl is-active --quiet "$service_name"; then
   fi
 fi
 
-# Code-only releases use Gunicorn's HUP reload: new workers boot with the new
-# code while old workers finish current requests. Full stop/start is reserved
-# for DB/service-level changes. This avoids the graceful-stop timeout on every
-# normal deployment.
 if sudo systemctl is-active --quiet "$service_name"; then
   if [ "$release_mode" = "heavy" ]; then
     sudo systemctl restart "$service_name"
@@ -119,9 +123,6 @@ else
 fi
 sudo systemctl --no-pager --full status "$service_name"
 
-# The background importer only needs replacement when importer/DB code changed.
-# Deploy workflow verifies there is no PROCESSING job before those modes reach
-# this script, so no live import can be interrupted by the restart.
 if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   if sudo systemctl is-active --quiet "$worker_service_name"; then
     sudo systemctl restart "$worker_service_name"
@@ -138,11 +139,9 @@ else
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
 
-# Representative pages use an atomic persistent snapshot generation just like
-# the region cockpit. Backend/heavy releases build a fresh generation in the
-# background while the previous ACTIVE generation remains readable. Therefore
-# no user's first representative click is responsible for warming the cache and
-# deploy does not block for all representatives to finish.
+# Once an ACTIVE generation exists, later backend/heavy calculation changes can
+# build a fresh representative generation asynchronously. Readers keep using the
+# previous ACTIVE set until the new generation atomically becomes ACTIVE.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
   echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild"
   nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
@@ -151,11 +150,6 @@ if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
   echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|pid=$!"
 fi
 
-# A runtime deploy is not accepted until the shared dashboard read model is
-# proven ready for the exact current IMS/production source identity. Import and
-# heavy modes wait for the restarted worker warm-up; backend mode verifies the
-# freshly rebuilt shared snapshot. UI-only releases do not touch the dashboard
-# data path and therefore keep the fast UI deploy behavior.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   echo "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
