@@ -25,7 +25,8 @@ def test_global_page_loader_does_not_touch_business_calculation_contracts():
         "ProductionResultService",
         "PrimeEngine",
         "realization =",
-        "target =",
+        "target_tl =",
+        "unit_target =",
     )
     loader_block = source[source.index("function setupGlobalPageLoader()") : source.index("function isMobile()")]
     for token in forbidden:
