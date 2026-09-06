@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
+from hashlib import sha1
 
 from flask import request, render_template
 from flask_login import current_user, login_required
 
+from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.models import Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
@@ -153,6 +155,38 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
     return rows, totals, assignments, sources
 
 
+def _market_source_cache_key(representative, year, month):
+    """Key the exact existing market read by immutable source/scope identity.
+
+    No formula or source precedence changes here: the loader remains
+    RepresentativeMarketService.build(). This only prevents the same completed
+    IMS/production/scope combination from being rebuilt on every page request.
+    """
+    year, month = int(year), int(month)
+    previous_year, previous_month = _shift_month(year, month, -1)
+    upload_id = RepresentativeMarketService._latest_upload_id(year, month) or 0
+    previous_upload_id = RepresentativeMarketService._latest_upload_id(previous_year, previous_month) or 0
+    production_upload = ProductionResultService.final_upload(year, month)
+    production_upload_id = int(production_upload.id) if production_upload else 0
+    assignments = RepresentativeBrickAssignment.query.filter_by(
+        representative_id=representative.id, year=year, month=month, active=True
+    ).order_by(RepresentativeBrickAssignment.brick).all()
+    scope_material = "|".join(
+        [
+            str(representative.id),
+            str(representative.region or ""),
+            str(representative.city or ""),
+            str(representative.territory or ""),
+            *[str(item.brick or "") for item in assignments],
+        ]
+    )
+    scope_digest = sha1(scope_material.encode("utf-8")).hexdigest()[:16]
+    return (
+        f"rep-market:{representative.id}:{year}:{month}:"
+        f"{upload_id}:{previous_upload_id}:{production_upload_id}:{scope_digest}:workspace-v1"
+    )
+
+
 def _aggregate_market(representative, months, market_cache=None):
     if not months:
         return _empty_market(PeriodService.get_active_period()["year"], PeriodService.get_active_period()["month"])
@@ -163,7 +197,12 @@ def _aggregate_market(representative, months, market_cache=None):
         cache_key = (int(year), int(month))
         payload = market_cache.get(cache_key)
         if payload is None:
-            payload = RepresentativeMarketService(representative, year, month).build()
+            source_cache_key = _market_source_cache_key(representative, year, month)
+            payload = RepresentativeAnalysisCache.get_or_compute(
+                source_cache_key,
+                lambda y=year, m=month: RepresentativeMarketService(representative, y, m).build(),
+                ttl_seconds=45,
+            )
             market_cache[cache_key] = payload
         monthly.append(payload)
 
@@ -172,7 +211,7 @@ def _aggregate_market(representative, months, market_cache=None):
 
     result = deepcopy(monthly[-1])
     product_rows = {}
-    for payload_index, payload in enumerate(monthly):
+    for payload in monthly:
         for row in payload.get("rows", []):
             pid = int(row["product"].id)
             if pid not in product_rows:
