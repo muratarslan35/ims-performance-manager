@@ -37,6 +37,16 @@ def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
     assert "PersistentRegionSnapshotService.build_for_period" in worker
 
 
+def test_worker_retries_and_gates_region_snapshot_readiness_after_import():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+    assert "def _warm_region_snapshots" in worker
+    assert 'region_snapshot_acceptance status=PASS' in worker
+    assert 'detail="Bölge analizleri doğrulanıyor"' in worker
+    assert 'region_result = _warm_region_snapshots(app, job_year, job_month)' in worker
+    assert 'and region_result.get("status") in {"ACTIVE", "REUSED"}' in worker
+    assert 'value = 97 + round(2 * done / max(total, 1))' in worker
+
+
 def test_runtime_deploy_refreshes_snapshot_before_web_activation():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     backfill_pos = installer.index("scripts/backfill_active_region_snapshots.py")
