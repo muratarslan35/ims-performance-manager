@@ -1,7 +1,7 @@
 /**
  * IMS Performance Manager – Enterprise Application Shell
  * Manages: sidebar drawer, mobile toggle, theme switching, notifications,
- * and persistent IMS background-import progress.
+ * persistent IMS background-import progress, and global page navigation progress.
  */
 
 (function () {
@@ -15,6 +15,133 @@
     const themeIcon      = document.getElementById('themeIcon');
     const userMenuButton = document.getElementById('userDropdown');
     const userMenu       = userMenuButton ? userMenuButton.nextElementSibling : null;
+
+    function setupGlobalPageLoader() {
+        if (document.getElementById('globalPageLoader')) return;
+
+        const style = document.createElement('style');
+        style.id = 'globalPageLoaderStyles';
+        style.textContent = [
+            '#globalPageLoader{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:rgba(244,247,251,.96);backdrop-filter:blur(8px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s ease,visibility .18s ease}',
+            '#globalPageLoader.is-visible{opacity:1;visibility:visible;pointer-events:all}',
+            '#globalPageLoader.is-complete{opacity:0;visibility:hidden;pointer-events:none}',
+            '.global-page-loader-card{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:190px;padding:28px 32px;border:1px solid rgba(11,78,162,.12);border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 24px 70px rgba(15,23,42,.14)}',
+            '.global-page-loader-ring{--page-load-progress:0deg;position:relative;width:108px;height:108px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#0b4ea2 var(--page-load-progress),rgba(11,78,162,.12) 0);box-shadow:0 12px 28px rgba(11,78,162,.16)}',
+            '.global-page-loader-ring::before{content:"";position:absolute;inset:9px;border-radius:50%;background:#fff;box-shadow:inset 0 0 0 1px rgba(11,78,162,.06)}',
+            '.global-page-loader-value{position:relative;z-index:1;font-size:25px;font-weight:900;letter-spacing:-.03em;color:#0b4ea2;font-variant-numeric:tabular-nums}',
+            '.global-page-loader-label{margin-top:14px;font-size:13px;font-weight:800;letter-spacing:.04em;color:#42556f}',
+            '.global-page-loader-sub{margin-top:3px;font-size:11px;color:#7b8ba0}',
+            '[data-theme="dark"] #globalPageLoader{background:rgba(8,17,31,.96)}',
+            '[data-theme="dark"] .global-page-loader-card{background:rgba(21,34,56,.94);border-color:#2d3e59;box-shadow:0 24px 70px rgba(0,0,0,.36)}',
+            '[data-theme="dark"] .global-page-loader-ring{background:conic-gradient(#75b8ff var(--page-load-progress),rgba(117,184,255,.13) 0)}',
+            '[data-theme="dark"] .global-page-loader-ring::before{background:#152238;box-shadow:inset 0 0 0 1px #2d3e59}',
+            '[data-theme="dark"] .global-page-loader-value{color:#91c7ff}',
+            '[data-theme="dark"] .global-page-loader-label{color:#dce7f5}',
+            '[data-theme="dark"] .global-page-loader-sub{color:#91a4bd}',
+            '@media(max-width:575.98px){.global-page-loader-card{min-width:170px;padding:24px 28px;border-radius:20px}.global-page-loader-ring{width:96px;height:96px}.global-page-loader-value{font-size:23px}}',
+            '@media(prefers-reduced-motion:reduce){#globalPageLoader{transition:none}}'
+        ].join('');
+        document.head.appendChild(style);
+
+        const loader = document.createElement('div');
+        loader.id = 'globalPageLoader';
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-live', 'polite');
+        loader.setAttribute('aria-hidden', 'true');
+        loader.innerHTML = '<div class="global-page-loader-card">' +
+            '<div class="global-page-loader-ring" id="globalPageLoaderRing">' +
+            '<span class="global-page-loader-value" id="globalPageLoaderValue">0%</span></div>' +
+            '<div class="global-page-loader-label">Yükleniyor</div>' +
+            '<div class="global-page-loader-sub">Sayfa hazırlanıyor</div></div>';
+        document.body.appendChild(loader);
+
+        const ring = document.getElementById('globalPageLoaderRing');
+        const value = document.getElementById('globalPageLoaderValue');
+        let current = 0;
+        let timer = null;
+        let finishing = false;
+
+        function render(next) {
+            current = Math.max(current, Math.min(Math.round(next), 100));
+            value.textContent = current + '%';
+            ring.style.setProperty('--page-load-progress', (current * 3.6) + 'deg');
+        }
+
+        function show(startAt) {
+            finishing = false;
+            current = 0;
+            render(startAt || 4);
+            loader.classList.remove('is-complete');
+            loader.classList.add('is-visible');
+            loader.setAttribute('aria-hidden', 'false');
+            if (timer) window.clearInterval(timer);
+            timer = window.setInterval(function () {
+                if (finishing) return;
+                const remaining = 92 - current;
+                if (remaining <= 0) return;
+                render(current + Math.max(1, Math.ceil(remaining * 0.09)));
+            }, 180);
+        }
+
+        function finish() {
+            if (!loader.classList.contains('is-visible')) return;
+            finishing = true;
+            if (timer) {
+                window.clearInterval(timer);
+                timer = null;
+            }
+            const finishTimer = window.setInterval(function () {
+                if (current >= 100) {
+                    window.clearInterval(finishTimer);
+                    window.setTimeout(function () {
+                        loader.classList.add('is-complete');
+                        loader.classList.remove('is-visible');
+                        loader.setAttribute('aria-hidden', 'true');
+                    }, 140);
+                    return;
+                }
+                render(Math.min(100, current + Math.max(1, Math.ceil((100 - current) * 0.32))));
+            }, 28);
+        }
+
+        function isSameOriginNavigation(anchor, event) {
+            if (!anchor || event.defaultPrevented || event.button !== 0) return false;
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+            if (anchor.target && anchor.target !== '_self') return false;
+            if (anchor.hasAttribute('download')) return false;
+            const href = anchor.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('javascript:')) return false;
+            try {
+                const url = new URL(anchor.href, window.location.href);
+                if (url.origin !== window.location.origin) return false;
+                if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash) return false;
+                return true;
+            } catch (_error) {
+                return false;
+            }
+        }
+
+        document.addEventListener('click', function (event) {
+            const anchor = event.target.closest('a[href]');
+            if (isSameOriginNavigation(anchor, event)) show(5);
+        }, true);
+
+        document.addEventListener('submit', function (event) {
+            if (event.defaultPrevented) return;
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            const target = (form.getAttribute('target') || '').toLowerCase();
+            if (target && target !== '_self') return;
+            show(5);
+        }, true);
+
+        window.addEventListener('pageshow', function (event) {
+            if (event.persisted) finish();
+        });
+        window.addEventListener('load', finish, { once: true });
+
+        window.IMSPageLoader = { show: show, finish: finish, setProgress: render };
+    }
 
     function isMobile() {
         return window.innerWidth < 992;
@@ -271,6 +398,7 @@
     }
 
     function init() {
+        setupGlobalPageLoader();
         restoreTheme();
         if (!isMobile()) restoreDesktopState();
 
