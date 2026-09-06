@@ -13,7 +13,7 @@
     {% endif %}
     <h1 class="h2 mb-1">{{ representative.rep_name|representative_display_name }}</h1>
     <p class="text-secondary mb-0"><span class="badge bg-primary-lt text-primary me-1">{{ representative.region or 'Bölge yok' }}</span>{{ representative.city or 'İl bilgisi yok' }}{% if representative.territory %} · {{ representative.territory }}{% endif %}</p>
-    {% if manager_access %}<a class="btn btn-sm btn-outline-primary mt-3" href="{{ url_for('representatives.territory_management', year=year, month=month, representative_id=representative.id) }}"><i class="bi bi-geo-alt-fill"></i> {{ assignments|length }} aktif çalışma alanını yönet</a>{% else %}<div class="small text-secondary mt-3"><i class="bi bi-geo-alt-fill"></i> {{ assignments|length }} aktif çalışma alanı</div>{% endif %}
+    {% if manager_access %}<a class="btn btn-sm btn-outline-primary mt-3" href="{{ url_for('representatives.territory_management', year=year, month=month, representative_id=representative.id) }}"><i class="bi bi-geo-alt-fill"></i> {{ active_snapshot.assignments|length }} aktif çalışma alanını yönet</a>{% else %}<div class="small text-secondary mt-3"><i class="bi bi-geo-alt-fill"></i> {{ active_snapshot.assignments|length }} aktif çalışma alanı</div>{% endif %}
   </div>
   <div class="representative-switcher">
     {% if not representative.active %}<div class="text-end text-danger fw-bold mb-2">PASİF KULLANICI</div>{% endif %}
@@ -25,102 +25,41 @@
   </div>
 </div>
 
-<div class="row g-3 mb-4">
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam TL hedefi</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.target_tl) }} ₺</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.actual_tl) }} ₺</div><div class="small text-secondary">{{ result_source_label }}</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kalan TL</div><div class="h2 mb-1">{{ '{:,.0f}'.format(totals.remaining_tl) }} ₺</div><div class="small text-secondary">Açık ürün hedefleri toplamı</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1 text-{% if totals.percent >= 100 %}success{% elif totals.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
+<div class="row g-3 mb-4" id="repKpiRow">
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam TL hedefi</div><div class="h2 mb-1" id="repKpiTarget">{{ '{:,.0f}'.format(active_snapshot.totals.target_tl) }} ₺</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1" id="repKpiActual">{{ '{:,.0f}'.format(active_snapshot.totals.actual_tl) }} ₺</div><div class="small text-secondary" id="repKpiSource">{{ active_snapshot.result_source_label }}</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Kalan TL</div><div class="h2 mb-1" id="repKpiRemaining">{{ '{:,.0f}'.format(active_snapshot.totals.remaining_tl) }} ₺</div><div class="small text-secondary">Açık ürün hedefleri toplamı</div></div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1" id="repKpiPercent">%{{ active_snapshot.totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
 </div>
 
-{% include "partials/scoped_ai_panel.html" %}
+<section class="rep-period-workspace" aria-label="Temsilci dönem görünümü">
+  <div class="rep-period-row rep-period-row-wide">
+    {% for key,label,kind in period_options if kind == 'wide' %}{% set snapshot=period_snapshots[key] %}
+    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <div class="rep-period-row rep-period-row-compact">
+    {% for key,label,kind in period_options if kind == 'compact' %}{% set snapshot=period_snapshots[key] %}
+    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+</section>
 
 <div class="card annual-realization-card mb-4">
   <div class="card-header"><div><h2 class="card-title mb-1">12 Aylık Toplam Realizasyon</h2><p class="text-secondary small mb-0">{{ year }} yılı aylık toplam TL hedefi ve gerçekleşen IMS verisine göre</p></div></div>
   <div class="card-body"><div class="annual-realization-chart"><canvas data-annual-realization-chart data-rows='{{ annual_realization|tojson|forceescape }}'></canvas></div></div>
 </div>
 
-<div class="row g-4">
-  <div class="col-xl-7">
-    <div class="card h-100">
-      <div class="card-header"><h2 class="card-title mb-0">Ürün hedefi ve {{ result_source_label }} durumu</h2></div>
-      <div class="table-responsive"><table class="table table-vcenter card-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">TL hedef</th><th class="text-end">{% if has_production_result %}Nihai TL ÇIKIŞI{% else %}IMS TL ÇIKIŞI{% endif %}</th><th class="text-end">Kutu hedefi (ADET)</th><th class="text-end">{% if has_production_result %}Nihai KUTU ÇIKIŞI (ADET){% else %}IMS KUTU ÇIKIŞI (ADET){% endif %}</th><th class="text-end">Realizasyon</th></tr></thead><tbody>
-      {% for item in products %}<tr><td class="fw-semibold">{{ item.product.product_name }}</td><td class="text-end">{{ '{:,.0f}'.format(item.target_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_tl) }} ₺</td><td class="text-end">{{ '{:,.0f}'.format(item.target_unit) }} adet</td><td class="text-end">{{ '{:,.0f}'.format(item.actual_unit) }} adet</td><td class="text-end"><span class="badge bg-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}-lt text-{% if item.percent >= 100 %}success{% elif item.percent >= 75 %}warning{% else %}danger{% endif %}">%{{ item.percent }}</span></td></tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün hedefi bulunamadı.</td></tr>{% endfor %}
-      </tbody></table></div>
-    </div>
-  </div>
-  <div class="col-xl-5">
-    <div class="card h-100">
-      <div class="card-header"><h2 class="card-title mb-0">Sorumlu brickler</h2></div>
-      <div class="list-group list-group-flush">
-      {% for item in assignments %}<div class="list-group-item"><div class="fw-semibold">{{ item.brick }}</div></div>{% else %}<div class="list-group-item text-secondary py-4">Bu dönem için brick ataması bulunmuyor.</div>{% endfor %}
-      </div>
-    </div>
-  </div>
+<div class="rep-period-panels">
+{% for key,label,kind in period_options %}
+  {% set snapshot=period_snapshots[key] %}
+  <section class="rep-period-panel {% if key == selected_period %}active{% endif %}" data-rep-period-panel="{{ key }}" {% if key != selected_period %}hidden{% endif %}>
+    {% with assignments=snapshot.assignments, products=snapshot.products, totals=snapshot.totals, market_analysis=snapshot.market_analysis, has_production_result=snapshot.has_production_result, result_source_label=snapshot.result_source_label, ai_report=snapshot.ai_report, selected_panel_key=key %}
+      {% include "partials/representative_period_panel.html" %}
+    {% endwith %}
+  </section>
+{% endfor %}
 </div>
-
-<section class="representative-market-section mt-4" aria-labelledby="representativeMarketTitle">
-  <div class="market-section-heading">
-    <div><span class="section-kicker">KUTU BAZLI · DİNAMİK REKABET ANALİZİ</span><h2 id="representativeMarketTitle">{{ representative.rep_name|representative_display_name }} Ürün ve Brick Rekabet Analizi</h2><p>Yedi ürünün mevcut kutu çıkışını rakiplerle karşılaştırır; dikkat gerektiren ürün ve brickleri önceliklendirir.</p></div>
-    <div class="scope-chip"><i class="bi bi-geo-alt"></i>{% if market_analysis.scope == 'brick' %}{{ market_analysis.bricks|length }} brick kapsamı{% elif market_analysis.scope == 'geography' %}Coğrafi eşleşme{% else %}Kapsam bekleniyor{% endif %}</div>
-  </div>
-
-  <div class="market-kpis">
-    <div><span>Temsilci IMS çıkışı</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.actual_unit) }} kutu</strong></div>
-    <div><span>Toplam kutu pazarı</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.market_unit) }} kutu</strong></div>
-    <div><span>Rakip çıkışları</span><strong>{{ '{:,.0f}'.format(market_analysis.totals.competitor_unit) }} kutu</strong></div>
-    <div><span>Temsilci pazar payı</span><strong>%{{ market_analysis.totals.share_percent }}</strong></div>
-  </div>
-
-  <div class="row g-4 mb-4">
-    <div class="col-12"><div class="card h-100"><div class="card-header"><h3 class="card-title mb-0">Ürün bazlı kutu analizi</h3></div><div class="table-responsive"><table class="table table-vcenter card-table market-product-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Temsilci satışı</th><th class="text-end">Rakip kutu toplamı</th><th class="text-end">Toplam kutu pazarı</th><th class="text-end">Pazardan alınan pay</th><th>Dikkat</th></tr></thead><tbody>
-      {% for item in market_analysis.rows %}<tr class="attention-row attention-{{ item.attention }}"><td><strong>{{ item.product.product_name }}</strong></td><td class="text-end">{{ '{:,.0f}'.format(item.actual_unit) }}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(item.competitor_unit) }}</td><td class="text-end">{{ '{:,.0f}'.format(item.market_unit) }}</td><td class="text-end"><span class="market-share-pill">%{{ item.share_percent }}</span></td><td><span class="attention-badge attention-{{ item.attention }}">{% if item.attention == 'critical' %}Öncelikli{% elif item.attention == 'warning' %}Takip{% else %}Güçlü{% endif %}</span></td></tr>{% endfor %}
-    </tbody></table></div></div></div>
-  </div>
-
-  <div class="card mb-4"><div class="card-header analysis-card-header"><div><h3 class="card-title mb-1">Aylık ürün değişimi ve rakip baskısı</h3><p class="text-secondary mb-0">{{ market_analysis.previous_period.year }}/{{ '%02d'|format(market_analysis.previous_period.month) }} ile {{ year }}/{{ '%02d'|format(month) }} gerçek kutu verileri karşılaştırılır.</p></div></div><div class="table-responsive"><table class="table table-vcenter card-table trend-analysis-table mb-0"><thead><tr><th>Ürün</th><th class="text-end">Önceki ay</th><th class="text-end">Bu ay</th><th class="text-end">Net değişim</th><th class="text-end">Değişim</th><th class="text-end">Rakip değişimi</th><th>Yönetim sinyali</th></tr></thead><tbody>
-    {% for item in market_analysis.rows %}<tr><td><strong>{{ item.product.product_name }}</strong></td>{% if item.has_previous %}<td class="text-end">{{ '{:,.0f}'.format(item.previous_actual_unit) }}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(item.actual_unit) }}</td><td class="text-end"><span class="trend-pill {% if item.actual_change_unit > 0 %}up{% elif item.actual_change_unit < 0 %}down{% else %}flat{% endif %}">{% if item.actual_change_unit > 0 %}▲ +{% elif item.actual_change_unit < 0 %}▼ {% else %}— {% endif %}{{ '{:,.0f}'.format(item.actual_change_unit) }}</span></td><td class="text-end">{% if item.actual_change_percent is not none %}%{{ '%+.1f'|format(item.actual_change_percent) }}{% else %}Yeni veri{% endif %}</td><td class="text-end">{% if item.competitor_change_unit > 0 %}<span class="trend-pill down">▲ +{{ '{:,.0f}'.format(item.competitor_change_unit) }}</span>{% elif item.competitor_change_unit < 0 %}<span class="trend-pill up">▼ {{ '{:,.0f}'.format(item.competitor_change_unit) }}</span>{% else %}—{% endif %}</td><td>{% if item.actual_change_unit > 0 and item.competitor_change_unit <= 0 %}<span class="decision-pill strong">Belirgin güçlenme</span>{% elif item.actual_change_unit > item.competitor_change_unit and item.actual_change_unit > 0 %}<span class="decision-pill positive">Rakipten hızlı büyüyor</span>{% elif item.competitor_change_unit > item.actual_change_unit %}<span class="decision-pill critical">Rakip baskısı artıyor</span>{% else %}<span class="decision-pill neutral">Dengeli</span>{% endif %}</td>{% else %}<td colspan="5" class="text-end text-secondary">Önceki dönem verisi yok</td><td><span class="decision-pill neutral">Karşılaştırma bekleniyor</span></td>{% endif %}</tr>{% endfor %}
-  </tbody></table></div></div>
-
-  <div class="analysis-explorer card">
-    <div class="analysis-mode-tabs" role="tablist" aria-label="Rekabet analiz görünümü">
-      <button type="button" class="analysis-mode-tab active" data-analysis-tab="product"><i class="bi bi-capsule"></i><span>1. Ürün Bazlı Analiz</span><small>Ürün, hedef, çıkış ve rakipler</small></button>
-      <button type="button" class="analysis-mode-tab" data-analysis-tab="brick"><i class="bi bi-grid-3x3-gap"></i><span>2. Brick Bazlı Analiz</span><small>Brick–ürün çıkışı ve hedef katkısı</small></button>
-    </div>
-
-    <div class="analysis-tab-pane active" data-analysis-pane="product">
-      <div class="product-explorer">
-        <nav class="product-explorer-menu" aria-label="Ürün seçimi">
-          <div class="product-menu-title">Ürünler</div>
-          {% for item in market_analysis.rows %}<button type="button" class="product-menu-item {% if loop.first %}active{% endif %}" data-product-target="product-{{ item.product.id }}"><span>{{ item.product.product_name }}</span><b>%{{ item.realization_percent }}</b></button>{% endfor %}
-        </nav>
-        <div class="product-explorer-content">
-          {% for item in market_analysis.rows %}<article class="product-detail-panel {% if loop.first %}active{% endif %}" id="product-{{ item.product.id }}">
-            <div class="product-detail-heading"><div><span>SEÇİLİ ÜRÜN</span><h3>{{ item.product.product_name }}</h3></div><span class="attention-badge attention-{{ item.attention }}">{% if item.attention == 'critical' %}Aksiyon gerekli{% elif item.attention == 'warning' %}İzlenmeli{% else %}Güçlü{% endif %}</span></div>
-            <div class="product-detail-kpis"><div><span>Aylık kutu hedefi</span><strong>{{ '{:,.0f}'.format(item.target_unit) }}</strong></div><div><span>Kutu çıkışı</span><strong>{{ '{:,.0f}'.format(item.actual_unit) }}</strong></div><div><span>Realizasyon</span><strong>%{{ item.realization_percent }}</strong></div><div><span>Rakip kutu</span><strong>{{ '{:,.0f}'.format(item.competitor_unit) }}</strong></div><div><span>Toplam pazar</span><strong>{{ '{:,.0f}'.format(item.market_unit) }}</strong></div><div><span>Pazar payımız</span><strong>%{{ item.share_percent }}</strong></div></div>
-            <div class="table-responsive"><table class="table table-vcenter rival-analysis-table mb-0"><thead><tr><th>Sıra</th><th>Rakip ürün</th><th class="text-end">Kutu çıkışı</th><th class="text-end">Grup pazarına oranı</th></tr></thead><tbody>{% for rival in item.rivals %}<tr><td>#{{ loop.index }}</td><td><strong>{{ rival.name }}</strong></td><td class="text-end fw-bold">{{ '{:,.0f}'.format(rival.unit) }}</td><td class="text-end">%{{ (rival.unit * 100 / item.market_unit)|round(1) if item.market_unit else 0 }}</td></tr>{% else %}<tr><td colspan="4" class="text-center text-secondary py-4">Bu ürün grubunda rakip kutu kaydı bulunmuyor.</td></tr>{% endfor %}</tbody></table></div>
-          </article>{% endfor %}
-        </div>
-      </div>
-    </div>
-
-    <div class="analysis-tab-pane" data-analysis-pane="brick">
-      <div class="brick-section-intro"><h3>Brick bazlı ürün karşılaştırması</h3><p>Soldan bir brick seçerek Excel'deki ürünlerin birebir kutu çıkışını, hedefe katkısını ve rakip durumunu karşılaştırın.</p></div>
-      <div class="brick-explorer">
-        <nav class="brick-explorer-menu" aria-label="Brick seçimi">
-          <div class="product-menu-title">Brickler</div>
-          {% for brick, items in market_analysis.brick_product_rows|groupby('brick') %}<button type="button" class="brick-menu-item {% if loop.first %}active{% endif %}" data-brick-target="brick-{{ loop.index }}"><span>{{ brick }}</span><b>{{ items|length }} ürün</b></button>{% else %}<div class="text-secondary small p-3">Brick verisi bulunmuyor.</div>{% endfor %}
-        </nav>
-        <div class="brick-explorer-content">
-          {% for brick, items in market_analysis.brick_product_rows|groupby('brick') %}<article class="brick-detail-panel {% if loop.first %}active{% endif %}" id="brick-{{ loop.index }}">
-            <div class="brick-pane-heading"><div><span>SEÇİLİ BRICK</span><h3>{{ brick }}</h3><p>Ürünlerin kutu çıkışı, aylık ürün hedefine katkısı ve rakip pazar karşılaştırması.</p></div></div>
-            <div class="brick-summary-kpis"><div><span>Ürün sayısı</span><strong>{{ items|length }}</strong></div><div><span>Toplam kutu çıkışı</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='company_unit')) }}</strong></div><div><span>Toplam rakip kutu</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='competitor_unit')) }}</strong></div><div><span>Toplam kutu pazarı</span><strong>{{ '{:,.0f}'.format(items|sum(attribute='market_unit')) }}</strong></div></div>
-            <div class="table-responsive"><table class="table table-vcenter card-table brick-product-table mb-0"><thead><tr><th>Ürün</th><th>Tür</th><th class="text-end">Kutu adet</th></tr></thead><tbody>{% for group in items %}<tr class="brick-product-group"><td colspan="2"><strong>{{ group.product_name }} ürün grubu</strong></td><td class="text-end"><strong>Toplam kutu çıkışı: {{ '{:,.0f}'.format(group.group_total_unit) }}</strong></td></tr>{% for market_product in group.market_products %}<tr class="{% if market_product.is_company %}company-product-row{% endif %}"><td><strong>{{ market_product.name }}</strong></td><td>{% if market_product.is_company %}<span class="product-type own">Şirket ürünü</span>{% else %}<span class="product-type rival">Rakip</span>{% endif %}</td><td class="text-end fw-bold">{{ '{:,.0f}'.format(market_product.unit) }}</td></tr>{% endfor %}{% endfor %}</tbody></table></div>
-          </article>{% endfor %}
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 {% endblock %}
 
 {% block scripts %}
@@ -128,27 +67,61 @@
 <script src="{{ url_for('static', filename='js/scoped-ai.js') }}"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  document.querySelectorAll("[data-analysis-tab]").forEach(button => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll("[data-analysis-tab]").forEach(item => item.classList.toggle("active", item === button));
-      document.querySelectorAll("[data-analysis-pane]").forEach(pane => pane.classList.toggle("active", pane.dataset.analysisPane === button.dataset.analysisTab));
+  const money = value => `${Math.round(Number(value || 0)).toLocaleString("en-US")} ₺`;
+  const buttons = [...document.querySelectorAll("[data-rep-period]")];
+  const panels = [...document.querySelectorAll("[data-rep-period-panel]")];
+  const kpiTarget = document.getElementById("repKpiTarget");
+  const kpiActual = document.getElementById("repKpiActual");
+  const kpiRemaining = document.getElementById("repKpiRemaining");
+  const kpiPercent = document.getElementById("repKpiPercent");
+  const kpiSource = document.getElementById("repKpiSource");
+
+  const activatePeriod = button => {
+    if (!button) return;
+    const key = button.dataset.repPeriod;
+    buttons.forEach(item => item.classList.toggle("active", item === button));
+    panels.forEach(panel => {
+      const active = panel.dataset.repPeriodPanel === key;
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
+    });
+    if (kpiTarget) kpiTarget.textContent = money(button.dataset.target);
+    if (kpiActual) kpiActual.textContent = money(button.dataset.actual);
+    if (kpiRemaining) kpiRemaining.textContent = money(button.dataset.remaining);
+    if (kpiPercent) kpiPercent.textContent = `%${button.dataset.percent || 0}`;
+    if (kpiSource) kpiSource.textContent = button.dataset.source || "";
+    const url = new URL(window.location.href);
+    url.searchParams.set("period", key);
+    window.history.replaceState({period:key}, "", url);
+    window.dispatchEvent(new Event("resize"));
+  };
+  buttons.forEach(button => button.addEventListener("click", () => activatePeriod(button)));
+
+  document.querySelectorAll("[data-rep-period-panel]").forEach(periodPanel => {
+    periodPanel.querySelectorAll("[data-analysis-tab]").forEach(button => {
+      button.addEventListener("click", () => {
+        periodPanel.querySelectorAll("[data-analysis-tab]").forEach(item => item.classList.toggle("active", item === button));
+        periodPanel.querySelectorAll("[data-analysis-pane]").forEach(pane => pane.classList.toggle("active", pane.dataset.analysisPane === button.dataset.analysisTab));
+      });
+    });
+    periodPanel.querySelectorAll("[data-product-target]").forEach(button => {
+      button.addEventListener("click", () => {
+        periodPanel.querySelectorAll("[data-product-target]").forEach(item => item.classList.toggle("active", item === button));
+        periodPanel.querySelectorAll(".product-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.productTarget));
+      });
+    });
+    periodPanel.querySelectorAll("[data-brick-target]").forEach(button => {
+      button.addEventListener("click", () => {
+        periodPanel.querySelectorAll("[data-brick-target]").forEach(item => item.classList.toggle("active", item === button));
+        periodPanel.querySelectorAll(".brick-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.brickTarget));
+      });
     });
   });
-  document.querySelectorAll("[data-product-target]").forEach(button => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll("[data-product-target]").forEach(item => item.classList.toggle("active", item === button));
-      document.querySelectorAll(".product-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.productTarget));
-    });
-  });
-  document.querySelectorAll("[data-brick-target]").forEach(button => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll("[data-brick-target]").forEach(item => item.classList.toggle("active", item === button));
-      document.querySelectorAll(".brick-detail-panel").forEach(panel => panel.classList.toggle("active", panel.id === button.dataset.brickTarget));
-    });
-  });
+
   const selector = document.getElementById("representativeSwitcher");
   selector?.addEventListener("change", function () {
-    const params = new URLSearchParams({year: selector.dataset.year, month: selector.dataset.month});
+    const activePeriod = document.querySelector("[data-rep-period].active")?.dataset.repPeriod || "monthly";
+    const params = new URLSearchParams({year: selector.dataset.year, month: selector.dataset.month, period: activePeriod});
     window.location.assign(`/representatives/view/${selector.value}?${params.toString()}`);
   });
 });
