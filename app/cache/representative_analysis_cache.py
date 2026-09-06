@@ -5,15 +5,16 @@ queries. This cache stores derived read-model payloads only; it never writes or
 changes IMS, target, production or representative business data.
 
 Representative market/intelligence keys already contain the active IMS upload and
-scope identity. Those immutable source-keyed entries can therefore live for the
-whole upload generation instead of expiring every 45-60 seconds. A new IMS upload
-naturally produces a new key, while a web-code deploy starts fresh workers and an
-empty process cache. This preserves every existing calculation/read service and
-only avoids repeating the same expensive reads.
+scope identity. Those immutable source-keyed entries therefore stay valid for the
+whole upload generation, with no calendar-day expiry. A new IMS upload naturally
+produces a new key, while a web-code deploy starts fresh workers and an empty
+process cache. This preserves every existing calculation/read service and only
+avoids repeating the same expensive reads.
 """
 from __future__ import annotations
 
 import copy
+import math
 import time
 from collections import OrderedDict
 from threading import Event, RLock
@@ -25,8 +26,7 @@ from flask import current_app, has_app_context
 class RepresentativeAnalysisCache:
     _MAX_ENTRIES = 512
     _DEFAULT_TTL_SECONDS = 45
-    _MAX_TTL_SECONDS = 8 * 24 * 60 * 60
-    _SOURCE_KEYED_TTL_SECONDS = 8 * 24 * 60 * 60
+    _MAX_TTL_SECONDS = 120
     _SOURCE_KEY_PREFIXES = ("rep-market:", "rep-intelligence:")
     _WAIT_SECONDS = 30.0
     _store: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
@@ -49,16 +49,18 @@ class RepresentativeAnalysisCache:
             return value
 
     @classmethod
-    def _ttl_for_key(cls, key: str, requested_ttl: int | None) -> int:
-        """Keep upload-scoped representative reads warm for their source lifetime.
+    def _ttl_for_key(cls, key: str, requested_ttl: int | None) -> float:
+        """Keep upload-scoped representative reads for the source generation.
 
-        This deliberately changes cache retention only. The loaders, precedence,
-        formulas, rounding and data-source selection remain untouched.
+        Source-keyed representative payloads are invalidated by source identity,
+        not elapsed days. Generic cache keys retain the original short TTL guard.
+        This changes retention only; loaders, precedence, formulas, rounding and
+        data-source selection remain untouched.
         """
-        ttl = requested_ttl or cls._DEFAULT_TTL_SECONDS
         if str(key).startswith(cls._SOURCE_KEY_PREFIXES):
-            ttl = max(int(ttl), cls._SOURCE_KEYED_TTL_SECONDS)
-        return max(1, min(int(ttl), cls._MAX_TTL_SECONDS))
+            return math.inf
+        ttl = requested_ttl or cls._DEFAULT_TTL_SECONDS
+        return float(max(1, min(int(ttl), cls._MAX_TTL_SECONDS)))
 
     @classmethod
     def clear(cls) -> None:
@@ -128,7 +130,8 @@ class RepresentativeAnalysisCache:
             raise
 
         with cls._lock:
-            cls._store[key] = (time.monotonic() + ttl, cls._copy(value))
+            expires_at = math.inf if math.isinf(ttl) else time.monotonic() + ttl
+            cls._store[key] = (expires_at, cls._copy(value))
             cls._store.move_to_end(key)
             while len(cls._store) > cls._MAX_ENTRIES:
                 cls._store.popitem(last=False)
