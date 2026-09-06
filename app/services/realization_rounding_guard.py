@@ -118,3 +118,16 @@ def install_realization_rounding_guard():
         _wrap_output(owner, name)
 
     _INSTALLED = True
+
+
+def _register_representative_period_workspace():
+    """Install the representative-wide selector after its blueprint is registered."""
+    from app.representatives import representatives_bp
+    from app.services.representative_period_workspace import install_representative_period_workspace
+
+    @representatives_bp.record_once
+    def _install(state):
+        install_representative_period_workspace(state.app)
+
+
+_register_representative_period_workspace()
