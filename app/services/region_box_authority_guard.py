@@ -81,14 +81,15 @@ def install_region_box_authority_guard():
         product_ids = {int(item.get("product_id")) for item in products if item.get("product_id") is not None}
         desired = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         covered = {product_id: True for product_id in product_ids}
+        targeted_by_month = defaultdict(set)
+        for row in self._target_rows(months):
+            year, month, _rep_id, product_id = int(row[0]), int(row[1]), row[2], row[3]
+            if product_id is not None:
+                targeted_by_month[(year, month)].add(int(product_id))
 
         for year, month in months:
             month_units, month_has_authority = _authoritative_month_units(self, year, month)
-            targeted = {
-                int(row[3])
-                for row in self._target_rows([(year, month)])
-                if row[3] is not None
-            }
+            targeted = targeted_by_month.get((year, month), set())
             for product_id in product_ids:
                 values = month_units.get(product_id)
                 if values is not None:
@@ -104,6 +105,7 @@ def install_region_box_authority_guard():
                     # product lacks a usable price/unit row. Fail closed.
                     covered[product_id] = False
 
+        april_or_later = any(TLBoxCalculationService.applies(year, month) for year, month in months)
         for item in products:
             product_id = int(item.get("product_id"))
             if not covered.get(product_id):
@@ -113,9 +115,8 @@ def install_region_box_authority_guard():
             item["actual_unit"] = actual_unit if complete else None
             item["unit_complete"] = bool(complete)
             item["unit_difference"] = (actual_unit - target_unit) if complete else None
-            item["box_authority"] = "REGION_TL_PERIOD_PRICE" if any(
-                TLBoxCalculationService.applies(year, month) for year, month in months
-            ) else item.get("box_authority")
+            if april_or_later:
+                item["box_authority"] = "REGION_TL_PERIOD_PRICE"
         return payload
 
     RegionPerformanceService.aggregate = guarded_aggregate
