@@ -77,6 +77,55 @@ def _warm_dashboard_snapshot(app, year, month):
         db.session.remove()
 
 
+def _warm_region_snapshots(app, year, month):
+    """Build/retry the complete region generation and verify it is readable.
+
+    IMSImportQueue already attempts the region build before the heavier dashboard
+    and representative warm-ups.  A transient failure there must not be hidden by
+    successful dashboard/representative snapshots, so the worker retries once
+    after the business import has committed and treats region readiness as a
+    first-class completion gate.
+    """
+    started = time.monotonic()
+    try:
+        result = PersistentRegionSnapshotService.build_for_period(year, month)
+        status = result.get("status")
+        app.logger.info(
+            "region_snapshot_warm status=%s year=%s month=%s regions=%s set_id=%s seconds=%.3f",
+            status, year, month,
+            result.get("regions", 0), result.get("set_id", 0),
+            time.monotonic() - started,
+        )
+        if status not in {"ACTIVE", "REUSED"}:
+            raise RuntimeError(f"region snapshot warm-up is not ready: status={status}")
+
+        read_started = time.perf_counter()
+        verified = PersistentRegionSnapshotService.get_active_all(year, month)
+        read_seconds = time.perf_counter() - read_started
+        expected_regions = int(result.get("regions") or 0)
+        if not isinstance(verified, dict) or not verified:
+            raise RuntimeError("region snapshot warm-up completed but active payload is unavailable")
+        if expected_regions and len(verified) != expected_regions:
+            raise RuntimeError(
+                "region snapshot warm-up completed with incomplete active payload: "
+                f"expected={expected_regions} actual={len(verified)}"
+            )
+        ims_id, production_id = PersistentRegionSnapshotService.source_identity(year, month)
+        app.logger.info(
+            "region_snapshot_acceptance status=PASS year=%s month=%s ims_upload_id=%s "
+            "production_upload_id=%s regions=%s read_seconds=%.4f",
+            year, month, ims_id, production_id, len(verified), read_seconds,
+        )
+        result["read_seconds"] = read_seconds
+        return result
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("region_snapshot_warm_failed year=%s month=%s", year, month)
+        return {"status": "FAILED"}
+    finally:
+        db.session.remove()
+
+
 def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None):
     """Prepare all representative pages before users navigate to them."""
     started = time.monotonic()
@@ -94,9 +143,9 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
                 eta_text = f"tahmini {eta_seconds} sn kaldı"
 
             if job_id is not None:
-                # 96-99 is driven by actual completed representative snapshots;
+                # 97-99 is driven by actual completed representative snapshots;
                 # no synthetic timer or random increment is used.
-                value = 96 + round(3 * done / max(total, 1))
+                value = 97 + round(2 * done / max(total, 1))
                 IMSProgressStore.write(
                     job_id,
                     percent=min(value, 99),
@@ -204,6 +253,16 @@ def main():
                 IMSProgressStore.write(
                     job_id,
                     percent=96,
+                    stage="region_snapshots",
+                    message="Veriler ekrana aktarılıyor",
+                    detail="Bölge analizleri doğrulanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
+                )
+                region_result = _warm_region_snapshots(app, job_year, job_month)
+
+                IMSProgressStore.write(
+                    job_id,
+                    percent=97,
                     stage="representative_snapshots",
                     message="Veriler ekrana aktarılıyor",
                     detail="Temsilci ekranları hazırlanıyor",
@@ -215,6 +274,7 @@ def main():
 
                 ready = (
                     dashboard_result.get("status") in {"ACTIVE", "REUSED"}
+                    and region_result.get("status") in {"ACTIVE", "REUSED"}
                     and representative_result.get("status") in {"ACTIVE", "REUSED"}
                 )
                 detail = "Dashboard, bölge ve temsilci analizleri hazır"

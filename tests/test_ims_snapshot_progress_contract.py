@@ -24,13 +24,16 @@ def test_completed_queue_row_can_keep_real_snapshot_progress_active():
     assert '"active": payload.get("status")' in route
 
 
-def test_worker_reports_dashboard_and_representative_snapshot_progress():
+def test_worker_reports_dashboard_region_and_representative_snapshot_progress():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert 'percent=95' in worker
     assert 'stage="dashboard_snapshot"' in worker
     assert 'percent=96' in worker
+    assert 'stage="region_snapshots"' in worker
+    assert 'detail="Bölge analizleri doğrulanıyor"' in worker
+    assert 'percent=97' in worker
     assert 'stage="representative_snapshots"' in worker
-    assert 'value = 96 + round(3 * done / max(total, 1))' in worker
+    assert 'value = 97 + round(2 * done / max(total, 1))' in worker
     assert 'eta_seconds' in worker
     assert 'tahmini' in worker
     assert 'percent=100' in worker
