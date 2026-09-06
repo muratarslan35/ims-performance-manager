@@ -214,4 +214,23 @@ def install_period_result_sum_guard():
     RegionPerformanceService.report = report
     RegionPerformanceService.aggregate = monthly_sum_aggregate
     RegionPerformanceService._period_result_sum_guard_installed = True
+
+    # The Türkiye cockpit consumes the region snapshot periods and performs no
+    # source re-resolution. Expose the same fixed grouping vocabulary there so
+    # every national panel is an aggregate of exactly the same region periods.
+    try:
+        from app.services.executive_market_cockpit_service import ExecutiveMarketCockpitService
+        ExecutiveMarketCockpitService.PERIODS = (
+            ("monthly", "Aylık"),
+            ("q1", "Q1"),
+            ("q2", "Q2"),
+            ("q3", "Q3"),
+            ("q4", "Q4"),
+            ("half_year", "6 Aylık"),
+            ("yearly", "YILLIK YTD"),
+        )
+        ExecutiveMarketCockpitService.PERIOD_LABELS = dict(ExecutiveMarketCockpitService.PERIODS)
+    except ImportError:
+        pass
+
     _INSTALLED = True
