@@ -48,19 +48,16 @@ def _merge_products(monthly_payloads):
             for label in item.get("quota_exit_months") or []:
                 if label not in bucket["quota_exit_months"]:
                     bucket["quota_exit_months"].append(label)
-
             complete = bool(item.get("complete")) and item.get("actual_tl") is not None
             bucket["complete"] = bucket["complete"] and complete
             if complete:
                 bucket["actual_tl"] += _d(item.get("actual_tl"))
                 bucket["gap_tl"] += _d(item.get("gap_tl"))
-
             unit_complete = bool(item.get("unit_complete")) and item.get("actual_unit") is not None
             bucket["unit_complete"] = bucket["unit_complete"] and unit_complete
             if unit_complete:
                 bucket["actual_unit"] += _d(item.get("actual_unit"))
                 bucket["unit_difference"] += _d(item.get("unit_difference"))
-
     result = []
     for bucket in rows.values():
         if bucket["complete"]:
@@ -99,7 +96,6 @@ def _merge_representatives(monthly_payloads):
             if complete:
                 bucket["actual_tl"] += _d(item.get("actual_tl"))
                 bucket["gap_tl"] += _d(item.get("gap_tl"))
-
     result = []
     for bucket in rows.values():
         if bucket["complete"]:
@@ -114,7 +110,6 @@ def _merge_representatives(monthly_payloads):
 
 
 def _has_business_data(payload):
-    """Return True only when a month is part of the real historical series."""
     return bool(
         _d(payload.get("target_tl"))
         or (payload.get("products") or [])
@@ -131,13 +126,11 @@ def _merge_monthly_payloads(months, monthly_payloads):
     total_target = sum((_d(payload.get("target_tl")) for payload in contributing), Decimal("0"))
     total_actual = sum((_d(payload.get("actual_tl")) for payload in contributing), Decimal("0"))
     total_gap = sum((_d(payload.get("gap_tl")) for payload in contributing), Decimal("0"))
-
     month_rows = []
     source_by_month = {}
     for payload in monthly_payloads:
         month_rows.extend(payload.get("months") or [])
         source_by_month.update(payload.get("source_by_month") or {})
-
     return {
         "target_tl": total_target,
         "actual_tl": total_actual if complete else None,
@@ -156,14 +149,26 @@ def _quarter_months(year, quarter):
     return [(int(year), month) for month in range(start, start + 3)]
 
 
+def _empty_period():
+    return {
+        "target_tl": Decimal("0"),
+        "actual_tl": None,
+        "realization_percent": None,
+        "gap_tl": None,
+        "complete": False,
+        "products": [],
+        "representatives": [],
+        "months": [],
+        "source_by_month": {},
+    }
+
+
 def install_period_result_sum_guard():
     """Make every RegionPerformanceService consumer use finalized monthly sums."""
     global _INSTALLED
     if _INSTALLED:
         return
-
     from app.services.region_performance_service import RegionPerformanceService
-
     original_report = RegionPerformanceService.report
     original_aggregate = RegionPerformanceService.aggregate
 
@@ -179,7 +184,7 @@ def install_period_result_sum_guard():
     def monthly_sum_aggregate(self, months):
         normalized = [(int(year), int(month)) for year, month in months]
         if not normalized:
-            return original_aggregate(self, normalized)
+            return _empty_period()
         if len(normalized) == 1:
             return finalized_month(self, normalized[0])
         monthly_payloads = [finalized_month(self, period) for period in normalized]
@@ -191,13 +196,22 @@ def install_period_result_sum_guard():
         try:
             result = original_report(self)
             periods = result.setdefault("periods", {})
+            yearly_month_rows = (periods.get("yearly") or {}).get("months") or []
+            available_months = [
+                int(row.get("month")) for row in yearly_month_rows
+                if int(row.get("year") or self.year) == int(self.year) and row.get("month")
+            ]
+            cutoff_month = max(available_months, default=int(self.month))
             for quarter in range(1, 5):
                 key = f"q{quarter}"
-                months = _quarter_months(self.year, quarter)
+                months = [
+                    period for period in _quarter_months(self.year, quarter)
+                    if period[1] <= cutoff_month
+                ]
                 periods[key] = {
                     "key": key,
                     "label": key.upper(),
-                    "month_count": 3,
+                    "month_count": len(months),
                     **monthly_sum_aggregate(self, months),
                 }
             if "yearly" in periods:
@@ -215,22 +229,13 @@ def install_period_result_sum_guard():
     RegionPerformanceService.aggregate = monthly_sum_aggregate
     RegionPerformanceService._period_result_sum_guard_installed = True
 
-    # The Türkiye cockpit consumes the region snapshot periods and performs no
-    # source re-resolution. Expose the same fixed grouping vocabulary there so
-    # every national panel is an aggregate of exactly the same region periods.
     try:
         from app.services.executive_market_cockpit_service import ExecutiveMarketCockpitService
         ExecutiveMarketCockpitService.PERIODS = (
-            ("monthly", "Aylık"),
-            ("q1", "Q1"),
-            ("q2", "Q2"),
-            ("q3", "Q3"),
-            ("q4", "Q4"),
-            ("half_year", "6 Aylık"),
-            ("yearly", "YILLIK YTD"),
+            ("monthly", "Aylık"), ("q1", "Q1"), ("q2", "Q2"), ("q3", "Q3"), ("q4", "Q4"),
+            ("half_year", "6 Aylık"), ("yearly", "YILLIK YTD"),
         )
         ExecutiveMarketCockpitService.PERIOD_LABELS = dict(ExecutiveMarketCockpitService.PERIODS)
     except ImportError:
         pass
-
     _INSTALLED = True
