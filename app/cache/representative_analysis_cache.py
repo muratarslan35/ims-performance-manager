@@ -1,10 +1,15 @@
-"""Short-lived, bounded cache for representative-heavy read models.
+"""Bounded cache for representative-heavy derived read models.
 
 The representative page is read-only but can fan out into expensive IMS/competition
-queries.  This cache deliberately stores only derived read-model payloads and is
-keyed with the relevant upload identity, so a new IMS upload naturally produces a
-new key.  It also coalesces concurrent misses inside each worker to avoid a cache
-stampede.
+queries. This cache stores derived read-model payloads only; it never writes or
+changes IMS, target, production or representative business data.
+
+Representative market/intelligence keys already contain the active IMS upload and
+scope identity. Those immutable source-keyed entries can therefore live for the
+whole upload generation instead of expiring every 45-60 seconds. A new IMS upload
+naturally produces a new key, while a web-code deploy starts fresh workers and an
+empty process cache. This preserves every existing calculation/read service and
+only avoids repeating the same expensive reads.
 """
 from __future__ import annotations
 
@@ -20,7 +25,9 @@ from flask import current_app, has_app_context
 class RepresentativeAnalysisCache:
     _MAX_ENTRIES = 512
     _DEFAULT_TTL_SECONDS = 45
-    _MAX_TTL_SECONDS = 120
+    _MAX_TTL_SECONDS = 8 * 24 * 60 * 60
+    _SOURCE_KEYED_TTL_SECONDS = 8 * 24 * 60 * 60
+    _SOURCE_KEY_PREFIXES = ("rep-market:", "rep-intelligence:")
     _WAIT_SECONDS = 30.0
     _store: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
     _inflight: dict[str, Event] = {}
@@ -38,8 +45,20 @@ class RepresentativeAnalysisCache:
             return copy.deepcopy(value)
         except Exception:
             # SQLAlchemy rows/simple namespaces are already immutable enough for
-            # these read-only consumers.  Do not let copying make the page fail.
+            # these read-only consumers. Do not let copying make the page fail.
             return value
+
+    @classmethod
+    def _ttl_for_key(cls, key: str, requested_ttl: int | None) -> int:
+        """Keep upload-scoped representative reads warm for their source lifetime.
+
+        This deliberately changes cache retention only. The loaders, precedence,
+        formulas, rounding and data-source selection remain untouched.
+        """
+        ttl = requested_ttl or cls._DEFAULT_TTL_SECONDS
+        if str(key).startswith(cls._SOURCE_KEY_PREFIXES):
+            ttl = max(int(ttl), cls._SOURCE_KEYED_TTL_SECONDS)
+        return max(1, min(int(ttl), cls._MAX_TTL_SECONDS))
 
     @classmethod
     def clear(cls) -> None:
@@ -61,8 +80,7 @@ class RepresentativeAnalysisCache:
         if not key or (not force_enable and not cls.enabled()):
             return loader()
 
-        ttl = ttl_seconds or cls._DEFAULT_TTL_SECONDS
-        ttl = max(1, min(int(ttl), cls._MAX_TTL_SECONDS))
+        ttl = cls._ttl_for_key(key, ttl_seconds)
         now = time.monotonic()
         wait_event: Event | None = None
         owner = False
@@ -91,7 +109,7 @@ class RepresentativeAnalysisCache:
                     cls._store.move_to_end(key)
                     return cls._copy(entry[1])
                 # If the owner failed or timed out, one waiter becomes the new
-                # owner.  This prevents all waiters from recomputing together.
+                # owner. This prevents all waiters from recomputing together.
                 current = cls._inflight.get(key)
                 if current is wait_event:
                     cls._inflight.pop(key, None)
