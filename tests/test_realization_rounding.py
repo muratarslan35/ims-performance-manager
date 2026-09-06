@@ -39,3 +39,15 @@ def test_live_payload_normalization_recalculates_tl_realization_only():
     assert payload["realization_percent"] == 126
     assert payload["unit_realization_percent"] == 88.75
     assert payload["products"][0]["realization_percent"] == 124
+
+
+def test_live_payload_normalization_preserves_missing_realization():
+    row = {
+        "month": 5,
+        "target_tl": 0.0,
+        "actual_tl": 0.0,
+        "percent": None,
+        "has_data": False,
+    }
+    normalize_realization_payload(row)
+    assert row["percent"] is None
