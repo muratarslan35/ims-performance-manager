@@ -31,40 +31,15 @@ def _valid_price(value):
         return False
 
 
-def _authoritative_month_units(service, year, month):
-    """Return product -> (target box, actual box, complete) for one month.
-
-    Production months keep stored P2/P1 units. April+ IMS months derive both
-    box values from the exact official region TL rows used by the same screen.
-    Older months keep their existing official region unit authority.
-    """
-    if ProductionResultService.final_upload(year, month) is not None:
-        return service._official_region_unit_month(year, month), True
-
-    if TLBoxCalculationService.applies(year, month):
-        official_tl = service._official_ims_region_month(year, month)
-        if not official_tl:
-            return {}, False
-        prices = ProductUnitPriceService.price_map(official_tl.keys(), year, month)
-        result = {}
-        for product_id, values in official_tl.items():
-            target_tl, actual_tl, complete = values
-            price = prices.get(int(product_id))
-            if not _valid_price(price):
-                continue
-            result[int(product_id)] = [
-                TLBoxCalculationService.boxes_from_tl(target_tl, price),
-                TLBoxCalculationService.boxes_from_tl(actual_tl, price) if complete else Decimal("0"),
-                bool(complete),
-            ]
-        return result, bool(result)
-
-    units = service._official_region_unit_month(year, month)
-    return units, bool(units)
-
-
 def install_region_box_authority_guard():
-    """Install as the final region aggregate normalization layer."""
+    """Install as the final region aggregate normalization layer.
+
+    The existing aggregate already contains correct legacy/production unit
+    contributions. We therefore replace only the April+ open-IMS contribution
+    by applying a delta: official region TL-derived boxes minus the previous
+    representative-derived boxes for the same month/product. This preserves
+    historical box authority and keeps the bounded report snapshot intact.
+    """
     global _INSTALLED
     if _INSTALLED:
         return
@@ -73,50 +48,78 @@ def install_region_box_authority_guard():
 
     def guarded_aggregate(self, months):
         months = [(int(year), int(month)) for year, month in months]
+        april_months = [
+            (year, month) for year, month in months
+            if TLBoxCalculationService.applies(year, month)
+            and ProductionResultService.final_upload(year, month) is None
+        ]
         payload = original_aggregate(self, months)
         products = list(payload.get("products") or [])
-        if not products:
+        if not products or not april_months:
             return payload
 
         product_ids = {int(item.get("product_id")) for item in products if item.get("product_id") is not None}
-        desired = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
-        covered = {product_id: True for product_id in product_ids}
-        targeted_by_month = defaultdict(set)
-        for row in self._target_rows(months):
-            year, month, _rep_id, product_id = int(row[0]), int(row[1]), row[2], row[3]
-            if product_id is not None:
-                targeted_by_month[(year, month)].add(int(product_id))
+        old_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        target_rows = self._target_rows(april_months)
+        for year, month, rep_id, product_id, _target_tl, _stored_target_unit in target_rows:
+            product_id = int(product_id)
+            if product_id not in product_ids:
+                continue
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if str(effective.get("source") or "").startswith("PRODUCTION_"):
+                continue
+            old_units[(int(year), int(month), product_id)][0] += _d(effective.get("target_unit"))
+            if not effective.get("complete") or effective.get("actual_unit") is None:
+                old_units[(int(year), int(month), product_id)][2] = False
+            else:
+                old_units[(int(year), int(month), product_id)][1] += _d(effective.get("actual_unit"))
 
-        for year, month in months:
-            month_units, month_has_authority = _authoritative_month_units(self, year, month)
-            targeted = targeted_by_month.get((year, month), set())
-            for product_id in product_ids:
-                values = month_units.get(product_id)
-                if values is not None:
-                    desired[product_id][0] += _d(values[0])
-                    desired[product_id][1] += _d(values[1])
-                    desired[product_id][2] = desired[product_id][2] and bool(values[2])
-                elif product_id in targeted and not month_has_authority:
-                    # Preserve the pre-existing fallback rather than partially
-                    # replacing a multi-month total with incomplete authority.
-                    covered[product_id] = False
-                elif product_id in targeted and month_has_authority:
-                    # An authoritative source exists for the month but this
-                    # product lacks a usable price/unit row. Fail closed.
-                    covered[product_id] = False
+        target_delta = defaultdict(lambda: Decimal("0"))
+        actual_delta = defaultdict(lambda: Decimal("0"))
+        invalid_products = set()
 
-        april_or_later = any(TLBoxCalculationService.applies(year, month) for year, month in months)
+        for year, month in april_months:
+            official_tl = self._official_ims_region_month(year, month)
+            if not official_tl:
+                continue
+            prices = ProductUnitPriceService.price_map(official_tl.keys(), year, month)
+            for product_id, values in official_tl.items():
+                product_id = int(product_id)
+                if product_id not in product_ids:
+                    continue
+                price = prices.get(product_id)
+                if not _valid_price(price):
+                    invalid_products.add(product_id)
+                    continue
+                target_tl, actual_tl, complete = values
+                old_target, old_actual, old_complete = old_units.get(
+                    (year, month, product_id),
+                    [Decimal("0"), Decimal("0"), False],
+                )
+                if not old_complete or not complete:
+                    invalid_products.add(product_id)
+                    continue
+                correct_target = TLBoxCalculationService.boxes_from_tl(target_tl, price)
+                correct_actual = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
+                target_delta[product_id] += correct_target - old_target
+                actual_delta[product_id] += correct_actual - old_actual
+
         for item in products:
             product_id = int(item.get("product_id"))
-            if not covered.get(product_id):
+            if product_id in invalid_products:
                 continue
-            target_unit, actual_unit, complete = desired[product_id]
+            if product_id not in target_delta and product_id not in actual_delta:
+                continue
+            target_unit = _d(item.get("target_unit")) + target_delta[product_id]
+            actual_value = item.get("actual_unit")
+            if actual_value is None:
+                continue
+            actual_unit = _d(actual_value) + actual_delta[product_id]
             item["target_unit"] = target_unit
-            item["actual_unit"] = actual_unit if complete else None
-            item["unit_complete"] = bool(complete)
-            item["unit_difference"] = (actual_unit - target_unit) if complete else None
-            if april_or_later:
-                item["box_authority"] = "REGION_TL_PERIOD_PRICE"
+            item["actual_unit"] = actual_unit
+            item["unit_complete"] = True
+            item["unit_difference"] = actual_unit - target_unit
+            item["box_authority"] = "REGION_TL_PERIOD_PRICE"
         return payload
 
     RegionPerformanceService.aggregate = guarded_aggregate
