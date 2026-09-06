@@ -37,9 +37,23 @@ def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
     assert "PersistentRegionSnapshotService.build_for_period" in worker
 
 
-def test_import_and_heavy_deploy_build_snapshot_before_web_activation():
+def test_runtime_deploy_refreshes_snapshot_before_web_activation():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     backfill_pos = installer.index("scripts/backfill_active_region_snapshots.py")
     web_activation_pos = installer.index("if sudo systemctl is-active --quiet \"$service_name\"")
     assert backfill_pos < web_activation_pos
     assert 'REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation' in installer
+    assert 'REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change' in installer
+    assert 'backfill_active_region_snapshots.py\" --force' in installer
+    assert '[ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]' in installer
+
+
+def test_force_backfill_invalidates_only_snapshot_cache_not_business_data():
+    script = (ROOT / "scripts/backfill_active_region_snapshots.py").read_text(encoding="utf-8")
+    assert 'parser.add_argument(' in script
+    assert '"--force"' in script
+    assert "region_snapshots.delete()" in script
+    assert "region_snapshot_sets.delete()" in script
+    assert "Target" not in script
+    assert "IMSFact" not in script
+    assert "IMSSummary" not in script
