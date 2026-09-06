@@ -14,7 +14,11 @@ _INSTALLED = False
 
 
 def normalize_realization_payload(value):
-    """Recalculate TL realization fields from their exact target/actual pair."""
+    """Recalculate present TL realization fields from their exact target/actual pair.
+
+    A missing realization (``None``) is a business signal meaning the period has
+    no authoritative IMS/production result yet. Never turn that signal into zero.
+    """
     if isinstance(value, list):
         for item in value:
             normalize_realization_payload(item)
@@ -32,12 +36,13 @@ def normalize_realization_payload(value):
     target = value.get("target_tl")
     actual = value.get("actual_tl")
     if target is not None and actual is not None:
-        if "realization_percent" in value:
+        if value.get("realization_percent") is not None:
             value["realization_percent"] = realization_percent(actual, target)
-        if "tl_realization_percent" in value:
+        if value.get("tl_realization_percent") is not None:
             value["tl_realization_percent"] = realization_percent(actual, target)
         # Annual chart rows use `percent` for the same TL realization metric.
-        if "percent" in value and ("month" in value or "has_data" in value):
+        # `None` means no authoritative result; preserve it exactly.
+        if value.get("percent") is not None and ("month" in value or "has_data" in value):
             value["percent"] = realization_percent(actual, target)
     return value
 
