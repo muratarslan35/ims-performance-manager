@@ -1,0 +1,68 @@
+{% extends "region_performance.html" %}
+
+{% block styles %}
+{{ super() }}
+<link href="{{ url_for('static', filename='css/quarter-period-menu.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+{{ super() }}
+<div id="quarterPeriodHost" class="quarter-period-host" hidden>
+  <nav class="period-tabs quarter-period-tabs" role="tablist" aria-label="Bölge dönem seçimi">
+    <div class="quarter-period-row quarter-period-row-wide">
+      <button class="period-tab" type="button" data-quarter-period-tab="half_year">6 Aylık</button>
+      <button class="period-tab" type="button" data-quarter-period-tab="yearly">YILLIK YTD</button>
+    </div>
+    <div class="quarter-period-row quarter-period-row-compact">
+      <button class="period-tab active" type="button" data-quarter-period-tab="monthly">Aylık</button>
+      <button class="period-tab" type="button" data-quarter-period-tab="q1">Q1</button>
+      <button class="period-tab" type="button" data-quarter-period-tab="q2">Q2</button>
+      <button class="period-tab" type="button" data-quarter-period-tab="q3">Q3</button>
+      <button class="period-tab" type="button" data-quarter-period-tab="q4">Q4</button>
+    </div>
+  </nav>
+
+  {% for key in ['half_year','yearly','monthly','q1','q2','q3','q4'] %}
+  {% set period=report.periods[key] %}
+  <section class="quarter-period-panel {% if key == 'monthly' %}active{% endif %}" data-quarter-period-panel="{{ key }}">
+    <div class="region-kpis">
+      <div class="region-kpi target"><span>{{ period.label|upper }} HEDEF</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>{{ period.month_count }} aylık mevcut hedef toplamı</small><i class="bi bi-bullseye"></i></div>
+      <div class="region-kpi actual"><span>{{ period.label|upper }} GERÇEKLEŞEN</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>Kesinleşmiş aylık sonuçların toplamı</small><i class="bi bi-cash-coin"></i></div>
+      <div class="region-kpi {% if period.realization_percent is not none and period.realization_percent >= 90 %}good{% elif period.realization_percent is not none and period.realization_percent >= 70 %}watch{% else %}risk{% endif %}"><span>{{ period.label|upper }} REALİZASYON</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none %}{{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {% if period.gap_tl > 0 %}hedef açığı{% else %}hedef üstü{% endif %}{% else %}Bu dönem için veri bekleniyor{% endif %}</small><i class="bi bi-graph-up-arrow"></i></div>
+    </div>
+
+    <div class="region-section"><div class="region-section-head"><h2><i class="bi bi-capsule-pill me-2 text-primary"></i>Ürün Bazlı {{ period.label }} Realizasyon</h2><span class="region-chip">{{ period.products|length }} ürün</span></div><div class="table-responsive"><table class="table region-table mb-0"><thead><tr><th>Ürün</th><th>Hedef ₺</th><th>Gerçekleşen ₺</th><th>Kutu Farkı</th><th>₺ Farkı</th><th>Realizasyon</th></tr></thead><tbody>
+      {% for item in period.products %}<tr><td><strong>{{ item.product_name }}</strong>{% if key == 'monthly' and item.quota_exit %}<br><span class="quota-exit-badge"><i class="bi bi-info-circle-fill"></i>Kota Çıkış</span>{% endif %}</td><td>{{ "{:,.0f}".format(item.target_tl) }} ₺</td><td><span class="metric-main">{% if item.actual_tl is not none %}{{ "{:,.0f}".format(item.actual_tl) }} ₺{% else %}—{% endif %}</span></td><td class="{% if item.unit_difference is none %}text-muted{% elif item.unit_difference > 0 %}text-success{% elif item.unit_difference < 0 %}text-danger{% endif %}">{% if item.unit_difference is not none %}{{ "{:,.0f}".format(item.unit_difference|abs) }} kutu{% else %}—{% endif %}</td><td class="{% if item.gap_tl is none %}text-muted{% elif item.gap_tl > 0 %}text-danger{% else %}text-success{% endif %}">{% if item.gap_tl is not none %}{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺{% else %}—{% endif %}</td><td>{% if item.realization_percent is not none %}<span class="realization-pill {% if item.realization_percent >= 90 %}good{% elif item.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ item.realization_percent }}</span>{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">Bu dönem için ürün verisi bulunmuyor.</td></tr>{% endfor %}
+    </tbody></table></div></div>
+
+    {% if period.months %}<div class="region-section"><div class="region-section-head"><h2><i class="bi bi-calendar2-week-fill me-2 text-primary"></i>Dönem Ayları</h2><span class="region-chip">Ay ay kesinleşmiş sonuç</span></div><div class="monthly-grid">{% for item in period.months %}{% if item.target_tl or item.actual_tl %}<div class="month-card"><strong>{{ item.label }}</strong><div class="month-card-row"><span>Hedef</span><b>{{ "{:,.0f}".format(item.target_tl) }} ₺</b></div><div class="month-card-row"><span>Gerçekleşen</span><b>{% if item.actual_tl is not none %}{{ "{:,.0f}".format(item.actual_tl) }} ₺{% else %}—{% endif %}</b></div><div class="month-card-row"><span>Realizasyon</span><b>{% if item.realization_percent is not none %}%{{ item.realization_percent }}{% else %}—{% endif %}</b></div></div>{% endif %}{% endfor %}</div></div>{% endif %}
+
+    <div class="region-section"><div class="region-section-head"><h2><i class="bi bi-people-fill me-2 text-primary"></i>Bölge Temsilci Performansı</h2><span class="region-chip">{{ report.representative_count }} aktif temsilci</span></div><div class="table-responsive"><table class="table region-table mb-0"><thead><tr><th>Temsilci</th><th>Hedef ₺</th><th>Gerçekleşen ₺</th><th>Fark</th><th>Realizasyon</th></tr></thead><tbody>
+      {% for item in period.representatives %}<tr><td><a class="rep-link" href="{{ url_for('representatives.view', id=item.representative_id, year=report.year, month=report.month) }}">{{ item.representative_name }}</a><span class="metric-sub">{{ item.city }}</span></td><td>{{ "{:,.0f}".format(item.target_tl) }} ₺</td><td><span class="metric-main">{% if item.actual_tl is not none %}{{ "{:,.0f}".format(item.actual_tl) }} ₺{% else %}—{% endif %}</span></td><td class="{% if item.gap_tl is none %}text-muted{% elif item.gap_tl > 0 %}text-danger{% else %}text-success{% endif %}">{% if item.gap_tl is not none %}{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺{% else %}—{% endif %}</td><td>{% if item.realization_percent is not none %}<span class="realization-pill {% if item.realization_percent >= 90 %}good{% elif item.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ item.realization_percent }}</span>{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-secondary py-4">Temsilci performans verisi bulunmuyor.</td></tr>{% endfor %}
+    </tbody></table></div></div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<style>.quarter-period-panel{display:none}.quarter-period-panel.active{display:block}</style>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+  const page=document.querySelector('.region-page');
+  const annual=page&&page.querySelector('.region-annual-card');
+  const host=document.getElementById('quarterPeriodHost');
+  if(!page||!annual||!host)return;
+  page.querySelectorAll(':scope > .period-tabs, :scope > .period-panel').forEach(el=>el.style.display='none');
+  host.hidden=false;
+  annual.insertAdjacentElement('afterend',host);
+  const activate=key=>{
+    host.querySelectorAll('[data-quarter-period-tab]').forEach(btn=>btn.classList.toggle('active',btn.dataset.quarterPeriodTab===key));
+    host.querySelectorAll('[data-quarter-period-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.quarterPeriodPanel===key));
+  };
+  host.querySelectorAll('[data-quarter-period-tab]').forEach(btn=>btn.addEventListener('click',()=>activate(btn.dataset.quarterPeriodTab)));
+  activate('monthly');
+});
+</script>
+{% endblock %}
