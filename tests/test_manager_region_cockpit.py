@@ -7,9 +7,15 @@ def test_market_analysis_replaces_flat_region_realization_with_dynamic_cockpit()
     assert "Bölgesel Realizasyon Durumu" not in template
     assert "Bölgesel Güncel Durum Merkezi" in template
     assert 'data-manager-period-button="monthly"' in template
-    assert 'data-manager-period-button="quarterly"' in template
+    assert 'data-manager-period-button="q1"' in template
+    assert 'data-manager-period-button="q2"' in template
+    assert 'data-manager-period-button="q3"' in template
+    assert 'data-manager-period-button="q4"' in template
     assert 'data-manager-period-button="half_year"' in template
     assert 'data-manager-period-button="yearly"' in template
+    assert 'data-manager-period-button="quarterly"' not in template
+    assert "manager-period-row-wide" in template
+    assert "manager-period-row-compact" in template
     assert "data-manager-region-button" in template
     assert "managerRegionSnapshotHost" in template
 
@@ -22,6 +28,7 @@ def test_region_workspace_reuses_existing_region_performance_and_market_shapes()
     assert "BÖLGESEL REKABET VE PAZAR MERKEZİ" in partial
     assert "Rakip Ürünlerin İl Bazlı Çıkış Analizi" in partial
     assert "report.periods" in partial
+    assert "'q1','q2','q3','q4'" in partial
     assert "report.annual_realization" in partial
     assert "market_analysis.rows" in partial
     assert "market_analysis.rival_groups" in partial

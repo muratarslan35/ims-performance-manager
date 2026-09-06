@@ -28,6 +28,6 @@ def detail(region_key):
         report["region_key"], performance_service.rep_ids, year, month
     ).build()
     return render_template(
-        "region_performance.html", report=report, ai_report=ai_report,
+        "region_performance_quarter.html", report=report, ai_report=ai_report,
         market_analysis=market_analysis,
     )

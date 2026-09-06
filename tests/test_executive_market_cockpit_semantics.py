@@ -58,7 +58,7 @@ def test_regional_ai_insights_carry_real_snapshot_values_without_prediction():
 
     istanbul = insights["101"]
     assert istanbul["signal"] == "Hedef üstü · pay avantajlı"
-    assert istanbul["period_label"] == "1 Aylık"
+    assert istanbul["period_label"] == "Aylık"
     assert istanbul["target_tl"] == 100.0
     assert istanbul["actual_tl"] == 100.0
     assert istanbul["realization_percent"] == 100.0
