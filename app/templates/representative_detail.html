@@ -35,12 +35,12 @@
 <section class="rep-period-workspace" aria-label="Temsilci dönem görünümü">
   <div class="rep-period-row rep-period-row-wide">
     {% for key,label,kind in period_options if kind == 'wide' %}{% set snapshot=period_snapshots[key] %}
-    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
+    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-realization-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
     {% endfor %}
   </div>
   <div class="rep-period-row rep-period-row-compact">
     {% for key,label,kind in period_options if kind == 'compact' %}{% set snapshot=period_snapshots[key] %}
-    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
+    <button type="button" class="rep-period-btn {% if key == selected_period %}active{% endif %}" data-rep-period="{{ key }}" data-target="{{ snapshot.totals.target_tl }}" data-actual="{{ snapshot.totals.actual_tl }}" data-remaining="{{ snapshot.totals.remaining_tl }}" data-realization-percent="{{ snapshot.totals.percent }}" data-source="{{ snapshot.result_source_label|e }}">{{ label }}</button>
     {% endfor %}
   </div>
 </section>
@@ -88,7 +88,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (kpiTarget) kpiTarget.textContent = money(button.dataset.target);
     if (kpiActual) kpiActual.textContent = money(button.dataset.actual);
     if (kpiRemaining) kpiRemaining.textContent = money(button.dataset.remaining);
-    if (kpiPercent) kpiPercent.textContent = `%${button.dataset.percent || 0}`;
+    if (kpiPercent) kpiPercent.textContent = `%${button.dataset.realizationPercent || 0}`;
     if (kpiSource) kpiSource.textContent = button.dataset.source || "";
     const url = new URL(window.location.href);
     url.searchParams.set("period", key);
