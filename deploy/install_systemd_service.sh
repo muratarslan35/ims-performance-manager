@@ -147,12 +147,12 @@ sudo systemctl --no-pager --full status "$worker_service_name"
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
   echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild|priority=low"
   if command -v ionice >/dev/null 2>&1; then
-    nohup nice -n 15 ionice -c3 env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-      "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
+    nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+      nice -n 15 ionice -c3 "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
       >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
   else
-    nohup nice -n 15 env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-      "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
+    nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+      nice -n 15 "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
       >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
   fi
   echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|pid=$!"
