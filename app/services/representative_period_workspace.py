@@ -6,7 +6,6 @@ from copy import deepcopy
 from flask import request, render_template
 from flask_login import current_user, login_required
 
-from app.extensions import db
 from app.models import Product, Representative, RepresentativeBrickAssignment, Target
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
@@ -49,19 +48,67 @@ def _period_months(year, month, key):
     return [(year, month)]
 
 
-def _aggregate_sales(representative_id, months):
+def _empty_totals():
+    return {
+        "target_tl": 0.0,
+        "actual_tl": 0.0,
+        "target_unit": 0.0,
+        "actual_unit": 0.0,
+        "remaining_tl": 0.0,
+        "percent": 0,
+    }
+
+
+def _empty_market(year, month):
+    previous_year, previous_month = _shift_month(year, month, -1)
+    return {
+        "scope": "none",
+        "bricks": [],
+        "rows": [],
+        "chart_rows": [],
+        "brick_product_rows": [],
+        "totals": {
+            "actual_unit": 0.0,
+            "market_unit": 0.0,
+            "competitor_unit": 0.0,
+            "share_percent": 0.0,
+        },
+        "previous_period": {"year": previous_year, "month": previous_month},
+        "period_months": [],
+    }
+
+
+def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cache=None):
+    if not months:
+        return [], _empty_totals(), [], set()
+
+    sales_cache = sales_cache if sales_cache is not None else {}
+    assignment_cache = assignment_cache if assignment_cache is not None else {}
     buckets = {}
     sources = set()
     assignments = []
+
     for year, month in months:
-        if (year, month) == months[-1]:
-            assignments = RepresentativeBrickAssignment.query.filter_by(
-                representative_id=representative_id, year=year, month=month, active=True
-            ).order_by(RepresentativeBrickAssignment.brick).all()
-        targets = Target.query.filter_by(
-            representative_id=representative_id, year=year, month=month
-        ).join(Product).order_by(Product.display_order, Product.product_name).all()
-        effective = ProductionResultService.effective_products(year, month, representative_id)
+        cache_key = (int(year), int(month))
+        cached = sales_cache.get(cache_key)
+        if cached is None:
+            targets = Target.query.filter_by(
+                representative_id=representative_id, year=year, month=month
+            ).join(Product).order_by(Product.display_order, Product.product_name).all()
+            effective = ProductionResultService.effective_products(year, month, representative_id)
+            cached = (targets, effective)
+            sales_cache[cache_key] = cached
+        else:
+            targets, effective = cached
+
+        if cache_key == months[-1]:
+            assignments = assignment_cache.get(cache_key)
+            if assignments is None:
+                assignments = RepresentativeBrickAssignment.query.filter_by(
+                    representative_id=representative_id, year=year, month=month, active=True
+                ).order_by(RepresentativeBrickAssignment.brick).all()
+                assignment_cache[cache_key] = assignments
+
         for target in targets:
             resolved = effective.get(target.product_id, {})
             target_tl = float(resolved.get("target_tl", target.tl_target or 0.0))
@@ -88,7 +135,13 @@ def _aggregate_sales(representative_id, months):
                 bucket["source"] = source
 
     rows = []
-    totals = {"target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0, "actual_unit": 0.0, "remaining_tl": 0.0}
+    totals = {
+        "target_tl": 0.0,
+        "actual_tl": 0.0,
+        "target_unit": 0.0,
+        "actual_unit": 0.0,
+        "remaining_tl": 0.0,
+    }
     for bucket in buckets.values():
         bucket["percent"] = realization_percent(bucket["actual_tl"], bucket["target_tl"]) if bucket["target_tl"] else 0
         for key in totals:
@@ -100,23 +153,32 @@ def _aggregate_sales(representative_id, months):
     return rows, totals, assignments, sources
 
 
-def _aggregate_market(representative, months):
-    monthly = [RepresentativeMarketService(representative, year, month).build() for year, month in months]
-    if not monthly:
-        return RepresentativeMarketService(representative, months[-1][0], months[-1][1]).build()
+def _aggregate_market(representative, months, market_cache=None):
+    if not months:
+        return _empty_market(PeriodService.get_active_period()["year"], PeriodService.get_active_period()["month"])
+
+    market_cache = market_cache if market_cache is not None else {}
+    monthly = []
+    for year, month in months:
+        cache_key = (int(year), int(month))
+        payload = market_cache.get(cache_key)
+        if payload is None:
+            payload = RepresentativeMarketService(representative, year, month).build()
+            market_cache[cache_key] = payload
+        monthly.append(payload)
+
     if len(monthly) == 1:
-        return monthly[0]
+        return deepcopy(monthly[0])
 
     result = deepcopy(monthly[-1])
     product_rows = {}
-    for payload in monthly:
+    for payload_index, payload in enumerate(monthly):
         for row in payload.get("rows", []):
             pid = int(row["product"].id)
-            bucket = product_rows.setdefault(pid, deepcopy(row))
-            if bucket is row:
+            if pid not in product_rows:
+                product_rows[pid] = deepcopy(row)
                 continue
-            if payload is monthly[0]:
-                continue
+            bucket = product_rows[pid]
             for key in ("actual_unit", "market_unit", "competitor_unit", "target_unit"):
                 bucket[key] = float(bucket.get(key) or 0) + float(row.get(key) or 0)
             rivals = defaultdict(float)
@@ -124,16 +186,31 @@ def _aggregate_market(representative, months):
                 rivals[existing["name"]] += float(existing.get("unit") or 0)
             for rival in row.get("rivals", []):
                 rivals[rival["name"]] += float(rival.get("unit") or 0)
-            bucket["rivals"] = [{"name": name, "unit": round(unit, 2)} for name, unit in sorted(rivals.items(), key=lambda item: -item[1])]
+            bucket["rivals"] = [
+                {"name": name, "unit": round(unit, 2)}
+                for name, unit in sorted(rivals.items(), key=lambda item: -item[1])
+            ]
+
     rows = list(product_rows.values())
     for row in rows:
         row["share_percent"] = round(row["actual_unit"] * 100.0 / row["market_unit"], 1) if row["market_unit"] else 0.0
         row["gap_unit"] = round(row["competitor_unit"] - row["actual_unit"], 2)
         row["realization_percent"] = realization_percent(row["actual_unit"], row["target_unit"]) if row["target_unit"] else 0
-        row["attention"] = "critical" if row["competitor_unit"] > row["actual_unit"] * 1.5 and row["competitor_unit"] > 0 else "warning" if row["competitor_unit"] > row["actual_unit"] else "strong"
+        row["attention"] = (
+            "critical" if row["competitor_unit"] > row["actual_unit"] * 1.5 and row["competitor_unit"] > 0
+            else "warning" if row["competitor_unit"] > row["actual_unit"]
+            else "strong"
+        )
     rows.sort(key=lambda item: getattr(item["product"], "display_order", 999))
     result["rows"] = rows
-    result["chart_rows"] = [{"product_name": row["product"].product_name, "actual_unit": row["actual_unit"], "competitor_unit": row["competitor_unit"]} for row in rows]
+    result["chart_rows"] = [
+        {
+            "product_name": row["product"].product_name,
+            "actual_unit": row["actual_unit"],
+            "competitor_unit": row["competitor_unit"],
+        }
+        for row in rows
+    ]
     total_actual = sum(float(row.get("actual_unit") or 0) for row in rows)
     total_market = sum(float(row.get("market_unit") or 0) for row in rows)
     result["totals"] = {
@@ -146,11 +223,11 @@ def _aggregate_market(representative, months):
     return result
 
 
-def _ai_period(key, label, rows, totals):
+def _ai_period(key, label, rows, totals, month_count):
     return {
         "key": key,
         "label": label,
-        "month_count": 1,
+        "month_count": month_count,
         "target_tl": totals["target_tl"],
         "actual_tl": totals["actual_tl"],
         "realization_percent": totals["percent"],
@@ -167,6 +244,17 @@ def _ai_period(key, label, rows, totals):
         } for row in rows],
         "representatives": [],
     }
+
+
+def _source_label(months, sources):
+    if len(months) > 1:
+        return "Dönemsel P2 > P1 > IMS toplamı"
+    has_production_result = any(source.startswith("PRODUCTION_") for source in sources)
+    if "PRODUCTION_2" in sources:
+        return "2. üretim nihai sonucu"
+    if has_production_result:
+        return "1. üretim sonucu"
+    return "Seçili IMS dönemine kadar"
 
 
 def install_representative_period_workspace(app):
@@ -189,26 +277,45 @@ def install_representative_period_workspace(app):
         selected = (request.args.get("period") or "monthly").strip().lower()
         if selected not in PERIOD_LABELS:
             selected = "monthly"
-        months = _period_months(year, month, selected)
-        if not months:
-            months = [(year, month)]
 
-        product_rows, totals, assignments, sources = _aggregate_sales(representative.id, months)
-        has_production_result = any(source.startswith("PRODUCTION_") for source in sources)
-        result_source_label = "Dönemsel P2 > P1 > IMS toplamı" if len(months) > 1 else (
-            "2. üretim nihai sonucu" if "PRODUCTION_2" in sources else "1. üretim sonucu" if has_production_result else "Seçili IMS dönemine kadar"
-        )
-        market_analysis = _aggregate_market(representative, months)
+        sales_cache = {}
+        assignment_cache = {}
+        market_cache = {}
         competitive_intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
-        label = PERIOD_LABELS[selected]
-        ai_report = ScopedAIInsightService.build(
-            scope_type="representative",
-            scope_name=_representative_display_name(representative.rep_name),
-            periods={selected: _ai_period(selected, label, product_rows, totals)},
-            market_analysis=market_analysis,
-            competitive_intelligence=competitive_intelligence,
-        )
         annual_realization = AnnualRealizationService.build(year, [representative.id])
+        snapshots = {}
+
+        for key, label, _kind in PERIOD_OPTIONS:
+            months = _period_months(year, month, key)
+            product_rows, totals, assignments, sources = _aggregate_sales(
+                representative.id,
+                months,
+                sales_cache=sales_cache,
+                assignment_cache=assignment_cache,
+            )
+            has_production_result = any(source.startswith("PRODUCTION_") for source in sources)
+            result_source_label = _source_label(months, sources)
+            market_analysis = _aggregate_market(representative, months, market_cache=market_cache) if months else _empty_market(year, month)
+            ai_report = ScopedAIInsightService.build(
+                scope_type="representative",
+                scope_name=_representative_display_name(representative.rep_name),
+                periods={key: _ai_period(key, label, product_rows, totals, len(months))},
+                market_analysis=market_analysis,
+                competitive_intelligence=competitive_intelligence,
+            )
+            snapshots[key] = {
+                "key": key,
+                "label": label,
+                "months": months,
+                "products": product_rows,
+                "totals": totals,
+                "assignments": assignments,
+                "market_analysis": market_analysis,
+                "has_production_result": has_production_result,
+                "result_source_label": result_source_label,
+                "ai_report": ai_report,
+            }
+
         if is_field_portal():
             from app.region_manager import _scoped_representatives
             representatives = _scoped_representatives(active_only=True)
@@ -217,27 +324,26 @@ def install_representative_period_workspace(app):
                 Representative.active.is_(True), _visible_representative_filter()
             ).order_by(Representative.rep_name.asc()).all()
 
-        html = render_template(
+        active_snapshot = snapshots[selected]
+        return render_template(
             "representative_detail.html",
             representative=representative,
             representatives=representatives,
-            assignments=assignments,
-            products=product_rows,
-            totals=totals,
-            market_analysis=market_analysis,
+            assignments=active_snapshot["assignments"],
+            products=active_snapshot["products"],
+            totals=active_snapshot["totals"],
+            market_analysis=active_snapshot["market_analysis"],
             annual_realization=annual_realization,
-            has_production_result=has_production_result,
-            result_source_label=result_source_label,
-            ai_report=ai_report,
+            has_production_result=active_snapshot["has_production_result"],
+            result_source_label=active_snapshot["result_source_label"],
+            ai_report=active_snapshot["ai_report"],
             year=year,
             month=month,
             selected_period=selected,
+            period_options=PERIOD_OPTIONS,
+            period_snapshots=snapshots,
+            active_snapshot=active_snapshot,
         )
-        selector = _selector_html(representative.id, year, month, selected)
-        marker = '<section class="scope-ai"'
-        if marker in html:
-            html = html.replace(marker, selector + marker, 1)
-        return html
 
     app.view_functions["representatives.view"] = period_view
 
@@ -250,23 +356,10 @@ def install_representative_period_workspace(app):
             except Exception:
                 return response
             if "</head>" in body and "representative-period-workspace.css" not in body:
-                body = body.replace("</head>", '<link rel="stylesheet" href="/static/css/representative-period-workspace.css"></head>', 1)
+                body = body.replace(
+                    "</head>",
+                    '<link rel="stylesheet" href="/static/css/representative-period-workspace.css"></head>',
+                    1,
+                )
                 response.set_data(body)
         return response
-
-
-def _selector_html(representative_id, year, month, selected):
-    def button(key, label, wide=False):
-        active = " active" if key == selected else ""
-        return (
-            f'<a class="rep-period-btn{active}" data-rep-period="{key}" '
-            f'href="/representatives/view/{representative_id}?year={year}&month={month}&period={key}">{label}</a>'
-        )
-    top = "".join(button(key, label, True) for key, label, kind in PERIOD_OPTIONS if kind == "wide")
-    bottom = "".join(button(key, label) for key, label, kind in PERIOD_OPTIONS if kind == "compact")
-    return (
-        '<section class="rep-period-workspace" aria-label="Temsilci dönem görünümü">'
-        '<div class="rep-period-row rep-period-row-wide">' + top + '</div>'
-        '<div class="rep-period-row rep-period-row-compact">' + bottom + '</div>'
-        '</section>'
-    )
