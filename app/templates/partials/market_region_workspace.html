@@ -16,9 +16,9 @@
     <div class="manager-annual-chart"><canvas data-manager-annual-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div>
   </section>
 
-  {% for key in ['monthly','quarterly','half_year','yearly'] %}
+  {% for key in ['half_year','yearly','monthly','q1','q2','q3','q4'] %}
   {% set period=report.periods[key] %}
-  <section class="manager-period-panel {% if loop.first %}active{% endif %}" data-manager-period-panel="{{ key }}">
+  <section class="manager-period-panel {% if key == 'monthly' %}active{% endif %}" data-manager-period-panel="{{ key }}">
     <div class="manager-region-kpis">
       <div class="manager-kpi target"><span>{{ period.label|upper }} HEDEF</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>{{ period.month_count }} aylık hedef toplamı</small></div>
       <div class="manager-kpi actual"><span>{{ period.label|upper }} GERÇEKLEŞEN</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>IMS gerçekleşen satış toplamı</small></div>
