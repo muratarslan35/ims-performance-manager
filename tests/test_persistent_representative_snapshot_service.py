@@ -43,6 +43,14 @@ def test_background_worker_warms_representatives_without_first_user_request():
     assert "_warm_representative_snapshots(app, latest.year, latest.month)" in worker
 
 
+def test_deploy_bootstraps_first_active_generation_before_web_activation():
+    installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
+    bootstrap = installer.index("REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web")
+    web_activation = installer.index('if sudo systemctl is-active --quiet "$service_name"')
+    assert bootstrap < web_activation
+    assert 'backfill_active_representative_snapshots.py"\n' in installer
+
+
 def test_backend_deploy_starts_nonblocking_representative_snapshot_refresh():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     assert "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild" in installer
