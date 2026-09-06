@@ -6,6 +6,7 @@ from app.services.realization_rounding_guard import normalize_realization_payloa
 
 def test_exact_half_stays_lower_integer():
     assert round_realization_value(Decimal("125.50000")) == 125
+    assert round_realization_value(Decimal("126.50000")) == 126
     assert round_realization_value(Decimal("0.50000")) == 0
 
 
