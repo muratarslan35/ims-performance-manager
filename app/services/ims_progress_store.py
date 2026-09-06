@@ -1,8 +1,10 @@
 """Small persistent progress channel for long-running IMS imports.
 
-Progress is deliberately stored outside the main IMS SQLite transaction.  The
+Progress is deliberately stored outside the main IMS SQLite transaction. The
 import remains atomic while the browser can still observe committed progress
-from a different request/process.
+from a different request/process. Post-import read-model warm-up deliberately
+uses the same channel so 100% means both business data and analysis screens are
+ready, not merely that the workbook transaction committed.
 """
 from __future__ import annotations
 
@@ -17,6 +19,12 @@ from flask import current_app
 
 class IMSProgressStore:
     """Atomic JSON progress records keyed by queue job id."""
+
+    POST_IMPORT_STAGES = {
+        "read_models",
+        "dashboard_snapshot",
+        "representative_snapshots",
+    }
 
     @classmethod
     def _folder(cls) -> Path:
@@ -86,7 +94,7 @@ class IMSProgressStore:
                 "job_id": job.id,
                 "percent": 100,
                 "stage": "completed",
-                "message": "IMS yüklemesi başarıyla tamamlandı",
+                "message": "IMS yüklemesi ve analiz ekranları hazır",
                 "detail": None,
                 "status": job.status,
                 "updated_at": job.completed_at.isoformat() if job.completed_at else None,
@@ -116,7 +124,19 @@ class IMSProgressStore:
         stored = cls.read(job.id)
         if stored is None:
             return cls.fallback(job)
-        # Queue state is authoritative for terminal results.
-        if job.status in {job.STATUS_COMPLETED, job.STATUS_FAILED} and stored.get("status") != job.status:
+
+        # A successful workbook transaction can be followed by durable dashboard
+        # and representative snapshot warm-up. Keep that real progress visible
+        # even though the queue row is already COMPLETED; only the final 100%
+        # record switches the visible status to COMPLETED.
+        if job.status == job.STATUS_COMPLETED:
+            if (
+                stored.get("status") == job.STATUS_PROCESSING
+                and stored.get("stage") in cls.POST_IMPORT_STAGES
+            ):
+                return stored
+            if stored.get("status") != job.status:
+                return cls.fallback(job)
+        elif job.status == job.STATUS_FAILED and stored.get("status") != job.status:
             return cls.fallback(job)
         return stored
