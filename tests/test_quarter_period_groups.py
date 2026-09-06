@@ -43,7 +43,8 @@ def test_quarter_total_is_sum_of_finalized_month_results():
     assert result["target_tl"] == Decimal("600")
     assert result["actual_tl"] == Decimal("580")
     assert result["gap_tl"] == Decimal("20")
-    assert result["realization_percent"] == Decimal("580") * Decimal("100") / Decimal("600")
+    # Exact 96.666... realization is rounded with the canonical live rule.
+    assert result["realization_percent"] == 97
 
 
 def test_partial_current_quarter_uses_only_available_months():
