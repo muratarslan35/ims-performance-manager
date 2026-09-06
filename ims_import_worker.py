@@ -16,6 +16,7 @@ from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
 from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
+from app.services.ims_progress_store import IMSProgressStore
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
@@ -76,15 +77,40 @@ def _warm_dashboard_snapshot(app, year, month):
         db.session.remove()
 
 
-def _warm_representative_snapshots(app, year, month, *, force=False):
+def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None):
     """Prepare all representative pages before users navigate to them."""
     started = time.monotonic()
     try:
         def progress(done, total, name):
+            elapsed = max(time.monotonic() - started, 0.001)
+            rate = done / elapsed if done else 0.0
+            remaining = max(total - done, 0)
+            eta_seconds = int(round(remaining / rate)) if rate > 0 else None
+            if eta_seconds is None:
+                eta_text = "süre hesaplanıyor"
+            elif eta_seconds >= 60:
+                eta_text = f"tahmini {max(1, round(eta_seconds / 60))} dk kaldı"
+            else:
+                eta_text = f"tahmini {eta_seconds} sn kaldı"
+
+            if job_id is not None:
+                # 96-99 is driven by actual completed representative snapshots;
+                # no synthetic timer or random increment is used.
+                value = 96 + round(3 * done / max(total, 1))
+                IMSProgressStore.write(
+                    job_id,
+                    percent=min(value, 99),
+                    stage="representative_snapshots",
+                    message="Veriler ekrana aktarılıyor",
+                    detail=f"Temsilci ekranları · {done}/{total} · {name} · {eta_text}",
+                    status=IMSImportJob.STATUS_PROCESSING,
+                )
+
             if done == 1 or done == total or done % 10 == 0:
                 app.logger.info(
-                    "representative_snapshot_warm_progress done=%s total=%s representative=%s",
-                    done, total, name,
+                    "representative_snapshot_warm_progress done=%s total=%s representative=%s "
+                    "elapsed=%.3f rate_per_second=%.3f eta_seconds=%s",
+                    done, total, name, elapsed, rate, eta_seconds,
                 )
 
         result = PersistentRepresentativeSnapshotService.build_for_period(
@@ -165,8 +191,43 @@ def main():
             IMSImportQueue.process(job)
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
-                _warm_dashboard_snapshot(app, job_year, job_month)
-                _warm_representative_snapshots(app, job_year, job_month)
+                IMSProgressStore.write(
+                    job_id,
+                    percent=95,
+                    stage="dashboard_snapshot",
+                    message="Veriler ekrana aktarılıyor",
+                    detail="Genel dashboard hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
+                )
+                dashboard_result = _warm_dashboard_snapshot(app, job_year, job_month)
+
+                IMSProgressStore.write(
+                    job_id,
+                    percent=96,
+                    stage="representative_snapshots",
+                    message="Veriler ekrana aktarılıyor",
+                    detail="Temsilci ekranları hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
+                )
+                representative_result = _warm_representative_snapshots(
+                    app, job_year, job_month, job_id=job_id
+                )
+
+                ready = (
+                    dashboard_result.get("status") in {"ACTIVE", "REUSED"}
+                    and representative_result.get("status") in {"ACTIVE", "REUSED"}
+                )
+                detail = "Dashboard, bölge ve temsilci analizleri hazır"
+                if not ready:
+                    detail = "IMS tamamlandı · bazı analizler güvenli canlı hesaplama yolunu kullanacak"
+                IMSProgressStore.write(
+                    job_id,
+                    percent=100,
+                    stage="completed",
+                    message="IMS yüklemesi ve analiz ekranları hazır" if ready else "IMS yüklemesi tamamlandı",
+                    detail=detail,
+                    status=IMSImportJob.STATUS_COMPLETED,
+                )
             db.session.remove()
 
 

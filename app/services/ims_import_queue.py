@@ -22,6 +22,8 @@ from app.services.official_brick_spread_service import OfficialBrickSpreadServic
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
 
+# 0-90 remains the real workbook/import path. The last 10% is deliberately
+# reserved for durable read models so 100% means the screens are actually ready.
 _PROGRESS_STAGES = {
     "validate_and_load_workbook": (5, 15, "Dosya kontrol ediliyor", "Dosya kontrol edildi"),
     "discover_and_prepare_sheets": (15, 25, "Sayfalar okunuyor", "Sayfalar okundu"),
@@ -29,8 +31,8 @@ _PROGRESS_STAGES = {
     "assignments_and_targets": (35, 45, "Hedefler okunuyor", "Hedefler okundu"),
     "facts_summary_and_official_aggregates": (45, 60, "Ürün çıkışları okunuyor", "Ürün çıkışları okundu"),
     "competition_import": (60, 90, "Rekabet verileri okunuyor", "Rekabet verileri okundu"),
-    "source_reconciliation": (90, 96, "Veriler karşılaştırılıyor ve doğrulanıyor", "Veriler karşılaştırıldı ve doğrulandı"),
-    "commit_upload": (97, 99, "Son kayıtlar tamamlanıyor", "Son kayıtlar tamamlandı"),
+    "source_reconciliation": (90, 91, "Veriler karşılaştırılıyor ve doğrulanıyor", "Veriler karşılaştırıldı ve doğrulandı"),
+    "commit_upload": (91, 92, "Son kayıtlar tamamlanıyor", "Son kayıtlar tamamlandı"),
 }
 
 
@@ -119,7 +121,7 @@ class IMSImportQueue:
                 CompetitionImportService.BULK_CHUNK_SIZE = max(1000, min(configured_chunk, 25000))
                 effective_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
 
-                # Competition is the longest stage.  Advance the visible bar
+                # Competition is the longest stage. Advance the visible bar
                 # after each real competition sheet finishes; no timer or random
                 # percentage is used.
                 def progress_compiled_sheet(service, structure_info, sheet_name):
@@ -186,7 +188,7 @@ class IMSImportQueue:
                 if not result.get("success"):
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
 
-                set_progress(99, "final_checks", "Son kontroller tamamlanıyor")
+                set_progress(92, "final_checks", "IMS verileri son kontrolden geçiriliyor")
                 spread = OfficialBrickSpreadService.persist(
                     file_path=staging_path,
                     upload_id=result["upload_id"],
@@ -209,10 +211,10 @@ class IMSImportQueue:
                 snapshot_result = {"status": "NOT_BUILT", "regions": 0}
                 try:
                     set_progress(
-                        99,
+                        92,
                         "region_snapshots",
+                        "Veriler ekrana aktarılıyor",
                         "Bölge analizleri hazırlanıyor",
-                        "Yeni IMS için kalıcı snapshot seti oluşturuluyor",
                     )
 
                     def snapshot_progress(done, total, region_name):
@@ -220,11 +222,12 @@ class IMSImportQueue:
                         if current_job is not None:
                             current_job.heartbeat_at = datetime.utcnow()
                             db.session.commit()
+                        value = 92 + round(2 * done / max(total, 1))
                         set_progress(
-                            99,
+                            min(value, 94),
                             "region_snapshots",
-                            "Bölge analizleri hazırlanıyor",
-                            f"{done}/{total} · {region_name}",
+                            "Veriler ekrana aktarılıyor",
+                            f"Bölge analizleri · {done}/{total} · {region_name}",
                         )
 
                     snapshot_result = PersistentRegionSnapshotService.build_for_period(
@@ -268,12 +271,16 @@ class IMSImportQueue:
                 job.completed_at = completed_at
                 job.heartbeat_at = completed_at
                 db.session.commit()
+
+                # The business-data transaction is complete, but the visible
+                # progress deliberately stays below 100 until the worker has
+                # prepared dashboard + representative read models as well.
                 set_progress(
-                    100,
-                    "completed",
-                    "IMS yüklemesi başarıyla tamamlandı",
-                    f"{detected_week_number}. hafta" if detected_week_number else None,
-                    status=IMSImportJob.STATUS_COMPLETED,
+                    94,
+                    "read_models",
+                    "Veriler ekrana aktarılıyor",
+                    "IMS kaydedildi · analiz ekranları hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
                 )
         except Exception as exc:
             db.session.rollback()

@@ -31,8 +31,9 @@ def test_progress_ui_is_server_driven_not_random():
 
 
 def test_worker_progress_messages_are_turkish_and_user_facing():
-    source = Path("app/services/ims_import_queue.py").read_text(encoding="utf-8")
-    expected = (
+    queue = Path("app/services/ims_import_queue.py").read_text(encoding="utf-8")
+    worker = Path("ims_import_worker.py").read_text(encoding="utf-8")
+    expected_queue = (
         "Dosya kontrol ediliyor",
         "Sayfalar okunuyor",
         "Temsilciler ve bölgeler eşleştiriliyor",
@@ -41,10 +42,11 @@ def test_worker_progress_messages_are_turkish_and_user_facing():
         "Rekabet verileri okunuyor",
         "Veriler karşılaştırılıyor ve doğrulanıyor",
         "Son kayıtlar tamamlanıyor",
-        "IMS yüklemesi başarıyla tamamlandı",
+        "Veriler ekrana aktarılıyor",
     )
-    for message in expected:
-        assert message in source
+    for message in expected_queue:
+        assert message in queue
+    assert "IMS yüklemesi ve analiz ekranları hazır" in worker
 
 
 def test_progress_channel_does_not_commit_main_import_transaction():

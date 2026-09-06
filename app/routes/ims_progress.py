@@ -47,6 +47,8 @@ def progress():
         "completed_at": selected.completed_at.isoformat() if selected.completed_at else None,
     })
     return {
-        "active": selected.status in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING},
+        # Post-import snapshot warm-up intentionally remains PROCESSING in the
+        # progress channel after the queue row has committed as COMPLETED.
+        "active": payload.get("status") in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING},
         "progress": payload,
     }

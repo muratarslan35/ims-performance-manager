@@ -39,7 +39,8 @@ def test_background_worker_warms_representatives_without_first_user_request():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_representative_snapshots" in worker
     assert "PersistentRepresentativeSnapshotService.build_for_period" in worker
-    assert "_warm_representative_snapshots(app, job_year, job_month)" in worker
+    assert "_warm_representative_snapshots(" in worker
+    assert "app, job_year, job_month, job_id=job_id" in worker
     assert "_warm_representative_snapshots(app, latest.year, latest.month)" in worker
 
 
