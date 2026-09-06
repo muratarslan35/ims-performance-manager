@@ -54,16 +54,12 @@ def _merge_products(monthly_payloads):
             bucket["complete"] = bucket["complete"] and complete
             if complete:
                 bucket["actual_tl"] += _d(item.get("actual_tl"))
-                # Sum the already-finalized monthly TL difference instead of
-                # reconstructing a historical result after months are mixed.
                 bucket["gap_tl"] += _d(item.get("gap_tl"))
 
             unit_complete = bool(item.get("unit_complete")) and item.get("actual_unit") is not None
             bucket["unit_complete"] = bucket["unit_complete"] and unit_complete
             if unit_complete:
                 bucket["actual_unit"] += _d(item.get("actual_unit"))
-                # This is the critical rule: preserve each month's own price,
-                # rounding and source decision, then add the monthly box result.
                 bucket["unit_difference"] += _d(item.get("unit_difference"))
 
     result = []
@@ -118,14 +114,31 @@ def _merge_representatives(monthly_payloads):
     return result
 
 
-def _merge_monthly_payloads(months, monthly_payloads):
-    complete = bool(monthly_payloads) and all(
-        bool(payload.get("complete")) and payload.get("actual_tl") is not None
-        for payload in monthly_payloads
+def _has_business_data(payload):
+    """Return True only when a month is part of the real historical series.
+
+    A 6-month window early in the year can reach into months before this system
+    has any target/result history (for example Nov/Dec before a Jan start). Such
+    structurally empty months must not invalidate the period. A month with a real
+    target/product/representative row still participates and remains incomplete
+    when its realization is genuinely missing.
+    """
+    return bool(
+        _d(payload.get("target_tl"))
+        or (payload.get("products") or [])
+        or (payload.get("representatives") or [])
     )
-    total_target = sum((_d(payload.get("target_tl")) for payload in monthly_payloads), Decimal("0"))
-    total_actual = sum((_d(payload.get("actual_tl")) for payload in monthly_payloads), Decimal("0"))
-    total_gap = sum((_d(payload.get("gap_tl")) for payload in monthly_payloads), Decimal("0"))
+
+
+def _merge_monthly_payloads(months, monthly_payloads):
+    contributing = [payload for payload in monthly_payloads if _has_business_data(payload)]
+    complete = bool(contributing) and all(
+        bool(payload.get("complete")) and payload.get("actual_tl") is not None
+        for payload in contributing
+    )
+    total_target = sum((_d(payload.get("target_tl")) for payload in contributing), Decimal("0"))
+    total_actual = sum((_d(payload.get("actual_tl")) for payload in contributing), Decimal("0"))
+    total_gap = sum((_d(payload.get("gap_tl")) for payload in contributing), Decimal("0"))
 
     month_rows = []
     source_by_month = {}
@@ -139,8 +152,8 @@ def _merge_monthly_payloads(months, monthly_payloads):
         "realization_percent": _percent(total_actual, total_target) if complete else None,
         "gap_tl": total_gap if complete else None,
         "complete": complete,
-        "products": _merge_products(monthly_payloads),
-        "representatives": _merge_representatives(monthly_payloads),
+        "products": _merge_products(contributing),
+        "representatives": _merge_representatives(contributing),
         "months": month_rows,
         "source_by_month": source_by_month,
     }
@@ -159,10 +172,6 @@ def install_period_result_sum_guard():
 
     def finalized_month(self, period):
         normalized = (int(period[0]), int(period[1]))
-        # report() owns a short-lived cache because its 1/3/6/12 windows overlap.
-        # Direct aggregate() callers remain uncached, so no stale data survives a
-        # report/request boundary. This also keeps the existing bounded-query
-        # performance contract instead of re-reading the same month repeatedly.
         cache = getattr(self, "_period_result_sum_month_cache", None)
         if cache is None:
             return original_aggregate(self, [normalized])
