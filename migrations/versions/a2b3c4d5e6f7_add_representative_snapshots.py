@@ -1,13 +1,13 @@
 """add persistent representative snapshots
 
 Revision ID: a2b3c4d5e6f7
-Revises: z0n1p2q3r4s5
+Revises: z0n1p2q3r4s5, b2q3s4j5d6e7
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "a2b3c4d5e6f7"
-down_revision = "z0n1p2q3r4s5"
+down_revision = ("z0n1p2q3r4s5", "b2q3s4j5d6e7")
 branch_labels = None
 depends_on = None
 
