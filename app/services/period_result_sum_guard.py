@@ -1,13 +1,12 @@
-"""Keep 3/6/12-month region results equal to the sum of finalized months.
+"""Keep multi-month region results equal to the sum of finalized months.
 
 Business rule: a multi-month period must never rebuild historical box values from
 one price or from a mixed-period aggregate. Each month is finalized first with
-that month's P2 > P1 > IMS source and period-aware unit price; 3/6/12-month
-views then add those monthly result values.
+that month's P2 > P1 > IMS source and period-aware unit price; rolling, quarter
+and YTD views then add those monthly result values.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from decimal import Decimal
 
 
@@ -115,14 +114,7 @@ def _merge_representatives(monthly_payloads):
 
 
 def _has_business_data(payload):
-    """Return True only when a month is part of the real historical series.
-
-    A 6-month window early in the year can reach into months before this system
-    has any target/result history (for example Nov/Dec before a Jan start). Such
-    structurally empty months must not invalidate the period. A month with a real
-    target/product/representative row still participates and remains incomplete
-    when its realization is genuinely missing.
-    """
+    """Return True only when a month is part of the real historical series."""
     return bool(
         _d(payload.get("target_tl"))
         or (payload.get("products") or [])
@@ -159,6 +151,11 @@ def _merge_monthly_payloads(months, monthly_payloads):
     }
 
 
+def _quarter_months(year, quarter):
+    start = (int(quarter) - 1) * 3 + 1
+    return [(int(year), month) for month in range(start, start + 3)]
+
+
 def install_period_result_sum_guard():
     """Make every RegionPerformanceService consumer use finalized monthly sums."""
     global _INSTALLED
@@ -185,7 +182,6 @@ def install_period_result_sum_guard():
             return original_aggregate(self, normalized)
         if len(normalized) == 1:
             return finalized_month(self, normalized[0])
-
         monthly_payloads = [finalized_month(self, period) for period in normalized]
         return _merge_monthly_payloads(normalized, monthly_payloads)
 
@@ -193,7 +189,20 @@ def install_period_result_sum_guard():
         previous = getattr(self, "_period_result_sum_month_cache", _MISSING)
         self._period_result_sum_month_cache = {}
         try:
-            return original_report(self)
+            result = original_report(self)
+            periods = result.setdefault("periods", {})
+            for quarter in range(1, 5):
+                key = f"q{quarter}"
+                months = _quarter_months(self.year, quarter)
+                periods[key] = {
+                    "key": key,
+                    "label": key.upper(),
+                    "month_count": 3,
+                    **monthly_sum_aggregate(self, months),
+                }
+            if "yearly" in periods:
+                periods["yearly"]["label"] = "YILLIK YTD"
+            return result
         finally:
             if previous is _MISSING:
                 delattr(self, "_period_result_sum_month_cache")
