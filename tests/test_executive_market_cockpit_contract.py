@@ -19,10 +19,22 @@ def test_executive_cockpit_is_below_region_workspace_and_dynamic():
     assert "GENEL MÜDÜR YÖNETİM ÖZETİ" in partial
     assert "Türkiye gerçekleşen" in partial
     assert "TR kutu payı farkı" in partial
+    assert "Güncel kutu pazar payı" in partial
+    assert "Seçili dönem realizasyonu" in partial
+    assert "Şirket kutu çıkışı" in partial
+    assert "Bölgesel AI Yönetim İçgörüleri" in partial
+    assert "GERÇEK VERİ + DİNAMİK YAPAY ZEKA" in partial
+    assert "Dönem hedefi" in partial
+    assert "Dönem gerçekleşen" in partial
+    assert "Rakip kutu" in partial
+    assert "Toplam kutu pazar" in partial
+    assert "AI yönetim yorumu" in partial
+    assert "data-exec-ai-panel" in partial
     assert "region.share_gap_to_national" not in partial
     assert "region.unit_share_gap_to_national" in partial
     assert "openRegion" in javascript
     assert "Chart.getChart" in javascript
+    assert "panel.dataset.execAiPanel === key" in javascript
 
 
 def test_executive_trend_renders_monthly_realization_labels():
@@ -46,19 +58,33 @@ def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_querie
     assert "unit_share_gap_to_national" in service
     assert "national_company_unit" in service
     assert "national_market_unit" in service
+    assert "_regional_ai_insights" in service
+    assert '"ai_insights"' in service
+    assert '"target_tl": round(target_tl, 2)' in service
+    assert '"actual_tl": actual_tl' in service
+    assert '"company_unit": round(company_unit, 2)' in service
+    assert '"competitor_unit": round(competitor_unit, 2)' in service
+    assert '"market_unit": round(market_unit, 2)' in service
 
 
-def test_market_analysis_loads_readability_layer_last():
+def test_market_analysis_loads_clarity_layer_last_and_removes_status_column():
     template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
-    css = (ROOT / "app/static/css/market-analysis-readability.css").read_text(encoding="utf-8")
+    readability = (ROOT / "app/static/css/market-analysis-readability.css").read_text(encoding="utf-8")
+    clarity = (ROOT / "app/static/css/market-analysis-exec-clarity.css").read_text(encoding="utf-8")
     assert template.index("executive-market-cockpit.css") < template.index("market-analysis-readability.css")
-    assert ".market-source-copy span" in css
-    assert ".manager-region-button span" in css
-    assert ".exec-cockpit .exec-region-foot" in css
-    assert '[data-theme="dark"]' in css
-    assert ".market-analysis-hero h1{color:#fff!important" in css
-    assert ".market-analysis-table th:last-child,.market-analysis-table td:last-child{display:none}" in css
-    assert ".exec-cockpit .exec-summary-items p{font-size:12px!important" in css
+    assert template.index("market-analysis-readability.css") < template.index("market-analysis-exec-clarity.css")
+    assert ".market-source-copy span" in readability
+    assert ".manager-region-button span" in readability
+    assert ".exec-cockpit .exec-region-foot" in readability
+    assert '[data-theme="dark"]' in readability
+    assert ".market-analysis-hero h1{color:#fff!important" in readability
+    assert ".market-analysis-table th:last-child,.market-analysis-table td:last-child{display:none}" not in readability
+    assert "<th>Veri durumu</th>" not in template
+    assert "item.data_status" not in template
+    assert ".exec-cockpit .exec-hero h2" in clarity
+    assert ".exec-metric-guide" in clarity
+    assert ".exec-ai-section" in clarity
+    assert ".exec-ai-facts" in readability
 
 
 def test_snapshot_backfill_has_application_root_on_python_path():

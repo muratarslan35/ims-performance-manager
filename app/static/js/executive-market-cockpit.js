@@ -69,6 +69,9 @@
     root.querySelectorAll("[data-exec-period-panel]").forEach(panel => {
       panel.classList.toggle("active", panel.dataset.execPeriodPanel === key);
     });
+    root.querySelectorAll("[data-exec-ai-panel]").forEach(panel => {
+      panel.classList.toggle("active", panel.dataset.execAiPanel === key);
+    });
   }
 
   function openRegion(regionKey) {
