@@ -1,8 +1,8 @@
 """Single-process worker for persistent IMS import jobs.
 
 Worker restarts also re-run durable read-model warm-ups. Import jobs still keep
-priority; once a workbook finishes, the national dashboard is rebuilt once and
-atomically shared with every Gunicorn worker.
+priority; once a workbook finishes, durable dashboard/region/representative read
+models are prepared without waiting for a user's first page request.
 """
 import signal
 import time
@@ -18,6 +18,7 @@ from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 
 
 stopping = False
@@ -75,12 +76,45 @@ def _warm_dashboard_snapshot(app, year, month):
         db.session.remove()
 
 
-def _backfill_latest_region_snapshots(app):
+def _warm_representative_snapshots(app, year, month, *, force=False):
+    """Prepare all representative pages before users navigate to them."""
+    started = time.monotonic()
+    try:
+        def progress(done, total, name):
+            if done == 1 or done == total or done % 10 == 0:
+                app.logger.info(
+                    "representative_snapshot_warm_progress done=%s total=%s representative=%s",
+                    done, total, name,
+                )
+
+        result = PersistentRepresentativeSnapshotService.build_for_period(
+            year, month, force=force, progress=progress
+        )
+        app.logger.info(
+            "representative_snapshot_warm status=%s year=%s month=%s representatives=%s "
+            "set_id=%s seconds=%.3f force=%s",
+            result.get("status"), year, month,
+            result.get("representatives", 0), result.get("set_id", 0),
+            time.monotonic() - started, int(force),
+        )
+        return result
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "representative_snapshot_warm_failed year=%s month=%s force=%s",
+            year, month, int(force),
+        )
+        return {"status": "FAILED"}
+    finally:
+        db.session.remove()
+
+
+def _backfill_latest_snapshots(app):
     queued = IMSImportJob.query.filter(
         IMSImportJob.status == IMSImportJob.STATUS_QUEUED
     ).first()
     if queued is not None:
-        app.logger.info("region_snapshot_startup_backfill skipped=queued_import job_id=%s", queued.id)
+        app.logger.info("snapshot_startup_backfill skipped=queued_import job_id=%s", queued.id)
         return
 
     latest = IMSUpload.query.filter_by(status="COMPLETED").order_by(
@@ -100,10 +134,11 @@ def _backfill_latest_region_snapshots(app):
             result.get("regions", 0), result.get("set_id", 0),
         )
         _warm_dashboard_snapshot(app, latest.year, latest.month)
+        _warm_representative_snapshots(app, latest.year, latest.month)
     except Exception:
         db.session.rollback()
         app.logger.exception(
-            "region_snapshot_startup_backfill_failed year=%s month=%s upload_id=%s",
+            "snapshot_startup_backfill_failed year=%s month=%s upload_id=%s",
             latest.year, latest.month, latest.id,
         )
     finally:
@@ -116,7 +151,7 @@ def main():
     app = create_app()
     with app.app_context():
         IMSImportQueue.recover_stale()
-        _backfill_latest_region_snapshots(app)
+        _backfill_latest_snapshots(app)
         while not stopping:
             job = IMSImportQueue.claim_next()
             if job is None:
@@ -130,6 +165,7 @@ def main():
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
                 _warm_dashboard_snapshot(app, job_year, job_month)
+                _warm_representative_snapshots(app, job_year, job_month)
             db.session.remove()
 
 
