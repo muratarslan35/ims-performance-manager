@@ -33,6 +33,14 @@ worker_unit_tmp=$(mktemp)
 runtime_env_tmp=$(mktemp)
 trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$runtime_env_tmp"' EXIT
 
+run_low_priority() {
+  if command -v ionice >/dev/null 2>&1; then
+    nice -n 15 ionice -c3 "$@"
+  else
+    nice -n 15 "$@"
+  fi
+}
+
 if ! grep -Eq '^[[:space:]]*SECRET_KEY[[:space:]]*=' "$ims_path/.env" 2>/dev/null; then
   secret_path="$ims_path/instance/.secret_key"
   if [ ! -s "$secret_path" ]; then
@@ -68,31 +76,25 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
 sudo systemctl enable "$worker_service_name"
 
-# Snapshot policy:
-# - import: a new IMS identity naturally creates a fresh generation;
-# - backend/heavy: calculation/read-model code may have changed while the IMS id
-#   stayed the same, therefore the current region generation is rebuilt before
-#   new web workers are activated;
-# - ui: payload calculations are unchanged, so no expensive rebuild is needed.
+# Snapshot policy is unchanged. The only operational change here is priority:
+# expensive backfills run with low CPU/I/O scheduling priority so live web
+# requests keep preference when the host is under contention.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
-  echo "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change"
+  echo "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py" --force
+    run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py" --force
 elif [ "$release_mode" = "import" ]; then
-  echo "REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation"
+  echo "REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
+    run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
 fi
 
-# Bootstrap rule for representative snapshots:
-# ensure at least one ACTIVE durable generation exists before the new web code
-# is exposed. On normal later deploys this is a quick REUSED no-op. On the first
-# rollout it performs the one-time build here, so the first user never becomes
-# the cache warmer and never pays the 30-35 second representative build cost.
+# Keep the existing representative bootstrap correctness rule, but make its
+# one-time/heavy work yield to the live Gunicorn service.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
-  echo "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web"
+  echo "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py"
+    run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py"
 fi
 
 if ! sudo systemctl is-active --quiet "$service_name"; then
@@ -143,10 +145,16 @@ sudo systemctl --no-pager --full status "$worker_service_name"
 # build a fresh representative generation asynchronously. Readers keep using the
 # previous ACTIVE set until the new generation atomically becomes ACTIVE.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
-  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild"
-  nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-    "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
-    >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
+  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild|priority=low"
+  if command -v ionice >/dev/null 2>&1; then
+    nohup nice -n 15 ionice -c3 env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+      "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
+      >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
+  else
+    nohup nice -n 15 env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
+      "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
+      >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
+  fi
   echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|pid=$!"
 fi
 
