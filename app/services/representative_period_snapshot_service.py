@@ -24,6 +24,7 @@ from app.models import (
     ProductionResultUpload,
     Target,
 )
+from app.services.realization_rounding import realization_percent
 
 
 class RepresentativePeriodSnapshotService:
@@ -40,7 +41,7 @@ class RepresentativePeriodSnapshotService:
 
     @staticmethod
     def _percent(actual, target):
-        return round(float(actual or 0) * 100 / float(target), 1) if target else 0.0
+        return realization_percent(actual, target)
 
     @staticmethod
     def _period_filter(model, periods):
@@ -129,9 +130,6 @@ class RepresentativePeriodSnapshotService:
                 summary = summary_by_key.get((period[0], period[1], product_id))
                 persisted_actual = Decimal(str(target.tl_realization or 0))
                 summary_actual = Decimal(str(summary.tl or 0)) if summary is not None else Decimal("0")
-                # New IMS imports persist the verified realization on Target.
-                # Prefer that value when populated; older periods/fixtures keep
-                # their valid summary source. A genuine zero summary stays zero.
                 if persisted_actual != 0:
                     actual_tl = persisted_actual
                     complete = True
