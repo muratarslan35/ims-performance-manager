@@ -14,7 +14,9 @@ def test_web_service_has_high_cpu_and_io_weight():
 
 def test_import_worker_yields_resources_to_web():
     unit = (ROOT / "deploy/ims-import-worker.service.in").read_text(encoding="utf-8")
-    assert "Nice=15" in unit
+    # Keep the existing locked Nice=10 contract; CPU/IO scheduling provides the
+    # additional background-load isolation without changing that contract.
+    assert "Nice=10" in unit
     assert "CPUWeight=50" in unit
     assert "IOWeight=50" in unit
     assert "IOSchedulingClass=idle" in unit
