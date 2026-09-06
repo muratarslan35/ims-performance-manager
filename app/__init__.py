@@ -53,6 +53,7 @@ from app.services.production_result_retry_ui import install_production_result_re
 from app.services.production_result_reconciliation_gate import install_production_result_reconciliation_gate
 from app.services.production_result_stale_zero_guard import install_production_result_stale_zero_guard
 from app.services.april_global_box_period_lock import install_april_global_box_period_lock
+from app.services.region_box_authority_guard import install_region_box_authority_guard
 from app.access_control import register_access_control
 from app.region_manager import install_region_manager_scope, manager_users_bp
 from app.region_manager_detail_scope import install_region_manager_detail_scope
@@ -211,6 +212,7 @@ def create_app(config_object=Config):
     install_production_result_reconciliation_gate()
     install_production_result_stale_zero_guard()
     install_april_global_box_period_lock()
+    install_region_box_authority_guard()
 
     register_template_context(app)
     register_blueprints(app)

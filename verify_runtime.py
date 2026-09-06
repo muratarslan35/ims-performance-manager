@@ -23,6 +23,7 @@ from app.extensions import db
 from app.models import IMSFact, IMSRawData, IMSSummary, IMSUpload, Product, Representative
 from app.models import PrimeRule, Setting, User
 from app.services.ims_import_service import IMSImportService
+from app.services.region_box_authority_guard import audit_all_regions
 from config import Config
 
 
@@ -142,6 +143,14 @@ def run_checks() -> tuple[list[Check], dict]:
         diagnostics["import_readiness"] = import_ready
         checks.append(Check("import.service_health", import_ready["service_health"].get("status") == "READY", json.dumps(import_ready["service_health"], ensure_ascii=False)))
         checks.append(Check("import.supported_reports", import_ready["supported_reports_count"] > 0, str(import_ready["supported_reports_count"])))
+
+        region_box_audit = audit_all_regions()
+        diagnostics["region_box_authority"] = region_box_audit
+        checks.append(Check(
+            "region.box_authority_all_regions",
+            not region_box_audit.get("failures"),
+            json.dumps(region_box_audit, ensure_ascii=False),
+        ))
 
     return checks, diagnostics
 
