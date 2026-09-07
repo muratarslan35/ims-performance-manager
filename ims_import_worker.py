@@ -80,11 +80,9 @@ def _warm_dashboard_snapshot(app, year, month):
 def _warm_region_snapshots(app, year, month):
     """Build/retry the complete region generation and verify it is readable.
 
-    IMSImportQueue already attempts the region build before the heavier dashboard
-    and representative warm-ups.  A transient failure there must not be hidden by
-    successful dashboard/representative snapshots, so the worker retries once
-    after the business import has committed and treats region readiness as a
-    first-class completion gate.
+    Snapshot readiness is deliberately advisory after the IMS business import
+    commits. A snapshot failure is reported to the user but never changes the
+    completed IMS job back into a blocking/processing state.
     """
     started = time.monotonic()
     try:
@@ -143,16 +141,15 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
                 eta_text = f"tahmini {eta_seconds} sn kaldı"
 
             if job_id is not None:
-                # 97-99 is driven by actual completed representative snapshots;
-                # no synthetic timer or random increment is used.
+                # Snapshot work is visible, but the IMS transaction is already complete.
                 value = 97 + round(2 * done / max(total, 1))
                 IMSProgressStore.write(
                     job_id,
                     percent=min(value, 99),
                     stage="representative_snapshots",
-                    message="Veriler ekrana aktarılıyor",
-                    detail=f"Temsilci ekranları · {done}/{total} · {name} · {eta_text}",
-                    status=IMSImportJob.STATUS_PROCESSING,
+                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+                    detail=f"Temsilci snapshotları · {done}/{total} · {name} · {eta_text}",
+                    status=IMSImportJob.STATUS_COMPLETED,
                 )
 
             if done == 1 or done == total or done % 10 == 0:
@@ -221,6 +218,10 @@ def _backfill_latest_region_snapshots(app):
         db.session.remove()
 
 
+def _snapshot_label(result):
+    return "alındı" if result.get("status") in {"ACTIVE", "REUSED"} else "alınamadı"
+
+
 def main():
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -240,13 +241,15 @@ def main():
             IMSImportQueue.process(job)
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
+                # The difficult/atomic IMS import is complete at this point. Everything
+                # below is advisory read-model preparation and must never block the UI.
                 IMSProgressStore.write(
                     job_id,
                     percent=95,
                     stage="dashboard_snapshot",
-                    message="Veriler ekrana aktarılıyor",
-                    detail="Genel dashboard hazırlanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
+                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+                    detail="Dashboard snapshotı hazırlanıyor",
+                    status=IMSImportJob.STATUS_COMPLETED,
                 )
                 dashboard_result = _warm_dashboard_snapshot(app, job_year, job_month)
 
@@ -254,9 +257,9 @@ def main():
                     job_id,
                     percent=96,
                     stage="region_snapshots",
-                    message="Veriler ekrana aktarılıyor",
-                    detail="Bölge analizleri doğrulanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
+                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+                    detail=f"Dashboard snapshotı {_snapshot_label(dashboard_result)} · Bölge snapshotları hazırlanıyor",
+                    status=IMSImportJob.STATUS_COMPLETED,
                 )
                 region_result = _warm_region_snapshots(app, job_year, job_month)
 
@@ -264,9 +267,13 @@ def main():
                     job_id,
                     percent=97,
                     stage="representative_snapshots",
-                    message="Veriler ekrana aktarılıyor",
-                    detail="Temsilci ekranları hazırlanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
+                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+                    detail=(
+                        f"Dashboard snapshotı {_snapshot_label(dashboard_result)} · "
+                        f"Bölge snapshotı {_snapshot_label(region_result)} · "
+                        "Temsilci snapshotları hazırlanıyor"
+                    ),
+                    status=IMSImportJob.STATUS_COMPLETED,
                 )
                 representative_result = _warm_representative_snapshots(
                     app, job_year, job_month, job_id=job_id
@@ -277,15 +284,21 @@ def main():
                     and region_result.get("status") in {"ACTIVE", "REUSED"}
                     and representative_result.get("status") in {"ACTIVE", "REUSED"}
                 )
-                detail = "Dashboard, bölge ve temsilci analizleri hazır"
-                if not ready:
-                    detail = "IMS tamamlandı · bazı analizler güvenli canlı hesaplama yolunu kullanacak"
+                snapshot_detail = (
+                    f"Snapshot durumu · Dashboard: {_snapshot_label(dashboard_result)} · "
+                    f"Bölge: {_snapshot_label(region_result)} · "
+                    f"Temsilci: {_snapshot_label(representative_result)}"
+                )
                 IMSProgressStore.write(
                     job_id,
                     percent=100,
                     stage="completed",
-                    message="IMS yüklemesi ve analiz ekranları hazır" if ready else "IMS yüklemesi tamamlandı",
-                    detail=detail,
+                    message=(
+                        "IMS yüklemesi tamamlandı · snapshot alındı"
+                        if ready
+                        else "IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı"
+                    ),
+                    detail=snapshot_detail,
                     status=IMSImportJob.STATUS_COMPLETED,
                 )
             db.session.remove()
