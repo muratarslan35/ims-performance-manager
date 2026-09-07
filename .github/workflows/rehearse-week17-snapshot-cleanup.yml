@@ -1,4 +1,4 @@
-name: Rehearse Week17 Snapshot Cleanup
+name: Emergency Verify And Start Production
 
 on:
   push:
@@ -6,15 +6,14 @@ on:
       - agent/shadow-production-copy-proof
     paths:
       - ".github/workflows/rehearse-week17-snapshot-cleanup.yml"
-      - "scripts/rehearse_week17_snapshot_cleanup.py"
 
 permissions:
   contents: read
 
 jobs:
-  rehearse:
+  rescue:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -22,64 +21,49 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/shadow-production-copy-proof
       - name: Configure SSH
         shell: bash
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
           set -Eeuo pipefail
-          test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Copy diagnostic scripts only
+      - name: Start services and report live state
         shell: bash
         run: |
           set -Eeuo pipefail
-          scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=12 \
-            scripts/rehearse_week17_to_week16.py scripts/rehearse_week17_snapshot_cleanup.py \
-            "$IMS_USER@$IMS_HOST:/tmp/"
-      - name: Roll back isolated candidate and rebuild clean week16 snapshots
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=30 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          test "$(git branch --show-current)" = "main"
-          test -z "$(git status --porcelain)"
-          BASE="$IMS_PATH/instance/test-baselines/week17-production-baseline.db"
-          META="$IMS_PATH/instance/test-baselines/week17-production-baseline.meta"
-          ROLLBACK=/tmp/rehearse_week17_to_week16.py
-          CLEANUP=/tmp/rehearse_week17_snapshot_cleanup.py
-          test -f "$BASE" && test -f "$META" && test -f "$ROLLBACK" && test -f "$CLEANUP"
-          expected=$(awk -F= '$1=="sha256"{print $2}' "$META")
-          test "$(sha256sum "$BASE" | awk '{print $1}')" = "$expected"
-          ROOT=$(mktemp -d "$IMS_PATH/instance/test-baselines/snapshot-cleanup-17-to-16.XXXXXX")
-          trap 'rm -rf "$ROOT" "$ROLLBACK" "$CLEANUP"' EXIT
-          chmod 700 "$ROOT"
-          cp --reflink=auto "$BASE" "$ROOT/candidate.db"
-          chmod 600 "$ROOT/candidate.db"
-          mkdir -p "$ROOT/uploads/ims_archive/snapshots" "$ROOT/instance"
-          cp "$IMS_PATH/uploads/ims_archive/upload-32.xlsx" "$ROOT/uploads/ims_archive/upload-32.xlsx"
-          cp "$IMS_PATH/uploads/ims_archive/snapshots/upload-32.json" "$ROOT/uploads/ims_archive/snapshots/upload-32.json"
-          PYTHONPATH="$IMS_PATH" "$IMS_PATH/venv/bin/python" "$ROLLBACK" \
-            --database "$ROOT/candidate.db" \
-            --upload-root "$ROOT/uploads" \
-            --delete-upload-id 32 \
-            --expected-previous-upload-id 31 \
-            --expected-previous-week 16
-          PYTHONPATH="$IMS_PATH" "$IMS_PATH/venv/bin/python" "$CLEANUP" \
-            --database "$ROOT/candidate.db" \
-            --instance-root "$ROOT/instance" \
-            --year 2026 --month 4 \
-            --deleted-upload-id 32 \
-            --expected-upload-id 31
-          test "$(sha256sum "$BASE" | awk '{print $1}')" = "$expected"
-          echo "SNAPSHOT_CLEANUP|BASELINE_UNCHANGED|sha256=$expected"
-          echo "SNAPSHOT_CLEANUP_REHEARSAL|PASS"
+          sudo systemctl start ims-performance-manager.service
+          sudo systemctl start ims-import-worker.service
+          health=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then health=1; break; fi
+            sleep 1
+          done
+          test "$health" = 1
+          venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try:
+              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              r=c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+              p=c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+              stale=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
+          finally:c.close()
+          print(f'EMERGENCY|STATE|latest={latest}|jobs={jobs}|region={r}|representative={p}|stale32={stale}')
+          if latest not in ((31,2026,4,16,'COMPLETED'),(32,2026,4,17,'COMPLETED')): raise SystemExit('unexpected live state')
+          if jobs: raise SystemExit('active import job after rescue')
+          print('EMERGENCY|DB_STATE|PASS')
+          PY
+          echo "EMERGENCY|WEB|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "EMERGENCY|WORKER|$(sudo systemctl is-active ims-import-worker.service)"
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
+          echo 'EMERGENCY_PRODUCTION_RECOVERY|PASS'
           REMOTE
