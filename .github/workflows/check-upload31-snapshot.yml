@@ -1,0 +1,49 @@
+name: Check Upload31 Snapshot
+
+on:
+  push:
+    branches:
+      - agent/shadow-production-copy-proof
+    paths:
+      - ".github/workflows/check-upload31-snapshot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Read-only snapshot check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=12 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          p="uploads/ims_archive/snapshots/upload-31.json"
+          if [ -f "$p" ]; then
+            echo "UPLOAD31_SNAPSHOT|PRESENT|bytes=$(stat -c '%s' "$p")|sha256=$(sha256sum "$p" | awk '{print $1}')"
+          else
+            echo "UPLOAD31_SNAPSHOT|ABSENT"
+          fi
+          REMOTE
