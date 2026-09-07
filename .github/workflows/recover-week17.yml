@@ -18,7 +18,7 @@ jobs:
   recover:
     name: Stop IMS work and restore week 17 view
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -62,7 +62,7 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
           mkdir -p instance/backups
-          recent_backup=$(find instance/backups -maxdepth 1 -type f -name 'ipm-before-week17-recovery-*.db' -mmin -60 -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+          recent_backup=$(find instance/backups -maxdepth 1 -type f -name 'ipm-before-week17-recovery-*.db' -mmin -180 -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
           if [ -n "$recent_backup" ] && [ -s "$recent_backup" ]; then
             echo "RECOVERY_BACKUP_REUSED|$recent_backup"
           else
