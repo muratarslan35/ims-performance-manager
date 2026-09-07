@@ -62,13 +62,18 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
           mkdir -p instance/backups
-          stamp=$(date +%Y%m%d-%H%M%S)
-          backup="instance/backups/ipm-before-week17-recovery-${stamp}.db"
-          venv/bin/python sqlite_online_backup.py instance/ipm.db "$backup"
-          echo "RECOVERY_BACKUP|$backup"
+          recent_backup=$(find instance/backups -maxdepth 1 -type f -name 'ipm-before-week17-recovery-*.db' -mmin -60 -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+          if [ -n "$recent_backup" ] && [ -s "$recent_backup" ]; then
+            echo "RECOVERY_BACKUP_REUSED|$recent_backup"
+          else
+            stamp=$(date +%Y%m%d-%H%M%S)
+            backup="instance/backups/ipm-before-week17-recovery-${stamp}.db"
+            venv/bin/python sqlite_online_backup.py instance/ipm.db "$backup"
+            echo "RECOVERY_BACKUP|$backup"
+          fi
 
           echo 'RECOVERY_PHASE|week17_guard'
-          if ! venv/bin/python scripts/recover_live_week17.py; then
+          if ! PYTHONPATH="$IMS_PATH" venv/bin/python scripts/recover_live_week17.py; then
             echo 'WEEK17_RECOVERY|FAIL'
             echo 'WORKER_RESTART|skipped_due_to_recovery_failure'
             exit 1
