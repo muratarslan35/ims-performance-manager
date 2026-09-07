@@ -1,0 +1,160 @@
+name: Shadow Production Copy Safety Proof Archive Source
+
+on:
+  push:
+    branches:
+      - agent/shadow-production-copy-proof
+    paths:
+      - ".github/workflows/shadow-production-copy-proof-archive.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-shadow-production-copy-proof-archive
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Run real importer on production DB copy using archived source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          LIVE_DB="$IMS_PATH/instance/ipm.db"
+          read -r latest_id latest_week active_jobs mode <<EOF
+          $(venv/bin/python - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try:
+              con.execute('PRAGMA busy_timeout=30000')
+              u=con.execute("SELECT id,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              j=con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              m=con.execute('PRAGMA journal_mode').fetchone()[0]
+          finally: con.close()
+          print(u[0],u[1],j,m)
+          PY
+          )
+          EOF
+          echo "SHADOW_ARCHIVE|LIVE_BASELINE|upload_id=$latest_id|week=$latest_week|active_jobs=$active_jobs|journal_mode=$mode"
+          test "$latest_week" = "17"
+          test "$active_jobs" = "0"
+          test "${mode,,}" = "wal"
+
+          source=""
+          for p in "$IMS_PATH/uploads/ims_archive/upload-$latest_id.xlsx" "$IMS_PATH/uploads/ims_archive/upload-$latest_id.xls"; do
+            if [ -f "$p" ]; then source="$p"; break; fi
+          done
+          test -n "$source"
+          echo "SHADOW_ARCHIVE|SOURCE|FOUND|$source|bytes=$(stat -c '%s' "$source")|sha256=$(sha256sum "$source"|awk '{print $1}')"
+
+          live_bytes=$(stat -c '%s' "$LIVE_DB")
+          free_bytes=$(df -PB1 "$IMS_PATH/instance"|awk 'NR==2{print $4}')
+          required=$((live_bytes*2+1073741824))
+          echo "SHADOW_ARCHIVE|DISK|live=$live_bytes|free=$free_bytes|required=$required"
+          test "$free_bytes" -ge "$required"
+
+          proof_dir="$IMS_PATH/instance/shadow-proof-archive-$(date +%Y%m%d-%H%M%S)-$$"
+          mkdir -p "$proof_dir"
+          trap 'rm -rf "$proof_dir" || true' EXIT
+          safe="$proof_dir/ims-safe-week17.db"
+          candidate="$proof_dir/ims-acceptance-candidate.db"
+          active="$proof_dir/ims-active-test.db"
+
+          echo 'SHADOW_ARCHIVE|PHASE|online_backup'
+          venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$safe"
+          safe_sha=$(sha256sum "$safe"|awk '{print $1}')
+          echo "SHADOW_ARCHIVE|SAFE_SHA|$safe_sha"
+          cp --reflink=auto "$safe" "$candidate"
+          test "$(sha256sum "$candidate"|awk '{print $1}')" = "$safe_sha"
+          echo 'SHADOW_ARCHIVE|CANDIDATE_INITIAL_IDENTICAL|YES'
+
+          echo 'SHADOW_ARCHIVE|PHASE|real_importer'
+          DATABASE_URL="sqlite:///$candidate" IMS_ACCEPTANCE_UPLOAD_ID="$latest_id" IMS_ACCEPTANCE_SOURCE="$source" PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          import verify_ims_acceptance as v
+          src=Path(os.environ['IMS_ACCEPTANCE_SOURCE'])
+          if not src.is_file():
+              raise SystemExit('archived source missing')
+          v._source_path=lambda app, upload: src
+          raise SystemExit(v.main())
+          PY
+
+          test "$(sha256sum "$safe"|awk '{print $1}')" = "$safe_sha"
+          echo 'SHADOW_ARCHIVE|SAFE_UNCHANGED_AFTER_REAL_IMPORT|YES'
+          venv/bin/python - "$candidate" <<'PY'
+          import sqlite3,sys
+          con=sqlite3.connect(sys.argv[1],timeout=30)
+          try: q=con.execute('PRAGMA integrity_check').fetchone()[0]
+          finally: con.close()
+          print('SHADOW_ARCHIVE|CANDIDATE_INTEGRITY|'+str(q))
+          if str(q).lower()!='ok': raise SystemExit(1)
+          PY
+
+          echo 'SHADOW_ARCHIVE|REJECT_RETURNS_TO_SAFE_WITHOUT_ROLLBACK_WRITE|YES'
+          mv "$safe" "$proof_dir/previous-safe.db"
+          mv "$candidate" "$active"
+          test "$(sha256sum "$proof_dir/previous-safe.db"|awk '{print $1}')" = "$safe_sha"
+          echo 'SHADOW_ARCHIVE|SAFE_GENERATION_PRESERVED_DURING_PROMOTE|YES'
+          venv/bin/python - "$proof_dir/previous-safe.db" "$active" <<'PY'
+          import os,sys
+          os.replace(sys.argv[1],sys.argv[2])
+          PY
+          rollback_sha=$(sha256sum "$active"|awk '{print $1}')
+          test "$rollback_sha" = "$safe_sha"
+          echo "SHADOW_ARCHIVE|ROLLBACK_BYTE_IDENTICAL|YES|sha256=$rollback_sha"
+          venv/bin/python - "$active" "$latest_id" <<'PY'
+          import sqlite3,sys
+          con=sqlite3.connect(sys.argv[1],timeout=30)
+          try:
+              q=con.execute('PRAGMA integrity_check').fetchone()[0]
+              u=con.execute("SELECT id,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+          finally: con.close()
+          print(f'SHADOW_ARCHIVE|ROLLBACK_INTEGRITY|{q}|LATEST|{u}')
+          if str(q).lower()!='ok' or int(u[0])!=int(sys.argv[2]) or int(u[1])!=17: raise SystemExit(1)
+          PY
+
+          read -r live_after jobs_after mode_after <<EOF
+          $(venv/bin/python - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try:
+              u=con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()[0]
+              j=con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              m=con.execute('PRAGMA journal_mode').fetchone()[0]
+          finally: con.close()
+          print(u,j,m)
+          PY
+          )
+          EOF
+          echo "SHADOW_ARCHIVE|LIVE_POST|latest=$live_after|jobs=$jobs_after|mode=$mode_after"
+          test "$live_after" = "$latest_id"
+          test "$jobs_after" = "0"
+          test "${mode_after,,}" = "wal"
+          echo 'SHADOW_ARCHIVE|REAL_PRODUCTION_COPY_ACCEPTANCE|PASS'
+          REMOTE
