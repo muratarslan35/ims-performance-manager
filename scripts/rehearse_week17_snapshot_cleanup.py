@@ -46,6 +46,12 @@ def main() -> None:
         SQLALCHEMY_DATABASE_URI = f"sqlite:///{database}"
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         WTF_CSRF_ENABLED = False
+        UPLOAD_FOLDER = instance_root / "uploads"
+        REPORT_FOLDER = instance_root / "reports"
+        BACKUP_FOLDER = instance_root / "backups"
+        LOG_FOLDER = instance_root / "logs"
+        TEMP_FOLDER = instance_root / "temp"
+        USER_VAULT_PATH = instance_root / "disabled-user-vault.db"
 
     app = create_app(Config)
     app.instance_path = str(instance_root)
