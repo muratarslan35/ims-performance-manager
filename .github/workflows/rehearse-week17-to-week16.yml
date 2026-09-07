@@ -62,7 +62,21 @@ jobs:
           test "$expected" = "$actual"
           ROOT=$(mktemp -d "$IMS_PATH/instance/test-baselines/rollback-17-to-16.XXXXXX")
           trap 'rm -rf "$ROOT" "$SCRIPT"' EXIT
+          chmod 700 "$ROOT"
           cp --reflink=auto "$BASE" "$ROOT/candidate.db"
+          chmod 600 "$ROOT/candidate.db"
+          test -w "$ROOT/candidate.db"
+          "$IMS_PATH/venv/bin/python" - "$ROOT/candidate.db" <<'PY'
+          import sqlite3, sys
+          path = sys.argv[1]
+          conn = sqlite3.connect(path, timeout=30)
+          try:
+              conn.execute("BEGIN IMMEDIATE")
+              conn.rollback()
+              print("ROLLBACK_REHEARSAL|CANDIDATE_WRITABLE|PASS")
+          finally:
+              conn.close()
+          PY
           mkdir -p "$ROOT/uploads/ims_archive/snapshots"
           cp "$IMS_PATH/uploads/ims_archive/upload-32.xlsx" "$ROOT/uploads/ims_archive/upload-32.xlsx"
           cp "$IMS_PATH/uploads/ims_archive/snapshots/upload-32.json" "$ROOT/uploads/ims_archive/snapshots/upload-32.json"
