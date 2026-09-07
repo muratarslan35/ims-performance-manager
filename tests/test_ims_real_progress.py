@@ -46,7 +46,8 @@ def test_worker_progress_messages_are_turkish_and_user_facing():
     )
     for message in expected_queue:
         assert message in queue
-    assert "IMS yüklemesi ve analiz ekranları hazır" in worker
+    assert "IMS yüklemesi tamamlandı · snapshot alındı" in worker
+    assert "IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı" in worker
 
 
 def test_progress_channel_does_not_commit_main_import_transaction():
