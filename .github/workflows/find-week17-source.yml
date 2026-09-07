@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=12 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = "main"
@@ -47,6 +47,7 @@ jobs:
           BASE_DB="$BASE_DIR/week17-production-baseline.db"
           META="$BASE_DIR/week17-production-baseline.meta"
           mkdir -p "$BASE_DIR"
+          find "$BASE_DIR" -maxdepth 1 -type f -name 'week17-production-baseline.db.tmp.*' -mmin +5 -delete || true
 
           ids=$(venv/bin/python - <<'PY'
           import sqlite3
@@ -95,6 +96,7 @@ jobs:
             echo "BASELINE|PREFLIGHT|live_bytes=$size|free_bytes=$free|required_bytes=$required"
             test "$free" -ge "$required"
             tmp="$BASE_DB.tmp.$$"
+            rm -f "$tmp"
             venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$tmp"
             mv "$tmp" "$BASE_DB"
             sha=$(sha256sum "$BASE_DB" | awk '{print $1}')
