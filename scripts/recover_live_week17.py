@@ -33,6 +33,8 @@ from app.services.period_service import PeriodService
 
 TARGET_WEEK = 17
 REMOVED_WEEK = 18
+EXPECTED_WEEK17_MASTER_REPRESENTATIVES = 187
+EXPECTED_WEEK17_TARGET_REPRESENTATIVES = 114
 
 
 def _completed_uploads():
@@ -250,7 +252,17 @@ def main() -> int:
             )
 
         stale_dashboard_files = _clear_dashboard_snapshots(app.instance_path)
-        remaining_week18 = IMSUpload.query.filter_by(status="COMPLETED", week_number=REMOVED_WEEK).count()
+        remaining_week18 = IMSUpload.query.filter_by(
+            year=latest.year,
+            month=latest.month,
+            status="COMPLETED",
+            week_number=REMOVED_WEEK,
+        ).count()
+        any_period_week18 = IMSUpload.query.filter_by(
+            year=latest.year,
+            month=latest.month,
+            week_number=REMOVED_WEEK,
+        ).count()
         active_jobs = IMSImportJob.query.filter(
             IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
         ).count()
@@ -266,17 +278,52 @@ def main() -> int:
         current_recent_orphans = sum(
             1 for representative in recent if int(representative.id) not in protected_after
         )
+        recent_ids = [int(representative.id) for representative in recent]
+        current_recent_target_refs = 0
+        if recent_ids:
+            current_recent_target_refs = (
+                db.session.query(Target.representative_id)
+                .filter(
+                    Target.year == latest.year,
+                    Target.month == latest.month,
+                    Target.representative_id.in_(recent_ids),
+                )
+                .distinct()
+                .count()
+            )
 
-        if remaining_week18 or active_jobs or orphan_total or current_recent_orphans:
+        master_representatives = Representative.query.count()
+        target_representatives = (
+            db.session.query(Target.representative_id)
+            .filter(Target.year == latest.year, Target.month == latest.month)
+            .distinct()
+            .count()
+        )
+
+        if (
+            remaining_week18
+            or any_period_week18
+            or active_jobs
+            or orphan_total
+            or current_recent_orphans
+            or current_recent_target_refs
+            or master_representatives != EXPECTED_WEEK17_MASTER_REPRESENTATIVES
+            or target_representatives != EXPECTED_WEEK17_TARGET_REPRESENTATIVES
+        ):
             raise RuntimeError(
                 "Recovery post-check failed: "
-                f"week18={remaining_week18} active_jobs={active_jobs} "
-                f"orphan_upload_rows={orphan_rows} recent_orphan_reps={current_recent_orphans}."
+                f"week18_completed={remaining_week18} week18_any={any_period_week18} "
+                f"active_jobs={active_jobs} orphan_upload_rows={orphan_rows} "
+                f"recent_orphan_reps={current_recent_orphans} "
+                f"recent_target_refs={current_recent_target_refs} "
+                f"master_reps={master_representatives} target_reps={target_representatives}."
             )
 
         print(f"BAD_IMPORT_REPRESENTATIVES_REMOVED|count={len(removed_representatives)}|rows={removed_representatives}")
         print(f"RECENT_REPRESENTATIVES_PROTECTED_BY_HISTORY|count={protected_recent}")
         print(f"ORPHAN_UPLOAD_ROWS|{orphan_rows}")
+        print(f"WEEK18_UPLOAD_ROWS_CURRENT_PERIOD|completed={remaining_week18}|all_statuses={any_period_week18}")
+        print(f"WEEK17_REPRESENTATIVE_AUDIT|master={master_representatives}|target_roster={target_representatives}|recent_target_refs={current_recent_target_refs}")
         print(
             "WEEK17_RECOVERY|PASS|"
             f"upload_id={latest.id}|year={latest.year}|month={latest.month}|week={latest.week_number}|"
@@ -286,6 +333,7 @@ def main() -> int:
             f"protected_recent_reps={protected_recent}|"
             f"cleared_dashboard_snapshots={stale_dashboard_files}"
         )
+        print("WEEK18_CONTAMINATION_AUDIT|PASS")
         return 0
 
 
