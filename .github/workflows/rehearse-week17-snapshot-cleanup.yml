@@ -58,7 +58,8 @@ jobs:
           expected=$(awk -F= '$1=="sha256"{print $2}' "$BASEMETA")
           test "$(sha256sum "$BASE"|awk '{print $1}')" = "$expected"
           rm -f "$TMP" "$META.tmp"
-          cp --reflink=auto "$BASE" "$TMP"\n          chmod 600 "$TMP"
+          cp --reflink=auto "$BASE" "$TMP"
+          chmod 600 "$TMP"
           work=$(mktemp -d instance/test-baselines/week16-candidate-files.XXXXXX)
           trap 'rm -rf "$work" /tmp/rehearse_week17_to_week16.py /tmp/rehearse_week17_snapshot_cleanup.py' EXIT
           mkdir -p "$work/uploads/ims_archive/snapshots" "$work/instance"
