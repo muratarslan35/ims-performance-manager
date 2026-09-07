@@ -13,7 +13,7 @@ permissions:
 jobs:
   rehearse:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -35,14 +35,14 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Copy diagnostic rehearsal script only
+      - name: Copy diagnostic scripts only
         shell: bash
         run: |
           set -Eeuo pipefail
           scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=12 \
-            scripts/rehearse_week17_to_week16.py \
-            "$IMS_USER@$IMS_HOST:/tmp/rehearse_week17_to_week16.py"
-      - name: Rehearse rollback on isolated baseline copy
+            scripts/rehearse_week17_to_week16.py scripts/audit_week17_shared_residue.py \
+            "$IMS_USER@$IMS_HOST:/tmp/"
+      - name: Rehearse rollback and audit shared residue on isolated baseline copy
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -54,14 +54,16 @@ jobs:
           BASE="$IMS_PATH/instance/test-baselines/week17-production-baseline.db"
           META="$IMS_PATH/instance/test-baselines/week17-production-baseline.meta"
           SCRIPT=/tmp/rehearse_week17_to_week16.py
+          AUDIT=/tmp/audit_week17_shared_residue.py
           test -f "$BASE"
           test -f "$META"
           test -f "$SCRIPT"
+          test -f "$AUDIT"
           expected=$(awk -F= '$1=="sha256"{print $2}' "$META")
           actual=$(sha256sum "$BASE" | awk '{print $1}')
           test "$expected" = "$actual"
           ROOT=$(mktemp -d "$IMS_PATH/instance/test-baselines/rollback-17-to-16.XXXXXX")
-          trap 'rm -rf "$ROOT" "$SCRIPT"' EXIT
+          trap 'rm -rf "$ROOT" "$SCRIPT" "$AUDIT"' EXIT
           chmod 700 "$ROOT"
           cp --reflink=auto "$BASE" "$ROOT/candidate.db"
           chmod 600 "$ROOT/candidate.db"
@@ -86,6 +88,11 @@ jobs:
             --delete-upload-id 32 \
             --expected-previous-upload-id 31 \
             --expected-previous-week 16
+          "$IMS_PATH/venv/bin/python" "$AUDIT" \
+            --baseline "$BASE" \
+            --candidate "$ROOT/candidate.db" \
+            --previous-upload-id 31 \
+            --deleted-upload-id 32
           test "$(sha256sum "$BASE" | awk '{print $1}')" = "$expected"
           echo "ROLLBACK_REHEARSAL|BASELINE_UNCHANGED|sha256=$expected"
           echo "ROLLBACK_REHEARSAL|PASS"
