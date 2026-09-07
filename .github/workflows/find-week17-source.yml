@@ -1,4 +1,4 @@
-name: Find Week17 Source Read Only
+name: Audit Week16 Source And Baseline
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  find:
+  audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -32,24 +32,94 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Search week17 source without writes
+      - name: Audit week16 source and create persistent diagnostic baseline
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "SOURCE_SEARCH|LIVE_COMMIT|$(git rev-parse HEAD)"
           test "$(git branch --show-current)" = "main"
           test -z "$(git status --porcelain)"
-          exact=""
-          for p in uploads/ims_archive/upload-32.xlsx uploads/ims_archive/upload-32.xls; do
-            if [ -f "$p" ]; then exact="$p"; break; fi
+
+          LIVE_DB="$IMS_PATH/instance/ipm.db"
+          BASE_DIR="$IMS_PATH/instance/test-baselines"
+          BASE_DB="$BASE_DIR/week17-production-baseline.db"
+          META="$BASE_DIR/week17-production-baseline.meta"
+          mkdir -p "$BASE_DIR"
+
+          ids=$(venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try:
+              rows=c.execute("SELECT id,week_number FROM ims_uploads WHERE year=2026 AND month=4 AND week_number IN (16,17) AND status='COMPLETED' ORDER BY id").fetchall()
+              m={int(w):int(i) for i,w in rows}
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              print(m.get(16,0),m.get(17,0),jobs)
+          finally: c.close()
+          PY
+          )
+          read -r WEEK16_ID WEEK17_ID ACTIVE_JOBS <<<"$ids"
+          echo "WEEK16_AUDIT|UPLOAD_IDS|week16=$WEEK16_ID|week17=$WEEK17_ID|active_jobs=$ACTIVE_JOBS"
+          test "$WEEK16_ID" -gt 0
+          test "$WEEK17_ID" -gt 0
+          test "$ACTIVE_JOBS" -eq 0
+
+          for spec in "week16:$WEEK16_ID" "week17:$WEEK17_ID"; do
+            label=${spec%%:*}; id=${spec##*:}
+            src="uploads/ims_archive/upload-$id.xlsx"
+            if [ ! -f "$src" ]; then src="uploads/ims_archive/upload-$id.xls"; fi
+            if [ ! -f "$src" ]; then echo "WEEK16_AUDIT|SOURCE_MISSING|$label|upload_id=$id"; exit 21; fi
+            echo "WEEK16_AUDIT|SOURCE|$label|upload_id=$id|path=$src|bytes=$(stat -c '%s' "$src")|sha256=$(sha256sum "$src" | awk '{print $1}')"
           done
-          if [ -n "$exact" ]; then
-            echo "SOURCE_SEARCH|ARCHIVE_EXACT|FOUND|$exact|bytes=$(stat -c '%s' "$exact")|sha256=$(sha256sum "$exact" | awk '{print $1}')"
-            exit 0
+
+          snap="uploads/ims_archive/snapshots/upload-$WEEK17_ID.json"
+          test -f "$snap"
+          echo "WEEK16_AUDIT|ROLLBACK_SNAPSHOT|path=$snap|bytes=$(stat -c '%s' "$snap")|sha256=$(sha256sum "$snap" | awk '{print $1}')"
+          venv/bin/python - "$snap" <<'PY'
+          import json,sys,hashlib
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(f"WEEK16_AUDIT|SNAPSHOT_META|version={d.get('version')}|year={d.get('year')}|month={d.get('month')}")
+          for k in ('targets','summaries','brick_assignments'):
+              rows=d.get(k) or []
+              h=hashlib.sha256(json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+              print(f"WEEK16_AUDIT|SNAPSHOT_{k.upper()}|count={len(rows)}|sha256={h}")
+          if int(d.get('year') or 0)!=2026 or int(d.get('month') or 0)!=4 or not d.get('summaries'):
+              raise SystemExit('invalid rollback snapshot')
+          PY
+
+          if [ ! -f "$BASE_DB" ]; then
+            size=$(stat -c '%s' "$LIVE_DB")
+            free=$(df -B1 "$BASE_DIR" | awk 'NR==2{print $4}')
+            required=$((size + 1073741824))
+            echo "BASELINE|PREFLIGHT|live_bytes=$size|free_bytes=$free|required_bytes=$required"
+            test "$free" -ge "$required"
+            tmp="$BASE_DB.tmp.$$"
+            venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$tmp"
+            mv "$tmp" "$BASE_DB"
+            sha=$(sha256sum "$BASE_DB" | awk '{print $1}')
+            bytes=$(stat -c '%s' "$BASE_DB")
+            printf 'sha256=%s\nbytes=%s\nweek17_upload_id=%s\n' "$sha" "$bytes" "$WEEK17_ID" > "$META"
+            chmod 444 "$BASE_DB" "$META"
+            echo "BASELINE|CREATED|path=$BASE_DB|bytes=$bytes|sha256=$sha"
+          else
+            test -f "$META"
+            expected=$(awk -F= '$1=="sha256"{print $2}' "$META")
+            actual=$(sha256sum "$BASE_DB" | awk '{print $1}')
+            test "$expected" = "$actual"
+            echo "BASELINE|REUSED|path=$BASE_DB|bytes=$(stat -c '%s' "$BASE_DB")|sha256=$actual"
           fi
-          echo "SOURCE_SEARCH|ARCHIVE_EXACT|NOT_FOUND"
-          find uploads instance backups temp -maxdepth 5 -type f \( -iname '*17*haft*.xlsx' -o -iname '*17*haft*.xls' -o -iname '*Tayfun*17*.xlsx' -o -iname '*Tayfun*17*.xls' -o -iname 'upload-32.xlsx' -o -iname 'upload-32.xls' \) -printf 'SOURCE_SEARCH|CANDIDATE|%p|bytes=%s\n' 2>/dev/null | head -n 50
+
+          venv/bin/python - "$BASE_DB" <<'PY'
+          import sqlite3,sys
+          c=sqlite3.connect(f'file:{sys.argv[1]}?mode=ro',uri=True,timeout=30)
+          try:
+              ok=c.execute('PRAGMA integrity_check').fetchone()[0]
+              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              print(f'BASELINE|VERIFY|integrity={ok}|latest={latest}|active_jobs={jobs}')
+              if ok!='ok' or not latest or int(latest[3])!=17 or jobs!=0: raise SystemExit('baseline verify failed')
+          finally: c.close()
+          PY
+          echo "WEEK16_BASELINE_AUDIT|PASS"
           REMOTE
