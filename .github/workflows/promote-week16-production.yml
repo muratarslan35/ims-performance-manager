@@ -1,0 +1,192 @@
+name: Promote Production Safely To Week16
+
+on:
+  push:
+    branches:
+      - agent/shadow-production-copy-proof
+    paths:
+      - ".github/workflows/promote-week16-production.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-production-data-transition
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/shadow-production-copy-proof
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Copy approved transition scripts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 \
+            scripts/rehearse_week17_to_week16.py scripts/rehearse_week17_snapshot_cleanup.py \
+            "$IMS_USER@$IMS_HOST:/tmp/"
+      - name: Back up, promote week16, rebuild snapshots, and verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=90 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          LIVE=instance/ipm.db
+          ROLLBACK=/tmp/rehearse_week17_to_week16.py
+          CLEANUP=/tmp/rehearse_week17_snapshot_cleanup.py
+          test -s "$LIVE" && test -f "$ROLLBACK" && test -f "$CLEANUP"
+
+          ids=$(venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try:
+              c.execute('PRAGMA busy_timeout=30000')
+              rows=c.execute("SELECT id,week_number FROM ims_uploads WHERE year=2026 AND month=4 AND status='COMPLETED' AND week_number IN (16,17) ORDER BY id").fetchall()
+              m={int(w):int(i) for i,w in rows}
+              latest=c.execute("SELECT id,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              print(m.get(16,0),m.get(17,0),latest[0] if latest else 0,latest[1] if latest else 0,jobs)
+          finally:c.close()
+          PY
+          )
+          read -r W16 W17 LATEST_ID LATEST_WEEK ACTIVE_JOBS <<<"$ids"
+          echo "WEEK16_PROD|PREFLIGHT|week16=$W16|week17=$W17|latest_id=$LATEST_ID|latest_week=$LATEST_WEEK|active_jobs=$ACTIVE_JOBS"
+          test "$W16" = "31" && test "$W17" = "32" && test "$LATEST_ID" = "32" && test "$LATEST_WEEK" = "17" && test "$ACTIVE_JOBS" = "0"
+          test -s uploads/ims_archive/upload-31.xlsx
+          test -s uploads/ims_archive/upload-32.xlsx
+          test -s uploads/ims_archive/snapshots/upload-32.json
+
+          sudo systemctl stop ims-import-worker.service
+          sudo systemctl stop ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-import-worker.service || true)" != active
+          test "$(sudo systemctl is-active ims-performance-manager.service || true)" != active
+
+          stamp=$(date +%Y%m%d-%H%M%S)
+          bundle="instance/backups/week17-to-week16-$stamp"
+          mkdir -p "$bundle"
+          mode=$(stat -c '%a' "$LIVE")
+          owner=$(stat -c '%u:%g' "$LIVE")
+          venv/bin/python sqlite_online_backup.py "$LIVE" "$bundle/ipm-week17.db"
+          cp uploads/ims_archive/upload-32.xlsx "$bundle/"
+          cp uploads/ims_archive/snapshots/upload-32.json "$bundle/"
+          sha256sum "$bundle"/* > "$bundle/SHA256SUMS"
+          echo "WEEK16_PROD|BACKUP|bundle=$bundle|db_sha=$(sha256sum "$bundle/ipm-week17.db"|awk '{print $1}')"
+
+          restore=1
+          finish() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ "$restore" = 1 ]; then
+              cp "$bundle/ipm-week17.db" "$LIVE.restore"
+              chmod "$mode" "$LIVE.restore"
+              sudo chown "$owner" "$LIVE.restore"
+              mv -f "$LIVE.restore" "$LIVE"
+              cp "$bundle/upload-32.xlsx" uploads/ims_archive/upload-32.xlsx
+              cp "$bundle/upload-32.json" uploads/ims_archive/snapshots/upload-32.json
+              echo 'WEEK16_PROD|AUTO_RESTORE|DONE'
+            fi
+            sudo systemctl start ims-performance-manager.service || true
+            sudo systemctl start ims-import-worker.service || true
+            rm -f "$ROLLBACK" "$CLEANUP"
+            exit "$rc"
+          }
+          trap finish EXIT
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python "$ROLLBACK" --database "$IMS_PATH/$LIVE" --upload-root "$IMS_PATH/uploads" --delete-upload-id 32 --expected-previous-upload-id 31 --expected-previous-week 16
+          PYTHONPATH="$IMS_PATH" venv/bin/python "$CLEANUP" --database "$IMS_PATH/$LIVE" --instance-root "$IMS_PATH" --year 2026 --month 4 --deleted-upload-id 32 --expected-upload-id 31
+
+          venv/bin/python - "$bundle/ipm-week17.db" <<'PY'
+          import hashlib,json,sqlite3,sys
+          old=sqlite3.connect(f'file:{sys.argv[1]}?mode=ro',uri=True,timeout=30)
+          new=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          def digest_rows(conn,sql):
+              h=hashlib.sha256(); count=0
+              for row in conn.execute(sql):
+                  h.update(json.dumps(row,ensure_ascii=False,default=str,separators=(',',':')).encode()); h.update(b'\n'); count+=1
+              return count,h.hexdigest()
+          checked=[]
+          try:
+              tables=[r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+              for table in tables:
+                  cols=[r[1] for r in old.execute(f'PRAGMA table_info("{table}")')]
+                  if 'year' in cols and 'month' in cols:
+                      order=','.join(f'"{c}"' for c in cols)
+                      sql=f'SELECT * FROM "{table}" WHERE NOT (year=2026 AND month=4) ORDER BY {order}'
+                      before=digest_rows(old,sql); after=digest_rows(new,sql)
+                      if before!=after: raise SystemExit(f'historical drift: {table} before={before} after={after}')
+                      checked.append((table,before[0],before[1]))
+              for table in ('products','representatives','regions'):
+                  exists=old.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()[0]
+                  if not exists: continue
+                  cols=[r[1] for r in old.execute(f'PRAGMA table_info("{table}")')]
+                  order=','.join(f'"{c}"' for c in cols)
+                  before=digest_rows(old,f'SELECT * FROM "{table}" ORDER BY {order}')
+                  after=digest_rows(new,f'SELECT * FROM "{table}" ORDER BY {order}')
+                  if before!=after: raise SystemExit(f'master drift: {table} before={before} after={after}')
+                  checked.append((table,before[0],before[1]))
+          finally: old.close(); new.close()
+          print(f'WEEK16_PROD|HISTORICAL_UNCHANGED|tables={len(checked)}|detail={checked}')
+          print('WEEK16_PROD|HISTORICAL_ACCEPTANCE|PASS')
+          PY
+
+          venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('instance/ipm.db',timeout=30)
+          try:
+              c.execute('PRAGMA busy_timeout=30000')
+              mode=c.execute('PRAGMA journal_mode=WAL').fetchone()[0]
+              timeout=c.execute('PRAGMA busy_timeout').fetchone()[0]
+              integrity=c.execute('PRAGMA integrity_check').fetchone()[0]
+              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              stale=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
+              r=c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+              p=c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+              children={}
+              for table,col in [('ims_facts','upload_id'),('ims_raw_data','upload_id'),('ims_competition_data','upload_id'),('ims_summary','upload_id'),('ims_import_jobs','ims_upload_id'),('import_audit_logs','upload_id'),('manual_match_queue','upload_id')]:
+                  children[table]=c.execute(f'SELECT COUNT(*) FROM {table} WHERE {col}=32').fetchone()[0]
+          finally:c.close()
+          print(f'WEEK16_PROD|DB|latest={latest}|jobs={jobs}|stale32={stale}|region={r}|representative={p}|children={children}|journal={mode}|timeout={timeout}|integrity={integrity}')
+          if latest!=(31,2026,4,16,'COMPLETED') or jobs or stale or any(children.values()) or not r or int(r[0])!=31 or int(r[1])!=11 or not p or int(p[0])!=31 or int(p[1])!=113 or str(mode).lower()!='wal' or int(timeout)!=30000 or integrity!='ok':
+              raise SystemExit('week16 production DB acceptance failed')
+          print('WEEK16_PROD|DB_ACCEPTANCE|PASS')
+          PY
+
+          test ! -e uploads/ims_archive/upload-32.xlsx
+          test ! -e uploads/ims_archive/snapshots/upload-32.json
+          restore=0
+          sudo systemctl start ims-performance-manager.service
+          health=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null; then health=1; break; fi
+            sleep 1
+          done
+          test "$health" = 1
+          sudo systemctl start ims-import-worker.service
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
+          echo 'WEEK16_PRODUCTION_TRANSITION|PASS'
+          REMOTE
