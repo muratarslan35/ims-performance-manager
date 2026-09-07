@@ -40,6 +40,12 @@ def main() -> None:
     instance_root = Path(args.instance_root).resolve()
     instance_root.mkdir(parents=True, exist_ok=True)
 
+    before_conn = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=30)
+    try:
+        foreign_keys_before = before_conn.execute("PRAGMA foreign_key_check").fetchall()
+    finally:
+        before_conn.close()
+
     class Config:
         TESTING = True
         SECRET_KEY = "snapshot-cleanup-rehearsal-only"
@@ -135,9 +141,15 @@ def main() -> None:
     try:
         fk = conn.execute("PRAGMA foreign_key_check").fetchall()
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-        assert not fk, fk[:10]
+        assert fk == foreign_keys_before, {
+            "before": foreign_keys_before[:10],
+            "after": fk[:10],
+        }
         assert integrity == "ok", integrity
-        print("SNAPSHOT_CLEANUP|DB_CHECK|foreign_keys=ok|integrity=ok")
+        print(
+            "SNAPSHOT_CLEANUP|DB_CHECK|"
+            f"foreign_keys_unchanged={len(fk)}|integrity=ok"
+        )
     finally:
         conn.close()
 
