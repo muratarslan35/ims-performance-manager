@@ -1,0 +1,131 @@
+name: Diff Week17 Summary Read Only V2
+
+on:
+  push:
+    branches:
+      - agent/shadow-production-copy-proof
+    paths:
+      - ".github/workflows/diff-week17-summary-readonly-v2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Diff week17 and audit week16 rollback source without live writes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          LIVE_DB="$IMS_PATH/instance/ipm.db"
+
+          venv/bin/python - <<'PY'
+          import sqlite3, os, hashlib
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          con.row_factory=sqlite3.Row
+          try:
+              rows=con.execute("SELECT id,year,month,week_number,status,file_name FROM ims_uploads WHERE year=2026 AND month=4 AND week_number IN (16,17) ORDER BY week_number,id").fetchall()
+              print('WEEK16_17_AUDIT|UPLOADS|'+repr([tuple(r) for r in rows]))
+              jobs=con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              print(f'WEEK16_17_AUDIT|ACTIVE_JOBS|{jobs}')
+              if jobs: raise SystemExit('active IMS job')
+          finally: con.close()
+          for wid in (16,17):
+              matches=[]
+              for suffix in ('.xlsx','.xls'):
+                  for p in [f'uploads/ims_archive/upload-{wid}{suffix}']:
+                      if os.path.isfile(p): matches.append(p)
+              print(f'WEEK16_17_AUDIT|ARCHIVE_BY_UPLOAD_ID_{wid}|{matches}')
+          PY
+
+          latest_id=$(venv/bin/python - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          try: row=con.execute("SELECT id,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+          finally: con.close()
+          if not row or int(row[1] or 0)!=17: raise SystemExit('latest is not week17')
+          print(row[0])
+          PY
+          )
+          source="$IMS_PATH/uploads/ims_archive/upload-$latest_id.xlsx"
+          test -f "$source"
+          work="$IMS_PATH/instance/week17-diff-v2-$(date +%Y%m%d-%H%M%S)-$$"
+          mkdir -p "$work"
+          trap 'rm -rf "$work" || true' EXIT
+          safe="$work/ims-safe-week17.db"
+          candidate="$work/ims-acceptance-candidate.db"
+          venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$safe"
+          cp --reflink=auto "$safe" "$candidate"
+
+          DATABASE_URL="sqlite:///$candidate" IMS_ACCEPTANCE_UPLOAD_ID="$latest_id" IMS_ACCEPTANCE_SOURCE="$source" PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          import verify_ims_acceptance as v
+          src=Path(os.environ['IMS_ACCEPTANCE_SOURCE'])
+          v._source_path=lambda app, upload: src
+          try: v.main()
+          except AssertionError as exc: print('DIFF_DIAG|EXPECTED_ACCEPTANCE_ASSERT|'+str(exc))
+          PY
+
+          venv/bin/python - "$safe" "$candidate" <<'PY'
+          import sqlite3,sys,json
+          safe,cand=sys.argv[1],sys.argv[2]
+          a=sqlite3.connect(safe); b=sqlite3.connect(cand)
+          a.row_factory=sqlite3.Row; b.row_factory=sqlite3.Row
+          try:
+              cols=[r['name'] for r in a.execute('PRAGMA table_info(ims_summary)')]
+              excluded={'id','upload_id','created_at','updated_at'}
+              cmpcols=[c for c in cols if c not in excluded]
+              keys=['year','month','representative_id','product_id']
+              def load(con):
+                  rows=con.execute('SELECT * FROM ims_summary WHERE year=2026 AND month=4').fetchall()
+                  return {tuple(r[k] for k in keys):r for r in rows}
+              A=load(a); B=load(b); changed=[]
+              for k in sorted(set(A)|set(B)):
+                  ra,rb=A.get(k),B.get(k)
+                  if ra is None or rb is None:
+                      changed.append({'key':k,'missing_before':ra is None,'missing_after':rb is None}); continue
+                  delta={c:{'before':ra[c],'after':rb[c]} for c in cmpcols if ra[c]!=rb[c]}
+                  if delta:
+                      rep=a.execute('SELECT rep_name FROM representatives WHERE id=?',(k[2],)).fetchone()
+                      prod=a.execute('SELECT product_name FROM products WHERE id=?',(k[3],)).fetchone()
+                      changed.append({'key':k,'representative':rep[0] if rep else None,'product':prod[0] if prod else None,'delta':delta})
+              field_counts={}; rep_counts={}
+              for item in changed:
+                  for f in item.get('delta',{}): field_counts[f]=field_counts.get(f,0)+1
+                  rep=item.get('representative')
+                  if rep: rep_counts[rep]=rep_counts.get(rep,0)+1
+              murat=[x for x in changed if (x.get('representative') or '').upper()=='MURAT ARSLAN']
+              print('DIFF_DIAG|SUMMARY_CHANGED_COUNT|'+str(len(changed)))
+              print('DIFF_DIAG|SUMMARY_FIELD_COUNTS|'+json.dumps(field_counts,ensure_ascii=False,sort_keys=True))
+              print('DIFF_DIAG|SUMMARY_TOP_REPS|'+json.dumps(sorted(rep_counts.items(),key=lambda x:(-x[1],x[0]))[:40],ensure_ascii=False))
+              print('DIFF_DIAG|MURAT_ARSLAN|'+json.dumps(murat,ensure_ascii=False,sort_keys=True,default=str))
+              print('DIFF_DIAG|FIRST_100|'+json.dumps(changed[:100],ensure_ascii=False,sort_keys=True,default=str))
+          finally: a.close(); b.close()
+          PY
+          REMOTE
