@@ -33,12 +33,6 @@ from app.services.period_service import PeriodService
 
 TARGET_WEEK = 17
 REMOVED_WEEK = 18
-CURRENT_STATE_TABLES = {
-    "targets",
-    "ims_summary",
-    "representative_brick_assignments",
-    "representative_aliases",
-}
 
 
 def _completed_uploads():
@@ -106,14 +100,20 @@ def _clear_dashboard_snapshots(instance_path: str) -> int:
     return removed
 
 
-def _protected_reference_count(representative_id: int, year: int, month: int) -> int:
-    """Count references that prove a representative belongs to real history.
+def _protected_representative_ids(candidate_ids: list[int], year: int, month: int) -> set[int]:
+    """Resolve protected representative IDs with one grouped query per FK.
 
-    Current-period Target/Summary/Brick rows can have been left by the bad file,
-    so only those exact-period rows are removable. Any other FK reference keeps
-    the representative master protected.
+    Current-period Target/Summary/Brick rows may belong to the bad workbook, so
+    those exact-period references do not protect a newly-created master. Any
+    reference outside that current period, or any other business-table FK,
+    preserves the representative. This batch form avoids thousands of full-table
+    COUNT scans on the production database.
     """
-    protected = 0
+    ids = sorted({int(value) for value in candidate_ids})
+    if not ids:
+        return set()
+
+    protected: set[int] = set()
     rep_table = Representative.__table__
     for table in db.metadata.sorted_tables:
         if table.name in {rep_table.name, "representative_aliases"}:
@@ -124,16 +124,16 @@ def _protected_reference_count(representative_id: int, year: int, month: int) ->
             if fk.column.table.name == rep_table.name and fk.column.name == "id"
         ]
         for column in rep_columns:
-            predicate = column == int(representative_id)
+            predicate = column.in_(ids)
             if table.name in {"targets", "ims_summary", "representative_brick_assignments"}:
                 predicate = sa.and_(
                     predicate,
                     sa.not_(sa.and_(table.c.year == int(year), table.c.month == int(month))),
                 )
-            count = db.session.execute(
-                sa.select(sa.func.count()).select_from(table).where(predicate)
-            ).scalar_one()
-            protected += int(count or 0)
+            rows = db.session.execute(
+                sa.select(column).where(predicate).distinct()
+            ).scalars().all()
+            protected.update(int(value) for value in rows if value is not None)
     return protected
 
 
@@ -148,16 +148,14 @@ def _remove_bad_import_orphan_representatives(latest: IMSUpload) -> tuple[list[d
         .order_by(Representative.created_at.asc(), Representative.id.asc())
         .all()
     )
+    protected_ids = _protected_representative_ids(
+        [representative.id for representative in candidates], latest.year, latest.month
+    )
     removed = []
-    protected_recent = 0
     for representative in candidates:
-        protected = _protected_reference_count(representative.id, latest.year, latest.month)
-        if protected:
-            protected_recent += 1
+        if int(representative.id) in protected_ids:
             continue
 
-        # Remove only current-period state that could have been introduced by
-        # the wrong workbook. Historical periods are protected above.
         Target.query.filter_by(
             representative_id=representative.id,
             year=latest.year,
@@ -187,7 +185,7 @@ def _remove_bad_import_orphan_representatives(latest: IMSUpload) -> tuple[list[d
 
     if removed:
         db.session.commit()
-    return removed, protected_recent
+    return removed, len(protected_ids)
 
 
 def _rebuild_week17_summary(latest: IMSUpload) -> int:
@@ -195,9 +193,6 @@ def _rebuild_week17_summary(latest: IMSUpload) -> int:
     if summary_count > 0:
         return int(summary_count)
 
-    # The intact week-17 facts are the canonical cumulative snapshot. Reuse the
-    # same importer method used in normal publication rather than inventing a
-    # second calculation path.
     service = IMSImportService("week17-recovery-no-workbook.xlsx", uploaded_by="week17-recovery")
     service.upload = latest
     service.rebuild_summary(int(latest.year), int(latest.month))
@@ -261,11 +256,16 @@ def main() -> int:
         ).count()
         orphan_rows = _orphan_upload_rows()
         orphan_total = sum(orphan_rows.values())
-        current_recent_orphans = 0
+
+        recent = []
         if latest.completed_at is not None:
-            for representative in Representative.query.filter(Representative.created_at > latest.completed_at).all():
-                if _protected_reference_count(representative.id, latest.year, latest.month) == 0:
-                    current_recent_orphans += 1
+            recent = Representative.query.filter(Representative.created_at > latest.completed_at).all()
+        protected_after = _protected_representative_ids(
+            [representative.id for representative in recent], latest.year, latest.month
+        )
+        current_recent_orphans = sum(
+            1 for representative in recent if int(representative.id) not in protected_after
+        )
 
         if remaining_week18 or active_jobs or orphan_total or current_recent_orphans:
             raise RuntimeError(
