@@ -14,13 +14,12 @@ def test_final_ten_percent_is_reserved_for_real_read_model_work():
     assert '"Veriler ekrana aktarılıyor"' in queue
 
 
-def test_completed_queue_row_can_keep_real_snapshot_progress_active():
-    store = (ROOT / "app/services/ims_progress_store.py").read_text(encoding="utf-8")
+def test_completed_queue_row_does_not_return_to_blocking_processing_state():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     route = (ROOT / "app/routes/ims_progress.py").read_text(encoding="utf-8")
-    assert 'POST_IMPORT_STAGES' in store
-    assert '"dashboard_snapshot"' in store
-    assert '"representative_snapshots"' in store
-    assert 'stored.get("status") == job.STATUS_PROCESSING' in store
+    post_import = worker[worker.index("if completed is not None and completed.status") :]
+    assert 'status=IMSImportJob.STATUS_PROCESSING' not in post_import
+    assert post_import.count('status=IMSImportJob.STATUS_COMPLETED') >= 4
     assert '"active": payload.get("status")' in route
 
 
@@ -30,14 +29,25 @@ def test_worker_reports_dashboard_region_and_representative_snapshot_progress():
     assert 'stage="dashboard_snapshot"' in worker
     assert 'percent=96' in worker
     assert 'stage="region_snapshots"' in worker
-    assert 'detail="Bölge analizleri doğrulanıyor"' in worker
+    assert 'Bölge snapshotları hazırlanıyor' in worker
     assert 'percent=97' in worker
     assert 'stage="representative_snapshots"' in worker
     assert 'value = 97 + round(2 * done / max(total, 1))' in worker
     assert 'eta_seconds' in worker
     assert 'tahmini' in worker
     assert 'percent=100' in worker
-    assert 'IMS yüklemesi ve analiz ekranları hazır' in worker
+    assert 'IMS yüklemesi tamamlandı · snapshot alındı' in worker
+    assert 'IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı' in worker
+    assert 'Snapshot durumu · Dashboard:' in worker
+
+
+def test_snapshot_failure_is_advisory_after_atomic_ims_completion():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+    assert 'def _snapshot_label' in worker
+    assert 'return "alındı"' in worker
+    assert 'else "alınamadı"' in worker
+    assert 'must never block the UI' in worker
+    assert 'status=IMSImportJob.STATUS_COMPLETED' in worker
 
 
 def test_snapshot_progress_is_measured_not_random_or_timer_driven():
