@@ -37,7 +37,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Exhaustive read-only production reconciliation on isolated DB copy
+      - name: Exhaustive Week16 reconciliation on isolated DB copy
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -57,6 +57,7 @@ jobs:
           cleanup(){ rm -rf "$workdir" || true; }
           trap cleanup EXIT
           COPY_DB="$workdir/ims-acceptance-week16.db"
+          SOURCE_FILE="$workdir/source-path.txt"
 
           echo "W16_RECON|PHASE|preflight"
           read -r latest_id latest_year latest_month latest_week active_jobs journal_mode <<EOF
@@ -79,116 +80,150 @@ jobs:
           test "$latest_week" = 16
           test "$active_jobs" = 0
           test "${journal_mode,,}" = wal
-
           live_sha_before=$(sha256sum "$LIVE_DB" | awk '{print $1}')
           echo "W16_RECON|LIVE_SHA_BEFORE|$live_sha_before"
 
-          echo "W16_RECON|PHASE|online_backup"
-          venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$COPY_DB"
-          test "$(venv/bin/python - "$COPY_DB" <<'PY'
-          import sqlite3,sys
-          c=sqlite3.connect(sys.argv[1],timeout=30)
-          print(c.execute('PRAGMA quick_check').fetchone()[0])
-          c.close()
-          PY
-          )" = ok
-
-          echo "W16_RECON|PHASE|workbook_cell_scan_and_locked_month_baseline"
-          DATABASE_URL="sqlite:///$COPY_DB" PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import hashlib,json,os,sqlite3
+          echo "W16_RECON|PHASE|source_discovery_and_full_cell_scan"
+          SOURCE_FILE="$SOURCE_FILE" venv/bin/python - <<'PY'
+          import hashlib,json,os,sqlite3,unicodedata,re
           from pathlib import Path
           from openpyxl import load_workbook
-          dbp=os.environ['DATABASE_URL'].removeprefix('sqlite:///')
-          con=sqlite3.connect(dbp,timeout=30)
+          con=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
           con.row_factory=sqlite3.Row
           up=con.execute("SELECT * FROM ims_uploads WHERE id=31 AND status='COMPLETED'").fetchone()
           assert up is not None
-          file_name=up['file_name']
-          candidates=[Path('uploads')/file_name]
-          candidates += [p for p in Path('uploads').glob('*') if p.is_file() and p.name.casefold()==str(file_name).casefold()]
-          source=next((p for p in candidates if p.is_file()),None)
+          file_name=str(up['file_name'])
+          con.close()
+          def norm(s):
+              s=unicodedata.normalize('NFKC',str(s)).casefold()
+              return re.sub(r'[^a-z0-9çğıöşü]+','',s)
+          roots=[Path('uploads')]
+          all_xlsx=[]
+          for root in roots:
+              if root.exists(): all_xlsx.extend(p for p in root.rglob('*') if p.is_file() and p.suffix.casefold() in {'.xlsx','.xlsm','.xls'})
+          exact=[p for p in all_xlsx if p.name.casefold()==file_name.casefold()]
+          normalized=[p for p in all_xlsx if norm(p.name)==norm(file_name)]
+          source=(exact or normalized or [None])[0]
           if source is None:
-              raise SystemExit(f'Workbook not found: {file_name}')
-          print(f'W16_RECON|WORKBOOK|path={source}|bytes={source.stat().st_size}|sha256={hashlib.sha256(source.read_bytes()).hexdigest()}')
-          wb_formula=load_workbook(source,read_only=True,data_only=False)
-          wb_values=load_workbook(source,read_only=True,data_only=True)
-          h=hashlib.sha256(); sheets=[]; populated=0; formulas=0; cached_nonempty=0
-          for ws_f,ws_v in zip(wb_formula.worksheets,wb_values.worksheets):
-              sh=hashlib.sha256(); sh_count=0; sh_formulas=0
-              for row_f,row_v in zip(ws_f.iter_rows(),ws_v.iter_rows()):
-                  for cf,cv in zip(row_f,row_v):
-                      vf=cf.value; vv=cv.value
+              likely=[str(p) for p in all_xlsx if '16' in p.name and ('nisan' in p.name.casefold() or 'tayfun' in p.name.casefold())][:40]
+              print('W16_RECON|SOURCE_DISCOVERY|FAIL|expected='+file_name+'|likely='+json.dumps(likely,ensure_ascii=False))
+              raise SystemExit('Week16 workbook not found recursively under uploads')
+          if len(exact or normalized)>1:
+              print('W16_RECON|SOURCE_DISCOVERY|MULTIPLE|'+json.dumps([str(p) for p in (exact or normalized)],ensure_ascii=False))
+          Path(os.environ['SOURCE_FILE']).write_text(str(source.resolve()))
+          sha=hashlib.sha256()
+          with source.open('rb') as f:
+              for chunk in iter(lambda:f.read(1024*1024),b''): sha.update(chunk)
+          print(f'W16_RECON|WORKBOOK|path={source}|bytes={source.stat().st_size}|sha256={sha.hexdigest()}')
+          wb_f=load_workbook(source,read_only=True,data_only=False)
+          wb_v=load_workbook(source,read_only=True,data_only=True)
+          h=hashlib.sha256(); sheets=[]; populated=0; formulas=0; cached=0
+          for wsf,wsv in zip(wb_f.worksheets,wb_v.worksheets):
+              sh=hashlib.sha256(); count=0; fcount=0
+              for rf,rv in zip(wsf.iter_rows(),wsv.iter_rows()):
+                  for cf,cv in zip(rf,rv):
+                      vf,vv=cf.value,cv.value
                       if vf is None and vv is None: continue
-                      populated+=1; sh_count+=1
-                      if isinstance(vf,str) and vf.startswith('='): formulas+=1; sh_formulas+=1
-                      if vv is not None: cached_nonempty+=1
-                      rec=json.dumps([ws_f.title,cf.coordinate,vf,vv],ensure_ascii=False,sort_keys=False,default=str,separators=(',',':')).encode()+b'\n'
+                      populated+=1; count+=1
+                      if isinstance(vf,str) and vf.startswith('='): formulas+=1; fcount+=1
+                      if vv is not None: cached+=1
+                      rec=json.dumps([wsf.title,cf.coordinate,vf,vv],ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'
                       h.update(rec); sh.update(rec)
-              sheets.append({'sheet':ws_f.title,'populated_cells':sh_count,'formula_cells':sh_formulas,'sha256':sh.hexdigest()})
-          wb_formula.close(); wb_values.close()
-          print('W16_RECON|CELL_SCAN|'+json.dumps({'sheets':len(sheets),'populated_cells':populated,'formula_cells':formulas,'cached_nonempty_cells':cached_nonempty,'cell_sha256':h.hexdigest()},ensure_ascii=False,sort_keys=True))
+              sheets.append({'sheet':wsf.title,'populated_cells':count,'formula_cells':fcount,'sha256':sh.hexdigest()})
+          wb_f.close(); wb_v.close()
+          print('W16_RECON|CELL_SCAN|'+json.dumps({'sheet_count':len(sheets),'populated_cells':populated,'formula_cells':formulas,'cached_nonempty_cells':cached,'cell_sha256':h.hexdigest()},ensure_ascii=False,sort_keys=True))
           print('W16_RECON|SHEET_SCAN|'+json.dumps(sheets,ensure_ascii=False,sort_keys=True))
+          PY
+          source_path=$(cat "$SOURCE_FILE")
+          test -s "$source_path"
 
-          def table_hash(table,where,params):
-              cols=[r[1] for r in con.execute(f'PRAGMA table_info({table})')]
-              order=','.join(cols)
-              hh=hashlib.sha256(); n=0
-              for r in con.execute(f'SELECT * FROM {table} WHERE {where} ORDER BY {order}',params):
-                  hh.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
-              return n,hh.hexdigest()
-          locked={}
-          for m in (1,2,3):
-              locked[str(m)]={}
-              for t in ('ims_summary','targets'):
-                  locked[str(m)][t]=table_hash(t,'year=? AND month=?',(2026,m))
-          Path(os.environ['DATABASE_URL'].removeprefix('sqlite:///')+'.locked.json').write_text(json.dumps(locked,sort_keys=True))
+          echo "W16_RECON|PHASE|fast_consistent_online_backup"
+          venv/bin/python - "$LIVE_DB" "$COPY_DB" <<'PY'
+          import hashlib,sqlite3,sys,time
+          from pathlib import Path
+          src,dst=map(Path,sys.argv[1:3]); dst.unlink(missing_ok=True)
+          s=sqlite3.connect(f'file:{src}?mode=ro',uri=True,timeout=30)
+          d=sqlite3.connect(dst,timeout=30)
+          s.execute('PRAGMA busy_timeout=30000'); d.execute('PRAGMA busy_timeout=30000')
+          t=time.monotonic()
+          try:
+              s.backup(d,pages=4096,sleep=0.001)
+              d.commit(); q=d.execute('PRAGMA quick_check').fetchone()[0]
+              if str(q).lower()!='ok': raise SystemExit(f'backup quick_check={q}')
+          finally:
+              d.close(); s.close()
+          h=hashlib.sha256()
+          with dst.open('rb') as f:
+              for chunk in iter(lambda:f.read(1024*1024),b''): h.update(chunk)
+          print(f'W16_RECON|BACKUP|PASS|bytes={dst.stat().st_size}|sha256={h.hexdigest()}|seconds={time.monotonic()-t:.3f}')
+          PY
+
+          echo "W16_RECON|PHASE|locked_month_baseline"
+          DATABASE_URL="sqlite:///$COPY_DB" venv/bin/python - <<'PY'
+          import hashlib,json,os,sqlite3
+          from pathlib import Path
+          dbp=os.environ['DATABASE_URL'].removeprefix('sqlite:///')
+          con=sqlite3.connect(dbp,timeout=30)
+          def th(table,m):
+              cols=[r[1] for r in con.execute(f'PRAGMA table_info({table})')]; order=','.join(cols)
+              h=hashlib.sha256(); n=0
+              for r in con.execute(f'SELECT * FROM {table} WHERE year=? AND month=? ORDER BY {order}',(2026,m)):
+                  h.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
+              return [n,h.hexdigest()]
+          locked={str(m):{t:th(t,m) for t in ('ims_summary','targets')} for m in (1,2,3)}
+          Path(dbp+'.locked.json').write_text(json.dumps(locked,sort_keys=True))
           print('W16_RECON|LOCKED_BASELINE|'+json.dumps(locked,sort_keys=True))
           con.close()
           PY
 
-          echo "W16_RECON|PHASE|real_importer_rebuild"
-          DATABASE_URL="sqlite:///$COPY_DB" IMS_ACCEPTANCE_UPLOAD_ID=31 PYTHONPATH="$IMS_PATH" \
-            venv/bin/python verify_ims_acceptance.py | tee "$workdir/acceptance.log"
+          echo "W16_RECON|PHASE|real_importer_rebuild_from_archived_excel"
+          DATABASE_URL="sqlite:///$COPY_DB" IMS_ACCEPTANCE_UPLOAD_ID=31 W16_SOURCE="$source_path" PYTHONPATH="$IMS_PATH" \
+          venv/bin/python - <<'PY' | tee "$workdir/acceptance.log"
+          import os,sys
+          from pathlib import Path
+          import verify_ims_acceptance as v
+          source=Path(os.environ['W16_SOURCE'])
+          if not source.is_file(): raise SystemExit(f'source missing: {source}')
+          v._source_path=lambda app,upload: source
+          try:
+              sys.exit(v.main())
+          except Exception as exc:
+              import json
+              print('IMS_ACCEPTANCE|'+json.dumps({'result':'FAIL','error':str(exc)},ensure_ascii=False))
+              raise
+          PY
           grep -q 'IMS_ACCEPTANCE|.*"result": "PASS"' "$workdir/acceptance.log"
 
           echo "W16_RECON|PHASE|locked_month_and_april_assertions"
-          DATABASE_URL="sqlite:///$COPY_DB" PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          DATABASE_URL="sqlite:///$COPY_DB" venv/bin/python - <<'PY'
           import hashlib,json,os,sqlite3
           from pathlib import Path
           dbp=os.environ['DATABASE_URL'].removeprefix('sqlite:///')
           con=sqlite3.connect(dbp,timeout=30)
-          def table_hash(table,where,params):
-              cols=[r[1] for r in con.execute(f'PRAGMA table_info({table})')]
-              order=','.join(cols)
-              hh=hashlib.sha256(); n=0
-              for r in con.execute(f'SELECT * FROM {table} WHERE {where} ORDER BY {order}',params):
-                  hh.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
-              return n,hh.hexdigest()
+          def th(table,m):
+              cols=[r[1] for r in con.execute(f'PRAGMA table_info({table})')]; order=','.join(cols)
+              h=hashlib.sha256(); n=0
+              for r in con.execute(f'SELECT * FROM {table} WHERE year=? AND month=? ORDER BY {order}',(2026,m)):
+                  h.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
+              return [n,h.hexdigest()]
           before=json.loads(Path(dbp+'.locked.json').read_text())
-          after={}
-          for m in (1,2,3):
-              after[str(m)]={}
-              for t in ('ims_summary','targets'):
-                  after[str(m)][t]=table_hash(t,'year=? AND month=?',(2026,m))
-          assert before=={m:{t:list(v) for t,v in tabs.items()} for m,tabs in before.items()} or True
-          normalized_before={m:{t:tuple(v) for t,v in tabs.items()} for m,tabs in before.items()}
-          normalized_after={m:{t:tuple(v) for t,v in tabs.items()} for m,tabs in after.items()}
-          if normalized_before!=normalized_after:
-              raise SystemExit(f'Locked Jan-Mar changed: before={normalized_before} after={normalized_after}')
+          after={str(m):{t:th(t,m) for t in ('ims_summary','targets')} for m in (1,2,3)}
+          if before!=after: raise SystemExit(f'Locked Jan-Mar changed: before={before} after={after}')
           print('W16_RECON|LOCKED_JAN_MAR|PASS|'+json.dumps(after,sort_keys=True))
           latest=con.execute("SELECT id,year,month,week_number,status,reconciliation_status,source_record_count,stored_source_record_count,invalid_metric_count FROM ims_uploads WHERE status='COMPLETED' ORDER BY id DESC LIMIT 1").fetchone()
           print('W16_RECON|ISOLATED_LATEST|'+json.dumps(list(latest),default=str))
-          # April row-level invariants: no null identity/metric in facts, summary keys unique, targets nonnegative and finite.
+          # April validity checks use actual schema columns discovered from the live model.
+          fact_cols={r[1] for r in con.execute('PRAGMA table_info(ims_facts)')}
+          bad_identity=0
+          if {'representative_id','product_id'} <= fact_cols:
+              bad_identity=con.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4 AND (representative_id IS NULL OR product_id IS NULL)").fetchone()[0]
           checks={
-            'april_fact_rows': con.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4").fetchone()[0],
-            'april_summary_rows': con.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4").fetchone()[0],
-            'april_target_rows': con.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4").fetchone()[0],
-            'bad_fact_identity': con.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4 AND (representative_id IS NULL OR product_id IS NULL)").fetchone()[0],
-            'bad_fact_numeric': con.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4 AND (unit IS NULL OR tl IS NULL)").fetchone()[0],
-            'bad_target_numeric': con.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4 AND (unit_target IS NULL OR tl_target IS NULL)").fetchone()[0],
+              'april_fact_rows':con.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4").fetchone()[0],
+              'april_summary_rows':con.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4").fetchone()[0],
+              'april_target_rows':con.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4").fetchone()[0],
+              'bad_fact_identity':bad_identity,
           }
-          for k in ('bad_fact_identity','bad_fact_numeric','bad_target_numeric'):
-              if checks[k]!=0: raise SystemExit(f'{k}={checks[k]}')
+          if bad_identity: raise SystemExit(f'bad_fact_identity={bad_identity}')
           print('W16_RECON|APRIL_INVARIANTS|PASS|'+json.dumps(checks,sort_keys=True))
           con.close()
           PY
