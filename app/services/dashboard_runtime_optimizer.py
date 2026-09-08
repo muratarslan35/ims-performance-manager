@@ -69,12 +69,14 @@ def install_dashboard_runtime_optimizer() -> None:
     # Partial weekly TL-only IMS imports must derive boxes from the price frozen
     # for that business month, even when the master price is edited mid-month.
     install_partial_ims_period_price_guard()
+    # The snapshot guard must wrap the base representative market builder before
+    # the historical request-only Week-8 repair wraps it. That ordering makes
+    # background snapshot generation and interactive detail requests consume the
+    # same canonical company/rival/previous-month payload without losing the
+    # workbook market denominator.
+    install_representative_snapshot_market_guard()
     install_week8_read_path_repair()
     # Week-8 keeps its source-selection behavior, but the final TL->box repair
     # must use the price frozen for the requested IMS month rather than today's
     # mutable product master price.
     install_period_price_read_guard()
-    # Persistent representative snapshots are built without a request context;
-    # enforce the exact same canonical company/rival/previous-month identities
-    # there as on the interactive representative detail route.
-    install_representative_snapshot_market_guard()
