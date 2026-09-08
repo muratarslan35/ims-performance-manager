@@ -19,6 +19,7 @@ def install_dashboard_runtime_optimizer() -> None:
     from app.query.dashboard_query import DashboardQuery
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
+    from app.services.representative_comparison_availability_guard import install_representative_comparison_availability_guard
     from app.services.representative_snapshot_market_guard import install_representative_snapshot_market_guard
     from app.services.week8_read_path_repair import install_week8_read_path_repair
 
@@ -80,3 +81,6 @@ def install_dashboard_runtime_optimizer() -> None:
     # must use the price frozen for the requested IMS month rather than today's
     # mutable product master price.
     install_period_price_read_guard()
+    # Previous-month company actuals and rival comparison availability are
+    # independent contracts. Never turn a missing rival month into a numeric zero.
+    install_representative_comparison_availability_guard()
