@@ -9,6 +9,14 @@ from __future__ import annotations
 from app.services.representative_market_service import RepresentativeMarketService
 
 
+def previous_rival_data_available(rows) -> bool:
+    """Return true only when the previous period carries a real rival output."""
+    return any(
+        abs(float(row.get("previous_competitor_unit") or 0.0)) > 0.0
+        for row in (rows or [])
+    )
+
+
 def install_representative_comparison_availability_guard() -> None:
     if getattr(RepresentativeMarketService, "_comparison_availability_guard_installed", False):
         return
@@ -23,10 +31,7 @@ def install_representative_comparison_availability_guard() -> None:
 
         # Previous rival source availability is month/scope-wide. A month with
         # no rival rows must not be interpreted as seven genuine zero values.
-        previous_rival_available = any(
-            abs(float(row.get("previous_competitor_unit") or 0.0)) > 0.0
-            for row in rows
-        )
+        previous_rival_available = previous_rival_data_available(rows)
 
         for row in rows:
             row["previous_competitor_available"] = previous_rival_available
