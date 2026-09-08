@@ -1,0 +1,55 @@
+name: Inspect Week16 Cutover Backup
+
+on:
+  push:
+    branches: [agent/shadow-production-copy-proof]
+    paths: [".github/workflows/inspect-week16-cutover-backup.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Inspect candidate databases without hashing
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          cd "$IMS_PATH"
+          base=instance/backups/atomic-week16-cutover-20260908-053534
+          echo 'W16_CUTOVER|LIST'
+          find "$base" -maxdepth 2 -type f -printf '%p|%s\n' 2>/dev/null | sort || true
+          echo 'W16_CUTOVER|DB_METADATA'
+          venv/bin/python - <<'PY'
+          import sqlite3
+          from pathlib import Path
+          base=Path('instance/backups/atomic-week16-cutover-20260908-053534')
+          for p in sorted(base.rglob('*')) if base.exists() else []:
+              if not p.is_file() or p.suffix not in {'.db','.sqlite'}: continue
+              try:
+                  c=sqlite3.connect(f'file:{p}?mode=ro',uri=True,timeout=5)
+                  latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+                  q=c.execute('PRAGMA quick_check').fetchone()[0]
+                  c.close()
+                  print(f'W16_CUTOVER|DB|{p}|bytes={p.stat().st_size}|latest={latest}|quick={q}')
+              except Exception as e:
+                  print(f'W16_CUTOVER|ERR|{p}|{type(e).__name__}|{e}')
+          PY
+          REMOTE
