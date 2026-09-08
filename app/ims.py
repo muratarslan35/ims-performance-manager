@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import abort
 from flask import current_app
 from flask import flash
 from flask import redirect
@@ -45,6 +46,25 @@ ims_bp = Blueprint(
     url_prefix="/ims"
 
 )
+
+
+IMS_LIFECYCLE_ADMIN_EMAIL = "murat.arslan@bilimilac.com"
+
+
+def _can_manage_ims_lifecycle(user) -> bool:
+    """Keep destructive IMS history actions bound to one named admin account."""
+    email = str(getattr(user, "email", "") or "").strip().lower()
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and role in {"admin", "administrator"}
+        and email == IMS_LIFECYCLE_ADMIN_EMAIL
+    )
+
+
+def _require_ims_lifecycle_admin() -> None:
+    if not _can_manage_ims_lifecycle(current_user):
+        abort(403)
 
 
 def _manager_reports(uploads):
@@ -192,12 +212,18 @@ def index():
     ).first()
     total_uploads = IMSUpload.query.count()
     hidden_upload_ids = IMSUploadLifecycleService.hidden_upload_ids()
-    delete_permissions = {
-        item.id: IMSUploadLifecycleService.can_delete(item)
-        for item in uploads
-    }
+    can_manage_ims_lifecycle = _can_manage_ims_lifecycle(current_user)
+    delete_permissions = (
+        {item.id: IMSUploadLifecycleService.can_delete(item) for item in uploads}
+        if can_manage_ims_lifecycle
+        else {}
+    )
     rollback_permissions = {}
-    if latest_upload is not None and any(item.id == latest_upload.id for item in uploads):
+    if (
+        can_manage_ims_lifecycle
+        and latest_upload is not None
+        and any(item.id == latest_upload.id for item in uploads)
+    ):
         rollback_permissions[latest_upload.id] = IMSUploadLifecycleService.can_rollback(latest_upload)
 
     production_uploads = ProductionResultUpload.query.order_by(
@@ -239,6 +265,7 @@ def index():
         show_hidden=show_hidden,
         delete_permissions=delete_permissions,
         rollback_permissions=rollback_permissions,
+        can_manage_ims_lifecycle=can_manage_ims_lifecycle,
 
         production_uploads=production_uploads,
 
@@ -509,6 +536,7 @@ def show_upload(upload_id):
 @ims_bp.route("/uploads/<int:upload_id>/delete", methods=["POST"])
 @login_required
 def delete_upload(upload_id):
+    _require_ims_lifecycle_admin()
     try:
         result = IMSUploadLifecycleService.delete_upload(upload_id)
     except LookupError as exc:
@@ -540,6 +568,7 @@ def delete_upload(upload_id):
 @ims_bp.route("/uploads/<int:upload_id>/rollback", methods=["POST"])
 @login_required
 def rollback_upload(upload_id):
+    _require_ims_lifecycle_admin()
     try:
         result = IMSUploadLifecycleService.rollback_to_previous(
             upload_id,

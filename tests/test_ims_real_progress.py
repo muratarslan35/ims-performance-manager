@@ -26,6 +26,15 @@ def test_progress_store_persists_and_clamps(tmp_path):
 def test_progress_ui_is_server_driven_not_random():
     source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
     assert "fetch('/ims/progress'" in source
+
+
+def test_progress_banner_is_prominent_and_readable():
+    source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
+
+    assert "linear-gradient(135deg,#f7fbff" in source
+    assert ".ims-real-progress-message{font-size:16px" in source
+    assert ".ims-real-progress-detail{font-size:13px" in source
+    assert ".ims-real-progress-track{height:12px" in source
     assert "imsRealProgressPercent" in source
     assert "Math.random" not in source
 

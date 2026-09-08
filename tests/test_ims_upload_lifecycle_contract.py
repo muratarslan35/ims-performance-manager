@@ -46,6 +46,20 @@ def test_delete_gate_blocks_active_import_and_requires_full_rollback_preflight()
     assert "rollback_bundle = cls._rollback_preflight(upload.id)" in source
 
 
+def test_destructive_history_actions_are_single_admin_and_two_step_confirmed():
+    route = Path("app/ims.py").read_text(encoding="utf-8")
+    template = Path("app/templates/ims.html").read_text(encoding="utf-8")
+    assert 'IMS_LIFECYCLE_ADMIN_EMAIL = "murat.arslan@bilimilac.com"' in route
+    assert 'role in {"admin", "administrator"}' in route
+    assert route.count("_require_ims_lifecycle_admin()") == 3
+    assert "can_manage_ims_lifecycle and rollback_permission" in template
+    assert "can_manage_ims_lifecycle and item.status" in template
+    assert 'type="button"' in template
+    assert "Onayla ve geri al" in template
+    assert "Onayla ve kalıcı sil" in template
+    assert "ims-lifecycle-confirm" in template
+
+
 def test_hide_is_metadata_only_not_an_ims_status_change():
     source = Path("app/services/ims_upload_lifecycle_service.py").read_text(encoding="utf-8")
     start = source.index("def set_hidden")
