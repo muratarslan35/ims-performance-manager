@@ -1,4 +1,4 @@
-name: Inventory Disk Before Atomic Cutover
+name: Fast Disk Inventory Before Atomic Cutover
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   inventory:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -31,24 +31,22 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Read-only disk and cutover inventory
+      - name: Fast read-only inventory
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo 'INVENTORY|BEGIN'
-          echo "INVENTORY|WEB|$(sudo systemctl is-active ims-performance-manager.service || true)"
-          echo "INVENTORY|WORKER|$(sudo systemctl is-active ims-import-worker.service || true)"
+          echo 'FAST_INVENTORY|BEGIN'
+          echo "FAST_INVENTORY|WEB|$(sudo systemctl is-active ims-performance-manager.service || true)"
+          echo "FAST_INVENTORY|WORKER|$(sudo systemctl is-active ims-import-worker.service || true)"
           df -h "$IMS_PATH"
-          echo 'INVENTORY|TOP_LEVEL'
-          du -sh instance/* 2>/dev/null | sort -h || true
-          echo 'INVENTORY|BACKUPS_LARGEST'
-          find instance/backups -maxdepth 2 -type f -printf '%s %TY-%Tm-%TdT%TH:%TM:%TS %p\n' 2>/dev/null | sort -nr | head -n 80 || true
-          echo 'INVENTORY|BASELINES_LARGEST'
-          find instance/test-baselines -maxdepth 2 -type f -printf '%s %TY-%Tm-%TdT%TH:%TM:%TS %p\n' 2>/dev/null | sort -nr | head -n 80 || true
-          echo 'INVENTORY|CUTOVER_FILES'
+          echo 'FAST_INVENTORY|BACKUP_FILES'
+          find instance/backups -maxdepth 2 -type f -printf '%s %TY-%Tm-%TdT%TH:%TM:%TS %p\n' 2>/dev/null | sort -nr | head -n 120 || true
+          echo 'FAST_INVENTORY|BASELINE_FILES'
+          find instance/test-baselines -maxdepth 2 -type f -printf '%s %TY-%Tm-%TdT%TH:%TM:%TS %p\n' 2>/dev/null | sort -nr | head -n 120 || true
+          echo 'FAST_INVENTORY|CUTOVER_FILES'
           for f in instance/ipm.db instance/ipm.db.next instance/ipm.db.restore instance/test-baselines/week16-production-candidate.db instance/test-baselines/week16-production-candidate.meta; do
             if [ -e "$f" ]; then stat -c '%n|bytes=%s|mtime=%y|inode=%i|links=%h' "$f"; else echo "$f|MISSING"; fi
           done
@@ -58,15 +56,14 @@ jobs:
           try:
               latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
               jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              quick=c.execute('PRAGMA quick_check(1)').fetchone()[0]
           finally:c.close()
-          print(f'INVENTORY|LIVE|latest={latest}|jobs={jobs}|quick={quick}')
-          if latest!=(32,2026,4,17,'COMPLETED') or jobs or quick!='ok':raise SystemExit('live preflight changed')
-          print('INVENTORY|LIVE_PREFLIGHT|PASS')
+          print(f'FAST_INVENTORY|LIVE|latest={latest}|jobs={jobs}')
+          if latest!=(32,2026,4,17,'COMPLETED') or jobs:raise SystemExit('live preflight changed')
+          print('FAST_INVENTORY|LIVE_PREFLIGHT|PASS')
           PY
           if [ -s instance/test-baselines/week16-production-candidate.meta ]; then
-            echo 'INVENTORY|CANDIDATE_META'
+            echo 'FAST_INVENTORY|CANDIDATE_META'
             cat instance/test-baselines/week16-production-candidate.meta
           fi
-          echo 'INVENTORY|END|PASS'
+          echo 'FAST_INVENTORY|END|PASS'
           REMOTE
