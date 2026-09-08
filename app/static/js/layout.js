@@ -60,6 +60,7 @@
         let current = 0;
         let timer = null;
         let finishing = false;
+        let shownAt = 0;
 
         function render(next) {
             current = Math.max(current, Math.min(Math.round(next), 100));
@@ -70,6 +71,7 @@
         function show(startAt) {
             finishing = false;
             current = 0;
+            shownAt = performance.now();
             render(startAt || 4);
             loader.classList.remove('is-complete');
             loader.classList.add('is-visible');
@@ -77,9 +79,13 @@
             if (timer) window.clearInterval(timer);
             timer = window.setInterval(function () {
                 if (finishing) return;
-                const remaining = 92 - current;
-                if (remaining <= 0) return;
-                render(current + Math.max(1, Math.ceil(remaining * 0.09)));
+                // Normal document navigation does not expose response-byte
+                // progress. Follow elapsed navigation time smoothly up to 99
+                // instead of freezing at an artificial 92 percent; the new
+                // document replaces this overlay as soon as it is ready.
+                const elapsed = Math.max(0, performance.now() - shownAt);
+                const elapsedTarget = 5 + (94 * (1 - Math.exp(-elapsed / 3200)));
+                render(Math.min(99, Math.max(current + 1, elapsedTarget)));
             }, 180);
         }
 
@@ -274,22 +280,26 @@
 
         const style = document.createElement('style');
         style.textContent = [
-            '#imsRealProgress{display:none;margin:0 0 16px;border:1px solid rgba(25,135,84,.28);border-radius:14px;background:rgba(25,135,84,.08);overflow:hidden;color:var(--bs-body-color,#1c3558)}',
+            '#imsRealProgress{display:none;margin:0 0 22px;border:1px solid rgba(11,78,162,.24);border-radius:18px;background:linear-gradient(135deg,#f7fbff 0%,#edf7f3 100%);overflow:hidden;color:#18324f;box-shadow:0 12px 30px rgba(15,53,91,.12)}',
             '#imsRealProgress.visible{display:block}',
-            '#imsRealProgress.failed{border-color:rgba(220,53,69,.32);background:rgba(220,53,69,.08)}',
-            '.ims-real-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px 8px}',
-            '.ims-real-progress-copy{min-width:0;display:flex;align-items:center;gap:10px}',
-            '.ims-real-progress-icon{font-size:20px;color:#198754;flex:0 0 auto}',
+            '#imsRealProgress.failed{border-color:rgba(220,53,69,.34);background:linear-gradient(135deg,#fff9fa,#fff0f1)}',
+            '.ims-real-progress-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 20px 15px}',
+            '.ims-real-progress-copy{min-width:0;display:flex;align-items:center;gap:14px}',
+            '.ims-real-progress-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:rgba(25,135,84,.12);font-size:23px;color:#198754;flex:0 0 auto}',
             '#imsRealProgress.failed .ims-real-progress-icon{color:#dc3545}',
-            '.ims-real-progress-message{font-size:14px;font-weight:800;line-height:1.25}',
-            '.ims-real-progress-detail{font-size:11px;opacity:.72;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-            '.ims-real-progress-percent{font-size:20px;font-weight:900;color:#198754;flex:0 0 auto}',
+            '.ims-real-progress-message{font-size:16px;font-weight:850;line-height:1.3;color:#163858}',
+            '.ims-real-progress-detail{font-size:13px;font-weight:600;line-height:1.4;color:#5c7088;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.ims-real-progress-percent{min-width:68px;padding:7px 10px;border-radius:12px;background:#fff;border:1px solid rgba(25,135,84,.2);box-shadow:0 4px 12px rgba(18,65,107,.08);font-size:23px;font-weight:900;text-align:center;color:#198754;flex:0 0 auto}',
             '#imsRealProgress.failed .ims-real-progress-percent{color:#dc3545}',
-            '.ims-real-progress-track{height:8px;background:rgba(25,135,84,.13)}',
-            '.ims-real-progress-fill{height:100%;width:0;background:#198754;transition:width .35s ease}',
+            '.ims-real-progress-track{height:12px;margin:0 20px 18px;border-radius:999px;background:rgba(25,135,84,.13);overflow:hidden;box-shadow:inset 0 1px 2px rgba(15,53,91,.12)}',
+            '.ims-real-progress-fill{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#0b66c3,#198754);transition:width .35s ease}',
             '#imsRealProgress.failed .ims-real-progress-track{background:rgba(220,53,69,.13)}',
             '#imsRealProgress.failed .ims-real-progress-fill{background:#dc3545}',
-            '@media(max-width:575.98px){.ims-real-progress-head{align-items:flex-start}.ims-real-progress-percent{font-size:18px}.ims-real-progress-detail{white-space:normal}}'
+            '[data-theme="dark"] #imsRealProgress{background:linear-gradient(135deg,#17283d,#17342f);border-color:#315779;color:#f0f6fc;box-shadow:0 12px 30px rgba(0,0,0,.3)}',
+            '[data-theme="dark"] .ims-real-progress-message{color:#f0f6fc}',
+            '[data-theme="dark"] .ims-real-progress-detail{color:#b9c9d9}',
+            '[data-theme="dark"] .ims-real-progress-percent{background:#132338;border-color:#315779}',
+            '@media(max-width:575.98px){.ims-real-progress-head{align-items:flex-start;padding:16px;gap:10px}.ims-real-progress-icon{width:38px;height:38px;font-size:20px}.ims-real-progress-message{font-size:15px}.ims-real-progress-detail{font-size:12px;white-space:normal}.ims-real-progress-percent{min-width:60px;font-size:20px}.ims-real-progress-track{margin:0 16px 16px;height:11px}}'
         ].join('');
         document.head.appendChild(style);
 
