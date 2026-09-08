@@ -1,4 +1,4 @@
-name: Build Verified Week16 Production Candidate
+name: Atomic Week16 Production Cutover
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  cutover:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -21,9 +21,6 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/shadow-production-copy-proof
       - name: Configure SSH
         shell: bash
         env:
@@ -34,77 +31,110 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Copy candidate scripts
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 scripts/rehearse_week17_to_week16.py scripts/rehearse_week17_snapshot_cleanup.py "$IMS_USER@$IMS_HOST:/tmp/"
-      - name: Build and persist verified candidate without stopping production
+      - name: Verify source, atomically cut over, and recover on failure
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=90 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          test "$(git branch --show-current)" = main
-          test -z "$(git status --porcelain)"
-          ROOT=instance/test-baselines/week16-production-candidate
-          FINAL="$ROOT.db"
-          STAGED="$ROOT.staged.db"
-          META="$ROOT.meta"
-          BASE=instance/test-baselines/week17-production-baseline.db
-          BASEMETA=instance/test-baselines/week17-production-baseline.meta
-          test -s "$BASE" && test -s "$BASEMETA"
-          expected=$(awk -F= '$1=="sha256"{print $2}' "$BASEMETA")
-          test "$(sha256sum "$BASE"|awk '{print $1}')" = "$expected"
-          work=$(mktemp -d instance/test-baselines/week16-candidate-files.XXXXXX)
-          chmod 700 "$work"
-          TMP="$work/candidate.db"
-          cp --reflink=auto "$BASE" "$TMP"
-          chmod 600 "$TMP"
-          rm -f "$STAGED" "$META.tmp"
-          trap 'rm -rf "$work" /tmp/rehearse_week17_to_week16.py /tmp/rehearse_week17_snapshot_cleanup.py' EXIT
-          mkdir -p "$work/uploads/ims_archive/snapshots" "$work/instance"
-          cp uploads/ims_archive/upload-32.xlsx "$work/uploads/ims_archive/upload-32.xlsx"
-          cp uploads/ims_archive/snapshots/upload-32.json "$work/uploads/ims_archive/snapshots/upload-32.json"
-          PYTHONPATH="$IMS_PATH" venv/bin/python /tmp/rehearse_week17_to_week16.py --database "$IMS_PATH/$TMP" --upload-root "$IMS_PATH/$work/uploads" --delete-upload-id 32 --expected-previous-upload-id 31 --expected-previous-week 16
-          PYTHONPATH="$IMS_PATH" venv/bin/python /tmp/rehearse_week17_snapshot_cleanup.py --database "$IMS_PATH/$TMP" --instance-root "$IMS_PATH/$work" --year 2026 --month 4 --deleted-upload-id 32 --expected-upload-id 31
-          mv -f "$TMP" "$STAGED"
-          TMP="$STAGED"
-          venv/bin/python - "$BASE" "$TMP" <<'PY'
-          import hashlib,json,sqlite3,sys
-          old=sqlite3.connect(f'file:{sys.argv[1]}?mode=ro',uri=True,timeout=30)
-          new=sqlite3.connect(f'file:{sys.argv[2]}?mode=ro',uri=True,timeout=30)
-          def dig(c,q):
-              h=hashlib.sha256();n=0
-              for r in c.execute(q):h.update(json.dumps(r,ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n');n+=1
-              return n,h.hexdigest()
-          checked=0
+          LIVE=instance/ipm.db
+          CAND=instance/test-baselines/week16-production-candidate.db
+          META=instance/test-baselines/week16-production-candidate.meta
+          test -s "$LIVE" && test -s "$CAND" && test -s "$META"
+          cand_sha=$(awk -F= '$1=="sha256"{print $2}' "$META")
+          source_sha=$(awk -F= '$1=="source_week17_sha256"{print $2}' "$META")
+          test "$(sha256sum "$CAND"|awk '{print $1}')" = "$cand_sha"
+          ids=$(venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
           try:
-              for t, in old.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"):
-                  cols=[r[1] for r in old.execute(f'PRAGMA table_info("{t}")')]
-                  if 'year' in cols and 'month' in cols:
-                      order=','.join(f'"{c}"' for c in cols);q=f'SELECT * FROM "{t}" WHERE NOT (year=2026 AND month=4) ORDER BY {order}'
-                      if dig(old,q)!=dig(new,q):raise SystemExit(f'historical drift {t}')
-                      checked+=1
-              for t in ('products','representatives'):
-                  cols=[r[1] for r in old.execute(f'PRAGMA table_info("{t}")')];order=','.join(f'"{c}"' for c in cols)
-                  if dig(old,f'SELECT * FROM "{t}" ORDER BY {order}')!=dig(new,f'SELECT * FROM "{t}" ORDER BY {order}'):raise SystemExit(f'master drift {t}')
-                  checked+=1
-              integrity=new.execute('PRAGMA integrity_check').fetchone()[0]
-              latest=new.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-              print(f'CANDIDATE|VERIFY|historical_tables={checked}|integrity={integrity}|latest={latest}')
-              if integrity!='ok' or latest!=(31,2026,4,16,'COMPLETED'):raise SystemExit('candidate final verification failed')
-          finally:old.close();new.close()
+              latest=c.execute("SELECT id,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              print(latest[0] if latest else 0,latest[1] if latest else 0,jobs)
+          finally:c.close()
           PY
-          sha=$(sha256sum "$TMP"|awk '{print $1}')
-          bytes=$(stat -c '%s' "$TMP")
-          printf 'sha256=%s\nbytes=%s\nsource_week17_sha256=%s\nweek16_upload_id=31\n' "$sha" "$bytes" "$expected" > "$META.tmp"
-          mv -f "$TMP" "$FINAL"
-          mv -f "$META.tmp" "$META"
-          chmod 444 "$FINAL" "$META"
-          test "$(sha256sum "$FINAL"|awk '{print $1}')" = "$sha"
-          test "$(sha256sum "$BASE"|awk '{print $1}')" = "$expected"
-          echo "WEEK16_CANDIDATE|READY|path=$FINAL|bytes=$bytes|sha256=$sha|source_sha256=$expected"
-          echo 'WEEK16_CANDIDATE_BUILD|PASS'
+          )
+          read -r LATEST_ID LATEST_WEEK ACTIVE_JOBS <<<"$ids"
+          echo "CUTOVER|PREFLIGHT|latest_id=$LATEST_ID|latest_week=$LATEST_WEEK|jobs=$ACTIVE_JOBS|candidate_sha=$cand_sha|source_sha=$source_sha"
+          test "$LATEST_ID" = 32 && test "$LATEST_WEEK" = 17 && test "$ACTIVE_JOBS" = 0
+          test -s uploads/ims_archive/upload-32.xlsx
+          test -s uploads/ims_archive/snapshots/upload-32.json
+
+          stamp=$(date +%Y%m%d-%H%M%S)
+          bundle="instance/backups/atomic-week16-cutover-$stamp"
+          mkdir -p "$bundle"
+          venv/bin/python sqlite_online_backup.py "$LIVE" "$bundle/ipm-week17.db"
+          fresh_sha=$(sha256sum "$bundle/ipm-week17.db"|awk '{print $1}')
+          echo "CUTOVER|FRESH_BACKUP|path=$bundle/ipm-week17.db|sha256=$fresh_sha"
+          test "$fresh_sha" = "$source_sha"
+          cp uploads/ims_archive/upload-32.xlsx "$bundle/"
+          cp uploads/ims_archive/snapshots/upload-32.json "$bundle/"
+          sha256sum "$bundle"/* > "$bundle/SHA256SUMS"
+
+          sudo systemctl stop ims-import-worker.service
+          sudo systemctl stop ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-import-worker.service || true)" != active
+          test "$(sudo systemctl is-active ims-performance-manager.service || true)" != active
+          mode=$(stat -c '%a' "$LIVE")
+          owner=$(stat -c '%u:%g' "$LIVE")
+          restore=1
+          finish() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ "$restore" = 1 ]; then
+              cp "$bundle/ipm-week17.db" "$LIVE.restore"
+              chmod "$mode" "$LIVE.restore"
+              sudo chown "$owner" "$LIVE.restore"
+              rm -f "$LIVE-wal" "$LIVE-shm"
+              mv -f "$LIVE.restore" "$LIVE"
+              cp "$bundle/upload-32.xlsx" uploads/ims_archive/upload-32.xlsx
+              cp "$bundle/upload-32.json" uploads/ims_archive/snapshots/upload-32.json
+              echo 'CUTOVER|AUTO_RESTORE|PASS'
+            fi
+            sudo systemctl start ims-performance-manager.service || true
+            sudo systemctl start ims-import-worker.service || true
+            exit "$rc"
+          }
+          trap finish EXIT
+
+          cp "$CAND" "$LIVE.next"
+          chmod "$mode" "$LIVE.next"
+          sudo chown "$owner" "$LIVE.next"
+          test "$(sha256sum "$LIVE.next"|awk '{print $1}')" = "$cand_sha"
+          rm -f "$LIVE-wal" "$LIVE-shm"
+          mv -f "$LIVE.next" "$LIVE"
+          rm -f uploads/ims_archive/upload-32.xlsx uploads/ims_archive/snapshots/upload-32.json
+
+          venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('instance/ipm.db',timeout=30)
+          try:
+              c.execute('PRAGMA busy_timeout=30000')
+              mode=c.execute('PRAGMA journal_mode=WAL').fetchone()[0]
+              timeout=c.execute('PRAGMA busy_timeout').fetchone()[0]
+              quick=c.execute('PRAGMA quick_check(1)').fetchone()[0]
+              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              stale=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
+              region=c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+              rep=c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
+          finally:c.close()
+          print(f'CUTOVER|DB|latest={latest}|jobs={jobs}|stale32={stale}|region={region}|rep={rep}|journal={mode}|timeout={timeout}|quick={quick}')
+          if latest!=(31,2026,4,16,'COMPLETED') or jobs or stale or region!=(31,11,'ACTIVE') or rep!=(31,113,'ACTIVE') or str(mode).lower()!='wal' or int(timeout)!=30000 or quick!='ok':raise SystemExit('atomic cutover acceptance failed')
+          print('CUTOVER|DB_ACCEPTANCE|PASS')
+          PY
+
+          restore=0
+          sudo systemctl start ims-performance-manager.service
+          health=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then health=1;break;fi
+            sleep 1
+          done
+          test "$health" = 1
+          sudo systemctl start ims-import-worker.service
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
+          echo 'CUTOVER|SERVICES|PASS'
+          echo 'WEEK16_ATOMIC_PRODUCTION_CUTOVER|PASS'
           REMOTE
