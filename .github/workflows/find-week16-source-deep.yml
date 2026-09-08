@@ -1,0 +1,82 @@
+name: Find Week16 Source Deep
+
+on:
+  push:
+    branches:
+      - agent/shadow-production-copy-proof
+    paths:
+      - ".github/workflows/find-week16-source-deep.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Deep source inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          echo 'W16_FIND|FILESYSTEM_XLSX'
+          find /home/ubuntu -type f \( -iname '*.xlsx' -o -iname '*.xlsm' -o -iname '*.xls' \) -printf '%p|%s\n' 2>/dev/null | sort || true
+          echo 'W16_FIND|ARCHIVES'
+          find /home/ubuntu -type f \( -iname '*.zip' -o -iname '*.tar' -o -iname '*.tar.gz' -o -iname '*.tgz' -o -iname '*.tar.xz' \) -printf '%p|%s\n' 2>/dev/null | sort || true
+          echo 'W16_FIND|ARCHIVE_MEMBER_SCAN'
+          venv/bin/python - <<'PY'
+          import os,re,tarfile,unicodedata,zipfile
+          from pathlib import Path
+          expected='Tayfun-1_16.Hafta_Nisan_Brick_Analizi_.xlsx'
+          def norm(s):
+              s=unicodedata.normalize('NFKC',str(s)).casefold()
+              return re.sub(r'[^a-z0-9çğıöşü]+','',s)
+          hits=[]; scanned=0; errors=[]
+          for root,dirs,files in os.walk('/home/ubuntu'):
+              dirs[:]=[d for d in dirs if d not in {'.git','venv','node_modules','.cache','__pycache__'}]
+              for name in files:
+                  p=Path(root)/name
+                  low=name.casefold()
+                  if not (low.endswith('.zip') or low.endswith('.tar') or low.endswith('.tar.gz') or low.endswith('.tgz') or low.endswith('.tar.xz')):
+                      continue
+                  scanned+=1
+                  try:
+                      if low.endswith('.zip'):
+                          with zipfile.ZipFile(p) as z:
+                              members=z.namelist()
+                      else:
+                          with tarfile.open(p,'r:*') as t:
+                              members=t.getnames()
+                      for m in members:
+                          base=Path(m).name
+                          if norm(base)==norm(expected) or ('16' in base and ('nisan' in base.casefold() or 'tayfun' in base.casefold())):
+                              hits.append((str(p),m))
+                  except Exception as e:
+                      errors.append((str(p),type(e).__name__))
+          print(f'W16_FIND|ARCHIVES_SCANNED|{scanned}')
+          print('W16_FIND|HITS|'+repr(hits))
+          print('W16_FIND|ERRORS|'+repr(errors[:30]))
+          PY
+          echo 'W16_FIND|DONE'
+          REMOTE
