@@ -69,12 +69,18 @@ venv/bin/python database_capacity_audit.py \
   --additional-uploads 49 \
   --optimize >> "$EVIDENCE_FILE" 2>&1
 
+printf '%s\n' 'BACKUPS_BEFORE' >> "$EVIDENCE_FILE"
+find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'STORAGE_BEFORE' >> "$EVIDENCE_FILE"
+du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
+df -h / >> "$EVIDENCE_FILE"
+
 backup_count=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l)
-printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=2|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
+printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
 if [ "$backup_count" -gt 0 ]; then
   venv/bin/python cleanup_old_backups.py \
     --backup-dir instance/backups \
-    --keep-latest 2 \
+    --keep-latest 1 \
     --purge-unmanaged-db >> "$EVIDENCE_FILE" 2>&1
 else
   printf 'MAINTENANCE_BACKUP_SET|status=none\n' >> "$EVIDENCE_FILE"
@@ -83,7 +89,7 @@ fi
 printf '%s\n' 'KEPT_BACKUPS' >> "$EVIDENCE_FILE"
 find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
 
-printf '%s\n' 'STORAGE' >> "$EVIDENCE_FILE"
+printf '%s\n' 'STORAGE_AFTER' >> "$EVIDENCE_FILE"
 du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
 df -h / >> "$EVIDENCE_FILE"
 free -h >> "$EVIDENCE_FILE"
