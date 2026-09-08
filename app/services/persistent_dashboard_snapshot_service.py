@@ -82,6 +82,24 @@ class PersistentDashboardSnapshotService:
         return value
 
     @classmethod
+    def generation_ready(
+        cls, year: int, month: int, ims_id: int, production_id: int
+    ) -> bool:
+        path = cls._generation_path(year, month, ims_id, production_id)
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return False
+        return bool(
+            envelope.get("version") == cls.VERSION
+            and int(envelope.get("year", 0)) == int(year)
+            and int(envelope.get("month", 0)) == int(month)
+            and int(envelope.get("ims_upload_id", -1)) == int(ims_id)
+            and int(envelope.get("production_upload_id", -1)) == int(production_id)
+            and isinstance(envelope.get("payload"), dict)
+        )
+
+    @classmethod
     def get_active(cls, year: int, month: int) -> dict | None:
         ims_id, production_id = cls.source_identity(year, month)
         generation_path = cls._generation_path(year, month, ims_id, production_id)

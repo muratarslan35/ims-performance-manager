@@ -520,10 +520,20 @@ def delete_upload(upload_id):
         current_app.logger.exception("ims_upload_delete_failed upload_id=%s", upload_id)
         flash("IMS silinemedi; mevcut dashboard verileri korunmuştur.", "danger")
     else:
+        cleanup = result.get("master_cleanup") or {}
+        preserved = len(cleanup.get("representatives_preserved") or []) + len(
+            cleanup.get("products_preserved") or []
+        )
+        if preserved:
+            flash(
+                "IMS ve yüklemeye ait veriler silindi; başka kayıtlarca kullanılan "
+                f"{preserved} master kayıt güvenlik için pasif olarak korundu.",
+                "warning",
+            )
         if result["restored_previous_period_state"]:
-            flash("IMS tamamen silindi ve dashboard bir önceki güvenli IMS durumuna döndürüldü.", "success")
+            flash("Dashboard bir önceki doğrulanmış IMS durumuna döndürüldü.", "success")
         else:
-            flash("IMS ve ona bağlı kayıtlar tamamen silindi.", "success")
+            flash("IMS ve ona ait yükleme kayıtları silindi.", "success")
     return redirect(url_for("ims.index") + "#ims-history")
 
 

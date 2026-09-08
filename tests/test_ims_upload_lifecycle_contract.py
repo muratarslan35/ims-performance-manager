@@ -37,13 +37,13 @@ def test_explicit_replace_bypasses_duplicate_guards_for_parser_reprocessing():
     assert "same_semantic_workbook" in source
 
 
-def test_delete_gate_blocks_active_import_and_requires_snapshot_for_latest_completed():
+def test_delete_gate_blocks_active_import_and_requires_full_rollback_preflight():
     source = Path("app/services/ims_upload_lifecycle_service.py").read_text(encoding="utf-8")
     assert "STATUS_QUEUED" in source
     assert "STATUS_PROCESSING" in source
     assert "Aktif IMS importu varken silme yapılamaz" in source
-    assert "upload_snapshot_path(upload.id).exists()" in source
-    assert "geri dönüş snapshot" in source.lower()
+    assert "return cls.can_rollback(upload)" in source
+    assert "rollback_bundle = cls._rollback_preflight(upload.id)" in source
 
 
 def test_hide_is_metadata_only_not_an_ims_status_change():

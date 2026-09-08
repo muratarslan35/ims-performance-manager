@@ -83,8 +83,36 @@ def install_ims_upload_lifecycle() -> None:
                     month=job.month,
                 )
                 snapshot_captured = True
-            except Exception:
+                IMSUploadLifecycleService.prepare_previous_rollback_assets(
+                    year=job.year,
+                    month=job.month,
+                )
+            except Exception as exc:
                 logger.exception("ims_lifecycle_snapshot_capture_failed job_id=%s", job.id)
+                failed_at = datetime.utcnow()
+                blocked = db.session.get(IMSImportJob, int(job.id))
+                blocked.status = IMSImportJob.STATUS_FAILED
+                blocked.error_message = (
+                    "Yeni IMS yayınlanmadı; önceki temiz IMS için eksiksiz geri dönüş "
+                    f"hazırlanamadı: {str(exc)[:3000]}"
+                )
+                blocked.completed_at = failed_at
+                blocked.heartbeat_at = failed_at
+                db.session.commit()
+                IMSProgressStore.write(
+                    blocked.id,
+                    percent=100,
+                    stage="rollback_readiness_failed",
+                    message="IMS yüklemesi güvenlik kontrolünde durduruldu",
+                    detail="Mevcut veriler değiştirilmedi; eksiksiz geri dönüş paketi hazırlanamadı",
+                    status=IMSImportJob.STATUS_FAILED,
+                )
+                if staging_path.is_file():
+                    try:
+                        failed_source.write_bytes(staging_path.read_bytes())
+                    except Exception:
+                        logger.exception("ims_failed_source_preserve_failed job_id=%s", job.id)
+                return None
 
             try:
                 if staging_path.is_file():
@@ -126,6 +154,17 @@ def install_ims_upload_lifecycle() -> None:
                         refreshed.id,
                         refreshed.ims_upload_id,
                     )
+                if snapshot_captured:
+                    try:
+                        IMSUploadLifecycleService.seal_snapshot_master_state(
+                            upload_id=refreshed.ims_upload_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "ims_lifecycle_master_seal_failed job_id=%s upload_id=%s",
+                            refreshed.id,
+                            refreshed.ims_upload_id,
+                        )
             else:
                 IMSUploadLifecycleService.discard_pending_snapshot(job.id)
                 if pending_source.is_file():
