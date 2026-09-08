@@ -22,7 +22,7 @@ jobs:
   maintain:
     name: Weekly SQLite and backup maintenance
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -67,6 +67,8 @@ jobs:
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = "main"
           test -z "$(git status --porcelain)"
+          git fetch origin main
+          git pull --ff-only origin main
           test -f scripts/run_production_maintenance.sh
           rm -rf "$JOB_DIR"
           mkdir -p "$JOB_DIR"
@@ -94,7 +96,7 @@ jobs:
           )
 
           consecutive_ssh_failures=0
-          for poll in $(seq 1 120); do
+          for poll in $(seq 1 300); do
             set +e
             status=$(ssh "${SSH_OPTS[@]}" "$IMS_USER@$IMS_HOST" \
               "test -f '$JOB_DIR/status' && cat '$JOB_DIR/status' || echo RUNNING" 2>/dev/null)
