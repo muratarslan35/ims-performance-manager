@@ -20,7 +20,7 @@ jobs:
   cleanup:
     name: Remove allowlisted obsolete production artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
