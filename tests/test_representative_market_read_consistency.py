@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app import create_app
+from sqlalchemy import event
 from app.extensions import db
 from app.models import (
     CompetitionData,
@@ -150,8 +151,19 @@ def test_representative_market_reconciles_named_rivals_and_previous_period_scope
         ])
         db.session.commit()
 
-        with app.test_request_context(f"/representatives/view/{representative.id}"):
-            result = RepresentativeMarketService(representative, 2026, 4).build()
+        statements = []
+
+        def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+            normalized = " ".join(statement.upper().split())
+            if normalized.startswith("SELECT"):
+                statements.append(normalized)
+
+        event.listen(db.engine, "before_cursor_execute", capture)
+        try:
+            with app.test_request_context(f"/representatives/view/{representative.id}"):
+                result = RepresentativeMarketService(representative, 2026, 4).build()
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture)
 
         brimoder = result["rows"][0]
         assert brimoder["product"].product_code == "BRIMODER"
@@ -181,6 +193,17 @@ def test_representative_market_reconciles_named_rivals_and_previous_period_scope
         assert float(result["totals"]["actual_unit"]) == 32
         assert float(result["totals"]["competitor_unit"]) == 287
         assert float(result["totals"]["market_unit"]) == 319
+
+        competition_selects = [
+            statement for statement in statements if "IMS_COMPETITION_DATA" in statement
+        ]
+        assert len(competition_selects) <= 3
+        assert all("UPLOAD_ID" in statement.split(" WHERE ", 1)[1] for statement in competition_selects)
+        assert all(
+            "SUBTERRITORY IN" in statement.split(" WHERE ", 1)[1]
+            or "TERRITORY IN" in statement.split(" WHERE ", 1)[1]
+            for statement in competition_selects
+        )
 
         db.session.remove()
         db.drop_all()
