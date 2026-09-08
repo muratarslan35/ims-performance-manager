@@ -51,6 +51,24 @@ def test_get_or_build_executes_builder_once_for_same_source(tmp_path, monkeypatc
     assert calls["count"] == 1
 
 
+def test_previous_dashboard_generation_is_reused_after_source_rollback(tmp_path, monkeypatch):
+    app = Flask(__name__, instance_path=str(tmp_path / "instance"))
+    identity = {"value": (31, 0)}
+    monkeypatch.setattr(
+        PersistentDashboardSnapshotService,
+        "source_identity",
+        classmethod(lambda cls, year, month: identity["value"]),
+    )
+
+    with app.app_context():
+        PersistentDashboardSnapshotService.publish(2026, 4, {"week": 16})
+        identity["value"] = (32, 0)
+        PersistentDashboardSnapshotService.publish(2026, 4, {"week": 17})
+        identity["value"] = (31, 0)
+
+        assert PersistentDashboardSnapshotService.get_active(2026, 4) == {"week": 16}
+
+
 def test_dashboard_route_uses_cross_worker_get_or_build():
     source = Path("app/dashboard.py").read_text(encoding="utf-8")
     assert "PersistentDashboardSnapshotService.get_or_build" in source

@@ -108,6 +108,11 @@ class CompetitionQueryBuilder:
     @staticmethod
     def apply_filters(query: Any, filters: Dict[str, Any]) -> Any:
         """Apply optional standard filters dynamically."""
+        # Rolled-back/failed upload generations are retained for audit and
+        # physical cleanup, but must never contribute to a live API result.
+        query = query.filter(
+            CompetitionData.upload.has(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
+        )
         if filters.get("year") is not None:
             query = query.filter(CompetitionData.year == filters["year"])
         if filters.get("month") is not None:
@@ -292,7 +297,9 @@ class CompetitionQueryBuilder:
         start_time = time.time()
 
         def _get_distinct_col(column_attr: Any) -> List[Any]:
-            col_q = db.session.query(distinct(column_attr))
+            col_q = db.session.query(distinct(column_attr)).filter(
+                CompetitionData.upload.has(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
+            )
             if upload_id is not None:
                 col_q = col_q.filter(CompetitionData.upload_id == upload_id)
             return [r[0] for r in col_q.order_by(column_attr).all()]

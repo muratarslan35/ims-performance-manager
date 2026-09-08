@@ -186,8 +186,9 @@ def index():
         IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()
     ).paginate(page=history_page, per_page=25, error_out=False)
     uploads = upload_pagination.items
-    latest_upload = IMSUpload.query.order_by(
-        IMSUpload.uploaded_at.desc(), IMSUpload.id.desc()
+    latest_upload = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
+        IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
+        IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
     ).first()
     total_uploads = IMSUpload.query.count()
     hidden_upload_ids = IMSUploadLifecycleService.hidden_upload_ids()
@@ -195,6 +196,9 @@ def index():
         item.id: IMSUploadLifecycleService.can_delete(item)
         for item in uploads
     }
+    rollback_permissions = {}
+    if latest_upload is not None and any(item.id == latest_upload.id for item in uploads):
+        rollback_permissions[latest_upload.id] = IMSUploadLifecycleService.can_rollback(latest_upload)
 
     production_uploads = ProductionResultUpload.query.order_by(
         ProductionResultUpload.uploaded_at.desc()
@@ -234,6 +238,7 @@ def index():
         hidden_upload_ids=hidden_upload_ids,
         show_hidden=show_hidden,
         delete_permissions=delete_permissions,
+        rollback_permissions=rollback_permissions,
 
         production_uploads=production_uploads,
 
@@ -515,10 +520,44 @@ def delete_upload(upload_id):
         current_app.logger.exception("ims_upload_delete_failed upload_id=%s", upload_id)
         flash("IMS silinemedi; mevcut dashboard verileri korunmuştur.", "danger")
     else:
+        cleanup = result.get("master_cleanup") or {}
+        preserved = len(cleanup.get("representatives_preserved") or []) + len(
+            cleanup.get("products_preserved") or []
+        )
+        if preserved:
+            flash(
+                "IMS ve yüklemeye ait veriler silindi; başka kayıtlarca kullanılan "
+                f"{preserved} master kayıt güvenlik için pasif olarak korundu.",
+                "warning",
+            )
         if result["restored_previous_period_state"]:
-            flash("IMS tamamen silindi ve dashboard bir önceki güvenli IMS durumuna döndürüldü.", "success")
+            flash("Dashboard bir önceki doğrulanmış IMS durumuna döndürüldü.", "success")
         else:
-            flash("IMS ve ona bağlı kayıtlar tamamen silindi.", "success")
+            flash("IMS ve ona ait yükleme kayıtları silindi.", "success")
+    return redirect(url_for("ims.index") + "#ims-history")
+
+
+@ims_bp.route("/uploads/<int:upload_id>/rollback", methods=["POST"])
+@login_required
+def rollback_upload(upload_id):
+    try:
+        result = IMSUploadLifecycleService.rollback_to_previous(
+            upload_id,
+            actor=current_user.full_name,
+        )
+    except (LookupError, RuntimeError) as exc:
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("ims_upload_rollback_failed upload_id=%s", upload_id)
+        flash("IMS geri alınamadı; mevcut dashboard verileri korunmuştur.", "danger")
+    else:
+        flash(
+            f"IMS #{result['rolled_back_upload_id']} geri alındı. "
+            f"Sistem temiz IMS #{result['active_upload_id']} verisine geçti. "
+            "Hatalı yükleme inceleme ve güvenli fiziksel temizlik için korundu.",
+            "success",
+        )
     return redirect(url_for("ims.index") + "#ims-history")
 
 

@@ -401,11 +401,15 @@ class DashboardQuery:
         """
         # Market-share is supplied by the dedicated competition PP sheets;
         # IMSSummary intentionally contains no PP value for brick sales.
+        active_upload_id = self._latest_competition_upload_id(filters)
+        if active_upload_id is None:
+            return []
         query = self.session.query(
             CompetitionData.year,
             CompetitionData.month,
             func.avg(CompetitionData.metric_value).label("avg_share"),
         ).filter(
+            CompetitionData.upload_id == int(active_upload_id),
             CompetitionData.metric_type == "MARKET_SHARE",
             CompetitionData.is_subtotal.is_(False),
             CompetitionData.is_grand_total.is_(False),

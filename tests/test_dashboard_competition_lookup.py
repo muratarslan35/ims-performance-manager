@@ -27,13 +27,13 @@ def _test_app():
     return create_app(TestConfig), temp_dir
 
 
-def _competition_row(upload_id, *, metric_value):
+def _competition_row(upload_id, *, metric_value, metric_type="TL", month=2):
     from app.models import CompetitionData
 
     return CompetitionData(
         upload_id=upload_id,
         year=2026,
-        month=2,
+        month=month,
         week_number=1,
         sheet_name=f"competition-{upload_id}",
         period_type="WEEKLY",
@@ -41,7 +41,7 @@ def _competition_row(upload_id, *, metric_value):
         subterritory="DIYARBAKIR",
         product_group="TEST GROUP",
         product_name="TEST PRODUCT",
-        metric_type="TL",
+        metric_type=metric_type,
         metric_value=metric_value,
         is_subtotal=False,
         is_grand_total=False,
@@ -102,5 +102,77 @@ def test_latest_competition_upload_uses_exists_and_is_memoized_per_request():
             assert "EXISTS" in normalized_sql
             assert "JOIN IMS_COMPETITION_DATA" not in normalized_sql
             assert "GROUP BY" not in normalized_sql
+    finally:
+        temp_dir.cleanup()
+
+
+def test_market_share_trend_excludes_rolled_back_upload_generation():
+    app, temp_dir = _test_app()
+    try:
+        with app.app_context():
+            from app.extensions import db
+            from app.models import IMSUpload
+            from app.query.dashboard_query import DashboardQuery
+            from app.query.filters import DashboardFilterParams
+
+            db.create_all()
+            active = IMSUpload(
+                file_name="week-16.xlsx", year=2026, month=4, week_number=16,
+                status="COMPLETED", completed_at=datetime(2026, 4, 23),
+            )
+            rolled_back = IMSUpload(
+                file_name="week-17-wrong.xlsx", year=2026, month=4, week_number=17,
+                status="ROLLED_BACK", completed_at=datetime(2026, 4, 30),
+            )
+            db.session.add_all([active, rolled_back])
+            db.session.flush()
+            db.session.add_all([
+                _competition_row(active.id, metric_value=100.0, month=4),
+                _competition_row(active.id, metric_value=10.0, metric_type="MARKET_SHARE", month=4),
+                _competition_row(rolled_back.id, metric_value=900.0, month=4),
+                _competition_row(rolled_back.id, metric_value=90.0, metric_type="MARKET_SHARE", month=4),
+            ])
+            db.session.commit()
+
+            rows = DashboardQuery().load_market_share_trend(
+                DashboardFilterParams(year=2026, month=4)
+            )
+            assert len(rows) == 1
+            assert rows[0].avg_share == 10.0
+    finally:
+        temp_dir.cleanup()
+
+
+def test_competition_api_query_builder_excludes_rolled_back_generation():
+    app, temp_dir = _test_app()
+    try:
+        with app.app_context():
+            from app.competition.api import CompetitionQueryBuilder
+            from app.extensions import db
+            from app.models import IMSUpload
+
+            db.create_all()
+            active = IMSUpload(
+                file_name="week-16.xlsx", year=2026, month=4, week_number=16,
+                status="COMPLETED",
+            )
+            rolled_back = IMSUpload(
+                file_name="week-17-wrong.xlsx", year=2026, month=4, week_number=17,
+                status="ROLLED_BACK",
+            )
+            db.session.add_all([active, rolled_back])
+            db.session.flush()
+            db.session.add_all([
+                _competition_row(active.id, metric_value=100.0, month=4),
+                _competition_row(rolled_back.id, metric_value=900.0, month=4),
+            ])
+            db.session.commit()
+
+            summary, _duration = CompetitionQueryBuilder.get_summary_metrics(
+                {"year": 2026, "month": 4}
+            )
+            assert summary["total_records"] == 1
+            assert summary["total_uploads"] == 1
+            assert summary["last_upload_id"] == active.id
     finally:
         temp_dir.cleanup()

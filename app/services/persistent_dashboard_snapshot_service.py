@@ -47,6 +47,16 @@ class PersistentDashboardSnapshotService:
         return root / f"dashboard-{int(year):04d}-{int(month):02d}.json"
 
     @classmethod
+    def _generation_path(
+        cls, year: int, month: int, ims_id: int, production_id: int
+    ) -> Path:
+        root = Path(current_app.instance_path) / "dashboard_snapshots"
+        return root / (
+            f"dashboard-{int(year):04d}-{int(month):02d}"
+            f"-ims{int(ims_id)}-production{int(production_id)}.json"
+        )
+
+    @classmethod
     def _lock_path(cls, year: int, month: int) -> Path:
         return cls._path(year, month).with_suffix(".lock")
 
@@ -72,29 +82,57 @@ class PersistentDashboardSnapshotService:
         return value
 
     @classmethod
-    def get_active(cls, year: int, month: int) -> dict | None:
-        path = cls._path(year, month)
+    def generation_ready(
+        cls, year: int, month: int, ims_id: int, production_id: int
+    ) -> bool:
+        path = cls._generation_path(year, month, ims_id, production_id)
         try:
             envelope = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, ValueError, TypeError):
-            return None
+            return False
+        return bool(
+            envelope.get("version") == cls.VERSION
+            and int(envelope.get("year", 0)) == int(year)
+            and int(envelope.get("month", 0)) == int(month)
+            and int(envelope.get("ims_upload_id", -1)) == int(ims_id)
+            and int(envelope.get("production_upload_id", -1)) == int(production_id)
+            and isinstance(envelope.get("payload"), dict)
+        )
 
+    @classmethod
+    def get_active(cls, year: int, month: int) -> dict | None:
         ims_id, production_id = cls.source_identity(year, month)
-        if (
-            envelope.get("version") != cls.VERSION
-            or int(envelope.get("year", 0)) != int(year)
-            or int(envelope.get("month", 0)) != int(month)
-            or int(envelope.get("ims_upload_id", -1)) != ims_id
-            or int(envelope.get("production_upload_id", -1)) != production_id
-        ):
-            return None
-        payload = envelope.get("payload")
-        return payload if isinstance(payload, dict) else None
+        generation_path = cls._generation_path(year, month, ims_id, production_id)
+        for path in (generation_path, cls._path(year, month)):
+            try:
+                envelope = json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, ValueError, TypeError):
+                continue
+            if (
+                envelope.get("version") != cls.VERSION
+                or int(envelope.get("year", 0)) != int(year)
+                or int(envelope.get("month", 0)) != int(month)
+                or int(envelope.get("ims_upload_id", -1)) != ims_id
+                or int(envelope.get("production_upload_id", -1)) != production_id
+            ):
+                continue
+            payload = envelope.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            # Transparently preserve a valid legacy snapshot as an immutable
+            # generation so a later one-click rollback can reuse it instantly.
+            if path != generation_path and not generation_path.exists():
+                generation_path.parent.mkdir(parents=True, exist_ok=True)
+                temp = generation_path.with_suffix(f".json.tmp-{os.getpid()}")
+                temp.write_text(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                os.replace(temp, generation_path)
+            return payload
+        return None
 
     @classmethod
     def publish(cls, year: int, month: int, payload: dict) -> dict:
         ims_id, production_id = cls.source_identity(year, month)
-        path = cls._path(year, month)
+        path = cls._generation_path(year, month, ims_id, production_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         envelope = {
             "version": cls.VERSION,
@@ -111,6 +149,15 @@ class PersistentDashboardSnapshotService:
             encoding="utf-8",
         )
         os.replace(temp_path, path)
+        # Keep the stable legacy path for operational tooling. Generation files
+        # remain immutable and are what make a rollback a cache hit.
+        legacy_path = cls._path(year, month)
+        legacy_temp = legacy_path.with_suffix(f".json.tmp-{os.getpid()}")
+        legacy_temp.write_text(
+            json.dumps(envelope, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(legacy_temp, legacy_path)
         return {
             "status": "ACTIVE",
             "year": int(year),
