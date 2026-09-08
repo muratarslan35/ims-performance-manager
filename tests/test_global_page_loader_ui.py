@@ -17,6 +17,14 @@ def test_global_page_loader_is_navigation_only_and_finishes_at_window_load():
     assert "window.IMSPageLoader" in source
 
 
+def test_global_page_loader_tracks_navigation_without_freezing_at_92():
+    source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
+
+    assert "const elapsedTarget" in source
+    assert "Math.min(99" in source
+    assert "92 - current" not in source
+
+
 def test_global_page_loader_does_not_touch_business_calculation_contracts():
     source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
 
