@@ -75,6 +75,27 @@ printf '%s\n' 'STORAGE_BEFORE' >> "$EVIDENCE_FILE"
 du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
 df -h / >> "$EVIDENCE_FILE"
 
+# Keep a bounded, read-only inventory in the maintenance evidence.  The former
+# summary showed only the aggregate instance size, which made large proof
+# databases or abandoned temporary directories indistinguishable from live
+# application data.
+printf '%s\n' 'ROOT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+sudo du -x -B1 --max-depth=1 / 2>/dev/null \
+  | sort -nr \
+  | head -n 30 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'HOME_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+sudo du -x -B1 --max-depth=2 /home 2>/dev/null \
+  | sort -nr \
+  | head -n 60 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'PROJECT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+du -x -B1 --max-depth=3 "$IMS_PATH" 2>/dev/null \
+  | sort -nr \
+  | head -n 120 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'LARGE_FILES_OVER_100M_BYTES' >> "$EVIDENCE_FILE"
+sudo find / -xdev -type f -size +100M -printf '%s %p\n' 2>/dev/null \
+  | sort -nr \
+  | head -n 120 >> "$EVIDENCE_FILE" || true
+
 backup_count=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l)
 printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
 if [ "$backup_count" -gt 0 ]; then
