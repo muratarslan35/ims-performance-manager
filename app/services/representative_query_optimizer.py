@@ -112,6 +112,17 @@ def install_representative_market_query_optimizer():
         if upload_id is None:
             return None, []
 
+        # The request-scoped Week-8 adapter rebuilds the previous-month rival
+        # comparison from exact named brick rows.  Do not execute the base
+        # aggregate comparison query as well: its result is immediately
+        # replaced by that adapter and previously added one redundant
+        # competition SELECT to every representative detail request.
+        if (
+            getattr(self, "_skip_base_previous_competition", False)
+            and (year, month) != (self.year, self.month)
+        ):
+            return upload_id, []
+
         # Historical comparison intentionally applies the representative's
         # current brick scope to the requested historical upload. This keeps
         # month-over-month deltas comparable even when no assignment snapshot
