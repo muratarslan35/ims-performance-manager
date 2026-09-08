@@ -157,6 +157,27 @@ def install_week8_read_path_repair() -> None:
     original_effective_product = ProductionResultService.effective_product.__func__
 
     def effective_products(cls, year, month, representative_id, product_ids=None):
+        cache_key = (int(year), int(month), int(representative_id))
+        requested_ids = (
+            frozenset(int(item) for item in product_ids)
+            if product_ids is not None
+            else None
+        )
+        if _is_field_detail_request():
+            cache = getattr(g, "_week8_effective_product_batches", None)
+            if cache is None:
+                cache = {}
+                g._week8_effective_product_batches = cache
+            cached = cache.get(cache_key)
+            if cached is not None:
+                if requested_ids is None:
+                    return cached
+                return {
+                    product_id: cached[product_id]
+                    for product_id in requested_ids
+                    if product_id in cached
+                }
+
         rows = original_effective_products(cls, year, month, representative_id, product_ids)
         if not rows or not _is_field_detail_request():
             return rows
@@ -167,13 +188,21 @@ def install_week8_read_path_repair() -> None:
             Target.representative_id == int(representative_id),
             Target.product_id.in_(product_ids_set),
         ).all()
-        return _apply_target_ims_actuals(
+        repaired = _apply_target_ims_actuals(
             rows,
             targets,
             has_completed_ims=_has_completed_ims(year, month),
             year=year,
             month=month,
         )
+        # A full-period read is the canonical request-local batch.  Subsequent
+        # market, AI and product-row consumers reuse it instead of repeating the
+        # same target/summary/production/price queries.  Filtered reads are not
+        # promoted to a full batch because absence outside their requested set
+        # would be ambiguous.
+        if requested_ids is None:
+            cache[cache_key] = repaired
+        return repaired
 
     def effective_product(cls, year, month, representative_id, product_id):
         if not _is_field_detail_request():
@@ -233,8 +262,16 @@ def install_week8_read_path_repair() -> None:
     original_market_build = RepresentativeMarketService.build
 
     def repaired_market_build(self):
-        payload = original_market_build(self)
-        if not _is_representative_detail_request():
+        is_representative_detail = _is_representative_detail_request()
+        if is_representative_detail:
+            self._skip_base_previous_competition = True
+        try:
+            payload = original_market_build(self)
+        finally:
+            if is_representative_detail:
+                self.__dict__.pop("_skip_base_previous_competition", None)
+
+        if not is_representative_detail:
             return payload
 
         # Current own-product boxes come from the same canonical P2>P1>IMS read
@@ -255,6 +292,11 @@ def install_week8_read_path_repair() -> None:
             self._key(item.brick)
             for item in previous_assignments
             if self._key(item.brick)
+        }
+        previous_brick_labels = {
+            str(item.brick).strip()
+            for item in previous_assignments
+            if str(item.brick or "").strip()
         }
         previous_fallback_keys = {
             self._key(value)
@@ -279,20 +321,17 @@ def install_week8_read_path_repair() -> None:
         previous_rival_seen = set()
         previous_upload_id = self._latest_upload_id(previous_year, previous_month)
         previous_competition_rows = []
-        if previous_upload_id is not None and previous_brick_keys:
-            candidates = CompetitionData.query.filter(
+        if previous_upload_id is not None and previous_brick_labels:
+            previous_competition_rows = CompetitionData.query.filter(
                 CompetitionData.upload_id == previous_upload_id,
                 CompetitionData.metric_type == "UNIT",
                 CompetitionData.is_subtotal.is_(False),
                 CompetitionData.is_grand_total.is_(False),
+                CompetitionData.subterritory.in_(sorted(previous_brick_labels)),
+                CompetitionData.sheet_name.ilike("%AYLIK%"),
+                CompetitionData.sheet_name.ilike("%REKABET%"),
+                CompetitionData.sheet_name.ilike("%KUTU%"),
             ).all()
-            previous_competition_rows = [
-                row for row in candidates
-                if self._key(row.subterritory) in previous_brick_keys
-                and "AYLIK" in str(row.sheet_name or "").upper()
-                and "REKABET" in str(row.sheet_name or "").upper()
-                and "KUTU" in str(row.sheet_name or "").upper()
-            ]
 
         if not previous_competition_rows:
             _, previous_competition_rows = self._competition_rows(
