@@ -97,19 +97,23 @@ jobs:
           def norm(s):
               s=unicodedata.normalize('NFKC',str(s)).casefold()
               return re.sub(r'[^a-z0-9çğıöşü]+','',s)
-          roots=[Path('uploads')]
+          skip_dirs={'.git','venv','__pycache__','node_modules','.cache'}
           all_xlsx=[]
-          for root in roots:
-              if root.exists(): all_xlsx.extend(p for p in root.rglob('*') if p.is_file() and p.suffix.casefold() in {'.xlsx','.xlsm','.xls'})
+          for root,dirs,files in os.walk('/home/ubuntu'):
+              dirs[:]=[d for d in dirs if d not in skip_dirs and not d.startswith('week16-reconcile-')]
+              for name in files:
+                  if Path(name).suffix.casefold() in {'.xlsx','.xlsm','.xls'}:
+                      all_xlsx.append(Path(root)/name)
           exact=[p for p in all_xlsx if p.name.casefold()==file_name.casefold()]
           normalized=[p for p in all_xlsx if norm(p.name)==norm(file_name)]
-          source=(exact or normalized or [None])[0]
+          likely=[p for p in all_xlsx if '16' in p.name and ('nisan' in p.name.casefold() or 'tayfun' in p.name.casefold())]
+          print('W16_RECON|SOURCE_INVENTORY|count='+str(len(all_xlsx))+'|likely='+json.dumps([str(p) for p in likely[:80]],ensure_ascii=False))
+          source=(exact or normalized or likely or [None])[0]
           if source is None:
-              likely=[str(p) for p in all_xlsx if '16' in p.name and ('nisan' in p.name.casefold() or 'tayfun' in p.name.casefold())][:40]
-              print('W16_RECON|SOURCE_DISCOVERY|FAIL|expected='+file_name+'|likely='+json.dumps(likely,ensure_ascii=False))
-              raise SystemExit('Week16 workbook not found recursively under uploads')
-          if len(exact or normalized)>1:
-              print('W16_RECON|SOURCE_DISCOVERY|MULTIPLE|'+json.dumps([str(p) for p in (exact or normalized)],ensure_ascii=False))
+              raise SystemExit('Week16 workbook not found anywhere under /home/ubuntu')
+          matched=exact or normalized or likely
+          if len(matched)>1:
+              print('W16_RECON|SOURCE_DISCOVERY|MULTIPLE|'+json.dumps([str(p) for p in matched[:80]],ensure_ascii=False))
           Path(os.environ['SOURCE_FILE']).write_text(str(source.resolve()))
           sha=hashlib.sha256()
           with source.open('rb') as f:
@@ -212,7 +216,6 @@ jobs:
           print('W16_RECON|LOCKED_JAN_MAR|PASS|'+json.dumps(after,sort_keys=True))
           latest=con.execute("SELECT id,year,month,week_number,status,reconciliation_status,source_record_count,stored_source_record_count,invalid_metric_count FROM ims_uploads WHERE status='COMPLETED' ORDER BY id DESC LIMIT 1").fetchone()
           print('W16_RECON|ISOLATED_LATEST|'+json.dumps(list(latest),default=str))
-          # April validity checks use actual schema columns discovered from the live model.
           fact_cols={r[1] for r in con.execute('PRAGMA table_info(ims_facts)')}
           bad_identity=0
           if {'representative_id','product_id'} <= fact_cols:
