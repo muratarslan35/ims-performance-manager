@@ -2,6 +2,12 @@ name: IMS Production Maintenance
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/run_production_maintenance.sh"
+      - ".github/workflows/ims-production-maintenance.yml"
   schedule:
     - cron: "17 2 * * 0"
 

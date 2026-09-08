@@ -134,7 +134,10 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     assert '--additional-uploads 49' in runner
     assert '--optimize' in runner
     assert 'cleanup_old_backups.py' in runner
-    assert '--keep-latest 2' in runner
+    assert '--keep-latest 1' in runner
+    assert 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1' in runner
+    assert 'BACKUPS_BEFORE' in runner
+    assert 'STORAGE_BEFORE' in runner
     assert 'MAINTENANCE_SKIPPED|reason=active_import' in runner
     assert 'IMS_PROCESSING|' in runner
     assert 'SQLITE_JOURNAL_MODE|' in runner
