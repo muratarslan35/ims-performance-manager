@@ -14,6 +14,7 @@ import statistics
 import time
 from pathlib import Path
 
+from flask import current_app, has_request_context
 from sqlalchemy import event
 
 from app import create_app
@@ -95,6 +96,13 @@ def is_scoped_competition_select(statement):
 
 
 def _build_read_model(representative, year, month):
+    # The production gate is explicitly for the representative detail route.
+    # Execute the service chain under the same request-context shape used by the
+    # live route so snapshot-only background guards do not distort query counts.
+    if not has_request_context():
+        with current_app.test_request_context(f"/representatives/view/{representative.id}"):
+            return _build_read_model(representative, year, month)
+
     market = RepresentativeMarketService(representative, year, month).build()
     intelligence = CompetitiveIntelligenceService(representative.id, year, month).build()
     periods = ScopedAIInsightService.representative_periods(representative.id, year, month)
@@ -147,7 +155,7 @@ def warmup_runtime(representative, year, month):
     """Prime interpreter/SQLite host caches, then clear application result caches.
 
     The first full read-model build is reported separately and remains subject to
-    the cold-max and query-count safety gates.  It is intentionally excluded from
+    the cold-max and query-count safety gates. It is intentionally excluded from
     the post-warmup p95 sample so an eight-item sample does not turn p95 into the
     one-off process/host startup maximum.
     """
@@ -171,8 +179,6 @@ def warmup_runtime(representative, year, month):
         seconds = time.perf_counter() - started
     finally:
         event.remove(db.engine, "before_cursor_execute", capture)
-        # Preserve cold application-cache semantics for every measured sample;
-        # only interpreter, filesystem and SQLite page caches stay warm.
         RepresentativeAnalysisCache.clear()
 
     unscoped = [
@@ -214,9 +220,6 @@ def measure_representative(representative, year, month):
         cold_competition_statements = list(competition_statements)
         cold_competition_count = len(cold_competition_statements)
 
-        # Warm path keeps the same full service chain. Competition/read-model
-        # caches may hit, while the batch period service performs only a small,
-        # bounded set of source reads for correctness.
         select_statements.clear()
         competition_statements.clear()
         started = time.perf_counter()

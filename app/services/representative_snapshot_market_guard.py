@@ -4,11 +4,14 @@ The historical representative-market repair is request-scoped because it was
 originally introduced for the detail route. Persistent representative snapshots
 are built by the background worker without a Flask request, so legacy IMS unit
 fields can leak into that stored read model. This adapter is intentionally a
-read-only repair and activates only when the market payload actually disagrees
-with the canonical P2 > P1 > IMS result. Existing market semantics are otherwise
-left untouched.
+read-only repair and activates only for background/no-request builds when the
+market payload actually disagrees with the canonical P2 > P1 > IMS result.
+Interactive detail requests retain their existing canonical repair path and do
+not pay the snapshot-only query overhead.
 """
 from __future__ import annotations
+
+from flask import has_request_context
 
 from app.services.production_result_service import ProductionResultService
 from app.services.representative_market_service import RepresentativeMarketService
@@ -83,13 +86,20 @@ def _needs_canonical_repair(rows, effective_by_product):
 
 
 def install_representative_snapshot_market_guard() -> None:
-    """Repair only representative market payloads that contain canonical drift."""
+    """Repair only background representative payloads containing canonical drift."""
     if getattr(RepresentativeMarketService, "_snapshot_market_guard_installed", False):
         return
 
     original_build = RepresentativeMarketService.build
 
     def guarded_build(self):
+        # Interactive detail requests already have the historical request-scoped
+        # canonical repair.  Do not duplicate it here: the extra effective-result
+        # and previous-period reads were enough to violate the representative
+        # performance query-count gate even though response times stayed fast.
+        if has_request_context():
+            return original_build(self)
+
         payload = original_build(self)
         rows = payload.get("rows", [])
         if not rows:
