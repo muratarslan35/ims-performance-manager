@@ -1,91 +1,16 @@
-Finalize Or Restore Week16 Production
 name: Finalize Or Restore Week16 Production
 
 on:
-  push:
-    branches: [agent/shadow-production-copy-proof]
-    paths: [".github/workflows/finalize-week16-production.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  finalize:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: production
-    env:
-      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
-      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
-      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
-      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - name: Configure SSH
-        shell: bash
-        env:
-          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+      - name: Retired diagnostic workflow
         run: |
-          set -Eeuo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
-          chmod 600 ~/.ssh/ims_deploy_key
-          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Finalize valid week16 or restore week17
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=30 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
-          set -Eeuo pipefail
-          cd "$IMS_PATH"
-          sudo systemctl stop ims-import-worker.service || true
-          sudo systemctl stop ims-performance-manager.service || true
-          bundle=$(find instance/backups -mindepth 1 -maxdepth 1 -type d -name 'week17-to-week16-*' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)
-          test -n "$bundle" && test -s "$bundle/ipm-week17.db"
-
-          if venv/bin/python - <<'PY'
-          import sqlite3
-          c=sqlite3.connect('instance/ipm.db',timeout=30)
-          try:
-              c.execute('PRAGMA busy_timeout=30000')
-              mode=c.execute('PRAGMA journal_mode=WAL').fetchone()[0]
-              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              stale=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
-              region=c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
-              rep=c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
-              children=[]
-              for table,col in [('ims_facts','upload_id'),('ims_raw_data','upload_id'),('ims_competition_data','upload_id'),('ims_summary','upload_id'),('ims_import_jobs','ims_upload_id'),('import_audit_logs','upload_id'),('manual_match_queue','upload_id')]:
-                  children.append(c.execute(f'SELECT COUNT(*) FROM {table} WHERE {col}=32').fetchone()[0])
-          finally:c.close()
-          print(f'FINALIZE|CANDIDATE|latest={latest}|jobs={jobs}|stale={stale}|region={region}|rep={rep}|children={children}|journal={mode}')
-          valid=latest==(31,2026,4,16,'COMPLETED') and jobs==0 and stale==0 and not any(children) and region and region[0]==31 and region[1]==11 and region[2]=='ACTIVE' and rep and rep[0]==31 and rep[1]==113 and rep[2]=='ACTIVE' and str(mode).lower()=='wal'
-          if not valid: raise SystemExit(1)
-          print('FINALIZE|WEEK16_DB|PASS')
-          PY
-          then
-            echo 'FINALIZE|DECISION|KEEP_WEEK16'
-          else
-            echo 'FINALIZE|DECISION|RESTORE_WEEK17'
-            mode=$(stat -c '%a' instance/ipm.db)
-            owner=$(stat -c '%u:%g' instance/ipm.db)
-            cp "$bundle/ipm-week17.db" instance/ipm.db.restore
-            chmod "$mode" instance/ipm.db.restore
-            sudo chown "$owner" instance/ipm.db.restore
-            mv -f instance/ipm.db.restore instance/ipm.db
-            cp "$bundle/upload-32.xlsx" uploads/ims_archive/upload-32.xlsx
-            cp "$bundle/upload-32.json" uploads/ims_archive/snapshots/upload-32.json
-            echo 'FINALIZE|WEEK17_RESTORED|PASS'
-          fi
-
-          sudo systemctl start ims-performance-manager.service
-          health=0
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then health=1; break; fi
-            sleep 1
-          done
-          test "$health" = 1
-          sudo systemctl start ims-import-worker.service
-          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
-          test "$(sudo systemctl is-active ims-import-worker.service)" = active
-          echo 'FINALIZE|SERVICES|PASS'
-          REMOTE
+          echo 'This diagnostic finalizer is intentionally disabled after the successful zero-copy Week16 cutover.'
+          echo 'Do not use it for production changes; use the current fail-closed rollback/cutover workflow instead.'
