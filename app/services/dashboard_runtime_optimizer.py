@@ -19,6 +19,7 @@ def install_dashboard_runtime_optimizer() -> None:
     from app.query.dashboard_query import DashboardQuery
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
+    from app.services.representative_snapshot_market_guard import install_representative_snapshot_market_guard
     from app.services.week8_read_path_repair import install_week8_read_path_repair
 
     if not getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
@@ -73,3 +74,7 @@ def install_dashboard_runtime_optimizer() -> None:
     # must use the price frozen for the requested IMS month rather than today's
     # mutable product master price.
     install_period_price_read_guard()
+    # Persistent representative snapshots are built without a request context;
+    # enforce the exact same canonical company/rival/previous-month identities
+    # there as on the interactive representative detail route.
+    install_representative_snapshot_market_guard()
