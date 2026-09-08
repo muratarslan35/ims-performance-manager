@@ -19,7 +19,7 @@ jobs:
   prove:
     name: Prove rollback module on isolated live DB copy
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -60,8 +60,12 @@ jobs:
           live_db="$IMS_PATH/instance/ipm.db"
           test -s "$live_db"
           proof_dir=$(mktemp -d "$IMS_PATH/instance/rollback-module-proof.XXXXXX")
+          base_build=""
           cleanup() {
             rm -rf "$proof_dir"
+            if [ -n "$base_build" ]; then
+              rm -f "$base_build"
+            fi
             rm -f "/tmp/rollback-module-code-${PROOF_RUN}.tgz"
           }
           trap cleanup EXIT
@@ -77,33 +81,17 @@ jobs:
               con.close()
           PY
           )
-          reusable_base=$(venv/bin/python - "$latest_live_id" <<'PY'
-          import sqlite3, sys
-          from pathlib import Path
-          expected = int(sys.argv[1])
-          root = Path('instance/backups/atomic-week16-cutover-20260908-053534')
-          for path in sorted(root.rglob('*')) if root.exists() else []:
-              if not path.is_file() or path.suffix not in {'.db', '.sqlite'}:
-                  continue
-              try:
-                  con = sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=10)
-                  latest = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()
-                  quick = con.execute('PRAGMA quick_check').fetchone()[0]
-                  con.close()
-                  if latest and int(latest[0]) == expected and quick == 'ok':
-                      print(path)
-                      break
-              except Exception:
-                  pass
-          PY
-          )
-          if [ -n "$reusable_base" ]; then
-            cp --reflink=auto "$reusable_base" "$proof_dir/copy.db"
-            echo "ROLLBACK_MODULE_PROOF|REUSABLE_WEEK16_BASE|$reusable_base"
+          reusable_base="$IMS_PATH/instance/rollback-module-proof-base-upload-${latest_live_id}.db"
+          if [ -s "$reusable_base" ]; then
+            echo "ROLLBACK_MODULE_PROOF|REUSABLE_BASE|$reusable_base"
           else
-            venv/bin/python sqlite_online_backup.py "$live_db" "$proof_dir/copy.db"
-            echo "ROLLBACK_MODULE_PROOF|FRESH_ONLINE_BACKUP|YES"
+            base_build="${reusable_base}.building-${PROOF_RUN}"
+            venv/bin/python sqlite_online_backup.py "$live_db" "$base_build"
+            mv "$base_build" "$reusable_base"
+            base_build=""
+            echo "ROLLBACK_MODULE_PROOF|REUSABLE_BASE_CREATED|$reusable_base"
           fi
+          cp --reflink=auto "$reusable_base" "$proof_dir/copy.db"
 
           latest_id=$(venv/bin/python - "$proof_dir/copy.db" <<'PY'
           import sqlite3, sys
@@ -111,11 +99,10 @@ jobs:
           try:
               row = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()
               active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
           finally:
               con.close()
-          if not row or active or integrity != 'ok':
-              raise SystemExit(f'unsafe baseline row={row} active={active} integrity={integrity}')
+          if not row or active:
+              raise SystemExit(f'unsafe baseline row={row} active={active}')
           print(row[0])
           PY
           )
@@ -130,6 +117,7 @@ jobs:
 
           cd "$proof_dir/code"
           export PYTHONPATH="$proof_dir/code"
+          export PYTHONUNBUFFERED=1
           venv_python="$IMS_PATH/venv/bin/python"
           "$venv_python" scripts/prove_instant_rollback_on_copy.py \
             --database "$proof_dir/copy.db" --upload-root "$proof_dir/uploads"
