@@ -1,11 +1,12 @@
-"""Keep representative market snapshots on the canonical box/market contract.
+"""Keep representative snapshots on the canonical box/market contract.
 
 The historical representative-market repair is request-scoped because it was
 originally introduced for the detail route. Persistent representative snapshots
-are built by the background worker without a Flask request, so that guard used
-to be skipped during snapshot generation. This adapter is intentionally a
-read-model normalization layer only: it does not mutate IMS, targets, production
-results, assignments, or competition data.
+are built by the background worker without a Flask request, so legacy IMS unit
+fields can leak into that stored read model. This adapter is intentionally a
+read-only repair and activates only when the market payload actually disagrees
+with the canonical P2 > P1 > IMS result. Existing market semantics are otherwise
+left untouched.
 """
 from __future__ import annotations
 
@@ -36,9 +37,6 @@ def _canonical_competitor(row, actual_unit):
     if market_unit >= float(actual_unit):
         return max(market_unit - float(actual_unit), 0.0)
 
-    # A malformed legacy own-unit can make the original market smaller than the
-    # canonical own-unit. Preserve an explicit competitor value when available
-    # rather than manufacturing a negative market.
     return max(float(row.get("competitor_unit") or 0.0), 0.0)
 
 
@@ -62,8 +60,30 @@ def _has_previous(row, effective):
     )
 
 
+def _needs_canonical_repair(rows, effective_by_product):
+    """Detect the exact stale-snapshot defect without rewriting healthy reads."""
+    for row in rows:
+        product_id = _product_id(row)
+        if product_id is None:
+            continue
+        effective = effective_by_product.get(product_id)
+        if not effective or not bool(effective.get("complete")):
+            continue
+        canonical_actual = effective.get("actual_unit")
+        if canonical_actual is not None and abs(
+            float(row.get("actual_unit") or 0.0) - float(canonical_actual or 0.0)
+        ) >= 0.5:
+            return True
+        canonical_target = effective.get("target_unit")
+        if canonical_target is not None and abs(
+            float(row.get("target_unit") or 0.0) - float(canonical_target or 0.0)
+        ) >= 0.5:
+            return True
+    return False
+
+
 def install_representative_snapshot_market_guard() -> None:
-    """Normalize every representative market payload, including worker builds."""
+    """Repair only representative market payloads that contain canonical drift."""
     if getattr(RepresentativeMarketService, "_snapshot_market_guard_installed", False):
         return
 
@@ -78,6 +98,8 @@ def install_representative_snapshot_market_guard() -> None:
         current_effective = ProductionResultService.effective_products(
             self.year, self.month, self.representative.id
         )
+        if not _needs_canonical_repair(rows, current_effective):
+            return payload
 
         previous_year = self.year if self.month > 1 else self.year - 1
         previous_month = self.month - 1 if self.month > 1 else 12
@@ -85,10 +107,8 @@ def install_representative_snapshot_market_guard() -> None:
             previous_year, previous_month, self.representative.id
         )
 
-        # Call the captured pre-guard implementation directly. It resolves the
-        # previous month's own assignments/source without recursively entering
-        # this wrapper. In a background snapshot there is no request context,
-        # which is exactly the historical regression this guard repairs.
+        # Resolve the previous month through the captured pre-guard builder so
+        # its own period/brick scope is used without recursively entering here.
         previous_service = RepresentativeMarketService(
             self.representative, previous_year, previous_month
         )
