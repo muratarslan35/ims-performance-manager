@@ -19,6 +19,7 @@ def install_dashboard_runtime_optimizer() -> None:
     from app.query.dashboard_query import DashboardQuery
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
+    from app.services.representative_snapshot_market_guard import install_representative_snapshot_market_guard
     from app.services.week8_read_path_repair import install_week8_read_path_repair
 
     if not getattr(DashboardQuery, "_bounded_competition_lookup_installed", False):
@@ -68,6 +69,12 @@ def install_dashboard_runtime_optimizer() -> None:
     # Partial weekly TL-only IMS imports must derive boxes from the price frozen
     # for that business month, even when the master price is edited mid-month.
     install_partial_ims_period_price_guard()
+    # The snapshot guard must wrap the base representative market builder before
+    # the historical request-only Week-8 repair wraps it. That ordering makes
+    # background snapshot generation and interactive detail requests consume the
+    # same canonical company/rival/previous-month payload without losing the
+    # workbook market denominator.
+    install_representative_snapshot_market_guard()
     install_week8_read_path_repair()
     # Week-8 keeps its source-selection behavior, but the final TL->box repair
     # must use the price frozen for the requested IMS month rather than today's
