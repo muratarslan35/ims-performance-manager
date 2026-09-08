@@ -1,0 +1,53 @@
+name: Peek Week16 Reconciliation
+
+on:
+  push:
+    branches: [agent/shadow-production-copy-proof]
+    paths: [".github/workflows/peek-week16-reconciliation.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Peek reconciliation progress
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          cd "$IMS_PATH"
+          echo 'W16_PEEK|PROCESSES'
+          ps -eo pid,etime,pcpu,pmem,args | grep -E 'verify_ims_acceptance|ims-acceptance-week16|w16-archive-recon' | grep -v grep || true
+          echo 'W16_PEEK|WORKDIRS'
+          find instance -maxdepth 1 -type d -name 'w16-archive-recon-*' -printf '%p\n' 2>/dev/null | sort || true
+          for d in instance/w16-archive-recon-*; do
+            [ -d "$d" ] || continue
+            echo "W16_PEEK|DIR|$d"
+            du -sh "$d" 2>/dev/null || true
+            ls -lh "$d" 2>/dev/null || true
+            if [ -f "$d/acceptance.log" ]; then
+              echo "W16_PEEK|ACCEPTANCE_TAIL|$d"
+              tail -n 40 "$d/acceptance.log" || true
+            fi
+          done
+          echo 'W16_PEEK|DISK'
+          df -h "$IMS_PATH/instance" || true
+          REMOTE
