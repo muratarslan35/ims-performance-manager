@@ -17,6 +17,14 @@ from app.models import (
     Target,
 )
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+from app.services.persistent_region_snapshot_service import (
+    region_snapshot_sets,
+    region_snapshots,
+)
+from app.services.persistent_representative_snapshot_service import (
+    representative_snapshot_sets,
+    representative_snapshots,
+)
 
 
 class LifecycleConfig:
@@ -266,6 +274,85 @@ def test_historical_upload_can_be_deleted_without_touching_current_period_state(
         assert IMSSummary.query.filter_by(year=2033, month=2).one().unit == 850.0
         assert db.session.get(IMSUpload, current.id) is not None
     finally:
+        db.session.remove()
+        db.drop_all()
+        ctx.pop()
+
+
+def test_instant_rollback_switches_to_previous_generation_without_deleting_bad_upload():
+    app, ctx = _context()
+    previous_id = current_id = 0
+    try:
+        rep, product, previous, target, summary = _seed_period()
+        previous_id = int(previous.id)
+        job = IMSImportJob(
+            status=IMSImportJob.STATUS_PROCESSING,
+            file_name="8.Hafta.xlsx",
+            stored_file_name="instant-rollback.xlsx",
+            source_hash="9" * 64,
+            year=2033,
+            month=2,
+            clear_before_import=True,
+            uploaded_by="Manager",
+        )
+        db.session.add(job)
+        db.session.flush()
+        IMSUploadLifecycleService.capture_period_snapshot(job_id=job.id, year=2033, month=2)
+
+        current = IMSUpload(
+            file_name="8.Hafta.xlsx", year=2033, month=2, quarter="Q1", week_number=8,
+            status=IMSUpload.STATUS_COMPLETED, reconciliation_status="PASSED",
+        )
+        db.session.add(current)
+        db.session.flush()
+        current_id = int(current.id)
+        target.unit_realization = 850.0
+        summary.upload_id = current_id
+        summary.unit = 850.0
+        job.status = IMSImportJob.STATUS_COMPLETED
+        job.ims_upload_id = current_id
+        db.session.commit()
+        IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=current_id)
+        IMSUploadLifecycleService.archived_source_path(previous_id).write_bytes(b"previous-workbook")
+
+        region_result = db.session.execute(region_snapshot_sets.insert().values(
+            year=2033, month=2, source_upload_id=previous_id, production_upload_id=0,
+            status="SUPERSEDED", region_count=1,
+        ))
+        region_set_id = int(region_result.inserted_primary_key[0])
+        db.session.execute(region_snapshots.insert().values(
+            set_id=region_set_id, region_key="901", payload_json="{}",
+        ))
+        rep_result = db.session.execute(representative_snapshot_sets.insert().values(
+            year=2033, month=2, source_upload_id=previous_id, production_upload_id=0,
+            status="SUPERSEDED", representative_count=1,
+        ))
+        rep_set_id = int(rep_result.inserted_primary_key[0])
+        db.session.execute(representative_snapshots.insert().values(
+            set_id=rep_set_id, representative_id=rep.id, payload_json="{}",
+        ))
+        db.session.commit()
+
+        result = IMSUploadLifecycleService.rollback_to_previous(current_id)
+
+        assert result["active_upload_id"] == previous_id
+        assert db.session.get(IMSUpload, current_id).status == IMSUpload.STATUS_ROLLED_BACK
+        assert db.session.get(IMSUpload, previous_id).status == IMSUpload.STATUS_COMPLETED
+        assert IMSSummary.query.filter_by(year=2033, month=2).one().upload_id == previous_id
+        assert IMSSummary.query.filter_by(year=2033, month=2).one().unit == 700.0
+        assert Target.query.filter_by(year=2033, month=2).one().unit_realization == 700.0
+        assert IMSImportJob.query.filter_by(ims_upload_id=current_id).count() == 1
+        assert db.session.execute(
+            region_snapshot_sets.select().where(region_snapshot_sets.c.id == region_set_id)
+        ).mappings().one()["status"] == "ACTIVE"
+        assert db.session.execute(
+            representative_snapshot_sets.select().where(representative_snapshot_sets.c.id == rep_set_id)
+        ).mappings().one()["status"] == "ACTIVE"
+    finally:
+        if previous_id:
+            IMSUploadLifecycleService.archived_source_path(previous_id).unlink(missing_ok=True)
+        if current_id:
+            IMSUploadLifecycleService.upload_snapshot_path(current_id).unlink(missing_ok=True)
         db.session.remove()
         db.drop_all()
         ctx.pop()

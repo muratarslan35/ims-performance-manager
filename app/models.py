@@ -213,6 +213,9 @@ class Target(db.Model):
 class IMSUpload(db.Model):
     __tablename__ = "ims_uploads"
 
+    STATUS_COMPLETED = "COMPLETED"
+    STATUS_ROLLED_BACK = "ROLLED_BACK"
+
     id = db.Column(db.Integer, primary_key=True)
     file_name = db.Column(db.String(255), nullable=False)
     year = db.Column(db.Integer, nullable=False)

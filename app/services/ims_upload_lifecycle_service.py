@@ -23,10 +23,12 @@ from pathlib import Path
 from typing import Iterable
 
 from flask import current_app
-from sqlalchemy import DateTime
+import sqlalchemy as sa
+from sqlalchemy import DateTime, desc
 
 from app.extensions import db
 from app.models import (
+    AuditLog,
     IMSImportJob,
     IMSSummary,
     IMSUpload,
@@ -39,6 +41,7 @@ from app.models import (
 class IMSUploadLifecycleService:
     HIDDEN_KEY_PREFIX = "IMS_UPLOAD_HIDDEN_"
     SNAPSHOT_VERSION = 2
+    READABLE_UPLOAD_STATUSES = (IMSUpload.STATUS_COMPLETED, IMSUpload.STATUS_ROLLED_BACK)
 
     @classmethod
     def _archive_root(cls) -> Path:
@@ -168,6 +171,13 @@ class IMSUploadLifecycleService:
             "version": cls.SNAPSHOT_VERSION,
             "year": int(year),
             "month": int(month),
+            "source_upload_id": db.session.query(IMSUpload.id).filter(
+                IMSUpload.year == int(year),
+                IMSUpload.month == int(month),
+                IMSUpload.status == IMSUpload.STATUS_COMPLETED,
+            ).order_by(
+                desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)
+            ).limit(1).scalar(),
             "targets": cls._serialize_rows(
                 Target.query.filter_by(year=int(year), month=int(month)).all()
             ),
@@ -209,7 +219,7 @@ class IMSUploadLifecycleService:
             .filter(
                 IMSImportJob.source_hash == str(source_hash),
                 IMSImportJob.status == IMSImportJob.STATUS_COMPLETED,
-                IMSUpload.status == "COMPLETED",
+                IMSUpload.status.in_(cls.READABLE_UPLOAD_STATUSES),
             )
             .order_by(IMSImportJob.completed_at.desc(), IMSImportJob.id.desc())
             .first()
@@ -226,7 +236,7 @@ class IMSUploadLifecycleService:
                 IMSImportJob.year == int(year),
                 IMSImportJob.month == int(month),
                 IMSImportJob.status == IMSImportJob.STATUS_COMPLETED,
-                IMSUpload.status == "COMPLETED",
+                IMSUpload.status.in_(cls.READABLE_UPLOAD_STATUSES),
                 IMSUpload.week_number == int(week_number),
             )
             .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc())
@@ -272,6 +282,174 @@ class IMSUploadLifecycleService:
             .order_by(IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc())
             .first()
         )
+
+    @classmethod
+    def _previous_completed_for_period(cls, upload: IMSUpload) -> IMSUpload | None:
+        return (
+            IMSUpload.query
+            .filter(
+                IMSUpload.year == upload.year,
+                IMSUpload.month == upload.month,
+                IMSUpload.status == IMSUpload.STATUS_COMPLETED,
+                IMSUpload.id != upload.id,
+            )
+            .order_by(IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc())
+            .first()
+        )
+
+    @classmethod
+    def _validated_snapshot_payload(cls, upload: IMSUpload, expected_source_id: int) -> dict:
+        path = cls.upload_snapshot_path(upload.id)
+        if not path.is_file():
+            raise RuntimeError("Önceki temiz IMS'e dönüş snapshot'ı bulunamadı.")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError("Geri dönüş snapshot'ı okunamıyor.") from exc
+        if int(payload.get("version", 0)) != cls.SNAPSHOT_VERSION:
+            raise RuntimeError("Geri dönüş snapshot sürümü desteklenmiyor.")
+        if (int(payload.get("year", 0)), int(payload.get("month", 0))) != (
+            int(upload.year), int(upload.month)
+        ):
+            raise RuntimeError("Geri dönüş snapshot dönemi aktif IMS ile eşleşmiyor.")
+        declared_source = payload.get("source_upload_id")
+        if declared_source is not None and int(declared_source) != int(expected_source_id):
+            raise RuntimeError("Geri dönüş snapshot kaynak IMS kimliği eşleşmiyor.")
+        summaries = payload.get("summaries") or []
+        summary_sources = {
+            int(row["upload_id"]) for row in summaries if row.get("upload_id") is not None
+        }
+        if not summaries or summary_sources != {int(expected_source_id)}:
+            raise RuntimeError("Geri dönüş snapshot özet kaynağı önceki IMS ile eşleşmiyor.")
+        if not payload.get("targets") or not payload.get("brick_assignments"):
+            raise RuntimeError("Geri dönüş snapshot'ında dönem verileri eksik.")
+        return payload
+
+    @classmethod
+    def _snapshot_set_for_source(cls, table, member_table, count_column, *, upload, source_id):
+        from app.services.ims_rollback_guard import IMSRollbackGuard
+        production_id = IMSRollbackGuard.final_applied_id(upload.year, upload.month)
+        row = db.session.execute(
+            sa.select(table.c.id, count_column).where(
+                table.c.year == int(upload.year),
+                table.c.month == int(upload.month),
+                table.c.source_upload_id == int(source_id),
+                table.c.production_upload_id == int(production_id),
+                table.c.status.in_(("ACTIVE", "SUPERSEDED")),
+            ).order_by(desc(table.c.activated_at), desc(table.c.id)).limit(1)
+        ).first()
+        if row is None or int(row[1] or 0) <= 0:
+            raise RuntimeError("Önceki IMS için hazır ekran snapshot seti bulunamadı.")
+        member_count = db.session.execute(
+            sa.select(sa.func.count()).select_from(member_table).where(member_table.c.set_id == int(row[0]))
+        ).scalar_one()
+        if int(member_count) != int(row[1]):
+            raise RuntimeError("Önceki IMS ekran snapshot seti eksik veya tutarsız.")
+        return int(row[0])
+
+    @classmethod
+    def _rollback_preflight(cls, upload_id: int):
+        active_job = IMSImportJob.query.filter(
+            IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
+        ).first()
+        if active_job is not None:
+            raise RuntimeError("Aktif IMS importu varken geri dönüş yapılamaz.")
+        upload = db.session.get(IMSUpload, int(upload_id))
+        if upload is None:
+            raise LookupError("IMS yüklemesi bulunamadı.")
+        latest = cls._latest_completed_for_period(upload)
+        if upload.status != IMSUpload.STATUS_COMPLETED or latest is None or latest.id != upload.id:
+            raise RuntimeError("Yalnız aktif dönemin son IMS yüklemesi geri alınabilir.")
+        global_latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
+            IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
+            IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
+        ).first()
+        if global_latest is None or global_latest.id != upload.id:
+            raise RuntimeError("Geçmiş dönem IMS'i değiştirilemez; yalnız sistemde aktif son IMS geri alınabilir.")
+        from app.services.ims_rollback_guard import IMSRollbackGuard
+        IMSRollbackGuard.assert_period_open(upload.year, upload.month)
+        previous = cls._previous_completed_for_period(upload)
+        if previous is None:
+            raise RuntimeError("Aynı dönemde geri dönülebilecek önceki temiz IMS yok.")
+        if cls.archived_source_for_upload(previous.id) is None:
+            raise RuntimeError("Önceki IMS'in arşiv kaynak dosyası bulunamadı.")
+        payload = cls._validated_snapshot_payload(upload, previous.id)
+
+        from app.services.persistent_region_snapshot_service import (
+            region_snapshot_sets, region_snapshots,
+        )
+        from app.services.persistent_representative_snapshot_service import (
+            representative_snapshot_sets, representative_snapshots,
+        )
+        region_set_id = cls._snapshot_set_for_source(
+            region_snapshot_sets, region_snapshots, region_snapshot_sets.c.region_count,
+            upload=upload, source_id=previous.id,
+        )
+        representative_set_id = cls._snapshot_set_for_source(
+            representative_snapshot_sets, representative_snapshots,
+            representative_snapshot_sets.c.representative_count,
+            upload=upload, source_id=previous.id,
+        )
+        return upload, previous, payload, region_set_id, representative_set_id
+
+    @classmethod
+    def can_rollback(cls, upload: IMSUpload) -> tuple[bool, str]:
+        try:
+            cls._rollback_preflight(upload.id)
+        except (LookupError, RuntimeError) as exc:
+            db.session.rollback()
+            return False, str(exc)
+        return True, ""
+
+    @classmethod
+    def rollback_to_previous(cls, upload_id: int, *, actor: str | None = None) -> dict:
+        upload, previous, payload, region_set_id, representative_set_id = cls._rollback_preflight(upload_id)
+        from app.services.persistent_region_snapshot_service import region_snapshot_sets
+        from app.services.persistent_representative_snapshot_service import representative_snapshot_sets
+
+        year, month = int(upload.year), int(upload.month)
+        try:
+            cls._restore_period_snapshot(upload)
+            upload.status = IMSUpload.STATUS_ROLLED_BACK
+            now = datetime.utcnow()
+            for table, target_set_id in (
+                (region_snapshot_sets, region_set_id),
+                (representative_snapshot_sets, representative_set_id),
+            ):
+                db.session.execute(
+                    table.update().where(
+                        table.c.year == year,
+                        table.c.month == month,
+                        table.c.status == "ACTIVE",
+                        table.c.id != target_set_id,
+                    ).values(status="SUPERSEDED")
+                )
+                db.session.execute(
+                    table.update().where(table.c.id == target_set_id).values(
+                        status="ACTIVE", activated_at=now
+                    )
+                )
+            db.session.add(AuditLog(
+                username=(str(actor).strip() if actor else None),
+                module="IMS",
+                action=(
+                    f"IMS_ROLLBACK from_upload={int(upload.id)} to_upload={int(previous.id)} "
+                    f"period={year:04d}-{month:02d} region_set={region_set_id} "
+                    f"representative_set={representative_set_id}"
+                ),
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        return {
+            "rolled_back_upload_id": int(upload.id),
+            "active_upload_id": int(previous.id),
+            "year": year,
+            "month": month,
+            "region_snapshot_set_id": region_set_id,
+            "representative_snapshot_set_id": representative_set_id,
+        }
 
     @classmethod
     def can_delete(cls, upload: IMSUpload) -> tuple[bool, str]:

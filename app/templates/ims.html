@@ -330,7 +330,7 @@
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Yükleyen</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Durum</th>
           <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Tarih</th>
-          <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">Detay</th>
+          <th style="font-size:11px;font-weight:700;text-transform:uppercase;color:#5f7188;padding:12px 16px;border-bottom:1px solid rgba(11,78,162,.12);">İşlem</th>
         </tr>
       </thead>
       <tbody id="imsHistoryBody">
@@ -362,13 +362,28 @@
             <span class="badge bg-warning text-dark" style="font-size:11px;">İşleniyor</span>
             {% elif item.status in ("Hata", "FAILED") %}
             <span class="badge bg-danger" style="font-size:11px;">Başarısız</span>
+            {% elif item.status == "ROLLED_BACK" %}
+            <span class="badge bg-secondary" style="font-size:11px;">Geri alındı</span>
             {% else %}
             <span class="badge bg-danger" style="font-size:11px;">{{ item.status }}</span>
             {% endif %}
           </td>
           <td style="padding:12px 16px;font-size:12px;color:#7a8fa6;">{{ item.uploaded_at | istanbul_datetime }}</td>
           <td style="padding:12px 16px;">
-            <button class="btn btn-sm btn-outline-primary py-1 px-2 ims-detail-btn" type="button" style="font-size:11px;" data-row="{{ loop.index0 }}"><i class="bi bi-eye me-1"></i>Detay</button>
+            <div class="d-flex flex-wrap gap-1">
+              <button class="btn btn-sm btn-outline-primary py-1 px-2 ims-detail-btn" type="button" style="font-size:11px;" data-row="{{ loop.index0 }}"><i class="bi bi-eye me-1"></i>Detay</button>
+              {% set rollback_permission = rollback_permissions.get(item.id) %}
+              {% if rollback_permission and rollback_permission[0] %}
+              <form method="post" action="{{ url_for('ims.rollback_upload', upload_id=item.id) }}" onsubmit="return confirm('Son IMS geri alınacak ve sistem bir önceki doğrulanmış IMS verisine dönecek. Devam edilsin mi?');">
+                <button class="btn btn-sm btn-outline-warning py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
+              </form>
+              {% endif %}
+              {% if item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
+              <form method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}" onsubmit="return confirm('Geri alınmış hatalı IMS ve ona bağlı kayıtlar kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam edilsin mi?');">
+                <button class="btn btn-sm btn-outline-danger py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
+              </form>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% else %}
