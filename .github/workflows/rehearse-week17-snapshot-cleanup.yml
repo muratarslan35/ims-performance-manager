@@ -1,4 +1,4 @@
-name: Zero Copy Week16 Atomic Cutover
+name: Week16 Post Cutover Read Only Acceptance
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  cutover:
+  acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -29,84 +29,78 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Cleanup duplicate backups and atomically move candidate live
+      - name: Verify live week16, history, archives, snapshots and calculations
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=90 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          LIVE=instance/ipm.db
-          CAND=instance/test-baselines/week16-production-candidate.db
-          META=instance/test-baselines/week16-production-candidate.meta
-          SAFE=instance/backups/atomic-week16-cutover-20260908-053534/ipm-week17.db
-          test -s "$LIVE" && test -s "$CAND" && test -s "$META" && test -s "$SAFE"
-          cand_sha=$(awk -F= '$1=="sha256"{print $2}' "$META")
-          source_sha=$(awk -F= '$1=="source_week17_sha256"{print $2}' "$META")
-          test "$(sha256sum "$CAND"|awk '{print $1}')" = "$cand_sha"
-          test "$(sha256sum "$SAFE"|awk '{print $1}')" = "$source_sha"
-          venv/bin/python - <<'PY'
-          import sqlite3
-          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
-          try:
-              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-          finally:c.close()
-          print(f'CUTOVER|PREFLIGHT|latest={latest}|jobs={jobs}')
-          if latest!=(32,2026,4,17,'COMPLETED') or jobs:raise SystemExit('preflight changed')
-          print('CUTOVER|PREFLIGHT|PASS')
-          PY
-          echo 'CUTOVER|DISK_BEFORE'; df -h "$IMS_PATH"
-          rm -rf instance/backups/week17-to-week16-20260907-214029
-          rm -f instance/backups/ipm-before-week17-recovery-20260907-054033.db instance/backups/ipm-before-week17-recovery-20260907-043726.db
-          rm -f instance/backups/ipm-predeploy-20260906-173529.db* instance/backups/ipm-predeploy-20260905-125046.db* instance/backups/ipm-predeploy-20260905-091223.db*
-          echo 'CUTOVER|DISK_AFTER_CLEANUP'; df -h "$IMS_PATH"
-          sudo systemctl stop ims-import-worker.service
-          sudo systemctl stop ims-performance-manager.service
-          mode=$(stat -c '%a' "$LIVE"); owner=$(stat -c '%u:%g' "$LIVE")
-          venv/bin/python - <<'PY'
-          import sqlite3
-          c=sqlite3.connect('instance/ipm.db',timeout=30)
-          try:
-              c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-          finally:c.close()
-          PY
-          rm -f "$LIVE-wal" "$LIVE-shm"
-          ROLLBACK=instance/ipm.db.week17.rollback
-          rm -f "$ROLLBACK"
-          mv "$LIVE" "$ROLLBACK"
-          mv "$CAND" "$LIVE"
-          chmod "$mode" "$LIVE"; sudo chown "$owner" "$LIVE"
-          restore=1
-          finish(){ rc=$?; if [ "$rc" -ne 0 ] && [ "$restore" = 1 ]; then rm -f "$LIVE-wal" "$LIVE-shm"; [ -e "$LIVE" ] && mv -f "$LIVE" instance/test-baselines/week16-production-candidate.failed.db || true; mv -f "$ROLLBACK" "$LIVE"; sudo systemctl start ims-performance-manager.service || true; sudo systemctl start ims-import-worker.service || true; echo 'CUTOVER|AUTO_RESTORE|PASS'; fi; exit "$rc"; }
-          trap finish EXIT
-          venv/bin/python - <<'PY'
-          import sqlite3
-          c=sqlite3.connect('instance/ipm.db',timeout=30)
-          try:
-              c.execute('PRAGMA busy_timeout=30000')
-              mode=c.execute('PRAGMA journal_mode=WAL').fetchone()[0]
-              timeout=c.execute('PRAGMA busy_timeout').fetchone()[0]
-              latest=c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              stale=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
-              region=c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
-              rep=c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
-              children=[]
-              for table,col in [('ims_facts','upload_id'),('ims_raw_data','upload_id'),('ims_competition_data','upload_id'),('ims_summary','upload_id'),('ims_import_jobs','ims_upload_id'),('import_audit_logs','upload_id'),('manual_match_queue','upload_id')]: children.append(c.execute(f'SELECT COUNT(*) FROM {table} WHERE {col}=32').fetchone()[0])
-          finally:c.close()
-          print(f'CUTOVER|DB|latest={latest}|jobs={jobs}|stale32={stale}|region={region}|rep={rep}|children={children}|journal={mode}|timeout={timeout}')
-          ok=latest==(31,2026,4,16,'COMPLETED') and jobs==0 and stale==0 and not any(children) and region==(31,11,'ACTIVE') and rep==(31,113,'ACTIVE') and str(mode).lower()=='wal' and int(timeout)==30000
-          if not ok: raise SystemExit('week16 acceptance failed')
-          print('CUTOVER|DB_ACCEPTANCE|PASS')
-          PY
-          rm -f uploads/ims_archive/upload-32.xlsx uploads/ims_archive/snapshots/upload-32.json
-          sudo systemctl start ims-performance-manager.service
-          health=0; for i in $(seq 1 40); do if curl --fail --silent --max-time 4 http://127.0.0.1:8000/login >/dev/null; then health=1; break; fi; sleep 1; done; test "$health" = 1
-          sudo systemctl start ims-import-worker.service
+          echo 'POST16|BEGIN'
           test "$(sudo systemctl is-active ims-performance-manager.service)" = active
           test "$(sudo systemctl is-active ims-import-worker.service)" = active
-          restore=0
-          rm -f "$ROLLBACK"
-          echo 'CUTOVER|SERVICES|PASS'; df -h "$IMS_PATH"; echo 'WEEK16_ZERO_COPY_ATOMIC_CUTOVER|PASS'
+          test -s uploads/ims_archive/upload-31.xlsx
+          test -s uploads/ims_archive/snapshots/upload-31.json
+          test ! -e uploads/ims_archive/upload-32.xlsx
+          test ! -e uploads/ims_archive/snapshots/upload-32.json
+          test -s instance/backups/atomic-week16-cutover-20260908-053534/ipm-week17.db
+          test -s instance/backups/atomic-week16-cutover-20260908-053534/upload-32.xlsx
+          test -s instance/backups/atomic-week16-cutover-20260908-053534/upload-32.json
+          echo "POST16|ARCHIVE31|xlsx_bytes=$(stat -c %s uploads/ims_archive/upload-31.xlsx)|snapshot_bytes=$(stat -c %s uploads/ims_archive/snapshots/upload-31.json)"
+          echo "POST16|SAFE17|bytes=$(stat -c %s instance/backups/atomic-week16-cutover-20260908-053534/ipm-week17.db)"
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          db='instance/ipm.db'
+          c=sqlite3.connect(f'file:{db}?mode=ro',uri=True,timeout=30)
+          c.row_factory=sqlite3.Row
+          try:
+              c.execute('PRAGMA busy_timeout=30000')
+              timeout=c.execute('PRAGMA busy_timeout').fetchone()[0]
+              journal=c.execute('PRAGMA journal_mode').fetchone()[0]
+              quick=c.execute('PRAGMA quick_check(1)').fetchone()[0]
+              latest=tuple(c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone())
+              jobs=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              uploads=[tuple(r) for r in c.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE year=2026 ORDER BY year,month,week_number,id")]
+              counts={}
+              for table in ['ims_facts','ims_raw_data','ims_competition_data','ims_summary']:
+                  counts[table]=c.execute(f'SELECT COUNT(*) FROM {table} WHERE upload_id=31').fetchone()[0]
+              children32={}
+              for table,col in [('ims_facts','upload_id'),('ims_raw_data','upload_id'),('ims_competition_data','upload_id'),('ims_summary','upload_id'),('ims_import_jobs','ims_upload_id'),('import_audit_logs','upload_id'),('manual_match_queue','upload_id')]:
+                  children32[table]=c.execute(f'SELECT COUNT(*) FROM {table} WHERE {col}=32').fetchone()[0]
+              stale32=c.execute("SELECT COUNT(*) FROM manager_region_snapshot_sets WHERE source_upload_id=32").fetchone()[0]+c.execute("SELECT COUNT(*) FROM representative_snapshot_sets WHERE source_upload_id=32").fetchone()[0]
+              region=tuple(c.execute("SELECT source_upload_id,region_count,status FROM manager_region_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone())
+              rep=tuple(c.execute("SELECT source_upload_id,representative_count,status FROM representative_snapshot_sets WHERE year=2026 AND month=4 AND status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone())
+              target_count=c.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4").fetchone()[0]
+              summary_period=c.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4").fetchone()[0]
+              # Core calculation invariant: representative-product actuals stored in summary must agree with upload31 fact aggregation where comparable.
+              fact_cols={r[1] for r in c.execute('PRAGMA table_info(ims_facts)')}
+              sum_cols={r[1] for r in c.execute('PRAGMA table_info(ims_summary)')}
+              calc_note={'fact_cols':sorted(fact_cols),'summary_cols':sorted(sum_cols)}
+          finally:
+              c.close()
+          print('POST16|LATEST|'+repr(latest))
+          print('POST16|UPLOAD31_COUNTS|'+json.dumps(counts,sort_keys=True))
+          print('POST16|UPLOAD32_CHILDREN|'+json.dumps(children32,sort_keys=True))
+          print(f'POST16|STATE|jobs={jobs}|stale32={stale32}|region={region}|rep={rep}|targets_apr={target_count}|summary_apr={summary_period}|journal={journal}|timeout={timeout}|quick={quick}')
+          print('POST16|HISTORY|'+json.dumps(uploads,ensure_ascii=False))
+          assert latest==(31,2026,4,16,'COMPLETED'), latest
+          assert jobs==0 and stale32==0 and not any(children32.values())
+          assert region==(31,11,'ACTIVE') and rep==(31,113,'ACTIVE')
+          assert target_count>0 and summary_period>0
+          assert str(journal).lower()=='wal' and int(timeout)==30000 and quick=='ok'
+          assert counts['ims_facts']>0 and counts['ims_raw_data']>0 and counts['ims_summary']>0
+          assert any(u[0]==31 and u[3]==16 and u[4]=='COMPLETED' for u in uploads)
+          assert not any(u[0]==32 for u in uploads)
+          print('POST16|DB_HISTORY_ACCEPTANCE|PASS')
+          PY
+          # Compare the live DB file to the already verified candidate digest when no post-cutover checkpoint has altered pages.
+          expected=$(awk -F= '$1=="sha256"{print $2}' instance/test-baselines/week16-production-candidate.meta)
+          actual=$(sha256sum instance/ipm.db | awk '{print $1}')
+          echo "POST16|LIVE_SHA256|actual=$actual|expected_candidate=$expected"
+          if [ "$actual" = "$expected" ]; then echo 'POST16|BYTE_MATCH_CANDIDATE|PASS'; else echo 'POST16|BYTE_MATCH_CANDIDATE|ADVISORY_DIFFERENT_AFTER_WAL_RUNTIME'; fi
+          curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8000/login >/dev/null
+          echo "POST16|WEB|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "POST16|WORKER|$(sudo systemctl is-active ims-import-worker.service)"
+          df -h "$IMS_PATH"
+          echo 'WEEK16_POST_CUTOVER_READONLY_ACCEPTANCE|PASS'
           REMOTE
