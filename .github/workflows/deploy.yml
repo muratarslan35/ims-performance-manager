@@ -60,7 +60,7 @@ jobs:
             [ "$file" = "requirements.txt" ] && requirements_changed="true"
 
             case "$file" in
-              app/representatives.py|app/services/representative*|app/services/region_market_service.py|app/services/ai_analytics_service.py|app/services/actual_sales_resolution_service.py|app/services/*market*)
+              verify_representative_performance.py|app/representatives.py|app/services/representative*|app/services/region_market_service.py|app/services/ai_analytics_service.py|app/services/actual_sales_resolution_service.py|app/services/*market*)
                 performance_changed="true"
                 ;;
             esac

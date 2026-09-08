@@ -230,3 +230,10 @@ def test_performance_gate_first_run_is_separate_and_clears_result_cache(tmp_path
         assert result["selects"] == 0
         assert result["competition_selects"] == 0
         assert not RepresentativeAnalysisCache._store
+
+
+def test_deploy_rechecks_production_gate_when_gate_contract_changes():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "verify_representative_performance.py|app/representatives.py" in workflow
