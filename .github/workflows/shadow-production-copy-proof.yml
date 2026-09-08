@@ -1,4 +1,4 @@
-name: Shadow Production Copy Safety Proof
+name: IMS Rollback Module Production-Copy Proof
 
 on:
   push:
@@ -6,17 +6,18 @@ on:
       - agent/shadow-production-copy-proof
     paths:
       - ".github/workflows/shadow-production-copy-proof.yml"
+      - "scripts/prove_instant_rollback_on_copy.py"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ims-shadow-production-copy-proof
+  group: ims-rollback-module-shadow-proof
   cancel-in-progress: false
 
 jobs:
   prove:
-    name: Prove shadow import on production DB copy only
+    name: Prove rollback module on isolated live DB copy
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment: production
@@ -26,8 +27,11 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/instant-ims-rollback
+
       - name: Configure production SSH key
-        shell: bash
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
@@ -38,175 +42,75 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Run production-copy proof without writing live DB
-        shell: bash
+      - name: Package candidate code
+        run: tar --exclude=.git --exclude=instance --exclude=uploads -czf /tmp/rollback-module-code.tgz .
+
+      - name: Copy candidate code to isolated server directory
         run: |
-          set -Eeuo pipefail
+          scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes \
+            /tmp/rollback-module-code.tgz "$IMS_USER@$IMS_HOST:/tmp/rollback-module-code-${GITHUB_RUN_ID}.tgz"
+
+      - name: Run proof without writing live database
+        run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=10 -o ServerAliveCountMax=6 -o TCPKeepAlive=yes \
-            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+            -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' PROOF_RUN='$GITHUB_RUN_ID' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-
-          echo "SHADOW_PROOF|LIVE_COMMIT|$(git rev-parse HEAD)"
           test "$(git branch --show-current)" = "main"
           test -z "$(git status --porcelain)"
-
-          LIVE_DB="$IMS_PATH/instance/ipm.db"
-          test -s "$LIVE_DB"
-
-          read -r latest_id latest_year latest_month latest_week active_jobs journal_mode <<EOF
-          $(venv/bin/python - <<'PY'
-          import sqlite3
-          con = sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
-          try:
-              con.execute('PRAGMA busy_timeout=30000')
-              latest = con.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-              active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              mode = con.execute('PRAGMA journal_mode').fetchone()[0]
-          finally:
-              con.close()
-          if not latest:
-              raise SystemExit('No completed IMS upload')
-          print(latest[0], latest[1], latest[2], latest[3], active, mode)
-          PY
-          )
-          EOF
-
-          echo "SHADOW_PROOF|LIVE_BASELINE|upload_id=$latest_id|year=$latest_year|month=$latest_month|week=$latest_week|active_jobs=$active_jobs|journal_mode=$journal_mode"
-          test "$active_jobs" = "0"
-          test "$latest_week" = "17"
-          test "${journal_mode,,}" = "wal"
-
-          live_bytes=$(stat -c '%s' "$LIVE_DB")
-          free_bytes=$(df -PB1 "$IMS_PATH/instance" | awk 'NR==2 {print $4}')
-          required_bytes=$(( live_bytes * 2 + 1073741824 ))
-          echo "SHADOW_PROOF|DISK_PREFLIGHT|live_bytes=$live_bytes|free_bytes=$free_bytes|required_bytes=$required_bytes"
-          if [ "$free_bytes" -lt "$required_bytes" ]; then
-              echo "SHADOW_PROOF|DISK_PREFLIGHT|FAIL"
-              exit 2
-          fi
-          echo "SHADOW_PROOF|DISK_PREFLIGHT|PASS"
-
-          proof_dir="$IMS_PATH/instance/shadow-proof-$(date +%Y%m%d-%H%M%S)-$$"
-          mkdir -p "$proof_dir"
+          live_db="$IMS_PATH/instance/ipm.db"
+          test -s "$live_db"
+          proof_dir=$(mktemp -d "$IMS_PATH/instance/rollback-module-proof.XXXXXX")
           cleanup() {
-              rm -rf "$proof_dir" || true
+            rm -rf "$proof_dir"
+            rm -f "/tmp/rollback-module-code-${PROOF_RUN}.tgz"
           }
           trap cleanup EXIT
+          mkdir -p "$proof_dir/code" "$proof_dir/uploads/ims_archive"
+          tar -xzf "/tmp/rollback-module-code-${PROOF_RUN}.tgz" -C "$proof_dir/code"
+          venv/bin/python sqlite_online_backup.py "$live_db" "$proof_dir/copy.db"
 
-          safe_db="$proof_dir/ims-safe-week17.db"
-          candidate_db="$proof_dir/ims-acceptance-candidate.db"
-          active_test_db="$proof_dir/ims-active-test.db"
-
-          echo "SHADOW_PROOF|PHASE|online_backup"
-          venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$safe_db"
-          safe_sha=$(sha256sum "$safe_db" | awk '{print $1}')
-          safe_bytes=$(stat -c '%s' "$safe_db")
-          echo "SHADOW_PROOF|SAFE_COPY|sha256=$safe_sha|bytes=$safe_bytes"
-
-          venv/bin/python - "$safe_db" "$latest_id" <<'PY'
+          latest_id=$(venv/bin/python - "$proof_dir/copy.db" <<'PY'
           import sqlite3, sys
-          path, expected = sys.argv[1], int(sys.argv[2])
-          con = sqlite3.connect(path, timeout=30)
+          con = sqlite3.connect(sys.argv[1])
           try:
-              quick = con.execute('PRAGMA integrity_check').fetchone()[0]
-              latest = con.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-          finally:
-              con.close()
-          print(f'SHADOW_PROOF|SAFE_COPY_INTEGRITY|{quick}')
-          print(f'SHADOW_PROOF|SAFE_COPY_LATEST|{latest}')
-          if str(quick).lower() != 'ok' or not latest or int(latest[0]) != expected or int(latest[3] or 0) != 17:
-              raise SystemExit('Safe copy baseline validation failed')
-          PY
-
-          echo "SHADOW_PROOF|PHASE|candidate_clone"
-          cp --reflink=auto "$safe_db" "$candidate_db"
-          candidate_initial_sha=$(sha256sum "$candidate_db" | awk '{print $1}')
-          test "$candidate_initial_sha" = "$safe_sha"
-          echo "SHADOW_PROOF|CANDIDATE_INITIAL_IDENTICAL|YES"
-
-          echo "SHADOW_PROOF|PHASE|real_importer_on_candidate"
-          DATABASE_URL="sqlite:///$candidate_db" \
-          IMS_ACCEPTANCE_UPLOAD_ID="$latest_id" \
-          PYTHONPATH="$IMS_PATH" \
-          venv/bin/python verify_ims_acceptance.py
-
-          safe_sha_after_import=$(sha256sum "$safe_db" | awk '{print $1}')
-          test "$safe_sha_after_import" = "$safe_sha"
-          echo "SHADOW_PROOF|SAFE_UNCHANGED_AFTER_REAL_IMPORT|YES|sha256=$safe_sha_after_import"
-
-          venv/bin/python - "$candidate_db" <<'PY'
-          import sqlite3, sys
-          con = sqlite3.connect(sys.argv[1], timeout=30)
-          try:
-              quick = con.execute('PRAGMA integrity_check').fetchone()[0]
-              latest = con.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY completed_at DESC,id DESC LIMIT 1").fetchone()
-          finally:
-              con.close()
-          print(f'SHADOW_PROOF|CANDIDATE_INTEGRITY|{quick}')
-          print(f'SHADOW_PROOF|CANDIDATE_LATEST|{latest}')
-          if str(quick).lower() != 'ok':
-              raise SystemExit('Candidate integrity failed')
-          PY
-
-          echo "SHADOW_PROOF|PHASE|reject_model"
-          safe_sha_after_reject_model=$(sha256sum "$safe_db" | awk '{print $1}')
-          test "$safe_sha_after_reject_model" = "$safe_sha"
-          echo "SHADOW_PROOF|REJECT_RETURNS_TO_SAFE_WITHOUT_ROLLBACK_WRITE|YES"
-
-          echo "SHADOW_PROOF|PHASE|promote_and_file_generation_rollback"
-          mv "$safe_db" "$proof_dir/previous-safe.db"
-          mv "$candidate_db" "$active_test_db"
-          previous_sha=$(sha256sum "$proof_dir/previous-safe.db" | awk '{print $1}')
-          test "$previous_sha" = "$safe_sha"
-          echo "SHADOW_PROOF|SAFE_GENERATION_PRESERVED_DURING_PROMOTE|YES"
-
-          venv/bin/python - "$proof_dir/previous-safe.db" "$active_test_db" <<'PY'
-          import os, sys
-          previous, active = sys.argv[1], sys.argv[2]
-          os.replace(previous, active)
-          PY
-
-          rollback_sha=$(sha256sum "$active_test_db" | awk '{print $1}')
-          test "$rollback_sha" = "$safe_sha"
-          echo "SHADOW_PROOF|ROLLBACK_BYTE_IDENTICAL|YES|sha256=$rollback_sha"
-
-          venv/bin/python - "$active_test_db" "$latest_id" <<'PY'
-          import sqlite3, sys
-          path, expected = sys.argv[1], int(sys.argv[2])
-          con = sqlite3.connect(path, timeout=30)
-          try:
-              quick = con.execute('PRAGMA integrity_check').fetchone()[0]
-              latest = con.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-          finally:
-              con.close()
-          print(f'SHADOW_PROOF|ROLLBACK_INTEGRITY|{quick}')
-          print(f'SHADOW_PROOF|ROLLBACK_LATEST|{latest}')
-          if str(quick).lower() != 'ok' or not latest or int(latest[0]) != expected or int(latest[3] or 0) != 17:
-              raise SystemExit('Rollback baseline validation failed')
-          PY
-
-          read -r live_latest_after live_active_after live_mode_after <<EOF
-          $(venv/bin/python - <<'PY'
-          import sqlite3
-          con = sqlite3.connect('file:instance/ipm.db?mode=ro', uri=True, timeout=30)
-          try:
-              con.execute('PRAGMA busy_timeout=30000')
-              latest = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()[0]
+              row = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()
               active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-              mode = con.execute('PRAGMA journal_mode').fetchone()[0]
+              integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
           finally:
               con.close()
-          print(latest, active, mode)
+          if not row or active or integrity != 'ok':
+              raise SystemExit(f'unsafe baseline row={row} active={active} integrity={integrity}')
+          print(row[0])
           PY
           )
-          EOF
-          echo "SHADOW_PROOF|LIVE_POST_AUDIT|latest_id=$live_latest_after|active_jobs=$live_active_after|journal_mode=$live_mode_after"
-          test "$live_latest_after" = "$latest_id"
-          test "$live_active_after" = "0"
-          test "${live_mode_after,,}" = "wal"
+          source_file=$(find "$IMS_PATH/uploads/ims_archive" -maxdepth 1 -type f \
+            \( -name "upload-${latest_id}.xlsx" -o -name "upload-${latest_id}.xls" \) -print -quit)
+          test -n "$source_file"
+          cp "$source_file" "$proof_dir/uploads/ims_archive/"
+          if [ -d "$IMS_PATH/instance/dashboard_snapshots" ]; then
+            mkdir -p "$proof_dir/code/instance"
+            cp -a "$IMS_PATH/instance/dashboard_snapshots" "$proof_dir/code/instance/"
+          fi
 
-          echo "SHADOW_PROOF|REAL_PRODUCTION_COPY_ACCEPTANCE|PASS"
+          cd "$proof_dir/code"
+          export PYTHONPATH="$proof_dir/code"
+          venv_python="$IMS_PATH/venv/bin/python"
+          "$venv_python" scripts/prove_instant_rollback_on_copy.py \
+            --database "$proof_dir/copy.db" --upload-root "$proof_dir/uploads"
+
+          live_latest=$("$venv_python" - "$live_db" <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True, timeout=30)
+          try:
+              latest = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()[0]
+              active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+          finally:
+              con.close()
+          print(latest, active)
+          PY
+          )
+          test "$live_latest" = "$latest_id 0"
+          echo "ROLLBACK_MODULE_PROOF|LIVE_UNCHANGED|upload_id=$latest_id|active_jobs=0"
           REMOTE
