@@ -1,0 +1,114 @@
+name: IMS Rollback Module Production-Copy Proof
+
+on:
+  push:
+    branches:
+      - agent/instant-ims-rollback
+    paths:
+      - ".github/workflows/ims-rollback-module-shadow-proof.yml"
+      - "scripts/prove_instant_rollback_on_copy.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-rollback-module-shadow-proof
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    name: Prove rollback module on isolated live DB copy
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Package candidate code
+        run: tar --exclude=.git --exclude=instance --exclude=uploads -czf /tmp/rollback-module-code.tgz .
+
+      - name: Copy candidate code to isolated server directory
+        run: |
+          scp -i ~/.ssh/ims_deploy_key -P "$IMS_PORT" -o BatchMode=yes \
+            /tmp/rollback-module-code.tgz "$IMS_USER@$IMS_HOST:/tmp/rollback-module-code-${GITHUB_RUN_ID}.tgz"
+
+      - name: Run proof without writing live database
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' PROOF_RUN='$GITHUB_RUN_ID' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain)"
+          live_db="$IMS_PATH/instance/ipm.db"
+          test -s "$live_db"
+          proof_dir=$(mktemp -d "$IMS_PATH/instance/rollback-module-proof.XXXXXX")
+          cleanup() {
+            rm -rf "$proof_dir"
+            rm -f "/tmp/rollback-module-code-${PROOF_RUN}.tgz"
+          }
+          trap cleanup EXIT
+          mkdir -p "$proof_dir/code" "$proof_dir/uploads/ims_archive"
+          tar -xzf "/tmp/rollback-module-code-${PROOF_RUN}.tgz" -C "$proof_dir/code"
+          venv/bin/python sqlite_online_backup.py "$live_db" "$proof_dir/copy.db"
+
+          latest_id=$(venv/bin/python - "$proof_dir/copy.db" <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect(sys.argv[1])
+          try:
+              row = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()
+              active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+              integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+          finally:
+              con.close()
+          if not row or active or integrity != 'ok':
+              raise SystemExit(f'unsafe baseline row={row} active={active} integrity={integrity}')
+          print(row[0])
+          PY
+          )
+          source_file=$(find "$IMS_PATH/uploads/ims_archive" -maxdepth 1 -type f \
+            \( -name "upload-${latest_id}.xlsx" -o -name "upload-${latest_id}.xls" \) -print -quit)
+          test -n "$source_file"
+          cp "$source_file" "$proof_dir/uploads/ims_archive/"
+          if [ -d "$IMS_PATH/instance/dashboard_snapshots" ]; then
+            mkdir -p "$proof_dir/code/instance"
+            cp -a "$IMS_PATH/instance/dashboard_snapshots" "$proof_dir/code/instance/"
+          fi
+
+          cd "$proof_dir/code"
+          export PYTHONPATH="$proof_dir/code"
+          venv_python="$IMS_PATH/venv/bin/python"
+          "$venv_python" scripts/prove_instant_rollback_on_copy.py \
+            --database "$proof_dir/copy.db" --upload-root "$proof_dir/uploads"
+
+          live_latest=$("$venv_python" - "$live_db" <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True, timeout=30)
+          try:
+              latest = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()[0]
+              active = con.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+          finally:
+              con.close()
+          print(latest, active)
+          PY
+          )
+          test "$live_latest" = "$latest_id 0"
+          echo "ROLLBACK_MODULE_PROOF|LIVE_UNCHANGED|upload_id=$latest_id|active_jobs=0"
+          REMOTE
