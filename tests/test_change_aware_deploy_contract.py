@@ -128,6 +128,7 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     assert 'ConnectionAttempts=3' in maintenance
     assert 'SSH_POLL_RETRY|' in maintenance
     assert 'consecutive_ssh_failures' in maintenance
+    assert 'git pull --ff-only origin main' in maintenance
     assert 'install_systemd_service.sh' not in maintenance
 
     assert 'database_capacity_audit.py' in runner
@@ -161,8 +162,9 @@ def test_detached_maintenance_status_survives_runner_disconnect():
     assert 'flock -n 9' in runner
 
     # GitHub Actions performs only bounded status probes and tolerates transient
-    # SSH failures before declaring connectivity lost.
-    assert 'for poll in $(seq 1 120)' in maintenance
+    # SSH failures before declaring connectivity lost. The 300 probes remain
+    # bounded while allowing a long SQLite optimize/quick-check to finish.
+    assert 'for poll in $(seq 1 300)' in maintenance
     assert 'sleep 10' in maintenance
     assert '"$consecutive_ssh_failures" -ge 6' in maintenance
 
