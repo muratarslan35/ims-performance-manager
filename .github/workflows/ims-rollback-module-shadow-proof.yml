@@ -67,7 +67,43 @@ jobs:
           trap cleanup EXIT
           mkdir -p "$proof_dir/code" "$proof_dir/uploads/ims_archive"
           tar -xzf "/tmp/rollback-module-code-${PROOF_RUN}.tgz" -C "$proof_dir/code"
-          venv/bin/python sqlite_online_backup.py "$live_db" "$proof_dir/copy.db"
+
+          latest_live_id=$(venv/bin/python - "$live_db" <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True, timeout=30)
+          try:
+              print(con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()[0])
+          finally:
+              con.close()
+          PY
+          )
+          reusable_base=$(venv/bin/python - "$latest_live_id" <<'PY'
+          import sqlite3, sys
+          from pathlib import Path
+          expected = int(sys.argv[1])
+          root = Path('instance/backups/atomic-week16-cutover-20260908-053534')
+          for path in sorted(root.rglob('*')) if root.exists() else []:
+              if not path.is_file() or path.suffix not in {'.db', '.sqlite'}:
+                  continue
+              try:
+                  con = sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=10)
+                  latest = con.execute("SELECT id FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,completed_at DESC,id DESC LIMIT 1").fetchone()
+                  quick = con.execute('PRAGMA quick_check').fetchone()[0]
+                  con.close()
+                  if latest and int(latest[0]) == expected and quick == 'ok':
+                      print(path)
+                      break
+              except Exception:
+                  pass
+          PY
+          )
+          if [ -n "$reusable_base" ]; then
+            cp --reflink=auto "$reusable_base" "$proof_dir/copy.db"
+            echo "ROLLBACK_MODULE_PROOF|REUSABLE_WEEK16_BASE|$reusable_base"
+          else
+            venv/bin/python sqlite_online_backup.py "$live_db" "$proof_dir/copy.db"
+            echo "ROLLBACK_MODULE_PROOF|FRESH_ONLINE_BACKUP|YES"
+          fi
 
           latest_id=$(venv/bin/python - "$proof_dir/copy.db" <<'PY'
           import sqlite3, sys

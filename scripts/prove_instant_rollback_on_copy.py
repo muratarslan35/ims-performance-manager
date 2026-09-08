@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from app import create_app
@@ -83,9 +84,11 @@ def main() -> None:
         IMSUploadLifecycleService.capture_period_snapshot(
             job_id=job.id, year=year, month=month
         )
+        readiness_started = time.monotonic()
         readiness = IMSUploadLifecycleService.prepare_previous_rollback_assets(
             year=year, month=month
         )
+        readiness_seconds = time.monotonic() - readiness_started
         assert readiness["status"] == "READY", readiness
         assert readiness["source_upload_id"] == int(previous.id)
 
@@ -139,6 +142,7 @@ def main() -> None:
             product=wrong_product.product_name,
             unit=1.0,
             tl=1.0,
+            source_row=1,
             raw_json="{}",
         )
         db.session.add(raw)
@@ -178,9 +182,11 @@ def main() -> None:
         IMSUploadLifecycleService.finalize_snapshot(job_id=job.id, upload_id=bad_upload_id)
         IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=bad_upload_id)
 
+        rollback_started = time.monotonic()
         rollback = IMSUploadLifecycleService.rollback_to_previous(
             bad_upload_id, actor="SHADOW_PROOF"
         )
+        rollback_seconds = time.monotonic() - rollback_started
         assert rollback["active_upload_id"] == int(previous.id)
         assert db.session.get(IMSUpload, bad_upload_id).status == IMSUpload.STATUS_ROLLED_BACK
         assert _rows(Target, year, month) == before["targets"]
@@ -189,7 +195,9 @@ def main() -> None:
         assert db.session.get(Representative, wrong_rep_id).active is False
         assert db.session.get(Product, wrong_product_id).is_active is False
 
+        cleanup_started = time.monotonic()
         cleanup = IMSUploadLifecycleService.delete_upload(bad_upload_id)
+        cleanup_seconds = time.monotonic() - cleanup_started
         assert cleanup["master_cleanup"]["representatives_deleted"] == 1
         assert cleanup["master_cleanup"]["products_deleted"] == 1
         assert db.session.get(IMSUpload, bad_upload_id) is None
@@ -202,7 +210,9 @@ def main() -> None:
             "ROLLBACK_MODULE_PROOF|PASS|"
             f"previous_upload_id={previous.id}|synthetic_upload_id={bad_upload_id}|"
             f"targets={len(before['targets'])}|summaries={len(before['summaries'])}|"
-            f"assignments={len(before['assignments'])}"
+            f"assignments={len(before['assignments'])}|"
+            f"readiness_seconds={readiness_seconds:.3f}|"
+            f"rollback_seconds={rollback_seconds:.3f}|cleanup_seconds={cleanup_seconds:.3f}"
         )
 
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=30)
