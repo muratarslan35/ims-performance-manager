@@ -1,0 +1,159 @@
+name: Week16 Archive Excel Reconciliation
+
+on:
+  push:
+    branches: [agent/shadow-production-copy-proof]
+    paths: [".github/workflows/week16-archive-reconciliation.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-week16-archive-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile archived upload31 workbook against live Week16
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=12 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          test -z "$(git status --porcelain)"
+          LIVE_DB="$IMS_PATH/instance/ipm.db"
+          SOURCE="$IMS_PATH/uploads/ims_archive/upload-31.xlsx"
+          test -s "$LIVE_DB"; test -s "$SOURCE"
+          workdir="$IMS_PATH/instance/w16-archive-recon-$(date +%Y%m%d-%H%M%S)-$$"
+          mkdir -p "$workdir"
+          trap 'rm -rf "$workdir" || true' EXIT
+          COPY_DB="$workdir/ims-acceptance-week16.db"
+
+          echo 'W16A|PHASE|preflight'
+          read -r uid yr mo wk jobs mode <<EOF
+          $(venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('file:instance/ipm.db?mode=ro',uri=True,timeout=30)
+          u=c.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+          j=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+          m=c.execute('PRAGMA journal_mode').fetchone()[0]; c.close(); print(*u,j,m)
+          PY
+          )
+          EOF
+          echo "W16A|LIVE|upload=$uid|year=$yr|month=$mo|week=$wk|jobs=$jobs|mode=$mode"
+          test "$uid" = 31; test "$yr" = 2026; test "$mo" = 4; test "$wk" = 16; test "$jobs" = 0; test "${mode,,}" = wal
+          live_sha_before=$(sha256sum "$LIVE_DB"|awk '{print $1}')
+
+          echo 'W16A|PHASE|full_cell_scan'
+          SOURCE="$SOURCE" venv/bin/python - <<'PY'
+          import hashlib,json,os
+          from openpyxl import load_workbook
+          from pathlib import Path
+          p=Path(os.environ['SOURCE']); fh=hashlib.sha256(p.read_bytes()).hexdigest()
+          wf=load_workbook(p,read_only=True,data_only=False); wv=load_workbook(p,read_only=True,data_only=True)
+          total=0; formulas=0; cached=0; hh=hashlib.sha256(); sheets=[]
+          for sf,sv in zip(wf.worksheets,wv.worksheets):
+              sh=hashlib.sha256(); n=0; f=0
+              for rf,rv in zip(sf.iter_rows(),sv.iter_rows()):
+                  for cf,cv in zip(rf,rv):
+                      vf,vv=cf.value,cv.value
+                      if vf is None and vv is None: continue
+                      total+=1; n+=1
+                      if isinstance(vf,str) and vf.startswith('='): formulas+=1; f+=1
+                      if vv is not None: cached+=1
+                      rec=json.dumps([sf.title,cf.coordinate,vf,vv],ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'
+                      hh.update(rec); sh.update(rec)
+              sheets.append({'sheet':sf.title,'cells':n,'formulas':f,'sha256':sh.hexdigest()})
+          wf.close(); wv.close()
+          print(f'W16A|WORKBOOK|bytes={p.stat().st_size}|sha256={fh}')
+          print('W16A|CELL_SCAN|'+json.dumps({'sheets':len(sheets),'populated_cells':total,'formula_cells':formulas,'cached_nonempty_cells':cached,'cell_sha256':hh.hexdigest()},ensure_ascii=False,sort_keys=True))
+          print('W16A|SHEETS|'+json.dumps(sheets,ensure_ascii=False,sort_keys=True))
+          PY
+
+          echo 'W16A|PHASE|consistent_copy'
+          venv/bin/python sqlite_online_backup.py "$LIVE_DB" "$COPY_DB"
+
+          echo 'W16A|PHASE|locked_baseline'
+          COPY_DB="$COPY_DB" venv/bin/python - <<'PY'
+          import hashlib,json,os,sqlite3
+          from pathlib import Path
+          p=os.environ['COPY_DB']; c=sqlite3.connect(p,timeout=30)
+          def fp(t,m):
+              cols=[r[1] for r in c.execute(f'PRAGMA table_info({t})')]; h=hashlib.sha256(); n=0
+              for r in c.execute(f"SELECT * FROM {t} WHERE year=? AND month=? ORDER BY {','.join(cols)}",(2026,m)):
+                  h.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
+              return [n,h.hexdigest()]
+          out={str(m):{t:fp(t,m) for t in ('ims_summary','targets')} for m in (1,2,3)}
+          Path(p+'.locked.json').write_text(json.dumps(out,sort_keys=True)); print('W16A|LOCKED_BASELINE|'+json.dumps(out,sort_keys=True)); c.close()
+          PY
+
+          echo 'W16A|PHASE|real_importer_rebuild'
+          DATABASE_URL="sqlite:///$COPY_DB" IMS_ACCEPTANCE_UPLOAD_ID=31 W16_SOURCE="$SOURCE" PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY' | tee "$workdir/acceptance.log"
+          import json,os,sys
+          from pathlib import Path
+          import verify_ims_acceptance as v
+          src=Path(os.environ['W16_SOURCE']); v._source_path=lambda app,upload: src
+          try: sys.exit(v.main())
+          except Exception as e:
+              print('IMS_ACCEPTANCE|'+json.dumps({'result':'FAIL','error':str(e)},ensure_ascii=False)); raise
+          PY
+          grep -q 'IMS_ACCEPTANCE|.*"result": "PASS"' "$workdir/acceptance.log"
+
+          echo 'W16A|PHASE|locked_and_april_checks'
+          COPY_DB="$COPY_DB" venv/bin/python - <<'PY'
+          import hashlib,json,math,os,sqlite3
+          from pathlib import Path
+          p=os.environ['COPY_DB']; c=sqlite3.connect(p,timeout=30)
+          def fp(t,m):
+              cols=[r[1] for r in c.execute(f'PRAGMA table_info({t})')]; h=hashlib.sha256(); n=0
+              for r in c.execute(f"SELECT * FROM {t} WHERE year=? AND month=? ORDER BY {','.join(cols)}",(2026,m)):
+                  h.update(json.dumps(list(r),ensure_ascii=False,default=str,separators=(',',':')).encode()+b'\n'); n+=1
+              return [n,h.hexdigest()]
+          before=json.loads(Path(p+'.locked.json').read_text()); after={str(m):{t:fp(t,m) for t in ('ims_summary','targets')} for m in (1,2,3)}
+          if before!=after: raise SystemExit(f'LOCKED_CHANGED before={before} after={after}')
+          print('W16A|LOCKED_JAN_MAR|PASS|'+json.dumps(after,sort_keys=True))
+          latest=c.execute("SELECT id,status,reconciliation_status,source_record_count,stored_source_record_count,invalid_metric_count,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY id DESC LIMIT 1").fetchone()
+          print('W16A|ISOLATED_LATEST|'+json.dumps(list(latest),default=str))
+          checks={
+            'fact_rows':c.execute("SELECT COUNT(*) FROM ims_facts WHERE year=2026 AND month=4").fetchone()[0],
+            'summary_rows':c.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4").fetchone()[0],
+            'target_rows':c.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4").fetchone()[0],
+            'null_summary_unit':c.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4 AND unit IS NULL").fetchone()[0],
+            'null_summary_tl':c.execute("SELECT COUNT(*) FROM ims_summary WHERE year=2026 AND month=4 AND tl IS NULL").fetchone()[0],
+            'null_target_unit':c.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4 AND unit_target IS NULL").fetchone()[0],
+            'null_target_tl':c.execute("SELECT COUNT(*) FROM targets WHERE year=2026 AND month=4 AND tl_target IS NULL").fetchone()[0],
+          }
+          if any(checks[k] for k in ('null_summary_unit','null_summary_tl','null_target_unit','null_target_tl')): raise SystemExit('APRIL_NULLS '+repr(checks))
+          print('W16A|APRIL|PASS|'+json.dumps(checks,sort_keys=True)); c.close()
+          PY
+
+          live_sha_after=$(sha256sum "$LIVE_DB"|awk '{print $1}')
+          test "$live_sha_before" = "$live_sha_after"
+          systemctl is-active --quiet ims-performance-manager.service
+          if systemctl list-unit-files | grep -q '^ims-import-worker.service'; then systemctl is-active --quiet ims-import-worker.service; fi
+          curl -fsS --max-time 20 http://127.0.0.1:8000/login >/dev/null || curl -fsS --max-time 20 http://127.0.0.1/login >/dev/null
+          echo "W16A|LIVE_UNCHANGED|PASS|sha256=$live_sha_after"
+          echo 'W16A|FINAL|PASS'
+          REMOTE
