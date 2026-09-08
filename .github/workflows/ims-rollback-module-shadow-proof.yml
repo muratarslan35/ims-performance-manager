@@ -1,12 +1,6 @@
 name: IMS Rollback Module Production-Copy Proof
 
 on:
-  push:
-    branches:
-      - agent/instant-ims-rollback
-    paths:
-      - ".github/workflows/ims-rollback-module-shadow-proof.yml"
-      - "scripts/prove_instant_rollback_on_copy.py"
   pull_request:
     branches:
       - main
@@ -19,7 +13,7 @@ permissions:
 
 concurrency:
   group: ims-rollback-module-shadow-proof
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prove:
