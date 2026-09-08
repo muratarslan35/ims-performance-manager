@@ -49,7 +49,6 @@ jobs:
           test "$(git branch --show-current)" = main
           test -z "$(git status --porcelain)"
           ROOT=instance/test-baselines/week16-production-candidate
-          TMP="$ROOT.tmp.db"
           FINAL="$ROOT.db"
           META="$ROOT.meta"
           BASE=instance/test-baselines/week17-production-baseline.db
@@ -57,10 +56,12 @@ jobs:
           test -s "$BASE" && test -s "$BASEMETA"
           expected=$(awk -F= '$1=="sha256"{print $2}' "$BASEMETA")
           test "$(sha256sum "$BASE"|awk '{print $1}')" = "$expected"
-          rm -f "$TMP" "$META.tmp"
+          work=$(mktemp -d instance/test-baselines/week16-candidate-files.XXXXXX)
+          chmod 700 "$work"
+          TMP="$work/candidate.db"
           cp --reflink=auto "$BASE" "$TMP"
           chmod 600 "$TMP"
-          work=$(mktemp -d instance/test-baselines/week16-candidate-files.XXXXXX)
+          rm -f "$META.tmp"
           trap 'rm -rf "$work" /tmp/rehearse_week17_to_week16.py /tmp/rehearse_week17_snapshot_cleanup.py' EXIT
           mkdir -p "$work/uploads/ims_archive/snapshots" "$work/instance"
           cp uploads/ims_archive/upload-32.xlsx "$work/uploads/ims_archive/upload-32.xlsx"
