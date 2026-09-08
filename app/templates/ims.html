@@ -373,15 +373,25 @@
             <div class="d-flex flex-wrap gap-1">
               <button class="btn btn-sm btn-outline-primary py-1 px-2 ims-detail-btn" type="button" style="font-size:11px;" data-row="{{ loop.index0 }}"><i class="bi bi-eye me-1"></i>Detay</button>
               {% set rollback_permission = rollback_permissions.get(item.id) %}
-              {% if rollback_permission and rollback_permission[0] %}
-              <form method="post" action="{{ url_for('ims.rollback_upload', upload_id=item.id) }}" onsubmit="return confirm('Son IMS geri alınacak ve sistem bir önceki doğrulanmış IMS verisine dönecek. Devam edilsin mi?');">
-                <button class="btn btn-sm btn-outline-warning py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
-              </form>
+              {% if can_manage_ims_lifecycle and rollback_permission and rollback_permission[0] %}
+              <button class="btn btn-sm btn-outline-warning py-1 px-2 ims-lifecycle-open" type="button" style="font-size:11px;" data-confirm-id="rollback-confirm-{{ item.id }}"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
+              <div class="alert alert-warning py-2 px-2 mb-0 w-100 ims-lifecycle-confirm" id="rollback-confirm-{{ item.id }}" hidden>
+                <strong class="d-block mb-1" style="font-size:11px;">Son IMS geri alınacak. Emin misiniz?</strong>
+                <form class="d-flex gap-1" method="post" action="{{ url_for('ims.rollback_upload', upload_id=item.id) }}">
+                  <button class="btn btn-sm btn-warning" type="submit" style="font-size:11px;">Onayla ve geri al</button>
+                  <button class="btn btn-sm btn-light ims-lifecycle-cancel" type="button" style="font-size:11px;">Vazgeç</button>
+                </form>
+              </div>
               {% endif %}
-              {% if item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
-              <form method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}" onsubmit="return confirm('Geri alınmış hatalı IMS ve ona bağlı kayıtlar kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam edilsin mi?');">
-                <button class="btn btn-sm btn-outline-danger py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
-              </form>
+              {% if can_manage_ims_lifecycle and item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
+              <button class="btn btn-sm btn-outline-danger py-1 px-2 ims-lifecycle-open" type="button" style="font-size:11px;" data-confirm-id="delete-confirm-{{ item.id }}"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
+              <div class="alert alert-danger py-2 px-2 mb-0 w-100 ims-lifecycle-confirm" id="delete-confirm-{{ item.id }}" hidden>
+                <strong class="d-block mb-1" style="font-size:11px;">Bu işlem geri alınamaz. Kalıcı silme onaylansın mı?</strong>
+                <form class="d-flex gap-1" method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}">
+                  <button class="btn btn-sm btn-danger" type="submit" style="font-size:11px;">Onayla ve kalıcı sil</button>
+                  <button class="btn btn-sm btn-light ims-lifecycle-cancel" type="button" style="font-size:11px;">Vazgeç</button>
+                </form>
+              </div>
               {% endif %}
             </div>
           </td>
@@ -560,6 +570,21 @@
         <div class="ims-manager-conclusion ${report.overall ? "is-ok" : "is-error"}"><i class="bi ${report.overall ? "bi-shield-check" : "bi-shield-exclamation"}"></i><div><strong>${report.overall ? "IMS dosyası eksiksiz işlendi" : "IMS dosyası yönetici kontrolü gerektiriyor"}</strong><span>${report.overall ? "Dashboard, hedef ve realizasyon ekranları bu doğrulanmış yüklemeyi kullanıyor." : "Teknik ekip raporu incelemelidir; eksik hesaplama sonuçları güvenilir kabul edilmemelidir."}</span></div></div>`;
       overlay.classList.add("visible");
     });
+  });
+
+  document.querySelectorAll(".ims-lifecycle-open").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      document.querySelectorAll(".ims-lifecycle-confirm").forEach((panel) => { panel.hidden = true; });
+      const panel = document.getElementById(button.dataset.confirmId);
+      if (panel) panel.hidden = false;
+    });
+  });
+  document.querySelectorAll(".ims-lifecycle-confirm").forEach((panel) => {
+    panel.addEventListener("click", (event) => event.stopPropagation());
+  });
+  document.querySelectorAll(".ims-lifecycle-cancel").forEach((button) => {
+    button.addEventListener("click", () => { button.closest(".ims-lifecycle-confirm").hidden = true; });
   });
 
   const latestReportButton = document.querySelector("[data-open-latest-report]");
