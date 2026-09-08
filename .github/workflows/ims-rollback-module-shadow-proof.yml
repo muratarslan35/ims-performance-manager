@@ -7,6 +7,12 @@ on:
     paths:
       - ".github/workflows/ims-rollback-module-shadow-proof.yml"
       - "scripts/prove_instant_rollback_on_copy.py"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ims-rollback-module-shadow-proof.yml"
+      - "scripts/prove_instant_rollback_on_copy.py"
 
 permissions:
   contents: read
