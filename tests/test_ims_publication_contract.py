@@ -1,6 +1,7 @@
 from pathlib import Path
 
 
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -28,4 +29,5 @@ def test_publication_is_atomic_and_notice_is_per_user():
     assert 'summary["publication_ready"] = True' in worker
     assert 'stage="snapshot_retry"' in worker
     assert '"ims_publication_receipts"' in service
+    assert "upload = cls.latest_visible_upload()" in service
     assert "checkPublishedIMSNotice();" in layout
