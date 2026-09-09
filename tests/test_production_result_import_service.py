@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 from werkzeug.security import generate_password_hash
 
@@ -18,6 +19,7 @@ from app.models import (
     User,
 )
 from app.services.production_result_import_service import ProductionResultImportService
+from app.services.production_result_import_service import ProductionWorkbookValidationError
 from app.services.production_result_service import ProductionResultService
 
 
@@ -126,6 +128,79 @@ def test_kota_workbook_preserves_exact_tl_and_unit_results(tmp_path):
         assert result["target_tl"] == 100
         assert result["target_unit"] == 10
         assert result["realization_percent"] == 120
+
+
+def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_path):
+    config = type(
+        "ProductionEmptyProductConfig",
+        (ProductionImportConfig,),
+        {
+            "SQLALCHEMY_DATABASE_URI": "sqlite://",
+            "UPLOAD_FOLDER": tmp_path / "uploads",
+            "REPORT_FOLDER": tmp_path / "reports",
+            "BACKUP_FOLDER": tmp_path / "backups",
+            "LOG_FOLDER": tmp_path / "logs",
+        },
+    )
+    app = create_app(config)
+    with app.app_context():
+        db.create_all()
+        db.session.query(Target).delete()
+        representative = Representative(
+            rep_code="EMPTY-PRODUCT-REP", rep_name="EMPTY PRODUCT REP", region="901 DIYARBAKIR", active=True
+        )
+        db.session.add(representative)
+        db.session.flush()
+        products = []
+        for name in PRODUCTS:
+            product = Product.query.filter_by(product_code=name).first()
+            if product is None:
+                product = Product(product_code=name, product_name=name.title(), is_active=True)
+                db.session.add(product)
+            products.append(product)
+        db.session.flush()
+        db.session.add_all([
+            Target(
+                year=2026, month=4, representative_id=representative.id, product_id=product.id,
+                tl_target=0 if product.product_code == "FENTIVAG" else 100,
+                unit_target=0 if product.product_code == "FENTIVAG" else 10,
+            )
+            for product in products
+        ])
+        db.session.commit()
+
+        path = tmp_path / "global-empty.xlsx"
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        tl = _sheet(workbook, "TTS REALIZASYONLARI TL", "TL", [120, 120, 120, 0, 120, 120, 120], [120, 120, 120, 0, 120, 120, 120], 720, 120, True)
+        unit = _sheet(workbook, "TTS REALIZASYONLARI KUTU", "KUTU", [11, 11, 11, 0, 11, 11, 11], [110, 110, 110, 0, 110, 110, 110], 66, 110, False)
+        for row_number in (2, 3):
+            tl.cell(row_number, 7).value = None
+            unit.cell(row_number, 7).value = 0
+        tl.cell(2, 11).value = tl.cell(3, 11).value = 600
+        unit.cell(2, 11).value = unit.cell(3, 11).value = 60
+        workbook.save(path)
+
+        report = ProductionResultImportService(path, 2026, 4, production_stage=2).parse()
+        assert report.globally_empty_products == ["Fentivag"]
+        fentivag_id = next(product.id for product in products if product.product_code == "FENTIVAG")
+        fentivag_row = next(row for row in report.product_results if row["product_id"] == fentivag_id)
+        assert fentivag_row["target_tl"] == 0
+        assert fentivag_row["actual_tl"] == 0
+
+        # Once any representative has product activity, another blank target is a row error.
+        tl.cell(2, 7).value = 100
+        tl.cell(2, 17).value = 10
+        workbook.save(path)
+        with pytest.raises(ProductionWorkbookValidationError, match=r"EMPTY PRODUCT REP.*Fentivag.*hedef G3.*çıkış Q3"):
+            ProductionResultImportService(path, 2026, 4, production_stage=2).parse()
+
+
+def test_danger_alerts_require_manual_dismissal():
+    base = Path("app/templates/base.html").read_text(encoding="utf-8")
+    javascript = Path("app/static/js/app.js").read_text(encoding="utf-8")
+    assert "data-auto-dismiss=\"{{ 'false' if category == 'danger' else 'true' }}\"" in base
+    assert ".alert:not([data-auto-dismiss='false'])" in javascript
 
 
 def test_invalid_production_upload_fails_without_mutating_ims(tmp_path):
