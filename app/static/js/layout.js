@@ -233,15 +233,21 @@
                 if (!item || document.getElementById('imsPublishedNotice')) return;
                 const notice = document.createElement('div');
                 notice.id = 'imsPublishedNotice';
-                notice.className = 'ims-published-notice';
-                notice.innerHTML = '<div class="ims-published-notice-icon"><i class="bi bi-check-circle-fill"></i></div>' +
-                    '<div class="ims-published-notice-copy"><strong>Yeni IMS yüklendi</strong>' +
+                notice.className = 'ims-published-notice-layer';
+                notice.setAttribute('role', 'dialog');
+                notice.setAttribute('aria-modal', 'true');
+                notice.setAttribute('aria-labelledby', 'imsPublishedNoticeTitle');
+                notice.innerHTML = '<section class="ims-published-notice"><div class="ims-published-notice-icon"><i class="bi bi-check2-circle"></i></div>' +
+                    '<div class="ims-published-notice-copy"><span class="ims-published-notice-eyebrow">Veriler kullanıma hazır</span>' +
+                    '<strong id="imsPublishedNoticeTitle">Yeni IMS başarıyla yüklendi</strong>' +
                     '<span>' + item.year + '/' + String(item.month).padStart(2, '0') +
                     (item.week_number ? ' · ' + item.week_number + '. Hafta' : '') +
                     ' verileri ve analiz ekranları kullanıma hazır.</span></div>' +
-                    '<button type="button" aria-label="Bildirimi kapat"><i class="bi bi-x-lg"></i></button>';
+                    '<div class="ims-published-notice-actions"><button type="button">Anladım</button></div></section>';
                 document.body.appendChild(notice);
-                notice.querySelector('button').addEventListener('click', function () {
+                const dismissButton = notice.querySelector('button');
+                dismissButton.focus();
+                dismissButton.addEventListener('click', function () {
                     fetch('/ims/publication-notice', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({upload_id: item.upload_id})
