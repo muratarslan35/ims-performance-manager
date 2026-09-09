@@ -32,3 +32,30 @@
 [data-theme="dark"] .exec-metric-guide article,[data-theme="dark"] .exec-ai-section{border-color:rgba(255,255,255,.18)}
 @media(max-width:1000px){.exec-metric-guide{grid-template-columns:1fr 1fr}.exec-ai-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){.exec-metric-guide{grid-template-columns:1fr}.exec-metric-guide span{font-size:11px}.exec-region-metrics{gap:8px!important}.exec-region-stat small{font-size:10px!important}.exec-region-foot{align-items:flex-start}.exec-region-foot small{font-size:9px}.exec-ai-section{padding:14px}.exec-ai-grid{grid-template-columns:1fr}.exec-ai-head p{font-size:11px}.exec-ai-card-head span{font-size:10px}.exec-ai-card p{font-size:11px}.exec-ai-card small{font-size:10px}}
+
+/* Final theme contrast contract for the complete executive market section. */
+.exec-summary-card h3{color:#123a55!important}
+.exec-summary-card>div>span{color:#0b6fa7!important}
+.exec-summary-items p{color:#2d4d63!important}
+.exec-summary-items i{color:#13875a!important}
+.exec-ai-card-head strong{color:#fff!important}
+.exec-ai-card-head span,.exec-ai-source span{color:#d8efff!important}
+.exec-ai-action,.exec-ai-action b{color:#f2f8fc!important}
+.exec-ai-facts>div{background:#f7fafc;border-color:#d6e3ed}
+.exec-ai-facts small{color:#536d80!important}
+.exec-ai-facts b{color:#102f48!important}
+
+[data-theme="dark"] .exec-summary-card{background:linear-gradient(100deg,#17283b,#1b3147)!important;border-color:#3b5369!important}
+[data-theme="dark"] .exec-summary-card h3{color:#f5f9fc!important}
+[data-theme="dark"] .exec-summary-card>div>span{color:#8fd8ff!important}
+[data-theme="dark"] .exec-summary-items p{color:#e1edf6!important}
+[data-theme="dark"] .exec-summary-items i{color:#61e0ad!important}
+[data-theme="dark"] .exec-ai-head>div>span{color:#9bdcff!important}
+[data-theme="dark"] .exec-ai-head h3{color:#fff!important}
+[data-theme="dark"] .exec-ai-head p{color:#e4f2fb!important}
+[data-theme="dark"] .exec-ai-card{background:rgba(11,48,78,.76);border-color:rgba(183,222,246,.28)}
+[data-theme="dark"] .exec-ai-source span{color:#cfe7f7!important}
+[data-theme="dark"] .exec-ai-facts>div{background:#1c3247;border-color:#466078}
+[data-theme="dark"] .exec-ai-facts small{color:#c1d6e6!important}
+[data-theme="dark"] .exec-ai-facts b{color:#fff!important}
+[data-theme="dark"] .exec-ai-action,[data-theme="dark"] .exec-ai-action b{color:#edf7fd!important}
