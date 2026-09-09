@@ -13,6 +13,23 @@
 /* ─── §2  GLOBAL SHELL LAYOUT ────────────────────────────────── */
 html, body { height: 100%; }
 
+.ims-published-notice {
+  position: fixed; top: 82px; left: 50%; transform: translateX(-50%);
+  z-index: 2147482500; width: min(620px, calc(100vw - 28px));
+  display: flex; align-items: center; gap: 14px; padding: 16px 18px;
+  border: 1px solid rgba(16,185,129,.32); border-radius: 18px;
+  background: rgba(240,253,250,.97); color: #123044;
+  box-shadow: 0 18px 50px rgba(15,23,42,.2); backdrop-filter: blur(8px);
+}
+.ims-published-notice-icon { color: #059669; font-size: 27px; line-height: 1; }
+.ims-published-notice-copy { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 2px; }
+.ims-published-notice-copy strong { font-size: 16px; font-weight: 850; }
+.ims-published-notice-copy span { font-size: 13px; line-height: 1.45; color: #476173; }
+.ims-published-notice button { border: 0; background: transparent; color: #476173; padding: 8px; }
+[data-theme="dark"] .ims-published-notice { background: rgba(15,39,49,.97); color: #ecfdf5; border-color: rgba(52,211,153,.38); }
+[data-theme="dark"] .ims-published-notice-copy span,
+[data-theme="dark"] .ims-published-notice button { color: #b8d6d0; }
+
 .page {
   display: flex;
   min-height: 100vh;

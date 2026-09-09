@@ -225,6 +225,31 @@
         else badge.classList.remove('hidden');
     }
 
+    function checkPublishedIMSNotice() {
+        fetch('/ims/publication-notice', {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+            .then(function (response) { return response.ok ? response.json() : Promise.reject(); })
+            .then(function (payload) {
+                const item = payload && payload.notice;
+                if (!item || document.getElementById('imsPublishedNotice')) return;
+                const notice = document.createElement('div');
+                notice.id = 'imsPublishedNotice';
+                notice.className = 'ims-published-notice';
+                notice.innerHTML = '<div class="ims-published-notice-icon"><i class="bi bi-check-circle-fill"></i></div>' +
+                    '<div class="ims-published-notice-copy"><strong>Yeni IMS yüklendi</strong>' +
+                    '<span>' + item.year + '/' + String(item.month).padStart(2, '0') +
+                    (item.week_number ? ' · ' + item.week_number + '. Hafta' : '') +
+                    ' verileri ve analiz ekranları kullanıma hazır.</span></div>' +
+                    '<button type="button" aria-label="Bildirimi kapat"><i class="bi bi-x-lg"></i></button>';
+                document.body.appendChild(notice);
+                notice.querySelector('button').addEventListener('click', function () {
+                    fetch('/ims/publication-notice', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({upload_id: item.upload_id})
+                    }).finally(function () { notice.remove(); });
+                });
+            }).catch(function () {});
+    }
+
     function renderImportNotifications(jobs) {
         const container = document.getElementById('imsImportNotifications');
         const empty = document.getElementById('notificationsEmpty');
@@ -419,6 +444,7 @@
 
         window.addEventListener('resize', onResize);
         updateNotificationBadge();
+        checkPublishedIMSNotice();
         refreshImportNotifications();
         window.setInterval(refreshImportNotifications, 15000);
         setupImsProgressBar();

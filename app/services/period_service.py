@@ -30,7 +30,7 @@ class PeriodService:
         try:
             from flask import has_app_context
             if has_app_context():
-                from app.models import IMSUpload
+                from app.services.ims_publication_service import IMSPublicationService
                 if year is not None and month is not None:
                     # Priority 1: Explicit parameters provided
                     period["year"] = int(year)
@@ -38,26 +38,14 @@ class PeriodService:
                     period["quarter"] = ((int(month) - 1) // 3) + 1
                     
                     # Try to fetch additional context (week, upload_id) for this explicit period
-                    upload = IMSUpload.query.filter_by(
-                        status='COMPLETED', year=int(year), month=int(month)
-                    ).order_by(
-                        IMSUpload.week_number.desc(),
-                        IMSUpload.completed_at.desc(),
-                        IMSUpload.id.desc(),
-                    ).first()
+                    upload = IMSPublicationService.latest_visible_upload(year, month)
                     
                     if upload:
                         period["week_number"] = upload.week_number or 1
                         period["upload_id"] = upload.id
                 else:
                     # Priority 2: Latest COMPLETED upload
-                    upload = IMSUpload.query.filter_by(status='COMPLETED').order_by(
-                        IMSUpload.year.desc(),
-                        IMSUpload.month.desc(),
-                        IMSUpload.week_number.desc(),
-                        IMSUpload.completed_at.desc(),
-                        IMSUpload.id.desc(),
-                    ).first()
+                    upload = IMSPublicationService.latest_visible_upload()
                     if upload and upload.year and upload.month:
                         period["year"] = upload.year
                         period["month"] = upload.month
