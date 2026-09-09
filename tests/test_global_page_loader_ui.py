@@ -39,3 +39,11 @@ def test_global_page_loader_does_not_touch_business_calculation_contracts():
     loader_block = source[source.index("function setupGlobalPageLoader()") : source.index("function isMobile()")]
     for token in forbidden:
         assert token not in loader_block
+
+
+def test_ajax_simulation_form_does_not_start_navigation_loader():
+    layout = Path("app/static/js/layout.js").read_text(encoding="utf-8")
+    simulation = Path("app/templates/simulation.html").read_text(encoding="utf-8")
+
+    assert "if (form.dataset.pageLoader === 'false') return;" in layout
+    assert '<form id="simulationForm" data-page-loader="false">' in simulation
