@@ -80,15 +80,19 @@ class IMSPublicationService:
     def notice_for_user(cls, user_id):
         cls.ensure_schema()
         job = cls.latest_ready_job()
-        if job is None or not job.ims_upload_id:
+        upload = db.session.get(IMSUpload, int(job.ims_upload_id)) if job and job.ims_upload_id else None
+        if upload is None:
+            # Uploads completed before the atomic-publication marker was added
+            # are still eligible once no import/snapshot publication is pending.
+            upload = cls.latest_visible_upload()
+        if upload is None:
             return None
         seen = db.session.execute(sa.select(ims_publication_receipts.c.user_id).where(
             ims_publication_receipts.c.user_id == int(user_id),
-            ims_publication_receipts.c.upload_id == int(job.ims_upload_id),
+            ims_publication_receipts.c.upload_id == int(upload.id),
         )).scalar()
         if seen:
             return None
-        upload = db.session.get(IMSUpload, int(job.ims_upload_id))
         return {
             "upload_id": int(upload.id), "year": int(upload.year), "month": int(upload.month),
             "week_number": int(upload.week_number or 0), "file_name": upload.file_name,
