@@ -228,7 +228,7 @@ const App={
 
                 .querySelectorAll(
 
-                    ".alert"
+                    ".alert:not([data-auto-dismiss='false'])"
 
                 )
 
