@@ -318,8 +318,12 @@ def production_upload():
 
     payload = file.read()
     source_hash = hashlib.sha256(payload).hexdigest()
-    existing = ProductionResultUpload.query.filter_by(source_hash=source_hash).first()
-    if existing:
+    existing = (
+        ProductionResultUpload.query.filter_by(source_hash=source_hash)
+        .order_by(ProductionResultUpload.id.desc())
+        .first()
+    )
+    if existing and existing.status != ProductionResultUpload.STATUS_FAILED:
         flash(
             f"Bu üretim dosyası daha önce {existing.year}/{existing.month:02d} dönemi için yüklenmiş.",
             "warning",
