@@ -176,6 +176,8 @@ IMS Performans Yönetim Sistemi
 
                     class="alert alert-{{ category }} alert-dismissible fade show"
 
+                    data-auto-dismiss="{{ 'false' if category == 'danger' else 'true' }}"
+
                 >
 
                     <div class="d-flex align-items-center gap-2">
