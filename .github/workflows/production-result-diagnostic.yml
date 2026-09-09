@@ -1,4 +1,4 @@
-name: Production Result Failure Diagnostic
+name: Week 18 IMS Read-Only Reconciliation
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read production result failure evidence
+      - name: Compare archived IMS source, database and dashboard
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -41,35 +41,93 @@ jobs:
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
-          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
           venv/bin/python - <<'PY'
+          from decimal import Decimal
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
+          from app.models import IMSUpload, Product, Target, IMSSummary
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.services.ims_import_service import IMSImportService
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.services.dynamic_import_contract import WorkbookSemanticLocator
+          from app.services.official_aggregate_service import OfficialAggregateService
+          from app.services.product_unit_price_service import ProductUnitPriceService
+          from app.services.tl_box_calculation_service import TLBoxCalculationService
 
           app = create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
-              )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
-                  print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
-                  )
+              upload = (IMSUpload.query.filter_by(year=2026, month=4, week_number=18, status="COMPLETED")
+                        .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first())
+              if upload is None:
+                  raise SystemExit("AUDIT_FAIL|week18_completed_upload_missing")
+              source = IMSUploadLifecycleService.archived_source_for_upload(upload.id)
+              if source is None:
+                  raise SystemExit(f"AUDIT_FAIL|archive_missing|upload={upload.id}")
+              print(f"AUDIT_UPLOAD|id={upload.id}|file={upload.file_name}|archive={source.name}|completed={upload.completed_at}")
+
+              importer = IMSImportService(source)
+              importer.upload = upload
+              importer.load_workbook()
+              locator = WorkbookSemanticLocator(importer)
+              products = {p.id: p for p in Product.query.order_by(Product.display_order, Product.id).all()}
+              source_rows = {}
+              for capability in ("balance", "weekly"):
+                  profile = locator.locate(capability, required=True)
+                  print(f"SOURCE_PROFILE|capability={capability}|sheet={profile.sheet_name}|header_row={profile.header_row+1}")
+                  for row_index, row in locator.iter_data_rows(profile):
+                      identity = locator.aggregate_identity(profile, row)
+                      if not identity or identity[0] != "NATIONAL":
+                          continue
+                      for product_id, columns in profile.product_metrics.items():
+                          values = {metric: importer.safe_float(row.iloc[column]) for metric, column in columns.items()}
+                          source_rows.setdefault(product_id, {}).update(values)
+                          print("SOURCE_NATIONAL|capability=" + capability + "|row=" + str(row_index+1) +
+                                "|product=" + products[product_id].product_code + "|" +
+                                "|".join(f"{k}={v:.6f}" for k,v in sorted(values.items())))
+                      break
+
+              official = {item["product_id"]: item for item in OfficialAggregateService.product_totals(2026,4,"NATIONAL") or []}
+              prices = ProductUnitPriceService.price_map(products.keys(), 2026, 4)
+              dashboard = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2026, month=4))
+              dashboard_rows = {item["product_id"]: item for item in dashboard.get("products", [])}
+              target_sums = dict(db.session.query(Target.product_id, db.func.sum(Target.tl_target))
+                                 .filter_by(year=2026, month=4).group_by(Target.product_id).all())
+              summary_sums = {pid:(tl,unit) for pid,tl,unit in
+                  db.session.query(IMSSummary.product_id, db.func.sum(IMSSummary.tl), db.func.sum(IMSSummary.unit))
+                    .filter_by(upload_id=upload.id).group_by(IMSSummary.product_id).all()}
+
+              mismatch_count = 0
+              managed = {"TRAVAZOL","MONUROL","ACNEMIX","MIXOVUL","STIDERM","BRIMODER","FENTIVAG"}
+              for product_id, product in products.items():
+                  if product.product_code not in managed:
+                      continue
+                  src, off, dash = source_rows.get(product_id,{}), official.get(product_id,{}), dashboard_rows.get(product_id,{})
+                  price = Decimal(str(prices.get(product_id) or 0))
+                  source_target = Decimal(str(src.get("target_tl") or 0))
+                  source_actual = Decimal(str(src.get("actual_tl") or 0))
+                  calc_target_box = TLBoxCalculationService.boxes_from_tl(source_target, price)
+                  calc_actual_box = TLBoxCalculationService.boxes_from_tl(source_actual, price)
+                  db_target = Decimal(str(target_sums.get(product_id) or 0))
+                  sum_tl, sum_unit = summary_sums.get(product_id,(0,0))
+                  checks = {
+                      "source_official_target": abs(source_target-Decimal(str(off.get("target_tl") or 0))) < Decimal("0.01"),
+                      "source_dashboard_target": abs(source_target-Decimal(str(dash.get("target_tl") or 0))) < Decimal("0.01"),
+                      "source_target_sum": abs(source_target-db_target) < Decimal("0.01"),
+                      "calc_dashboard_target_box": calc_target_box == Decimal(str(dash.get("unit_target") or 0)),
+                      "calc_dashboard_actual_box": calc_actual_box == Decimal(str(dash.get("unit_actual") or 0)),
+                  }
+                  bad = [name for name, ok in checks.items() if not ok]
+                  mismatch_count += len(bad)
+                  print("PRODUCT_AUDIT|" +
+                        f"product={product.product_code}|price={price}|source_target_tl={source_target}|" +
+                        f"official_target_tl={off.get('target_tl')}|target_sum_tl={db_target}|dashboard_target_tl={dash.get('target_tl')}|" +
+                        f"source_actual_tl={source_actual}|official_actual_tl={off.get('actual_tl')}|summary_sum_tl={sum_tl}|dashboard_actual_tl={dash.get('actual_tl')}|" +
+                        f"source_actual_unit={src.get('actual_unit')}|summary_sum_unit={sum_unit}|" +
+                        f"calc_target_box={calc_target_box}|dashboard_target_box={dash.get('unit_target')}|" +
+                        f"calc_actual_box={calc_actual_box}|dashboard_actual_box={dash.get('unit_actual')}|" +
+                        f"checks={','.join(bad) if bad else 'PASS'}")
+              print(f"AUDIT_RESULT|mismatches={mismatch_count}|dashboard_source={dashboard.get('source')}|box_source={dashboard.get('box_source')}")
+              db.session.rollback()
           PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
-          echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
