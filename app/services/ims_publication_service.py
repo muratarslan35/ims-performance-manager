@@ -38,7 +38,7 @@ class IMSPublicationService:
             progress = IMSProgressStore.for_job(job)
             if progress.get("status") in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING}:
                 return job
-            if progress.get("stage") in {"read_models", "dashboard_snapshot", "region_snapshots", "representative_snapshots"}:
+            if progress.get("stage") in {"read_models", "dashboard_snapshot", "region_snapshots", "representative_snapshots", "snapshot_retry"}:
                 return job
         return None
 
@@ -53,14 +53,6 @@ class IMSPublicationService:
             desc(IMSUpload.year), desc(IMSUpload.month), desc(IMSUpload.week_number),
             desc(IMSUpload.completed_at), desc(IMSUpload.id),
         ).limit(5).all()
-        blocked_ids = {
-            int(row[0]) for row in db.session.query(IMSImportJob.ims_upload_id).filter(
-                IMSImportJob.status == IMSImportJob.STATUS_FAILED,
-                IMSImportJob.ims_upload_id.isnot(None),
-                IMSImportJob.error_message.like("%snapshot%yayınlanmadı%"),
-            ).all()
-        }
-        uploads = [item for item in uploads if int(item.id) not in blocked_ids]
         pending = cls.pending_job(year, month)
         pending_upload_id = int(pending.ims_upload_id) if pending and pending.ims_upload_id else None
         if pending and pending.status != IMSImportJob.STATUS_QUEUED and pending_upload_id is None and uploads:

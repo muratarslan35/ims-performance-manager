@@ -233,6 +233,61 @@ def _snapshot_label(result):
     return "alındı" if result.get("status") in {"ACTIVE", "REUSED"} else "alınamadı"
 
 
+def _prepare_and_publish(app, completed):
+    """Retryable read-model publication; the committed IMS always stays valid."""
+    job_id, year, month = completed.id, completed.year, completed.month
+    IMSProgressStore.write(job_id, percent=42, stage="representative_snapshots",
+        message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+        detail="Temsilci snapshotları hazırlanıyor", status=IMSImportJob.STATUS_PROCESSING)
+    representative_result = _warm_representative_snapshots(app, year, month, job_id=job_id)
+    IMSProgressStore.write(job_id, percent=95, stage="dashboard_snapshot",
+        message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+        detail="Temsilci snapshotları hazır · Dashboard snapshotı hazırlanıyor",
+        status=IMSImportJob.STATUS_PROCESSING)
+    dashboard_result = _warm_dashboard_snapshot(app, year, month)
+    IMSProgressStore.write(job_id, percent=97, stage="region_snapshots",
+        message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+        detail="Temsilci ve dashboard snapshotları hazır · Bölge snapshotları hazırlanıyor",
+        status=IMSImportJob.STATUS_PROCESSING)
+    region_result = _warm_region_snapshots(app, year, month)
+    ready = all(result.get("status") in {"ACTIVE", "REUSED"} for result in (
+        dashboard_result, region_result, representative_result
+    ))
+    detail = (
+        f"Snapshot durumu · Dashboard: {_snapshot_label(dashboard_result)} · "
+        f"Bölge: {_snapshot_label(region_result)} · Temsilci: {_snapshot_label(representative_result)}"
+    )
+    if not ready:
+        completed.error_message = "IMS başarıyla işlendi; eksik snapshotlar otomatik olarak yeniden denenecek."
+        db.session.commit()
+        IMSProgressStore.write(job_id, percent=98, stage="snapshot_retry",
+            message="IMS yüklendi · snapshotlar yeniden denenecek", detail=detail,
+            status=IMSImportJob.STATUS_PROCESSING)
+        return False
+    roster_result = IMSRosterSyncService.sync_latest()
+    app.logger.info("ims_roster_sync_success %s", roster_result)
+    IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=completed.ims_upload_id)
+    summary = json.loads(completed.result_summary or "{}")
+    summary["publication_ready"] = True
+    completed.result_summary = json.dumps(summary, ensure_ascii=False)
+    completed.error_message = None
+    db.session.commit()
+    IMSProgressStore.write(job_id, percent=100, stage="completed",
+        message="IMS yüklemesi tamamlandı · snapshot alındı", detail=detail,
+        status=IMSImportJob.STATUS_COMPLETED)
+    return True
+
+
+def _retryable_publication_job():
+    for job in IMSImportJob.query.filter_by(status=IMSImportJob.STATUS_COMPLETED).order_by(
+        desc(IMSImportJob.completed_at), desc(IMSImportJob.id)
+    ).limit(5):
+        stored = IMSProgressStore.read(job.id) or {}
+        if stored.get("stage") == "snapshot_retry":
+            return job
+    return None
+
+
 def main():
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -240,9 +295,15 @@ def main():
     with app.app_context():
         IMSImportQueue.recover_stale()
         _backfill_latest_region_snapshots(app)
+        next_publication_retry = 0.0
         while not stopping:
             job = IMSImportQueue.claim_next()
             if job is None:
+                if time.monotonic() >= next_publication_retry:
+                    retry_job = _retryable_publication_job()
+                    if retry_job is not None:
+                        _prepare_and_publish(app, retry_job)
+                    next_publication_retry = time.monotonic() + 60
                 db.session.remove()
                 time.sleep(2)
                 continue
@@ -252,76 +313,7 @@ def main():
             IMSImportQueue.process(job)
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
-                # Build the long representative generation first. Published pages
-                # keep their previous immutable generation until every model is ready.
-                IMSProgressStore.write(
-                    job_id,
-                    percent=42,
-                    stage="representative_snapshots",
-                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail="Temsilci snapshotları hazırlanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
-                )
-                representative_result = _warm_representative_snapshots(
-                    app, job_year, job_month, job_id=job_id
-                )
-
-                IMSProgressStore.write(
-                    job_id,
-                    percent=95,
-                    stage="dashboard_snapshot",
-                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail="Temsilci snapshotları hazır · Dashboard snapshotı hazırlanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
-                )
-                dashboard_result = _warm_dashboard_snapshot(app, job_year, job_month)
-
-                IMSProgressStore.write(
-                    job_id,
-                    percent=97,
-                    stage="region_snapshots",
-                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail="Temsilci ve dashboard snapshotları hazır · Bölge snapshotları hazırlanıyor",
-                    status=IMSImportJob.STATUS_PROCESSING,
-                )
-                region_result = _warm_region_snapshots(app, job_year, job_month)
-
-                ready = (
-                    dashboard_result.get("status") in {"ACTIVE", "REUSED"}
-                    and region_result.get("status") in {"ACTIVE", "REUSED"}
-                    and representative_result.get("status") in {"ACTIVE", "REUSED"}
-                )
-                snapshot_detail = (
-                    f"Snapshot durumu · Dashboard: {_snapshot_label(dashboard_result)} · "
-                    f"Bölge: {_snapshot_label(region_result)} · "
-                    f"Temsilci: {_snapshot_label(representative_result)}"
-                )
-                if not ready:
-                    completed.status = IMSImportJob.STATUS_FAILED
-                    completed.error_message = "IMS işlendi ancak snapshot doğrulaması tamamlanamadığı için yayınlanmadı."
-                    db.session.commit()
-                else:
-                    roster_result = IMSRosterSyncService.sync_latest()
-                    app.logger.info("ims_roster_sync_success %s", roster_result)
-                    IMSUploadLifecycleService.seal_snapshot_master_state(
-                        upload_id=completed.ims_upload_id
-                    )
-                    summary = json.loads(completed.result_summary or "{}")
-                    summary["publication_ready"] = True
-                    completed.result_summary = json.dumps(summary, ensure_ascii=False)
-                    db.session.commit()
-                IMSProgressStore.write(
-                    job_id,
-                    percent=100,
-                    stage="completed",
-                    message=(
-                        "IMS yüklemesi tamamlandı · snapshot alındı"
-                        if ready
-                        else "IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı"
-                    ),
-                    detail=snapshot_detail,
-                    status=IMSImportJob.STATUS_COMPLETED if ready else IMSImportJob.STATUS_FAILED,
-                )
+                _prepare_and_publish(app, completed)
             db.session.remove()
 
 
