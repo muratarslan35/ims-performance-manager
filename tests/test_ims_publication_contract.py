@@ -31,3 +31,6 @@ def test_publication_is_atomic_and_notice_is_per_user():
     assert '"ims_publication_receipts"' in service
     assert "upload = cls.latest_visible_upload()" in service
     assert "checkPublishedIMSNotice();" in layout
+    assert "ims-published-notice-layer" in layout
+    assert "Yeni IMS başarıyla yüklendi" in layout
+    assert "aria-modal" in layout
