@@ -37,16 +37,15 @@ def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
     assert "PersistentRegionSnapshotService.build_for_period" in worker
 
 
-def test_worker_retries_region_snapshot_without_gating_completed_ims():
+def test_worker_requires_region_snapshot_before_atomic_publication():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_region_snapshots" in worker
     assert 'region_snapshot_acceptance status=PASS' in worker
     assert 'region_result = _warm_region_snapshots(app, job_year, job_month)' in worker
     assert 'Bölge snapshotları hazırlanıyor' in worker
-    assert 'Bölge snapshotı {_snapshot_label(region_result)}' in worker
-    assert 'status=IMSImportJob.STATUS_COMPLETED' in worker
-    assert 'must never block the UI' in worker
-    assert 'value = 97 + round(2 * done / max(total, 1))' in worker
+    assert 'and region_result.get("status") in {"ACTIVE", "REUSED"}' in worker
+    assert 'summary["publication_ready"] = True' in worker
+    assert 'value = 42 + round(52 * done / max(total, 1))' in worker
 
 
 def test_runtime_deploy_refreshes_snapshot_before_web_activation():
