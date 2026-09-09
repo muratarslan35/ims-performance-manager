@@ -349,7 +349,9 @@ def production_upload():
         )
         db.session.add(upload)
         db.session.flush()
-        report = ProductionResultImportService(stored_path, year, month).parse()
+        report = ProductionResultImportService(
+            stored_path, year, month, production_stage=production_stage
+        ).parse()
         ProductionResultImportService.apply(upload, report)
         db.session.commit()
     except ProductionWorkbookValidationError as exc:
