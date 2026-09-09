@@ -41,9 +41,9 @@ def test_worker_requires_region_snapshot_before_atomic_publication():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_region_snapshots" in worker
     assert 'region_snapshot_acceptance status=PASS' in worker
-    assert 'region_result = _warm_region_snapshots(app, job_year, job_month)' in worker
+    assert 'region_result = _warm_region_snapshots(app, year, month)' in worker
     assert 'Bölge snapshotları hazırlanıyor' in worker
-    assert 'and region_result.get("status") in {"ACTIVE", "REUSED"}' in worker
+    assert 'dashboard_result, region_result, representative_result' in worker
     assert 'summary["publication_ready"] = True' in worker
     assert 'value = 42 + round(52 * done / max(total, 1))' in worker
 

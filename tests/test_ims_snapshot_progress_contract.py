@@ -16,8 +16,8 @@ def test_completed_queue_row_remains_visibly_processing_until_publication():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     route = (ROOT / "app/routes/ims_progress.py").read_text(encoding="utf-8")
     post_import = worker[worker.index("if completed is not None and completed.status") :]
-    assert post_import.count('status=IMSImportJob.STATUS_PROCESSING') >= 3
-    assert 'summary["publication_ready"] = True' in post_import
+    assert worker.count('status=IMSImportJob.STATUS_PROCESSING') >= 3
+    assert 'summary["publication_ready"] = True' in worker
     assert '"active": payload.get("status")' in route
 
 
@@ -35,7 +35,7 @@ def test_worker_reports_dashboard_region_and_representative_snapshot_progress():
     assert 'tahmini' in worker
     assert 'percent=100' in worker
     assert 'IMS yüklemesi tamamlandı · snapshot alındı' in worker
-    assert 'IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı' in worker
+    assert 'IMS yüklendi · snapshotlar yeniden denenecek' in worker
     assert 'Snapshot durumu · Dashboard:' in worker
 
 
@@ -44,8 +44,9 @@ def test_snapshot_failure_blocks_publication_but_preserves_imported_data():
     assert 'def _snapshot_label' in worker
     assert 'return "alındı"' in worker
     assert 'else "alınamadı"' in worker
-    assert 'completed.status = IMSImportJob.STATUS_FAILED' in worker
-    assert 'snapshot doğrulaması tamamlanamadığı için yayınlanmadı' in worker
+    assert 'stage="snapshot_retry"' in worker
+    assert 'eksik snapshotlar otomatik olarak yeniden denenecek' in worker
+    assert 'completed.status = IMSImportJob.STATUS_FAILED' not in worker
 
 
 def test_snapshot_progress_is_measured_not_random_or_timer_driven():

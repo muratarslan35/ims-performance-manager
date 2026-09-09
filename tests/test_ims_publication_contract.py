@@ -23,7 +23,9 @@ def test_publication_is_atomic_and_notice_is_per_user():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     service = (ROOT / "app/services/ims_publication_service.py").read_text(encoding="utf-8")
     layout = (ROOT / "app/static/js/layout.js").read_text(encoding="utf-8")
-    assert worker.index("_warm_representative_snapshots(") < worker.index("dashboard_result = _warm_dashboard_snapshot")
+    publish = worker[worker.index("def _prepare_and_publish"):]
+    assert publish.index("_warm_representative_snapshots(") < publish.index("dashboard_result = _warm_dashboard_snapshot")
     assert 'summary["publication_ready"] = True' in worker
+    assert 'stage="snapshot_retry"' in worker
     assert '"ims_publication_receipts"' in service
     assert "checkPublishedIMSNotice();" in layout
