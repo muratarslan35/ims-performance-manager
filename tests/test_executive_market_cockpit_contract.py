@@ -43,6 +43,23 @@ def test_executive_trend_renders_monthly_realization_labels():
     assert 'ctx.fillText(`%${Number(value).toLocaleString("tr-TR"' in javascript
     assert "plugins: [trendValueLabels]" in javascript
     assert "layout: {padding: {top: 18}}" in javascript
+    assert 'dataset.theme === "dark"' in javascript
+    assert 'ticks: {color: dark ? "#d8e7f2"' in javascript
+    assert "new MutationObserver" in javascript
+
+
+def test_executive_summary_and_ai_cards_keep_theme_contrast():
+    clarity = (ROOT / "app/static/css/market-analysis-exec-clarity.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert '[data-theme="dark"] .exec-summary-card h3{color:#f5f9fc!important}' in clarity
+    assert '[data-theme="dark"] .exec-summary-items p{color:#e1edf6!important}' in clarity
+    assert ".exec-ai-card-head strong{color:#fff!important}" in clarity
+    assert ".exec-ai-source span{color:#d8efff!important}" in clarity
+    assert ".exec-ai-action,.exec-ai-action b{color:#f2f8fc!important}" in clarity
+    assert '[data-theme="dark"] .exec-ai-facts small{color:#c1d6e6!important}' in clarity
+    assert '[data-theme="dark"] .exec-ai-facts b{color:#fff!important}' in clarity
 
 
 def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_queries():
