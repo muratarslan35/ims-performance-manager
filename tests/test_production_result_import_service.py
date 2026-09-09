@@ -177,23 +177,26 @@ def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_pat
         for row_number in (2, 3):
             tl.cell(row_number, 7).value = None
             unit.cell(row_number, 7).value = 0
+        tl.cell(3, 3).value = "EMPTY PRODUCT REP"
+        unit.cell(3, 3).value = "EMPTY PRODUCT REP"
         tl.cell(2, 11).value = tl.cell(3, 11).value = 600
         unit.cell(2, 11).value = unit.cell(3, 11).value = 60
         workbook.save(path)
 
-        report = ProductionResultImportService(path, 2026, 4, production_stage=2).parse()
+        service = ProductionResultImportService(path, 2026, 4, production_stage=2)
+        report = service.parse()
         assert report.globally_empty_products == ["Fentivag"]
         fentivag_id = next(product.id for product in products if product.product_code == "FENTIVAG")
         fentivag_row = next(row for row in report.product_results if row["product_id"] == fentivag_id)
         assert fentivag_row["target_tl"] == 0
         assert fentivag_row["actual_tl"] == 0
 
-        # Once any representative has product activity, another blank target is a row error.
-        tl.cell(2, 7).value = 100
-        tl.cell(2, 17).value = 10
-        workbook.save(path)
+        # The same blank is invalid unless the product is globally empty for all representatives.
+        parsed_tl = service._find_sheet("TTS REALIZASYONLARI TL")
+        parsed_layout = service._layout_for(parsed_tl)
+        service._globally_empty_by_sheet[parsed_tl.title] = set()
         with pytest.raises(ProductionWorkbookValidationError, match=r"EMPTY PRODUCT REP.*Fentivag.*hedef G3.*çıkış Q3"):
-            ProductionResultImportService(path, 2026, 4, production_stage=2).parse()
+            service._read_metric_values(parsed_tl, 3, parsed_layout, "temsilci")
 
 
 def test_danger_alerts_require_manual_dismissal():
@@ -271,6 +274,22 @@ def test_invalid_production_upload_fails_without_mutating_ims(tmp_path):
                 IMSFact.query.count(),
                 IMSSummary.query.count(),
             ) == (0, 0, 0, 0)
+
+            # Failed uploads may be retried with the exact same file after a parser fix.
+            with invalid_path.open("rb") as handle:
+                retry = client.post(
+                    "/ims/production-upload",
+                    data={
+                        "year": "2026",
+                        "month": "1",
+                        "production_stage": "1",
+                        "file": (handle, invalid_path.name),
+                    },
+                    content_type="multipart/form-data",
+                    follow_redirects=False,
+                )
+            assert retry.status_code in (301, 302)
+            assert ProductionResultUpload.query.count() == 2
 
             page = client.get("/ims/")
             assert page.status_code == 200
