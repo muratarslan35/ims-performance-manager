@@ -19,20 +19,19 @@ from app.services.import_coordinator import ImportCoordinator
 from app.services.ims_import_service import IMSImportService
 from app.services.ims_progress_store import IMSProgressStore
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
-from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
 
-# 0-90 remains the real workbook/import path. The last 10% is deliberately
-# reserved for durable read models so 100% means the screens are actually ready.
+# Production timings show that workbook import is roughly two fifths of the
+# end-to-end job; representative read models own most of the remaining work.
 _PROGRESS_STAGES = {
-    "validate_and_load_workbook": (5, 15, "Dosya kontrol ediliyor", "Dosya kontrol edildi"),
-    "discover_and_prepare_sheets": (15, 25, "Sayfalar okunuyor", "Sayfalar okundu"),
-    "stage_raw_rows": (25, 35, "Temsilciler ve bölgeler eşleştiriliyor", "Temsilciler ve bölgeler alındı"),
-    "assignments_and_targets": (35, 45, "Hedefler okunuyor", "Hedefler okundu"),
-    "facts_summary_and_official_aggregates": (45, 60, "Ürün çıkışları okunuyor", "Ürün çıkışları okundu"),
-    "competition_import": (60, 90, "Rekabet verileri okunuyor", "Rekabet verileri okundu"),
-    "source_reconciliation": (90, 91, "Veriler karşılaştırılıyor ve doğrulanıyor", "Veriler karşılaştırıldı ve doğrulandı"),
-    "commit_upload": (91, 92, "Son kayıtlar tamamlanıyor", "Son kayıtlar tamamlandı"),
+    "validate_and_load_workbook": (3, 7, "Dosya kontrol ediliyor", "Dosya kontrol edildi"),
+    "discover_and_prepare_sheets": (7, 11, "Sayfalar okunuyor", "Sayfalar okundu"),
+    "stage_raw_rows": (11, 16, "Temsilciler ve bölgeler eşleştiriliyor", "Temsilciler ve bölgeler alındı"),
+    "assignments_and_targets": (16, 21, "Hedefler okunuyor", "Hedefler okundu"),
+    "facts_summary_and_official_aggregates": (21, 28, "Ürün çıkışları okunuyor", "Ürün çıkışları okundu"),
+    "competition_import": (28, 38, "Rekabet verileri okunuyor", "Rekabet verileri okundu"),
+    "source_reconciliation": (38, 39, "Veriler karşılaştırılıyor ve doğrulanıyor", "Veriler karşılaştırıldı ve doğrulandı"),
+    "commit_upload": (39, 40, "Son kayıtlar tamamlanıyor", "Son kayıtlar tamamlandı"),
 }
 
 
@@ -127,7 +126,7 @@ class IMSImportQueue:
                 def progress_compiled_sheet(service, structure_info, sheet_name):
                     total = max(len(service.get_supported_sheets()), 1)
                     completed = int(getattr(service, "_ui_completed_competition_sheets", 0))
-                    start_percent = 60 + round(30 * completed / total)
+                    start_percent = 28 + round(10 * completed / total)
                     set_progress(
                         start_percent,
                         "competition",
@@ -137,9 +136,9 @@ class IMSImportQueue:
                     result = previous_compiled_sheet_import(service, structure_info, sheet_name)
                     completed += 1
                     service._ui_completed_competition_sheets = completed
-                    end_percent = 60 + round(30 * completed / total)
+                    end_percent = 28 + round(10 * completed / total)
                     set_progress(
-                        min(end_percent, 90),
+                        min(end_percent, 38),
                         "competition",
                         "Rekabet verileri okundu" if completed == total else "Rekabet verileri okunuyor",
                         f"{completed}/{total} rekabet sayfası tamamlandı",
@@ -188,7 +187,7 @@ class IMSImportQueue:
                 if not result.get("success"):
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
 
-                set_progress(92, "final_checks", "IMS verileri son kontrolden geçiriliyor")
+                set_progress(40, "final_checks", "IMS verileri son kontrolden geçiriliyor")
                 spread = OfficialBrickSpreadService.persist(
                     file_path=staging_path,
                     upload_id=result["upload_id"],
@@ -208,46 +207,10 @@ class IMSImportQueue:
                 # set without holding the import write transaction. The worker is
                 # already a single consumer, so this adds no concurrent DB storm.
                 db.session.commit()
-                snapshot_result = {"status": "NOT_BUILT", "regions": 0}
-                try:
-                    set_progress(
-                        92,
-                        "region_snapshots",
-                        "Veriler ekrana aktarılıyor",
-                        "Bölge analizleri hazırlanıyor",
-                    )
-
-                    def snapshot_progress(done, total, region_name):
-                        current_job = db.session.get(IMSImportJob, job.id)
-                        if current_job is not None:
-                            current_job.heartbeat_at = datetime.utcnow()
-                            db.session.commit()
-                        value = 92 + round(2 * done / max(total, 1))
-                        set_progress(
-                            min(value, 94),
-                            "region_snapshots",
-                            "Veriler ekrana aktarılıyor",
-                            f"Bölge analizleri · {done}/{total} · {region_name}",
-                        )
-
-                    snapshot_result = PersistentRegionSnapshotService.build_for_period(
-                        job.year,
-                        job.month,
-                        progress=snapshot_progress,
-                    )
-                except Exception as snapshot_exc:
-                    # Snapshot acceleration must never turn a valid IMS import
-                    # into a failed business-data import. The previous ACTIVE set
-                    # remains intact and runtime calculation is the safe fallback.
-                    current_app.logger.exception(
-                        "region_snapshot_build_failed upload_id=%s",
-                        result["upload_id"],
-                    )
-                    snapshot_result = {
-                        "status": "FAILED",
-                        "regions": 0,
-                        "error": str(snapshot_exc)[:500],
-                    }
+                # Read models are published by the worker only after the complete
+                # representative generation is ready. Until then users keep the
+                # previous immutable dashboard/region/representative generation.
+                snapshot_result = {"status": "DEFERRED", "regions": 0}
 
                 completed_at = datetime.utcnow()
                 stats = dict(result.get("statistics") or {})
@@ -276,7 +239,7 @@ class IMSImportQueue:
                 # progress deliberately stays below 100 until the worker has
                 # prepared dashboard + representative read models as well.
                 set_progress(
-                    94,
+                    41,
                     "read_models",
                     "Veriler ekrana aktarılıyor",
                     "IMS kaydedildi · analiz ekranları hazırlanıyor",

@@ -600,11 +600,19 @@ def import_jobs():
         .limit(10)
         .all()
     )
+    from app.services.ims_progress_store import IMSProgressStore
+
+    def visible_status(job):
+        progress = IMSProgressStore.for_job(job)
+        if progress.get("status") in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING}:
+            return progress.get("status")
+        return job.status
+
     return {
         "jobs": [
             {
                 "id": job.id,
-                "status": job.status,
+                "status": visible_status(job),
                 "file_name": job.file_name,
                 "year": job.year,
                 "month": job.month,

@@ -130,6 +130,16 @@ class PersistentDashboardSnapshotService:
         return None
 
     @classmethod
+    def get_stable(cls, year: int, month: int) -> dict | None:
+        """Read the currently published legacy pointer without rebuilding it."""
+        try:
+            envelope = json.loads(cls._path(year, month).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+        payload = envelope.get("payload")
+        return payload if isinstance(payload, dict) else None
+
+    @classmethod
     def publish(cls, year: int, month: int, payload: dict) -> dict:
         ims_id, production_id = cls.source_identity(year, month)
         path = cls._generation_path(year, month, ims_id, production_id)

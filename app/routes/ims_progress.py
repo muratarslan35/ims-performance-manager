@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from flask import Blueprint
+from flask import Blueprint, request
 from flask_login import current_user, login_required
 
 from app.models import IMSImportJob
 from app.services.ims_progress_store import IMSProgressStore
+from app.services.ims_publication_service import IMSPublicationService
 
 
 ims_progress_bp = Blueprint("ims_progress", __name__, url_prefix="/ims")
@@ -52,3 +53,15 @@ def progress():
         "active": payload.get("status") in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING},
         "progress": payload,
     }
+
+
+@ims_progress_bp.route("/publication-notice", methods=["GET", "POST"])
+@login_required
+def publication_notice():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or request.form
+        upload_id = int(payload.get("upload_id") or 0)
+        if upload_id:
+            IMSPublicationService.dismiss(current_user.id, upload_id)
+        return {"ok": True}
+    return {"notice": IMSPublicationService.notice_for_user(current_user.id)}

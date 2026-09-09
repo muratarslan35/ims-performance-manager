@@ -17,7 +17,7 @@ from sqlalchemy import desc
 from sqlalchemy.inspection import inspect as sa_inspect
 
 from app.extensions import db
-from app.models import IMSUpload, Representative, Target
+from app.models import IMSRawData, IMSUpload, Representative
 from app.services.production_result_service import ProductionResultService
 
 
@@ -111,10 +111,18 @@ class PersistentRepresentativeSnapshotService:
         return int(ims_id or 0), int(production.id if production is not None else 0)
 
     @classmethod
-    def representative_ids(cls, year, month):
-        rows = db.session.query(Target.representative_id).filter(
-            Target.year == int(year), Target.month == int(month)
-        ).distinct().order_by(Target.representative_id.asc()).all()
+    def representative_ids(cls, year, month, source_upload_id=None):
+        """Return the exact roster resolved by the snapshot's IMS upload.
+
+        Monthly targets can retain representatives from an earlier weekly roster.
+        Using them here made obsolete representatives appear in new snapshots and
+        needlessly rebuilt their expensive workspaces.
+        """
+        upload_id = int(source_upload_id or cls.source_identity(year, month)[0] or 0)
+        rows = db.session.query(IMSRawData.representative_id).filter(
+            IMSRawData.upload_id == upload_id,
+            IMSRawData.representative_id.isnot(None),
+        ).distinct().order_by(IMSRawData.representative_id.asc()).all()
         ids = [int(row[0]) for row in rows if row[0] is not None]
         if ids:
             return ids
@@ -159,6 +167,18 @@ class PersistentRepresentativeSnapshotService:
         ims_id, production_id = cls.source_identity(year, month)
         if not ims_id:
             return None
+        from app.services.ims_publication_service import IMSPublicationService
+        if IMSPublicationService.pending_job(year, month) is not None:
+            previous = db.session.execute(
+                sa.select(representative_snapshot_sets.c.id).where(
+                    representative_snapshot_sets.c.year == year,
+                    representative_snapshot_sets.c.month == month,
+                    representative_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                    representative_snapshot_sets.c.source_upload_id != int(ims_id),
+                ).order_by(desc(representative_snapshot_sets.c.activated_at), desc(representative_snapshot_sets.c.id)).limit(1)
+            ).scalar()
+            if previous:
+                return int(previous)
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
         if exact:
             return int(exact.id)
@@ -209,7 +229,7 @@ class PersistentRepresentativeSnapshotService:
         if not ims_id:
             return {"status": "SKIPPED", "reason": "NO_COMPLETED_IMS", "representatives": 0}
 
-        ids = cls.representative_ids(year, month)
+        ids = cls.representative_ids(year, month, ims_id)
         if not ids:
             return {"status": "SKIPPED", "reason": "NO_REPRESENTATIVES", "representatives": 0}
 
@@ -260,7 +280,10 @@ class PersistentRepresentativeSnapshotService:
                         representative_snapshot_sets.c.id == set_id
                     ).values(representative_count=index)
                 )
-                db.session.commit()
+                # Keep writes bounded while avoiding one SQLite fsync/transaction
+                # per representative. Calculations and payloads are unchanged.
+                if index % 8 == 0 or index == total:
+                    db.session.commit()
                 if progress:
                     progress(index, total, str(representative.rep_name or representative_id))
 

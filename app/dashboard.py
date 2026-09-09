@@ -5,6 +5,7 @@ from app.cache.dashboard_cache import DashboardCache
 from app.constants.dashboard_constants import DashboardConstants
 from app.services.dashboard_service import DashboardService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+from app.services.ims_publication_service import IMSPublicationService
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 
@@ -25,9 +26,13 @@ def index():
         DashboardCache().invalidate(cache_key)
         return service.run()
 
-    payload, _built = PersistentDashboardSnapshotService.get_or_build(
-        service.year,
-        service.month,
-        rebuild,
-    )
+    payload = None
+    if IMSPublicationService.pending_job(service.year, service.month) is not None:
+        payload = PersistentDashboardSnapshotService.get_stable(service.year, service.month)
+    if payload is None:
+        payload, _built = PersistentDashboardSnapshotService.get_or_build(
+            service.year,
+            service.month,
+            rebuild,
+        )
     return render_template("dashboard.html", payload=payload)

@@ -6,6 +6,8 @@ models are prepared without waiting for a user's first page request.
 """
 import signal
 import time
+import json
+from collections import deque
 
 from sqlalchemy import desc
 
@@ -17,6 +19,8 @@ from app.models import IMSImportJob, IMSUpload
 from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_progress_store import IMSProgressStore
+from app.services.import_roster_sync import IMSRosterSyncService
+from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
@@ -127,12 +131,20 @@ def _warm_region_snapshots(app, year, month):
 def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None):
     """Prepare all representative pages before users navigate to them."""
     started = time.monotonic()
+    recent_seconds = deque(maxlen=12)
+    previous_tick = started
     try:
         def progress(done, total, name):
-            elapsed = max(time.monotonic() - started, 0.001)
-            rate = done / elapsed if done else 0.0
+            nonlocal previous_tick
+            now = time.monotonic()
+            elapsed = max(now - started, 0.001)
+            recent_seconds.append(max(now - previous_tick, 0.001))
+            previous_tick = now
             remaining = max(total - done, 0)
-            eta_seconds = int(round(remaining / rate)) if rate > 0 else None
+            eta_seconds = (
+                int(round(remaining * sum(recent_seconds) / len(recent_seconds)))
+                if len(recent_seconds) >= 3 else None
+            )
             if eta_seconds is None:
                 eta_text = "süre hesaplanıyor"
             elif eta_seconds >= 60:
@@ -141,15 +153,14 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
                 eta_text = f"tahmini {eta_seconds} sn kaldı"
 
             if job_id is not None:
-                # Snapshot work is visible, but the IMS transaction is already complete.
-                value = 97 + round(2 * done / max(total, 1))
+                value = 42 + round(52 * done / max(total, 1))
                 IMSProgressStore.write(
                     job_id,
-                    percent=min(value, 99),
+                    percent=min(value, 94),
                     stage="representative_snapshots",
                     message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
                     detail=f"Temsilci snapshotları · {done}/{total} · {name} · {eta_text}",
-                    status=IMSImportJob.STATUS_COMPLETED,
+                    status=IMSImportJob.STATUS_PROCESSING,
                 )
 
             if done == 1 or done == total or done % 10 == 0:
@@ -241,43 +252,39 @@ def main():
             IMSImportQueue.process(job)
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
-                # The difficult/atomic IMS import is complete at this point. Everything
-                # below is advisory read-model preparation and must never block the UI.
+                # Build the long representative generation first. Published pages
+                # keep their previous immutable generation until every model is ready.
+                IMSProgressStore.write(
+                    job_id,
+                    percent=42,
+                    stage="representative_snapshots",
+                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+                    detail="Temsilci snapshotları hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
+                )
+                representative_result = _warm_representative_snapshots(
+                    app, job_year, job_month, job_id=job_id
+                )
+
                 IMSProgressStore.write(
                     job_id,
                     percent=95,
                     stage="dashboard_snapshot",
                     message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail="Dashboard snapshotı hazırlanıyor",
-                    status=IMSImportJob.STATUS_COMPLETED,
+                    detail="Temsilci snapshotları hazır · Dashboard snapshotı hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
                 )
                 dashboard_result = _warm_dashboard_snapshot(app, job_year, job_month)
 
                 IMSProgressStore.write(
                     job_id,
-                    percent=96,
+                    percent=97,
                     stage="region_snapshots",
                     message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail=f"Dashboard snapshotı {_snapshot_label(dashboard_result)} · Bölge snapshotları hazırlanıyor",
-                    status=IMSImportJob.STATUS_COMPLETED,
+                    detail="Temsilci ve dashboard snapshotları hazır · Bölge snapshotları hazırlanıyor",
+                    status=IMSImportJob.STATUS_PROCESSING,
                 )
                 region_result = _warm_region_snapshots(app, job_year, job_month)
-
-                IMSProgressStore.write(
-                    job_id,
-                    percent=97,
-                    stage="representative_snapshots",
-                    message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-                    detail=(
-                        f"Dashboard snapshotı {_snapshot_label(dashboard_result)} · "
-                        f"Bölge snapshotı {_snapshot_label(region_result)} · "
-                        "Temsilci snapshotları hazırlanıyor"
-                    ),
-                    status=IMSImportJob.STATUS_COMPLETED,
-                )
-                representative_result = _warm_representative_snapshots(
-                    app, job_year, job_month, job_id=job_id
-                )
 
                 ready = (
                     dashboard_result.get("status") in {"ACTIVE", "REUSED"}
@@ -289,6 +296,20 @@ def main():
                     f"Bölge: {_snapshot_label(region_result)} · "
                     f"Temsilci: {_snapshot_label(representative_result)}"
                 )
+                if not ready:
+                    completed.status = IMSImportJob.STATUS_FAILED
+                    completed.error_message = "IMS işlendi ancak snapshot doğrulaması tamamlanamadığı için yayınlanmadı."
+                    db.session.commit()
+                else:
+                    roster_result = IMSRosterSyncService.sync_latest()
+                    app.logger.info("ims_roster_sync_success %s", roster_result)
+                    IMSUploadLifecycleService.seal_snapshot_master_state(
+                        upload_id=completed.ims_upload_id
+                    )
+                    summary = json.loads(completed.result_summary or "{}")
+                    summary["publication_ready"] = True
+                    completed.result_summary = json.dumps(summary, ensure_ascii=False)
+                    db.session.commit()
                 IMSProgressStore.write(
                     job_id,
                     percent=100,
@@ -299,7 +320,7 @@ def main():
                         else "IMS yüklemesi tamamlandı · snapshotların bir kısmı alınamadı"
                     ),
                     detail=snapshot_detail,
-                    status=IMSImportJob.STATUS_COMPLETED,
+                    status=IMSImportJob.STATUS_COMPLETED if ready else IMSImportJob.STATUS_FAILED,
                 )
             db.session.remove()
 

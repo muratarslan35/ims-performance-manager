@@ -179,6 +179,18 @@ class PersistentRegionSnapshotService:
         ims_id, production_id = cls.source_identity(year, month)
         if not ims_id:
             return None
+        from app.services.ims_publication_service import IMSPublicationService
+        if IMSPublicationService.pending_job(year, month) is not None:
+            previous = db.session.execute(
+                sa.select(region_snapshot_sets.c.id).where(
+                    region_snapshot_sets.c.year == year,
+                    region_snapshot_sets.c.month == month,
+                    region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                    region_snapshot_sets.c.source_upload_id != int(ims_id),
+                ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
+            ).scalar()
+            if previous:
+                return int(previous)
         current = cls._existing_set(year, month, ims_id, production_id)
         if current and current.status == cls.STATUS_ACTIVE:
             return int(current.id)

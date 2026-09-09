@@ -144,27 +144,8 @@ def install_ims_upload_lifecycle() -> None:
                             refreshed.id,
                             refreshed.ims_upload_id,
                         )
-                try:
-                    roster_result = IMSRosterSyncService.sync_latest()
-                    logger.info("ims_roster_sync_success %s", roster_result)
-                except Exception:
-                    db.session.rollback()
-                    logger.exception(
-                        "ims_roster_sync_failed job_id=%s upload_id=%s",
-                        refreshed.id,
-                        refreshed.ims_upload_id,
-                    )
-                if snapshot_captured:
-                    try:
-                        IMSUploadLifecycleService.seal_snapshot_master_state(
-                            upload_id=refreshed.ims_upload_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "ims_lifecycle_master_seal_failed job_id=%s upload_id=%s",
-                            refreshed.id,
-                            refreshed.ims_upload_id,
-                        )
+                # Roster visibility and the post-import master seal are delayed
+                # until every read model passes acceptance in the worker.
             else:
                 IMSUploadLifecycleService.discard_pending_snapshot(job.id)
                 if pending_source.is_file():
