@@ -11,7 +11,7 @@
 
       ctx.save();
       ctx.font = "700 11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-      ctx.fillStyle = "#173a55";
+      ctx.fillStyle = document.documentElement.dataset.theme === "dark" ? "#f4f8fc" : "#173a55";
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
 
@@ -32,6 +32,7 @@
     if (existing) existing.destroy();
     let rows = [];
     try { rows = JSON.parse(canvas.dataset.rows || "[]"); } catch (_) { rows = []; }
+    const dark = document.documentElement.dataset.theme === "dark";
     new Chart(canvas, {
       type: "line",
       data: {
@@ -39,6 +40,9 @@
         datasets: [{
           label: "Türkiye realizasyonu",
           data: rows.map(row => row.has_data ? row.realization_percent : null),
+          borderColor: dark ? "#57b9ff" : "#168bd1",
+          backgroundColor: dark ? "rgba(87,185,255,.18)" : "rgba(22,139,209,.18)",
+          pointBackgroundColor: dark ? "#8fd8ff" : "#168bd1",
           borderWidth: 2,
           pointRadius: 4,
           pointHoverRadius: 6,
@@ -55,8 +59,13 @@
         interaction: {mode: "index", intersect: false},
         plugins: {legend: {display: false}, tooltip: {callbacks: {label: context => `%${context.parsed.y}`}}},
         scales: {
-          x: {grid: {display: false}},
-          y: {beginAtZero: true, suggestedMax: 120, ticks: {callback: value => `%${value}`}}
+          x: {grid: {display: false}, ticks: {color: dark ? "#c9dae7" : "#5b7184"}},
+          y: {
+            beginAtZero: true,
+            suggestedMax: 120,
+            grid: {color: dark ? "rgba(214,233,247,.14)" : "rgba(37,68,94,.12)"},
+            ticks: {color: dark ? "#d8e7f2" : "#526b7e", callback: value => `%${value}`}
+          }
         }
       }
     });
@@ -111,5 +120,9 @@
       setPeriod(root, "monthly");
       initTrend(root);
     });
+    new MutationObserver(mutations => {
+      if (!mutations.some(item => item.attributeName === "data-theme")) return;
+      document.querySelectorAll("[data-exec-cockpit]").forEach(initTrend);
+    }).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
   });
 })();
