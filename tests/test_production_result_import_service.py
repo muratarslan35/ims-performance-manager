@@ -2,7 +2,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from werkzeug.security import generate_password_hash
 
 from app import create_app
@@ -192,8 +192,8 @@ def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_pat
         assert fentivag_row["actual_tl"] == 0
 
         # The same blank is invalid unless the product is globally empty for all representatives.
-        parsed_tl = service._find_sheet("TTS REALIZASYONLARI TL")
-        parsed_layout = service._layout_for(parsed_tl)
+        parsed_tl = service._find_sheet(load_workbook(path, data_only=True), "TL")
+        parsed_layout = service._layout(parsed_tl, "TL")
         service._globally_empty_by_sheet[parsed_tl.title] = set()
         with pytest.raises(ProductionWorkbookValidationError, match=r"EMPTY PRODUCT REP.*Fentivag.*hedef G3.*çıkış Q3"):
             service._read_metric_values(parsed_tl, 3, parsed_layout, "temsilci")
@@ -289,7 +289,8 @@ def test_invalid_production_upload_fails_without_mutating_ims(tmp_path):
                     follow_redirects=False,
                 )
             assert retry.status_code in (301, 302)
-            assert ProductionResultUpload.query.count() == 2
+            assert ProductionResultUpload.query.count() == 1
+            assert ProductionResultUpload.query.one().status == ProductionResultUpload.STATUS_FAILED
 
             page = client.get("/ims/")
             assert page.status_code == 200
