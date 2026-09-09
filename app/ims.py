@@ -330,28 +330,34 @@ def production_upload():
         )
         return redirect(url_for("ims.index") + "#production-results")
 
+    retry_failed_id = existing.id if existing else None
     production_folder = current_app.config["UPLOAD_FOLDER"] / "production_results"
     production_folder.mkdir(parents=True, exist_ok=True)
-    stored_file_name = f"{year}-{month:02d}-u{production_stage}-{uuid4().hex}{extension}"
+    stored_file_name = (
+        existing.stored_file_name
+        if existing
+        else f"{year}-{month:02d}-u{production_stage}-{uuid4().hex}{extension}"
+    )
     stored_path = production_folder / stored_file_name
 
     try:
         stored_path.write_bytes(payload)
-        upload = ProductionResultUpload(
-            file_name=original_name,
-            stored_file_name=stored_file_name,
-            source_hash=source_hash,
-            year=year,
-            month=month,
-            production_stage=production_stage,
-            status=ProductionResultUpload.STATUS_PENDING_VALIDATION,
-            uploaded_by=current_user.full_name,
-            warning_message=(
+        upload = db.session.get(ProductionResultUpload, retry_failed_id) if retry_failed_id else None
+        if upload is None:
+            upload = ProductionResultUpload(source_hash=source_hash)
+            db.session.add(upload)
+        upload.file_name = original_name
+        upload.stored_file_name = stored_file_name
+        upload.year = year
+        upload.month = month
+        upload.production_stage = production_stage
+        upload.status = ProductionResultUpload.STATUS_PENDING_VALIDATION
+        upload.uploaded_by = current_user.full_name
+        upload.error_message = None
+        upload.warning_message = (
                 "Dosya güvenli alana alındı. Şablon doğrulaması tamamlanana kadar mevcut IMS, "
                 "realizasyon ve prim hesaplarına uygulanmayacaktır."
-            ),
         )
-        db.session.add(upload)
         db.session.flush()
         report = ProductionResultImportService(
             stored_path, year, month, production_stage=production_stage
@@ -361,13 +367,18 @@ def production_upload():
     except ProductionWorkbookValidationError as exc:
         db.session.rollback()
         # Preserve rejected source evidence and its reason without applying any result.
-        upload = ProductionResultUpload(
-            file_name=original_name, stored_file_name=stored_file_name, source_hash=source_hash,
-            year=year, month=month, production_stage=production_stage,
-            status=ProductionResultUpload.STATUS_FAILED, uploaded_by=current_user.full_name,
-            error_message=str(exc),
-        )
-        db.session.add(upload)
+        upload = db.session.get(ProductionResultUpload, retry_failed_id) if retry_failed_id else None
+        if upload is None:
+            upload = ProductionResultUpload(source_hash=source_hash)
+            db.session.add(upload)
+        upload.file_name = original_name
+        upload.stored_file_name = stored_file_name
+        upload.year = year
+        upload.month = month
+        upload.production_stage = production_stage
+        upload.status = ProductionResultUpload.STATUS_FAILED
+        upload.uploaded_by = current_user.full_name
+        upload.error_message = str(exc)
         db.session.commit()
         flash(f"Üretim dosyası uygulanmadı: {exc}", "danger")
         return redirect(url_for("ims.index") + "#production-results")
