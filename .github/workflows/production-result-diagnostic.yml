@@ -76,19 +76,28 @@ jobs:
               products = {p.id: p for p in Product.query.order_by(Product.display_order, Product.id).all()}
               source_rows = {}
               for capability in ("balance", "weekly"):
-                  profile = locator.locate(capability, required=True)
-                  print(f"SOURCE_PROFILE|capability={capability}|sheet={profile.sheet_name}|header_row={profile.header_row+1}")
-                  for row_index, row in locator.iter_data_rows(profile):
-                      identity = locator.aggregate_identity(profile, row)
-                      if not identity or identity[0] != "NATIONAL":
-                          continue
-                      for product_id, columns in profile.product_metrics.items():
-                          values = {metric: importer.safe_float(row.iloc[column]) for metric, column in columns.items()}
-                          source_rows.setdefault(product_id, {}).update(values)
-                          print("SOURCE_NATIONAL|capability=" + capability + "|row=" + str(row_index+1) +
-                                "|product=" + products[product_id].product_code + "|" +
-                                "|".join(f"{k}={v:.6f}" for k,v in sorted(values.items())))
-                      break
+                  if capability == "balance":
+                      profiles = [locator.locate(capability, required=True)]
+                  else:
+                      profiles = [candidate for name, frame in importer.workbook.items()
+                                  if (candidate := locator._candidate_profile(name, frame, capability))]
+                      profiles.sort(key=lambda item: item.score, reverse=True)
+                  for profile in profiles:
+                      print(f"SOURCE_PROFILE|capability={capability}|sheet={profile.sheet_name}|header_row={profile.header_row+1}|score={profile.score}")
+                      selected = capability == "balance" or "TTS HAFTALIK" in profile.sheet_name.upper()
+                      for row_index, row in locator.iter_data_rows(profile):
+                          identity = locator.aggregate_identity(profile, row)
+                          if not identity or identity[0] != "NATIONAL":
+                              continue
+                          for product_id, columns in profile.product_metrics.items():
+                              values = {metric: importer.safe_float(row.iloc[column]) for metric, column in columns.items()}
+                              if selected:
+                                  source_rows.setdefault(product_id, {}).update(values)
+                              print("SOURCE_NATIONAL|capability=" + capability + "|sheet=" + profile.sheet_name +
+                                    "|selected=" + str(selected) + "|row=" + str(row_index+1) +
+                                    "|product=" + products[product_id].product_code + "|" +
+                                    "|".join(f"{k}={v:.6f}" for k,v in sorted(values.items())))
+                          break
 
               official = {item["product_id"]: item for item in OfficialAggregateService.product_totals(2026,4,"NATIONAL") or []}
               prices = ProductUnitPriceService.price_map(products.keys(), 2026, 4)
