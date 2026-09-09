@@ -9,7 +9,7 @@
   <div class="card simulation-hero position-relative mb-4"><div class="card-body d-flex align-items-center gap-3 position-relative" style="z-index:1"><div class="hero-icon"><i class="bi bi-calculator-fill"></i></div><div><div class="fw-bold fs-3">Prim Senaryo Merkezi</div><div class="opacity-75">Kutu ve ciro değişikliklerinin prim etkisini güvenli biçimde karşılaştırın.</div></div></div></div>
   <div class="row g-4">
     <div class="col-xl-4"><div class="card simulation-card h-100"><div class="card-header"><h3 class="card-title"><i class="bi bi-sliders me-2 text-primary"></i>Senaryo Parametreleri</h3></div><div class="card-body">
-      <form id="simulationForm">
+      <form id="simulationForm" data-page-loader="false">
         <div class="mb-3"><label class="form-label fw-semibold">Temsilci</label><select class="form-select" name="representative_id" required><option value="">Temsilci seçiniz</option>{% for representative in representatives %}<option value="{{ representative.id }}">{{ representative.rep_name }}</option>{% endfor %}</select></div>
         <div class="row g-2 mb-3"><div class="col-6"><label class="form-label fw-semibold">Yıl</label><input type="number" class="form-control" name="year" value="2026" min="2020" required></div><div class="col-6"><label class="form-label fw-semibold">Ay</label><select class="form-select" name="month">{% for i in range(1,13) %}<option value="{{ i }}">{{ i }}</option>{% endfor %}</select></div></div>
         <div class="d-flex align-items-center justify-content-between mb-2"><h4 class="mb-0">Ürün Güncellemeleri</h4><span class="badge bg-blue-lt">Ek satış senaryosu</span></div>
