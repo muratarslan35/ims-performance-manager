@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - '.github/workflows/production-result-diagnostic.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/production-result-diagnostic.yml'
 
 permissions:
   contents: read
