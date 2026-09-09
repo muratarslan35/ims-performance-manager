@@ -136,6 +136,7 @@
             if (event.defaultPrevented) return;
             const form = event.target;
             if (!(form instanceof HTMLFormElement)) return;
+            if (form.dataset.pageLoader === 'false') return;
             const target = (form.getAttribute('target') || '').toLowerCase();
             if (target && target !== '_self') return;
             show(5);
