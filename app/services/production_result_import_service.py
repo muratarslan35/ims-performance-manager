@@ -39,6 +39,7 @@ class ProductionImportReport:
     national_product_results: list = field(default_factory=list)
     national_total: dict | None = None
     target_mismatch_count: int = 0
+    globally_empty_products: list = field(default_factory=list)
 
     @property
     def matched_result_count(self):
@@ -71,6 +72,8 @@ class ProductionResultImportService:
         self._vacancies = {}
         self._vacancy_names = set()
         self._layout_cache = {}
+        self._product_by_id = {}
+        self._globally_empty_by_sheet = {}
 
     @staticmethod
     def _number(value):
@@ -127,6 +130,7 @@ class ProductionResultImportService:
     def _load_master_maps(self):
         normalize = AliasService.normalize
         for product in Product.query.all():
+            self._product_by_id[int(product.id)] = product
             for label in (product.product_name, product.product_code, product.ims_name):
                 if label:
                     self._products[normalize(label)] = product
@@ -311,21 +315,36 @@ class ProductionResultImportService:
 
     def _read_metric_values(self, sheet, row_number, layout, context):
         targets, values, percentages = [], [], []
-        for target_column, actual_column, percent_column in zip(
-            layout["target_columns"], layout["actual_columns"], layout["percent_columns"]
+        globally_empty = self._globally_empty_by_sheet.get(sheet.title, set())
+        for product_id, target_column, actual_column, percent_column in zip(
+            layout["product_ids"], layout["target_columns"], layout["actual_columns"], layout["percent_columns"]
         ):
             target = self._number(sheet.cell(row_number, target_column).value)
             actual = self._number(sheet.cell(row_number, actual_column).value)
             percent = self._number(sheet.cell(row_number, percent_column).value)
+            if product_id in globally_empty:
+                target = 0.0 if target is None else target
+                actual = 0.0 if actual is None else actual
+                percent = 0.0 if percent is None else percent
             if target is None or target < 0 or actual is None:
+                product = self._product_by_id.get(int(product_id))
+                product_name = product.product_name if product is not None else str(product_id)
+                representative = str(sheet.cell(row_number, layout["name_column"]).value or context).strip()
+                target_cell = sheet.cell(row_number, target_column).coordinate
+                actual_cell = sheet.cell(row_number, actual_column).coordinate
                 raise ProductionWorkbookValidationError(
-                    f"{sheet.title}!{row_number} {context} hedef/çıkış değeri geçersiz."
+                    f"{sheet.title}!{row_number} {representative} · {product_name} hedef/çıkış değeri geçersiz "
+                    f"(hedef {target_cell}, çıkış {actual_cell})."
                 )
             if percent is None:
                 percent = self._derived_percent(actual, target)
             if percent is None:
+                product = self._product_by_id.get(int(product_id))
+                product_name = product.product_name if product is not None else str(product_id)
+                representative = str(sheet.cell(row_number, layout["name_column"]).value or context).strip()
                 raise ProductionWorkbookValidationError(
-                    f"{sheet.title}!{row_number} {context} realizasyonu güvenli biçimde türetilemedi."
+                    f"{sheet.title}!{row_number} {representative} · {product_name} realizasyonu "
+                    "güvenli biçimde türetilemedi."
                 )
             targets.append(target)
             values.append(actual)
@@ -356,6 +375,28 @@ class ProductionResultImportService:
             "total_percent": total_percent,
             "product_ids": layout["product_ids"],
         }
+
+    def _detect_globally_empty_products(self, sheet, layout):
+        """Allow a product only when every representative has no target or sale."""
+        representative_rows = []
+        for row_number in range(layout["header_row"] + 1, sheet.max_row + 1):
+            raw_name = sheet.cell(row_number, layout["name_column"]).value
+            label = AliasService.normalize(raw_name)
+            if label and label != "NATIONAL" and not self._is_region(label):
+                representative_rows.append(row_number)
+
+        globally_empty = set()
+        for product_id, target_column, actual_column in zip(
+            layout["product_ids"], layout["target_columns"], layout["actual_columns"]
+        ):
+            if representative_rows and all(
+                self._number(sheet.cell(row_number, target_column).value) in (None, 0.0)
+                and self._number(sheet.cell(row_number, actual_column).value) in (None, 0.0)
+                for row_number in representative_rows
+            ):
+                globally_empty.add(int(product_id))
+        self._globally_empty_by_sheet[sheet.title] = globally_empty
+        return globally_empty
 
     def _read_sheet(self, sheet, metric):
         layout = self._layout(sheet, metric)
@@ -427,6 +468,8 @@ class ProductionResultImportService:
         self._load_master_maps()
         tl_sheet = self._find_sheet(workbook, "TL")
         unit_sheet = self._find_sheet(workbook, "KUTU")
+        tl_empty = self._detect_globally_empty_products(tl_sheet, self._layout(tl_sheet, "TL"))
+        unit_empty = self._detect_globally_empty_products(unit_sheet, self._layout(unit_sheet, "KUTU"))
         tl_rows = self._read_sheet(tl_sheet, "TL")
         unit_rows = self._read_sheet(unit_sheet, "KUTU")
         region_tl = self._read_regions(tl_sheet, "TL")
@@ -462,7 +505,16 @@ class ProductionResultImportService:
                 f"(eksik={len(set(targets)-source_keys)}, fazlalık={len(source_keys-set(targets))})."
             )
 
-        report = ProductionImportReport(rows_seen=len(tl_rows), matched_rows=len(tl_rows))
+        globally_empty = sorted(tl_empty & unit_empty)
+        report = ProductionImportReport(
+            rows_seen=len(tl_rows),
+            matched_rows=len(tl_rows),
+            globally_empty_products=[
+                self._product_by_id[product_id].product_name
+                for product_id in globally_empty
+                if product_id in self._product_by_id
+            ],
+        )
         for tl_index, product_id in enumerate(national_tl["product_ids"]):
             unit_index = self._product_position(national_unit, product_id)
             report.national_product_results.append({
@@ -527,8 +579,12 @@ class ProductionResultImportService:
 
                 expected = self._derived_percent(actual_tl, source_target_tl)
                 if expected is None or abs(percent - expected) > self.PERCENT_TOLERANCE:
+                    representative = db.session.get(Representative, representative_id)
+                    product = self._product_by_id.get(int(product_id))
                     raise ProductionWorkbookValidationError(
-                        f"{tl_sheet.title}!{tl_row['row_number']} TL realizasyonu doğrulanamadı."
+                        f"{tl_sheet.title}!{tl_row['row_number']} "
+                        f"{representative.rep_name if representative else representative_id} · "
+                        f"{product.product_name if product else product_id} TL realizasyonu doğrulanamadı."
                     )
                 if (
                     abs(source_target_tl - float(database_target.tl_target or 0)) > self.PERCENT_TOLERANCE
@@ -537,8 +593,12 @@ class ProductionResultImportService:
                     report.target_mismatch_count += 1
                 expected_unit_percent = self._derived_percent(actual_unit, source_target_unit)
                 if expected_unit_percent is None or abs(unit_percent - expected_unit_percent) > self.PERCENT_TOLERANCE:
+                    representative = db.session.get(Representative, representative_id)
+                    product = self._product_by_id.get(int(product_id))
                     raise ProductionWorkbookValidationError(
-                        f"{unit_sheet.title}!{unit_row['row_number']} kutu realizasyonu doğrulanamadı."
+                        f"{unit_sheet.title}!{unit_row['row_number']} "
+                        f"{representative.rep_name if representative else representative_id} · "
+                        f"{product.product_name if product else product_id} kutu realizasyonu doğrulanamadı."
                     )
                 report.product_results.append({
                     "representative_id": representative_id,
@@ -587,6 +647,11 @@ class ProductionResultImportService:
                 f" {report.target_mismatch_count} IMS hedef farkı, kaynak veriyi değiştirmeden "
                 "üretim sonucu kapsamında kaydedildi."
                 if report.target_mismatch_count else ""
+            )
+            + (
+                " Tüm temsilcilerde hedefi ve satışı bulunmayan ürünler hesap dışı kabul edildi: "
+                + ", ".join(report.globally_empty_products) + "."
+                if report.globally_empty_products else ""
             )
         )
 
