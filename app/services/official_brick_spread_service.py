@@ -22,8 +22,9 @@ from typing import Any
 from openpyxl import load_workbook
 
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, Product
+from app.models import IMSRawData, IMSUpload, Product, Representative
 from app.services.alias_service import AliasService
+from app.services.vacancy_matching import vacancy_slot_token
 
 
 class OfficialBrickSpreadError(ValueError):
@@ -183,14 +184,30 @@ class OfficialBrickSpreadService:
                     continue
 
                 match = AliasService.find_representative(representative_name)
-                if not match.get("matched"):
+                representative = match.get("object") if match.get("matched") else None
+
+                # Some workbooks introduce a newly vacant position first in
+                # the authoritative spread master instead of the balance
+                # sheet used by the main importer bootstrap. Keep the normal
+                # fail-closed rule for people, but create an explicit BOS/BOŞ
+                # slot deterministically from its row's region context.
+                if representative is None and vacancy_slot_token(representative_name):
+                    from app.services.ims_import_service import IMSImportService
+
+                    vacancy_importer = IMSImportService(str(file_path), uploaded_by=upload.uploaded_by)
+                    representative_id = vacancy_importer._ensure_vacancy_representative(
+                        region,
+                        vacancy_name=representative_name,
+                    )
+                    representative = db.session.get(Representative, representative_id)
+
+                if representative is None:
                     metric_cells = [values[2] if len(values) > 2 else None]
                     metric_cells.extend(values[index - 1] if len(values) >= index else None for index in product_columns)
                     if any(cell not in (None, "", "-") for cell in metric_cells):
                         unresolved.append({"row": source_row, "representative": representative_name})
                     continue
 
-                representative = match["object"]
                 if representative.id in seen_representatives:
                     raise OfficialBrickSpreadError(
                         f"Satış Brick Yayılımı içinde temsilci tekrarı: {representative.rep_name} (satır {source_row})"

@@ -103,7 +103,7 @@ def _seed_master_data():
     return representative, products, upload
 
 
-def _make_workbook(path: Path, products, representative_name="TEST TEMSILCI"):
+def _make_workbook(path: Path, products, representative_name="TEST TEMSILCI", region="901 DIYARBAKIR"):
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Satış Brick Yayılımı"
@@ -111,7 +111,7 @@ def _make_workbook(path: Path, products, representative_name="TEST TEMSILCI"):
     worksheet.append(["BÖLGE", None, "Brick Sayısı", *[p.product_name for p in products], "TOPLAM"])
     worksheet.append([None, "NATIONAL", 0, 0, 0, 0, 0, 0, 0, 0, 0])
     worksheet.append(["901 DIYARBAKIR", "901 DIYARBAKIR", 1, 1, 1, 1, 1, 1, 1, 1, 1])
-    worksheet.append(["901 DIYARBAKIR", representative_name, 6, 6, 5, 4, 1, 3, 6, 2, 6])
+    worksheet.append([region, representative_name, 6, 6, 5, 4, 1, 3, 6, 2, 6])
     workbook.save(path)
     workbook.close()
 
@@ -207,6 +207,44 @@ def test_active_vacancy_does_not_capture_region_subtotal(spread_app):
 
         assert result["representatives"] == 1
         assert result["aggregate_rows_ignored"] == 2
+        assert OfficialBrickSpreadService.for_representative(
+            upload_id=upload.id,
+            representative_id=vacancy.id,
+        )["total"] == 6
+
+
+def test_numbered_vacancy_first_seen_in_spread_master_is_created_in_its_region(spread_app):
+    from app.extensions import db
+    from app.models import Representative
+    from app.services.ims_import_service import IMSImportService
+    from app.services.official_brick_spread_service import OfficialBrickSpreadService
+
+    with spread_app.app_context():
+        _representative, products, upload = _seed_master_data()
+        workbook_path = spread_app.config["TEST_ROOT"] / "new-numbered-vacancy-spread.xlsx"
+        _make_workbook(
+            workbook_path,
+            products,
+            representative_name="ANKARA BOS KADRO 3",
+            region="501 ANKARA",
+        )
+
+        result = OfficialBrickSpreadService.persist(
+            file_path=workbook_path,
+            upload_id=upload.id,
+            year=2026,
+            month=7,
+            week_number=30,
+        )
+        db.session.commit()
+
+        vacancy = Representative.query.filter_by(
+            rep_code=IMSImportService._vacancy_code("501", "ANKARA BOS KADRO 3")
+        ).one()
+        assert vacancy.active is True
+        assert vacancy.region == "501"
+        assert vacancy.city == "ANKARA"
+        assert result["representatives"] == 1
         assert OfficialBrickSpreadService.for_representative(
             upload_id=upload.id,
             representative_id=vacancy.id,
