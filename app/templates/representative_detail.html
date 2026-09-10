@@ -9,7 +9,7 @@
     {% if field_portal_scoped %}
     <a href="{{ url_for('dashboard.index') }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Ana Sayfaya dön</a>
     {% else %}
-    <a href="{{ url_for('representatives.index') }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Temsilcilere dön</a>
+    <a href="{{ url_for('regions.detail', region_key=representative.region, year=year, month=month) }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Bölgeye Dön</a>
     {% endif %}
     <h1 class="h2 mb-1">{{ representative.rep_name|representative_display_name }}</h1>
     <p class="text-secondary mb-0"><span class="badge bg-primary-lt text-primary me-1">{{ representative.region or 'Bölge yok' }}</span>{{ representative.city or 'İl bilgisi yok' }}{% if representative.territory %} · {{ representative.territory }}{% endif %}</p>
