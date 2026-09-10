@@ -71,8 +71,15 @@ def _vacancy_ordinal(value):
     identity = vacancy_identity(value)
     if identity is None:
         return None
-    numbers = re.findall(r"\b\d+\b", identity[0])
-    return numbers[-1] if numbers else None
+    tokens = identity[0].split()
+    vacancy_positions = [
+        index for index, token in enumerate(tokens)
+        if token in {"BOS", "BOŞ", "KADRO"}
+    ]
+    if not vacancy_positions:
+        return None
+    trailing = tokens[max(vacancy_positions) + 1:]
+    return next((token for token in trailing if token.isdigit()), None)
 
 
 def _is_explicit_vacancy(value) -> bool:
