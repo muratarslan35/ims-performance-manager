@@ -158,6 +158,9 @@ class IMSImportQueue:
                 # those detached Product/Representative instances.
                 AliasService.clear_cache()
                 service = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by)
+                if job.ims_upload_id:
+                    service.retry_upload_id = int(job.ims_upload_id)
+                    service.retry_file_name = job.file_name
                 original_measure_stage = service._measure_stage
 
                 @contextmanager
