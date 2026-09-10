@@ -8,6 +8,8 @@
   <div>
     {% if field_portal_scoped %}
     <a href="{{ url_for('dashboard.index') }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Ana Sayfaya dön</a>
+    {% elif representative.region %}
+    <a href="{{ url_for('regions.detail', region_key=representative.region, year=year, month=month) }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Bölgeye Dön</a>
     {% else %}
     <a href="{{ url_for('representatives.index') }}" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Temsilcilere dön</a>
     {% endif %}
