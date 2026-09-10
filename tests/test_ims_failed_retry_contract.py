@@ -16,6 +16,22 @@ def test_failed_retry_route_is_fail_closed_and_sha_guarded():
     assert "_sha256(source) != str(job.source_hash or \"\")" in source
     assert "_sha256(staging) != str(job.source_hash or \"\")" in source
     assert "job.status = IMSImportJob.STATUS_QUEUED" in source
+    assert "_recover_orphaned_failed_job(upload)" in source
+    assert "distance > 120" in source
+    assert "job.ims_upload_id = upload.id" in source
+
+
+def test_failed_import_links_audit_upload_before_queue_failure():
+    source = Path("app/services/ims_import_queue.py").read_text(encoding="utf-8")
+    assert 'failure_upload_id = result.get("upload_id")' in source
+    assert "linked_job.ims_upload_id = int(failure_upload_id)" in source
+    assert "db.session.commit()" in source
+
+
+def test_failed_ims_reason_stays_visible_in_history():
+    source = Path("app/templates/ims.html").read_text(encoding="utf-8")
+    assert "item.error_message" in source
+    assert "Hata nedeni:" in source
 
 
 def test_failed_rows_are_visible_and_retry_is_in_options_menu():
