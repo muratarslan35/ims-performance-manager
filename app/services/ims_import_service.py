@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 33105)
+Total output lines: 2752
+
 """Workbook import service implementing IMSRawData -> IMSFact -> IMSSummary."""
 
 import json
@@ -268,6 +271,23 @@ class IMSImportService:
         return "" if AliasService.normalize(text) in {"", "NAN", "NONE"} else text
 
     def create_upload(self, year, month, week_number=None):
+        retry_upload_id = getattr(self, "retry_upload_id", None)
+        if retry_upload_id:
+            retry_upload = db.session.get(IMSUpload, int(retry_upload_id))
+            if retry_upload is not None:
+                self.upload = retry_upload
+                retry_upload.file_name = getattr(self, "retry_file_name", None) or retry_upload.file_name
+                retry_upload.year = year
+                retry_upload.month = month
+                retry_upload.week_number = week_number
+                retry_upload.quarter = self.quarter_for(month)
+                retry_upload.status = "PROCESSING"
+                retry_upload.error_message = None
+                retry_upload.warning_message = None
+                retry_upload.completed_at = None
+                retry_upload.reconciliation_status = "NOT_AVAILABLE"
+                db.session.flush()
+                return retry_upload
         self.upload = IMSUpload(
             file_name=os.path.basename(self.file_path),
             year=year,
@@ -1360,263 +1380,7 @@ class IMSImportService:
                             "value": self._value_for_json(metric_value),
                         }
                     )
-                merged_row["source_values"][f"{sheet['sheet_name']}::{sheet['metric_column']}"] = self._value_for_json(
-                    metric_value
-                )
-        return list(merged.values())
-
-    def stage_normalized_raw_data(self, normalized_rows, year, month, week_number=None):
-        for item in normalized_rows:
-            self.statistics["source_metric_records"] += 1
-            representative_name = item["representative_name"]
-            try:
-                region_value = self.clean_text(item.get("region"))
-                province_value = self.clean_text(item.get("province"))
-                parsed_region, parsed_city = self._region_context(region_value, province_value)
-                representative_match = self.resolve_representative_match(representative_name)
-                if representative_match["matched"]:
-                    representative_id = representative_match["object"].id
-                    self.statistics["matched_representatives"] += 1
-                elif parsed_region or province_value:
-                    representative_id, _ = self._ensure_representative(
-                        representative_name,
-                        region=parsed_region or region_value or None,
-                        city=province_value or parsed_city,
-                    )
-                    representative_match = self.resolve_representative_match(representative_name)
-                    self.warnings.append(
-                        f"Yeni temsilci bölge bağlamıyla otomatik oluşturuldu ({representative_name})."
-                    )
-                else:
-                    self.statistics["unresolved_representative_rows"] += 1
-                    self.statistics["unmatched_representatives"] += 1
-                    self.statistics["queued_for_manual"] += 1
-                    self._log_skipped_row(
-                        reason="unmatched_representative_without_region_context",
-                        sheet_name=" | ".join(sorted(item["sheet_names"])),
-                        source_row=min(item["source_rows"]),
-                        representative=representative_name,
-                    )
-                    representative_id = None
-
-                product_group_name = item["product_group"]
-                product, _ = self._ensure_product(product_group_name)
-                if product is None:
-                    self.statistics["skipped_records"] += 1
-                    self.statistics["unmatched_product_records"] += 1
-                    continue
-                product_match = {"matched": True, "object": product}
-
-                if region_value:
-                    region_suggestion = AliasService.suggest_region(region_value)
-                    if not region_suggestion["matched"]:
-                        self.statistics["unmatched_regions"] += 1
-                        self.statistics["queued_for_manual"] += 1
-                        AliasService.enqueue_unmatched_region(
-                            source_value=region_value,
-                            import_id=self.upload.id,
-                            worksheet=" | ".join(sorted(item["sheet_names"])),
-                            row_number=min(item["source_rows"]),
-                            suggested_match=region_suggestion.get("value"),
-                            confidence_score=region_suggestion.get("score", 0.0),
-                            reason="unmatched_region",
-                        )
-                    elif representative_match["matched"]:
-                        canonical_region = self.clean_text(representative_match["object"].region)
-                        if canonical_region and AliasService.normalize(canonical_region) != AliasService.normalize(
-                            region_value
-                        ):
-                            self._log_warning(
-                                reason="inconsistent_region",
-                                sheet_name=" | ".join(sorted(item["sheet_names"])),
-                                source_row=min(item["source_rows"]),
-                                representative=representative_name,
-                                region=region_value,
-                                expected_region=canonical_region,
-                            )
-
-                province_value = self.clean_text(item.get("province"))
-                if province_value:
-                    province_suggestion = AliasService.suggest_province(province_value)
-                    if not province_suggestion["matched"]:
-                        self.statistics["unmatched_provinces"] += 1
-                        self.statistics["queued_for_manual"] += 1
-                        AliasService.enqueue_unmatched_province(
-                            source_value=province_value,
-                            import_id=self.upload.id,
-                            worksheet=" | ".join(sorted(item["sheet_names"])),
-                            row_number=min(item["source_rows"]),
-                            suggested_match=province_suggestion.get("value"),
-                            confidence_score=province_suggestion.get("score", 0.0),
-                            reason="unmatched_province",
-                        )
-                    elif representative_match["matched"]:
-                        canonical_province = self.clean_text(representative_match["object"].city)
-                        if canonical_province and AliasService.normalize(
-                            canonical_province
-                        ) != AliasService.normalize(province_value):
-                            self._log_warning(
-                                reason="inconsistent_province",
-                                sheet_name=" | ".join(sorted(item["sheet_names"])),
-                                source_row=min(item["source_rows"]),
-                                representative=representative_name,
-                                province=province_value,
-                                expected_province=canonical_province,
-                            )
-
-                self.statistics["matched_products"] += 1
-                metrics = item["metrics"]
-                if item["invalid_metrics"]:
-                    self.statistics["skipped_records"] += 1
-                    self.statistics["invalid_metric_records"] += 1
-                    for invalid_metric in item["invalid_metrics"]:
-                        self._log_skipped_row(
-                            reason="invalid_numeric_value",
-                            representative=representative_name,
-                            product=product_group_name,
-                            **invalid_metric,
-                        )
-                    continue
-                if not item["has_metric_value"]:
-                    self.statistics["skipped_records"] += 1
-                    self.statistics["blank_metric_records"] += 1
-                    self._log_skipped_row(
-                        reason="empty_metrics",
-                        sheet_name=" | ".join(sorted(item["sheet_names"])),
-                        source_row=min(item["source_rows"]),
-                        representative=representative_name,
-                        product_group=product_group_name,
-                    )
-                    continue
-
-                source_values = {
-                    **item["source_values"],
-                    "region": item["region"],
-                    "province": item["province"],
-                    "product_group": product_group_name,
-                    "sheet_names": sorted(item["sheet_names"]),
-                }
-
-                self.create_raw_record(
-                    year=year,
-                    month=month,
-                    week_number=week_number,
-                    sheet_name=" | ".join(sorted(item["sheet_names"])),
-                    sheet_type="brick_normalized",
-                    source_row=min(item["source_rows"]),
-                    representative_name=representative_name,
-                    representative_id=representative_id,
-                    product=product_match["object"],
-                    metrics=metrics,
-                    source_values=source_values,
-                )
-                self.statistics["stored_source_records"] += 1
-                if not any(metrics.values()):
-                    self.statistics["zero_metric_records"] += 1
-                self.statistics["processed_rows"] += 1
-            except Exception as exc:
-                self.statistics["rows_error"] += 1
-                self._log_skipped_row(
-                    reason="row_processing_error",
-                    sheet_name=" | ".join(sorted(item.get("sheet_names", []))),
-                    source_row=min(item.get("source_rows", [0])),
-                    error=str(exc),
-                )
-                continue
-
-    def create_raw_record(
-        self,
-        *,
-        year,
-        month,
-        week_number=None,
-        sheet_name,
-        sheet_type,
-        source_row,
-        representative_name,
-        representative_id,
-        product,
-        product_id=None,
-        metrics,
-        source_values,
-        manager=None,
-        territory=None,
-        brick=None,
-        province=None,
-        market=None,
-        competitor=None,
-    ):
-        resolved_product_id = product_id if product_id is not None else getattr(product, "id", None)
-        if resolved_product_id is None:
-            raise ValueError("Raw IMS record requires a resolved product_id.")
-        product_name = getattr(product, "product_name", product)
-        self._raw_batch.append({
-            "upload_id": self.upload.id,
-            "year": year,
-            "month": month,
-            "week_number": week_number,
-            "quarter": self.quarter_for(month),
-            "sheet_name": sheet_name,
-            "sheet_type": sheet_type,
-            "source_row": source_row,
-            "representative_id": representative_id,
-            "product_id": resolved_product_id,
-            "representative": representative_name,
-            "manager": manager,
-            "territory": territory,
-            "brick": brick,
-            "province": province,
-            "product": product_name,
-            "competitor": competitor,
-            "market": market,
-            "unit": metrics["unit"],
-            "tl": metrics["tl"],
-            "market_share": metrics["market_share"],
-            "value_share": metrics["value_share"],
-            "growth": metrics["growth"],
-            "raw_json": self._json_dump({
-                "representative": representative_name,
-                "product": product_name,
-                "metrics": metrics,
-                "source_values": source_values,
-            }),
-            "created_at": datetime.utcnow(),
-        })
-        self._pending_raw_records += 1
-        if self._pending_raw_records >= self.WRITE_BATCH_SIZE:
-            self._flush_raw_batch()
-        self.statistics["raw_records"] += 1
-        return None
-
-    def _flush_raw_batch(self):
-        """Write RAW rows in bounded batches without retaining ORM instances."""
-        if not self._raw_batch:
-            return
-        db.session.bulk_insert_mappings(IMSRawData, self._raw_batch)
-        self._raw_batch.clear()
-        self._pending_raw_records = 0
-
-    def stage_raw_data(self, prepared_sheets, year, month, week_number=None):
-        for sheet in prepared_sheets:
-            if sheet.get("mode") == "normalized":
-                continue
-            dataframe = sheet["dataframe"]
-            representative_columns = sheet.get("representative_columns") or [sheet["representative_column"]]
-            representative_column = representative_columns[0]
-            brick_column = sheet.get("brick_column")
-            region_column = sheet.get("region_column")
-            province_column = sheet.get("province_column")
-            manager_column = sheet.get("manager_column")
-            auto_create_representatives = bool(sheet.get("auto_create_representatives"))
-
-            for dataframe_index, (_, row) in enumerate(dataframe.iterrows()):
-                try:
-                    representative_values = []
-                    primary_representative = self.clean_text(row[representative_column])
-                    if primary_representative:
-                        representative_values.append(primary_representative)
-                    else:
-                        for candidate_column in representative_columns[1:]:
+                merged_row["source_value…3105 tokens truncated…e_column in representative_columns[1:]:
                             value = self.clean_text(row[candidate_column])
                             if value:
                                 representative_values.append(value)
@@ -2610,27 +2374,39 @@ class IMSImportService:
         return True
 
     def _persist_failure(self, year, month, week_number=None):
-        failure_upload = IMSUpload(
-            file_name=os.path.basename(self.file_path),
-            year=year,
-            month=month,
-            week_number=week_number,
-            quarter=self.quarter_for(month),
-            uploaded_by=self.uploaded_by,
-            status="FAILED",
-            processing_time=round(time.monotonic() - self.started, 2),
-            error_message="\n".join(self.errors),
-            warning_message="\n".join(self.warnings) or None,
-            completed_at=datetime.utcnow(),
-            source_record_count=self.statistics["source_metric_records"],
-            stored_source_record_count=self.statistics["stored_source_records"],
-            zero_metric_count=self.statistics["zero_metric_records"],
-            blank_metric_count=self.statistics["blank_metric_records"],
-            invalid_metric_count=self.statistics["invalid_metric_records"],
-            excluded_aggregate_count=self.statistics["aggregate_rows_excluded"],
-            reconciliation_status=self.statistics.get("reconciliation_status", "FAILED"),
-        )
-        db.session.add(failure_upload)
+        failure_upload = None
+        retry_upload_id = getattr(self, "retry_upload_id", None)
+        if retry_upload_id:
+            failure_upload = db.session.get(IMSUpload, int(retry_upload_id))
+        if failure_upload is None:
+            failure_upload = IMSUpload(
+                file_name=os.path.basename(self.file_path),
+                year=year,
+                month=month,
+                week_number=week_number,
+                quarter=self.quarter_for(month),
+                uploaded_by=self.uploaded_by,
+                status="FAILED",
+                processing_time=round(time.monotonic() - self.started, 2),
+                error_message="\n".join(self.errors),
+                warning_message="\n".join(self.warnings) or None,
+                completed_at=datetime.utcnow(),
+                source_record_count=self.statistics["source_metric_records"],
+                stored_source_record_count=self.statistics["stored_source_records"],
+                zero_metric_count=self.statistics["zero_metric_records"],
+                blank_metric_count=self.statistics["blank_metric_records"],
+                invalid_metric_count=self.statistics["invalid_metric_records"],
+                excluded_aggregate_count=self.statistics["aggregate_rows_excluded"],
+                reconciliation_status=self.statistics.get("reconciliation_status", "FAILED"),
+            )
+            db.session.add(failure_upload)
+        else:
+            failure_upload.file_name = getattr(self, "retry_file_name", None) or failure_upload.file_name
+            failure_upload.status = "FAILED"
+            failure_upload.error_message = "\n".join(self.errors)
+            failure_upload.warning_message = "\n".join(self.warnings) or None
+            failure_upload.completed_at = datetime.utcnow()
+            failure_upload.reconciliation_status = self.statistics.get("reconciliation_status", "FAILED")
         db.session.commit()
         self.upload = failure_upload
 
@@ -2721,4 +2497,3 @@ class IMSImportService:
     @classmethod
     def supported_reports(cls):
         return list(cls.REPORT_SHEETS.values())
-
