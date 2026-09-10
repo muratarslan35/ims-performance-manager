@@ -185,6 +185,16 @@ class IMSImportQueue:
                         week_number=detected_week_number,
                     )
                 if not result.get("success"):
+                    # IMSImportService persists a separate FAILED IMSUpload so
+                    # the administrator can inspect the rejected workbook. Keep
+                    # that audit row linked to its queue job before raising;
+                    # otherwise the safe retry route cannot find the preserved
+                    # source file for this failure.
+                    failure_upload_id = result.get("upload_id")
+                    if failure_upload_id:
+                        linked_job = db.session.get(IMSImportJob, job.id)
+                        linked_job.ims_upload_id = int(failure_upload_id)
+                        db.session.commit()
                     raise RuntimeError("; ".join(result.get("errors") or ["IMS doğrulaması başarısız."]))
 
                 set_progress(40, "final_checks", "IMS verileri son kontrolden geçiriliyor")
