@@ -93,6 +93,7 @@ class IMSImportQueue:
     @classmethod
     def process(cls, job):
         staging_path = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
+        result = None
         previous_chunk_size = CompetitionImportService.BULK_CHUNK_SIZE
         previous_competition_service = ims_import_service_module.CompetitionImportService
         previous_compiled_sheet_import = CompiledCompetitionImportService._import_compiled_sheet
@@ -259,6 +260,17 @@ class IMSImportQueue:
             db.session.rollback()
             current_app.logger.exception("ims_background_import_failed job_id=%s", job.id)
             failed = db.session.get(IMSImportJob, job.id)
+            # A later authoritative check can fail after IMSImportService has
+            # committed its audit upload. Keep that upload linked to this job
+            # so its preserved source remains safely retryable.
+            late_upload_id = result.get("upload_id") if isinstance(result, dict) else None
+            if late_upload_id:
+                failed.ims_upload_id = int(late_upload_id)
+                late_upload = db.session.get(IMSUpload, int(late_upload_id))
+                if late_upload is not None:
+                    late_upload.status = "FAILED"
+                    late_upload.error_message = str(exc)[:4000]
+                    late_upload.completed_at = datetime.utcnow()
             failed.status = IMSImportJob.STATUS_FAILED
             failed.error_message = str(exc)[:4000]
             failed.completed_at = datetime.utcnow()
