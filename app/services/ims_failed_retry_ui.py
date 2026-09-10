@@ -48,8 +48,6 @@ def _recover_orphaned_failed_job(upload: IMSUpload) -> IMSImportJob | None:
             status=IMSImportJob.STATUS_FAILED,
             ims_upload_id=None,
             file_name=upload.file_name,
-            year=upload.year,
-            month=upload.month,
             uploaded_by=upload.uploaded_by,
         )
         .order_by(IMSImportJob.id.desc())
@@ -122,6 +120,10 @@ def install_ims_failed_retry_ui(app):
             upload.uploaded_by = current_user.full_name
             upload.completed_at = None
             job.ims_upload_id = upload.id
+            # Older month-boundary failures may have the form month on the job
+            # and the workbook-detected month on the audit upload.
+            job.year = upload.year
+            job.month = upload.month
             job.status = IMSImportJob.STATUS_QUEUED
             job.uploaded_by = current_user.full_name
             job.started_at = None
