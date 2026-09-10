@@ -324,7 +324,10 @@ class ProductionResultImportService:
             percent = self._number(sheet.cell(row_number, percent_column).value)
             if product_id in globally_empty:
                 target = 0.0 if target is None else target
-                actual = 0.0 if actual is None else actual
+                # A targetless product can still carry return adjustments from
+                # earlier sales. Those non-positive values do not make the
+                # product active in the current production period.
+                actual = 0.0 if actual is None or actual <= 0 else actual
                 percent = 0.0 if percent is None else percent
             if target is None or target < 0 or actual is None:
                 product = self._product_by_id.get(int(product_id))
@@ -377,7 +380,7 @@ class ProductionResultImportService:
         }
 
     def _detect_globally_empty_products(self, sheet, layout):
-        """Allow a product only when every representative has no target or sale."""
+        """Allow a targetless product when no representative has a positive sale."""
         representative_rows = []
         for row_number in range(layout["header_row"] + 1, sheet.max_row + 1):
             raw_name = sheet.cell(row_number, layout["name_column"]).value
@@ -389,10 +392,12 @@ class ProductionResultImportService:
         for product_id, target_column, actual_column in zip(
             layout["product_ids"], layout["target_columns"], layout["actual_columns"]
         ):
-            if representative_rows and all(
-                self._number(sheet.cell(row_number, target_column).value) in (None, 0.0)
-                and self._number(sheet.cell(row_number, actual_column).value) in (None, 0.0)
-                for row_number in representative_rows
+            target_values = [self._number(sheet.cell(row_number, target_column).value) for row_number in representative_rows]
+            actual_values = [self._number(sheet.cell(row_number, actual_column).value) for row_number in representative_rows]
+            if (
+                representative_rows
+                and all(value in (None, 0.0) for value in target_values)
+                and all(value is None or value <= 0.0 for value in actual_values)
             ):
                 globally_empty.add(int(product_id))
         self._globally_empty_by_sheet[sheet.title] = globally_empty

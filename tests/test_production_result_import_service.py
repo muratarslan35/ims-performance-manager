@@ -177,6 +177,9 @@ def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_pat
         for row_number in (2, 3):
             tl.cell(row_number, 7).value = None
             unit.cell(row_number, 7).value = 0
+        # Return-only adjustments do not make a targetless product active.
+        tl.cell(3, 17).value = -537
+        unit.cell(3, 17).value = -3
         tl.cell(3, 3).value = "EMPTY PRODUCT REP"
         unit.cell(3, 3).value = "EMPTY PRODUCT REP"
         tl.cell(2, 11).value = tl.cell(3, 11).value = 600
@@ -190,6 +193,7 @@ def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_pat
         fentivag_row = next(row for row in report.product_results if row["product_id"] == fentivag_id)
         assert fentivag_row["target_tl"] == 0
         assert fentivag_row["actual_tl"] == 0
+        assert fentivag_row["actual_unit"] == 0
 
         # The same blank is invalid unless the product is globally empty for all representatives.
         parsed_tl = service._find_sheet(load_workbook(path, data_only=True), "TL")
