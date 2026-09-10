@@ -217,6 +217,15 @@ class IMSImportService:
                 return week
         return None
 
+    @classmethod
+    def extract_month_number(cls, file_name):
+        """Extract a reporting month token from an IMS file name."""
+        tokens = set(re.findall(r"[A-ZÇĞİÖŞÜ]+", os.path.basename(file_name).upper()))
+        for token, month in cls.MONTH_TOKENS.items():
+            if token in tokens:
+                return month
+        return None
+
     @staticmethod
     def quarter_for(month):
         if month < 1 or month > 12:
@@ -2721,4 +2730,3 @@ class IMSImportService:
     @classmethod
     def supported_reports(cls):
         return list(cls.REPORT_SHEETS.values())
-
