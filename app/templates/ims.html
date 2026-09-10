@@ -246,6 +246,12 @@
               {% if item.status == 'APPLIED' %}<span class="badge bg-success">Uygulandı</span>
               {% elif item.status == 'VALIDATED' %}<span class="badge bg-primary">Doğrulandı</span>
               {% elif item.status == 'FAILED' %}<span class="badge bg-danger">Hatalı</span>
+                {% if item.error_message %}
+                <div class="mt-2 p-2 rounded production-result-error" role="alert" style="min-width:260px;max-width:420px;white-space:normal;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font-size:12px;line-height:1.45;">
+                  <strong><i class="bi bi-exclamation-triangle-fill me-1"></i>Hata nedeni:</strong>
+                  {{ item.error_message }}
+                </div>
+                {% endif %}
               {% else %}<span class="badge" style="background:#fff4cf;color:#765500;">Şablon doğrulaması bekliyor</span>{% endif %}
             </td>
             <td>{{ item.uploaded_by or '—' }}</td>
