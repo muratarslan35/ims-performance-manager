@@ -10,7 +10,7 @@ from flask import current_app, flash, redirect, url_for
 from flask_login import current_user, login_required
 
 from app.extensions import db
-from app.models import IMSImportJob, IMSUpload
+from app.models import IMSImportJob, IMSUpload, Setting
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 
 
@@ -119,6 +119,27 @@ def install_ims_failed_retry_ui(app):
                 raise RuntimeError("Staging SHA-256 doğrulaması başarısız.")
 
             now = datetime.utcnow()
+            stale_uploads = IMSUpload.query.filter(
+                IMSUpload.id != upload.id,
+                IMSUpload.year == upload.year,
+                IMSUpload.month == upload.month,
+                IMSUpload.week_number == upload.week_number,
+                IMSUpload.file_name == upload.file_name,
+                IMSUpload.status == "PROCESSING",
+            ).all()
+            for stale in stale_uploads:
+                stale.status = "FAILED"
+                stale.error_message = "Aynı IMS yeniden deneme kaydı tarafından devralındı."
+                stale.completed_at = now
+                hidden_key = IMSUploadLifecycleService.hidden_setting_key(stale.id)
+                if Setting.query.filter_by(setting_key=hidden_key).first() is None:
+                    db.session.add(Setting(
+                        setting_key=hidden_key,
+                        setting_value="1",
+                        category="IMS",
+                        description="Tekrarlanan IMS yeniden deneme kaydı",
+                    ))
+            upload.file_name = job.file_name
             upload.status = "PROCESSING"
             upload.error_message = None
             upload.reconciliation_status = "NOT_AVAILABLE"
