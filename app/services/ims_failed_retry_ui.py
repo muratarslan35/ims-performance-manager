@@ -47,7 +47,6 @@ def _recover_orphaned_failed_job(upload: IMSUpload) -> IMSImportJob | None:
         .filter_by(
             status=IMSImportJob.STATUS_FAILED,
             ims_upload_id=None,
-            file_name=upload.file_name,
             year=upload.year,
             month=upload.month,
             uploaded_by=upload.uploaded_by,
@@ -56,6 +55,10 @@ def _recover_orphaned_failed_job(upload: IMSUpload) -> IMSImportJob | None:
         .all()
     )
     for candidate in candidates:
+        # Late failures used to retain the randomized staging name on the
+        # upload while the queue kept the original display name.
+        if upload.file_name not in {candidate.file_name, candidate.stored_file_name}:
+            continue
         if candidate.completed_at and upload.completed_at:
             distance = abs((candidate.completed_at - upload.completed_at).total_seconds())
             if distance > 120:
