@@ -69,3 +69,14 @@ def test_blocker_keeps_manager_report_failed(monkeypatch):
 def test_duplicate_import_result_flash_is_not_registered():
     source = open("app/__init__.py", encoding="utf-8").read()
     assert "register_import_result_flash(app)" not in source
+
+
+def test_queue_staging_filename_does_not_hide_canonical_report():
+    upload = _upload(year=2026, month=6, file_name="Tayfun-1_24.Hafta.xlsx")
+    report = _report(
+        upload_id=13,
+        period={"year": 2026, "month": 6},
+        file_name="queue-uuid.xlsx",
+    )
+
+    assert alignment._report_matches_upload(upload, report) is True

@@ -30,6 +30,8 @@ def test_publication_is_atomic_and_notice_is_per_user():
     assert 'stage="snapshot_retry"' in worker
     assert '"ims_publication_receipts"' in service
     assert "upload = cls.latest_visible_upload()" in service
+    assert '"commit_upload", "final_checks", "read_models"' in service
+    assert 'pending_progress.get("stage") in committed_unlinked_stages' in service
     assert "checkPublishedIMSNotice();" in layout
     assert "ims-published-notice-layer" in layout
     assert "Yeni IMS başarıyla yüklendi" in layout

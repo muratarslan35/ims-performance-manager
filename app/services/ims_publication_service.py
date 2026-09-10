@@ -55,7 +55,17 @@ class IMSPublicationService:
         ).limit(5).all()
         pending = cls.pending_job(year, month)
         pending_upload_id = int(pending.ims_upload_id) if pending and pending.ims_upload_id else None
-        if pending and pending.status != IMSImportJob.STATUS_QUEUED and pending_upload_id is None and uploads:
+        pending_progress = IMSProgressStore.for_job(pending) if pending else {}
+        committed_unlinked_stages = {
+            "commit_upload", "final_checks", "read_models", "dashboard_snapshot",
+            "region_snapshots", "representative_snapshots", "snapshot_retry",
+        }
+        if (
+            pending
+            and pending_upload_id is None
+            and uploads
+            and pending_progress.get("stage") in committed_unlinked_stages
+        ):
             # The import has committed its IMS row but has not linked the queue row
             # yet; the newest row belongs to that still-unpublished job.
             uploads = uploads[1:]
