@@ -67,6 +67,15 @@ def vacancy_stable_suffix(value) -> str:
     return f"{qualifier}{encoded}"[:48] or "VACANCY"
 
 
+def _vacancy_ordinal(value):
+    """Keep numbered cadre slots distinct from generic vacancy labels."""
+    identity = vacancy_identity(value)
+    if identity is None:
+        return None
+    numbers = re.findall(r"\b\d+\b", identity[0])
+    return numbers[-1] if numbers else None
+
+
 def _is_explicit_vacancy(value) -> bool:
     return vacancy_slot_token(value) is not None
 
@@ -126,12 +135,15 @@ def _legacy_placeholder_candidates(vacancy_name):
     if source_identity is None:
         return []
     source_canonical, source_token = source_identity
+    source_ordinal = _vacancy_ordinal(vacancy_name)
     ignored = {"BOS", "BOŞ", "KADRO", "BRICK"}
     source_context = " ".join(token for token in source_canonical.split() if token not in ignored)
     matches = []
     for representative in Representative.query.filter(Representative.rep_code.like("UNASSIGNED%")).all():
         candidate_token = vacancy_slot_token(representative.rep_name) or vacancy_slot_token(representative.territory)
         if candidate_token != source_token:
+            continue
+        if _vacancy_ordinal(representative.rep_name) != source_ordinal:
             continue
         city = canonical_vacancy_text(representative.city or "")
         territory = canonical_vacancy_text(representative.territory or "")
