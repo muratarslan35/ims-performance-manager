@@ -14,7 +14,7 @@ _legacy_manager_reports = None
 
 
 def _report_matches_upload(upload, report):
-    """Reject stale audit rows that only happen to share a reused upload id."""
+    """Match immutable upload identity; queue staging names are intentionally transient."""
     if int(report.get("upload_id") or 0) != int(upload.id or 0):
         return False
     period = report.get("period") or {}
@@ -22,9 +22,7 @@ def _report_matches_upload(upload, report):
         return False
     if int(period.get("month") or 0) != int(upload.month or 0):
         return False
-    report_file = str(report.get("file_name") or "").strip()
-    upload_file = str(upload.file_name or "").strip()
-    return not report_file or report_file == upload_file
+    return True
 
 
 def _canonical_candidates(uploads):
