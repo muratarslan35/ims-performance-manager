@@ -221,6 +221,12 @@ def test_numbered_vacancy_first_seen_in_spread_master_is_created_in_its_region(s
 
     with spread_app.app_context():
         _representative, products, upload = _seed_master_data()
+        db.session.add(Representative(
+            rep_code="UNASSIGNED501ANKARABOSKADRO",
+            rep_name="ATANMAMIŞ · 501 ANKARA · ANKARA BOS KADRO",
+            region="501", city="ANKARA", territory="ANKARA", team="TAYFUN-1", active=False,
+        ))
+        db.session.commit()
         workbook_path = spread_app.config["TEST_ROOT"] / "new-numbered-vacancy-spread.xlsx"
         _make_workbook(
             workbook_path,
