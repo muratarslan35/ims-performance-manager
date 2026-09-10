@@ -36,6 +36,16 @@ def test_late_post_import_failure_keeps_upload_link_for_retry():
     assert 'late_upload.status = "FAILED"' in source
 
 
+def test_retry_reuses_one_audit_upload_and_preserves_display_name():
+    queue = Path("app/services/ims_import_queue.py").read_text(encoding="utf-8")
+    importer = Path("app/services/ims_import_service.py").read_text(encoding="utf-8")
+    retry = Path("app/services/ims_failed_retry_ui.py").read_text(encoding="utf-8")
+    assert "service.retry_upload_id" in queue
+    assert "db.session.get(IMSUpload, int(retry_upload_id))" in importer
+    assert "upload.file_name = job.file_name" in retry
+    assert "Tekrarlanan IMS yeniden deneme kaydı" in retry
+
+
 def test_failed_ims_reason_stays_visible_in_history():
     source = Path("app/templates/ims.html").read_text(encoding="utf-8")
     assert "item.error_message" in source
