@@ -40,6 +40,31 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _recover_orphaned_failed_job(upload: IMSUpload) -> IMSImportJob | None:
+    """Match failures created before the queue-to-upload link was persisted."""
+    candidates = (
+        IMSImportJob.query
+        .filter_by(
+            status=IMSImportJob.STATUS_FAILED,
+            ims_upload_id=None,
+            file_name=upload.file_name,
+            year=upload.year,
+            month=upload.month,
+            uploaded_by=upload.uploaded_by,
+        )
+        .order_by(IMSImportJob.id.desc())
+        .all()
+    )
+    for candidate in candidates:
+        if candidate.completed_at and upload.completed_at:
+            distance = abs((candidate.completed_at - upload.completed_at).total_seconds())
+            if distance > 120:
+                continue
+        if _failed_source_for_job(candidate) is not None:
+            return candidate
+    return None
+
+
 def install_ims_failed_retry_ui(app):
     endpoint = "ims_failed_retry"
     if endpoint in app.view_functions:
@@ -65,6 +90,8 @@ def install_ims_failed_retry_ui(app):
             .order_by(IMSImportJob.id.desc())
             .first()
         )
+        if job is None:
+            job = _recover_orphaned_failed_job(upload)
         if job is None:
             flash("Bu başarısız IMS için yeniden işleme kuyruğu kaydı bulunamadı.", "warning")
             return redirect(url_for("ims.index") + "#ims-history")
@@ -94,6 +121,7 @@ def install_ims_failed_retry_ui(app):
             upload.reconciliation_status = "NOT_AVAILABLE"
             upload.uploaded_by = current_user.full_name
             upload.completed_at = None
+            job.ims_upload_id = upload.id
             job.status = IMSImportJob.STATUS_QUEUED
             job.uploaded_by = current_user.full_name
             job.started_at = None
