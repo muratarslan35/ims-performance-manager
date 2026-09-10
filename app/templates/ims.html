@@ -368,6 +368,11 @@
             <span class="badge bg-warning text-dark" style="font-size:11px;">İşleniyor</span>
             {% elif item.status in ("Hata", "FAILED") %}
             <span class="badge bg-danger" style="font-size:11px;">Başarısız</span>
+            {% if item.error_message %}
+            <div class="mt-2 p-2 rounded" role="alert" style="min-width:260px;max-width:420px;white-space:normal;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font-size:11px;line-height:1.45;">
+              <strong>Hata nedeni:</strong> {{ item.error_message }}
+            </div>
+            {% endif %}
             {% elif item.status == "ROLLED_BACK" %}
             <span class="badge bg-secondary" style="font-size:11px;">Geri alındı</span>
             {% else %}
