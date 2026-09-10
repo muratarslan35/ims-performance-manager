@@ -5,6 +5,7 @@ import json
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import MethodType
 
 from flask import current_app
 from sqlalchemy import update
@@ -158,6 +159,42 @@ class IMSImportQueue:
                 # those detached Product/Representative instances.
                 AliasService.clear_cache()
                 service = IMSImportService(str(staging_path), uploaded_by=job.uploaded_by)
+                if job.ims_upload_id:
+                    retry_upload_id = int(job.ims_upload_id)
+
+                    def create_retry_upload(importer, year, month, week_number=None):
+                        upload = db.session.get(IMSUpload, retry_upload_id)
+                        if upload is None:
+                            return IMSImportService.create_upload(importer, year, month, week_number)
+                        importer.upload = upload
+                        upload.file_name = job.file_name
+                        upload.year = year
+                        upload.month = month
+                        upload.week_number = week_number
+                        upload.quarter = importer.quarter_for(month)
+                        upload.status = "PROCESSING"
+                        upload.error_message = None
+                        upload.warning_message = None
+                        upload.completed_at = None
+                        upload.reconciliation_status = "NOT_AVAILABLE"
+                        db.session.flush()
+                        return upload
+
+                    def persist_retry_failure(importer, year, month, week_number=None):
+                        upload = db.session.get(IMSUpload, retry_upload_id)
+                        if upload is None:
+                            return IMSImportService._persist_failure(importer, year, month, week_number)
+                        upload.file_name = job.file_name
+                        upload.status = "FAILED"
+                        upload.error_message = "\n".join(importer.errors)
+                        upload.warning_message = "\n".join(importer.warnings) or None
+                        upload.completed_at = datetime.utcnow()
+                        upload.reconciliation_status = importer.statistics.get("reconciliation_status", "FAILED")
+                        db.session.commit()
+                        importer.upload = upload
+
+                    service.create_upload = MethodType(create_retry_upload, service)
+                    service._persist_failure = MethodType(persist_retry_failure, service)
                 original_measure_stage = service._measure_stage
 
                 @contextmanager
