@@ -60,6 +60,7 @@ class IMSPublicationService:
             "commit_upload", "final_checks", "read_models", "dashboard_snapshot",
             "region_snapshots", "representative_snapshots", "snapshot_retry",
         }
+        # Parsing-stage jobs have not superseded the last published upload yet.
         if (
             pending
             and pending_upload_id is None
