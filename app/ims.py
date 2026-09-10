@@ -447,6 +447,13 @@ def upload():
         flash("IMS dönemi geçersiz. Yıl ve ay bilgisini kontrol edin.", "danger")
         return redirect(url_for("ims.index"))
 
+    # The lifecycle snapshot is captured before the workbook is parsed. Use a
+    # month explicitly present in the file name at queue time so a month-boundary
+    # upload cannot snapshot June while the workbook later imports as July.
+    filename_month = IMSImportService.extract_month_number(filename)
+    if filename_month is not None:
+        month = filename_month
+
     uploaded_by = current_user.full_name
     staging_folder = Path(current_app.config["UPLOAD_FOLDER"]) / "ims_queue"
     stored_file_name = f"{year}-{month:02d}-{uuid4().hex}{extension}"
