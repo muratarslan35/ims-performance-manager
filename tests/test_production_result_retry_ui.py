@@ -16,6 +16,11 @@ def test_production_result_retry_ui_contract():
     assert "Tekrar Dene" in source
     assert "bi-arrow-clockwise" in source
 
+    template_source = Path("app/templates/ims.html").read_text(encoding="utf-8")
+    assert "item.error_message" in template_source
+    assert "Hata nedeni:" in template_source
+    assert 'class="mt-2 p-2 rounded production-result-error"' in template_source
+
     # No failed-history hide/show workflow: failed rows stay visible and are retried in place.
     assert "show_failed_production" not in ims_source
     assert "Hatalıları göster" not in ims_source
