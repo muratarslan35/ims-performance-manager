@@ -46,7 +46,7 @@ def test_realization_display_rounding_rule_and_scientific_zero():
     }};
     global.window = global;
     require({json.dumps(str(JS_FILE))});
-    const values = [90.54, 95.50, 12.51, 12.50, 12.49, 79.6696913311, 0e4];
+    const values = [90.54, 95.50, 12.51, 12.50, 12.49, 79.6696913311, 73.5044, 0e4];
     console.log(JSON.stringify(values.map(global.roundRealizationForDisplay)));
     """
     completed = subprocess.run(
@@ -56,4 +56,4 @@ def test_realization_display_rounding_rule_and_scientific_zero():
         capture_output=True,
         text=True,
     )
-    assert json.loads(completed.stdout.strip()) == [91, 95, 13, 12, 12, 80, 0]
+    assert json.loads(completed.stdout.strip()) == [91, 95, 13, 12, 12, 80, 74, 0]
