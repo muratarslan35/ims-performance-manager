@@ -25,20 +25,34 @@ def test_realization_is_calculated_from_exact_target_actual_before_rounding():
     assert realization_percent(Decimal("125.5"), Decimal("100")) == 125
 
 
-def test_live_payload_normalization_recalculates_tl_realization_only():
+def test_live_payload_normalization_recalculates_tl_and_unit_realization():
     payload = {
         "target_tl": Decimal("100"),
         "actual_tl": Decimal("125.5004"),
         "realization_percent": 125.5,
-        "unit_realization_percent": 88.75,
+        "unit_target": Decimal("100"),
+        "unit_actual": Decimal("73.58"),
+        "unit_realization_percent": 73.58,
         "products": [
             {"target_tl": 100, "actual_tl": 124.499999, "realization_percent": 124.5}
         ],
     }
     normalize_realization_payload(payload)
     assert payload["realization_percent"] == 126
-    assert payload["unit_realization_percent"] == 88.75
+    assert payload["unit_realization_percent"] == 74
     assert payload["products"][0]["realization_percent"] == 124
+
+
+def test_live_payload_normalization_supports_target_unit_aliases():
+    payload = {
+        "target_unit": 100,
+        "actual_unit": 73.50,
+        "unit_realization_percent": 73.5,
+    }
+
+    normalize_realization_payload(payload)
+
+    assert payload["unit_realization_percent"] == 73
 
 
 def test_live_payload_normalization_preserves_missing_realization():
