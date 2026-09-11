@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from flask import current_app
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 
 from app.extensions import db
 from app.models import CompetitionData, IMSRawData, IMSSummary, IMSUpload, Product, RepresentativeBrickAssignment, Target
@@ -205,7 +205,10 @@ class RepresentativeMarketService:
         rows = CompetitionData.query.filter(
             CompetitionData.upload_id == upload_id,
             CompetitionData.metric_type == "UNIT",
-            CompetitionData.is_subtotal.is_(False),
+            or_(
+                CompetitionData.is_subtotal.is_(False),
+                CompetitionData.sheet_name.like("AYLIK REKABET KUTU IMS COMPAT%"),
+            ),
             CompetitionData.is_grand_total.is_(False),
         ).all()
         exact = [
@@ -362,6 +365,7 @@ class RepresentativeMarketService:
                         "exact_company_unit": 0.0,
                         "market_unit": 0.0,
                         "subtotal_unit": 0.0,
+                        "authoritative_subtotal_unit": 0.0,
                         "market_products": defaultdict(float),
                     }
                 ),
@@ -415,6 +419,7 @@ class RepresentativeMarketService:
                     product_bucket["market_unit"] += value
 
         if use_exact_brick_competition:
+            has_authoritative_kpi_subtotal = False
             exact_grouped = defaultdict(
                 lambda: {"unit": 0.0, "subtotal_unit": 0.0, "rivals": defaultdict(float)}
             )
@@ -428,6 +433,9 @@ class RepresentativeMarketService:
                 if self._is_subtotal_product_name(row.product_name):
                     product_bucket["subtotal_unit"] += value
                     exact_grouped[product.id]["subtotal_unit"] += value
+                    if AliasService.normalize(row.sheet_name).startswith("AYLIK REKABET KUTU IMS COMPAT"):
+                        product_bucket["authoritative_subtotal_unit"] += value
+                        has_authoritative_kpi_subtotal = True
                     continue
                 product_bucket["market_unit"] += value
                 product_bucket["market_products"][str(row.product_name).strip()] += value
@@ -446,6 +454,23 @@ class RepresentativeMarketService:
             for brick_data in brick_groups.values():
                 for product_data in brick_data["products"].values():
                     product_data["company_unit"] = product_data["exact_company_unit"]
+                    # The week-32 KPI workbook supplies PAZAR as an explicit
+                    # subtotal because its named rival columns can overlap.
+                    # Keep the names for drill-down, but use PAZAR as the
+                    # market denominator exactly as the source defines it.
+                    if product_data["authoritative_subtotal_unit"] > 0:
+                        product_data["market_unit"] = product_data["authoritative_subtotal_unit"]
+
+            # Rebuild the representative product denominator from exact brick
+            # rows after applying the source-authoritative KPI PAZAR subtotals.
+            if has_authoritative_kpi_subtotal:
+                for market in grouped.values():
+                    market["unit"] = 0.0
+                for brick_data in brick_groups.values():
+                    for product_name, product_data in brick_data["products"].items():
+                        product = products_by_name.get(product_name)
+                        if product is not None:
+                            grouped[product.id]["unit"] += product_data["market_unit"]
 
         for brick_data in brick_groups.values():
             brick_data["company_unit"] = 0.0
