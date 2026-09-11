@@ -8,8 +8,8 @@
  *   xx.51 and above -> next integer
  *   xx.50 and below -> current integer
  *
- * Values are first normalized to two decimals so floating-point artifacts such
- * as 90.509999999 render as the intended 90.51.
+ * The full supplied fraction is preserved: any value strictly above .50000
+ * rounds upward, while an exact .50000 tie stays at the lower integer.
  */
 (function () {
     const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA"]);
@@ -25,10 +25,9 @@
 
         const sign = numeric < 0 ? -1 : 1;
         const absolute = Math.abs(numeric);
-        const normalized = Math.round((absolute + Number.EPSILON) * 100) / 100;
-        const whole = Math.floor(normalized);
-        const fraction = Math.round((normalized - whole) * 100) / 100;
-        const displayed = whole + (fraction >= 0.51 ? 1 : 0);
+        const whole = Math.floor(absolute);
+        const fraction = absolute - whole;
+        const displayed = whole + (fraction > 0.5 ? 1 : 0);
         return sign * displayed;
     }
 
