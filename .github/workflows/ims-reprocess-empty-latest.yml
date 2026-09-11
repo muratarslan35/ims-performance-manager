@@ -1,0 +1,104 @@
+name: IMS Reprocess Empty Latest
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: IMS year
+        required: true
+        default: "2026"
+      month:
+        description: IMS month
+        required: true
+        default: "8"
+      week:
+        description: IMS week
+        required: true
+        default: "32"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ims-production-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Requeue guarded IMS replacement
+        env:
+          YEAR: ${{ inputs.year }}
+          MONTH: ${{ inputs.month }}
+          WEEK: ${{ inputs.week }}
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
+            "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' YEAR='$YEAR' MONTH='$MONTH' WEEK='$WEEK' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          test -z "$(git status --porcelain)"
+          git fetch origin main
+          git pull --ff-only origin main
+          mkdir -p instance/backups
+          stamp=$(date +%Y%m%d-%H%M%S)
+          venv/bin/python sqlite_online_backup.py instance/ipm.db "instance/backups/ipm-week32-recovery-${stamp}.db"
+          sudo systemctl restart ims-performance-manager.service ims-import-worker.service
+          venv/bin/python scripts/requeue_latest_empty_ims.py \
+            --year "$YEAR" --month "$MONTH" --week "$WEEK"
+          REMOTE
+
+      - name: Wait for worker and verify live IMS
+        env:
+          YEAR: ${{ inputs.year }}
+          MONTH: ${{ inputs.month }}
+          WEEK: ${{ inputs.week }}
+        run: |
+          set -Eeuo pipefail
+          for poll in $(seq 1 180); do
+            state=$(ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+              -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
+              "$IMS_USER@$IMS_HOST" \
+              "cd '$IMS_PATH' && venv/bin/python - <<'PY'
+from app import create_app
+from app.models import IMSImportJob
+from config import Config
+app=create_app(Config)
+with app.app_context():
+    job=IMSImportJob.query.order_by(IMSImportJob.id.desc()).first()
+    print('MISSING' if job is None else job.status)
+PY")
+            echo "IMS_RECOVERY_STATUS|poll=$poll|state=$state"
+            case "$state" in
+              COMPLETED) break ;;
+              FAILED|MISSING) exit 1 ;;
+            esac
+            if [ "$poll" = 180 ]; then exit 1; fi
+            sleep 10
+          done
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
+            "$IMS_USER@$IMS_HOST" \
+            "cd '$IMS_PATH' && venv/bin/python verify_live_ims_gate.py"
