@@ -45,7 +45,7 @@
   </div>
   <section class="ims-unit-exit-panel" aria-label="IMS kutu çıkışı">
     <div class="ims-unit-exit-head"><div><span>NATIONAL · KUTU PERFORMANSI</span><strong>Kutu Hedef ve Gerçekleşme</strong><small>Hedef yönetimi + TTS haftalık çıkışları</small></div><i class="bi bi-box-seam"></i></div>
-    <div class="unit-summary-grid"><div><span>Hedef Kutu</span><strong>{{ "{:,.0f}".format(national.unit_target | default(0, true)) }}</strong></div><div><span>Gerçekleşen Kutu</span><strong>{{ "{:,.0f}".format(national.unit_actual | default(0, true)) }}</strong></div><div><span>Kutu Realizasyonu</span><strong>%{{ "{:.0f}".format(national.unit_realization_percent | default(0, true)) }}</strong></div></div>
+    <div class="unit-summary-grid"><div><span>Hedef Kutu</span><strong>{{ "{:,.0f}".format(national.unit_target | default(0, true)) }}</strong></div><div><span>Gerçekleşen Kutu</span><strong>{{ "{:,.0f}".format(national.unit_actual | default(0, true)) }}</strong></div><div><span>Kutu Realizasyonu</span><strong>%{{ national.unit_realization_percent | default(0, true) }}</strong></div></div>
     <div class="ims-unit-exit-list">{% for product in national.products | default([], true) %}<div class="ims-unit-exit-row"><span>{{ product.product_name }}</span><small>{{ "{:,.0f}".format(product.unit_target | default(0, true)) }} hedef</small><b>{{ "{:,.0f}".format(product.unit_actual | default(0, true)) }} kutu</b><em class="{% if product.unit_realization_percent >= 100 %}good{% elif product.unit_realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ product.unit_realization_percent | default(0, true) }}</em></div>{% else %}<div class="ims-unit-exit-empty">Kutu verisi sonraki importta burada listelenir.</div>{% endfor %}</div>
   </section>
 </div>
@@ -458,3 +458,151 @@
 {% if not field_portal_scoped %}
 <div class="row g-4 mb-4" id="warningActionSection">
   <div class="col-12">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-bell-fill text-warning"></i> Uyarılar ve Aksiyonlar</h2>
+        
+        {% set critical_products = payload.critical_products | default(0, true) | int %}
+        {% set risk_products = payload.risk_products | default(0, true) | int %}
+        {% set warning_products = payload.warning_products | default(0, true) | int %}
+        {% set total_warnings = critical_products + risk_products + warning_products %}
+        
+        {% if total_warnings > 0 %}<span class="badge bg-danger">{{ total_warnings }}</span>{% endif %}
+      </div>
+      <div class="section-card-body alerts-body">
+        <div class="row g-3">
+            <div class="col-md-8">
+                {% if critical_products > 0 %}
+                <div class="alert-item alert-item-critical">
+                  <div class="alert-item-icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Kritik Ürün</strong>
+                    <span>{{ critical_products }} ürün kritik durumda – acil aksiyon gerekli</span>
+                    <small>Öncelik: Yüksek</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if risk_products > 0 %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Riskli Ürün</strong>
+                    <span>{{ risk_products }} ürün yakından takip edilmeli</span>
+                    <small>Öncelik: Orta</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if warning_products > 0 %}
+                <div class="alert-item alert-item-info">
+                  <div class="alert-item-icon"><i class="bi bi-eye-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Takip Seviyesinde</strong>
+                    <span>{{ warning_products }} ürün izleme listesinde</span>
+                    <small>Öncelik: İzleme</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if total_targets == 0 %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-bullseye"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Eksik Hedef</strong>
+                    <span>Sisteme henüz hedef girilmemiş</span>
+                    <small>Durum zamanı: Şimdi</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if not payload.last_upload %}
+                <div class="alert-item alert-item-warning">
+                  <div class="alert-item-icon"><i class="bi bi-cloud-upload"></i></div>
+                  <div class="alert-item-text">
+                    <strong>IMS Yüklenmedi</strong>
+                    <span>Henüz IMS dosyası yüklenmemiş</span>
+                    <small>Durum zamanı: Şimdi</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if active_q %}
+                <div class="alert-item alert-item-info">
+                  <div class="alert-item-icon"><i class="bi bi-calendar-check-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Aktif Quarter: Q{{ active_q }}</strong>
+                    <span>Quarter performansını takip edin</span>
+                    <small>Plan: Güncel dönem</small>
+                  </div>
+                </div>
+                {% endif %}
+        
+                {% if critical_products == 0 and risk_products == 0 and warning_products == 0 and total_targets > 0 and payload.last_upload %}
+                <div class="alert-item alert-item-success">
+                  <div class="alert-item-icon"><i class="bi bi-shield-check-fill"></i></div>
+                  <div class="alert-item-text">
+                    <strong>Her Şey Yolunda</strong>
+                    <span>Sistem normal çalışıyor, risk tespit edilmedi</span>
+                    <small>Durum zamanı: Güncel</small>
+                  </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="col-md-4">
+                <div class="quick-actions-wrap h-100 d-flex flex-column">
+                  <div class="quick-actions-title mb-3">Hızlı İşlemler</div>
+                  {% if manager_access %}<a href="{{ url_for('ims.index') }}" class="quick-action-btn quick-action-primary w-100 mb-2"><i class="bi bi-upload"></i> IMS Yükle</a>{% endif %}
+                  <a href="{{ url_for('simulation.index') }}" class="quick-action-btn quick-action-success w-100 mb-2"><i class="bi bi-calculator"></i> Prim Simülasyonu</a>
+                  <a href="{{ url_for('targets.index') }}" class="quick-action-btn quick-action-warning w-100"><i class="bi bi-bullseye"></i> Hedef Yönetimi</a>
+                </div>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script id="dashboardData" type="application/json">
+{
+  "productDonut": {
+    "labels": {{ payload.products | default([], true) | map(attribute='product_name') | list | tojson }},
+    "values": [
+      {% for p in payload.products | default([], true) %}
+        {{ p.realization_tl | default(0, true) }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  },
+  "monthlyTrend": {
+    {% set hist = payload.simulation_history | default([], true) %}
+    "labels": [
+      {% for h in hist | reverse %}
+        "{{ (h.simulation_date | string)[:7] }}"{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ],
+    "values": [
+      {% for h in hist | reverse %}
+        {% set hsum = h.summary | default({}, true) %}
+        {{ hsum.total_realization | default(0, true) }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  },
+  "marketShare": {{ payload.market_share_trend | default({"labels": [], "values": []}, true) | tojson }},
+  "gauge": {
+    "percent": {{ overall_safe }},
+    "realization": {{ payload.overall_realization_tl | default(0, true) }},
+    "target": {{ payload.overall_target_tl | default(0, true) }}
+  },
+  "cityPerformance": {{ payload.city_performance | default({}, true) | tojson }},
+  "regionRealization": {{ payload.region_realization | default([], true) | tojson }},
+  "competitionAnalysis": {{ payload.competition_analysis | default({"groups": []}, true) | tojson }}
+}
+</script>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
