@@ -31,6 +31,7 @@ from app.services.aggregate_identity_refinement import install_aggregate_identit
 from app.services.ims_summary_integrity import install_ims_summary_integrity
 from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
+from app.services.kpi_workbook_compat import install_kpi_workbook_compat
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
 from app.services.compact_brick_sales_metric_authority import install_compact_brick_sales_metric_authority
@@ -195,6 +196,7 @@ def create_app(config_object=Config):
     install_ims_summary_integrity()
     install_workbook_preflight()
     install_official_brick_spread_atomic()
+    install_kpi_workbook_compat()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
     install_compact_brick_sales_metric_authority()
