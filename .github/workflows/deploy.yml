@@ -77,7 +77,7 @@ jobs:
               deploy/*|migrations/*|app/models.py|sqlite_online_backup.py|cleanup_old_backups.py|database_capacity_audit.py|scripts/sqlite_scale_probe.py|config.py|requirements.txt)
                 mode="heavy"
                 ;;
-              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
+              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/kpi_workbook_compat.py|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
                 if [ "$mode" != "heavy" ]; then mode="import"; fi
                 ;;
               *)

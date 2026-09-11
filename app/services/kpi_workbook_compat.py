@@ -5,6 +5,7 @@ The legacy readers remain untouched.  When the workbook exposes the paired
 the canonical wide brick-sales shape consumed by :class:`IMSImportService`.
 Product KPI sheets are validation evidence only. Their calculated
 PAZAR/PP/RANK and competitor columns are never persisted as business data.
+Changes here require the same production acceptance gates as other IMS importers.
 """
 from __future__ import annotations
 
