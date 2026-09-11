@@ -44,6 +44,12 @@ def normalize_realization_payload(value):
         # `None` means no authoritative result; preserve it exactly.
         if value.get("percent") is not None and ("month" in value or "has_data" in value):
             value["percent"] = realization_percent(actual, target)
+
+    unit_target = value.get("unit_target", value.get("target_unit"))
+    unit_actual = value.get("unit_actual", value.get("actual_unit"))
+    if unit_target is not None and unit_actual is not None:
+        if value.get("unit_realization_percent") is not None:
+            value["unit_realization_percent"] = realization_percent(unit_actual, unit_target)
     return value
 
 
