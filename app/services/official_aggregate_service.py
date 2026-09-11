@@ -82,6 +82,9 @@ def _balance_columns(importer, frame, header_row):
     columns = defaultdict(dict)
     for column in range(frame.shape[1]):
         label = _norm(importer.clean_text(frame.iloc[header_row, column]))
+        if "HEDEF" in label and ("KUTU" in label or "UNIT" in label):
+            current = "target_unit"
+            continue
         if "HEDEF" in label and "TL" in label:
             current = "target_tl"
             continue
@@ -213,7 +216,13 @@ def _persist_targets(importer, year, month):
             index
             for index in range(min(12, len(frame)))
             if "HEDEF" in " ".join(_norm(value) for value in frame.iloc[index])
-            and "BAKIYE" in " ".join(_norm(value) for value in frame.iloc[index])
+            and (
+                "BAKIYE" in " ".join(_norm(value) for value in frame.iloc[index])
+                or (
+                    _norm(sheet).startswith("IMS COMPAT BAKIYE")
+                    and "CIKIS" in " ".join(_norm(value) for value in frame.iloc[index])
+                )
+            )
         ),
         None,
     )
@@ -245,9 +254,13 @@ def _persist_targets(importer, year, month):
                 else 0.0
             )
             target_unit = (
-                target_tl / (balance_tl / balance_unit)
-                if balance_tl and balance_unit and balance_tl / balance_unit > 0
-                else 0.0
+                importer.safe_float(row.iloc[metrics["target_unit"]])
+                if "target_unit" in metrics
+                else (
+                    target_tl / (balance_tl / balance_unit)
+                    if balance_tl and balance_unit and balance_tl / balance_unit > 0
+                    else 0.0
+                )
             )
             _upsert(
                 importer,
