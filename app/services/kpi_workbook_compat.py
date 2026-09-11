@@ -3,8 +3,8 @@
 The legacy readers remain untouched.  When the workbook exposes the paired
 ``2-TTS-BRICK ... REA%`` matrices, this adapter joins their actual columns into
 the canonical wide brick-sales shape consumed by :class:`IMSImportService`.
-Product KPI sheets are exposed to the competition importer as UNIT matrices;
-their calculated PAZAR/PP/RANK columns are deliberately excluded.
+Product KPI sheets are validation evidence only. Their calculated
+PAZAR/PP/RANK and competitor columns are never persisted as business data.
 """
 from __future__ import annotations
 
@@ -141,8 +141,70 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
     return pd.DataFrame(output, columns=headers), {tl_name, unit_name}
 
 
+def validate_product_kpi_sheets(workbook, canonical):
+    """Use optional KPI sheets only as a NATIONAL control for core units."""
+    checked = 0
+    key_columns = ["BÖLGE", "İL", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI"]
+    canonical_rows = {
+        tuple(str(value).strip() for value in row[key_columns].tolist()): row
+        for _, row in canonical.iterrows()
+    }
+    for sheet_name, frame in workbook.items():
+        if not is_product_kpi_sheet(sheet_name):
+            continue
+        product = _norm(sheet_name).removeprefix("2 KUTU ").removesuffix(" KPI")
+        source_column = f"{product} KUTU ÇIKIŞ"
+        if source_column not in canonical.columns:
+            raise ValueError(f"{sheet_name}: KPI ürünü ana KUTU matrisinde bulunamadı ({product}).")
+        header_row = next((
+            row for row in range(min(12, len(frame)))
+            if any(_norm(value) == "PAZAR" for value in frame.iloc[row].tolist())
+        ), None)
+        if header_row is None:
+            raise ValueError(f"{sheet_name}: KPI ürün başlığı bulunamadı.")
+        product_columns = [
+            column for column in range(frame.shape[1])
+            if _norm(frame.iloc[header_row, column]).startswith(product)
+        ]
+        if len(product_columns) != 1:
+            raise ValueError(f"{sheet_name}: KPI ana ürün kolonu tekil değil ({product}).")
+        product_column = product_columns[0]
+        national_seen = False
+        for row_index in range(header_row + 1, len(frame)):
+            values = frame.iloc[row_index]
+            key = tuple(
+                "" if pd.isna(values.iloc[column]) else str(values.iloc[column]).strip()
+                for column in range(5)
+            )
+            if not any(key):
+                continue
+            # KPI detail rows can use a different commercial brick allocation
+            # from the TTS matrix. They are extra analytical data, not a source
+            # for representative sales. Only the common NATIONAL control has
+            # identical business meaning in both layouts.
+            if _norm(key[2]) != "NATIONAL":
+                continue
+            source = canonical_rows.get(key)
+            if source is None:
+                raise ValueError(f"{sheet_name}: KPI satırı ana brick matrisinde bulunamadı: {key}")
+            kpi_value = pd.to_numeric(pd.Series([values.iloc[product_column]]), errors="coerce").iloc[0]
+            core_value = pd.to_numeric(pd.Series([source[source_column]]), errors="coerce").iloc[0]
+            if pd.isna(kpi_value) and pd.isna(core_value):
+                pass
+            elif pd.isna(kpi_value) or pd.isna(core_value) or abs(float(kpi_value) - float(core_value)) > 1e-6:
+                raise ValueError(
+                    f"{sheet_name}: KPI doğrulaması ana KUTU matrisiyle uyuşmuyor; "
+                    f"brick={key[2]}, KPI={kpi_value}, ana={core_value}."
+                )
+            national_seen = True
+        if not national_seen:
+            raise ValueError(f"{sheet_name}: KPI NATIONAL doğrulama satırı bulunamadı.")
+        checked += 1
+    return checked
+
+
 def install_kpi_workbook_compat():
-    from app.services.competition_import_service import CompetitionImportService, SheetType
+    from app.services.competition_import_service import CompetitionImportService
     from app.services.ims_import_service import IMSImportService
     if getattr(IMSImportService, "_kpi_workbook_compat_installed", False):
         return
@@ -155,6 +217,9 @@ def install_kpi_workbook_compat():
         )
         if canonical is None:
             return original_analyze(self)
+        self.statistics["kpi_validation_sheets"] = validate_product_kpi_sheets(
+            self.workbook or {}, canonical
+        )
         analyses = []
         for sheet_name, frame in (self.workbook or {}).items():
             if sheet_name in consumed or is_product_kpi_sheet(sheet_name):
@@ -185,74 +250,8 @@ def install_kpi_workbook_compat():
     IMSImportService.analyze_workbook = analyze_with_kpi_compat
 
     original_supported = CompetitionImportService.get_supported_sheets
-    original_type = CompetitionImportService.get_sheet_type
-    original_structure = CompetitionImportService._parse_sheet_structure
-
     def supported_with_kpi(self):
-        supported = original_supported(self)
-        if not self._workbook:
-            return supported
-        for name in self._workbook.sheetnames:
-            if is_product_kpi_sheet(name) and name not in supported:
-                supported.append(name)
-        return supported
-
-    def type_with_kpi(self, sheet_name):
-        if is_product_kpi_sheet(sheet_name):
-            return SheetType.MONTHLY_COMPETITION_UNITS.value
-        return original_type(self, sheet_name)
-
-    def structure_with_kpi(self, sheet_name):
-        if not is_product_kpi_sheet(sheet_name):
-            return original_structure(self, sheet_name)
-        sheet = self._workbook[sheet_name]
-        max_row, max_col = sheet.max_row or 0, sheet.max_column or 0
-        header_row = next((
-            row for row in range(1, min(max_row, 12) + 1)
-            if any(_norm(self._get_cell_value(sheet, row, col)) == "PAZAR" for col in range(1, max_col + 1))
-        ), None)
-        if header_row is None:
-            raise ValueError(f"{sheet_name}: KPI ürün başlığı bulunamadı.")
-        group = next((
-            str(self._get_cell_value(sheet, header_row - 2, col)).strip()
-            for col in range(1, max_col + 1)
-            if self._get_cell_value(sheet, header_row - 2, col) is not None
-            and _norm(self._get_cell_value(sheet, header_row - 2, col))
-        ), _norm(sheet_name).replace("2 KUTU ", "").replace(" KPI", ""))
-        excluded = {"PAZAR", "PP", "RANK"}
-        products = [
-            (str(self._get_cell_value(sheet, header_row, col)).strip(), col)
-            for col in range(1, max_col + 1)
-            if self._get_cell_value(sheet, header_row, col) is not None
-            and _norm(self._get_cell_value(sheet, header_row, col)) not in excluded
-            and col > 5
-        ]
-        if not products:
-            raise ValueError(f"{sheet_name}: KPI rakip ürün kolonları bulunamadı.")
-        data_rows = []
-        for row in range(header_row + 1, max_row + 1):
-            territory = self._get_cell_value(sheet, row, 1)
-            brick = self._get_cell_value(sheet, row, 3)
-            if (territory is not None or brick is not None) and any(
-                isinstance(self._get_cell_value(sheet, row, col), (int, float)) for _, col in products
-            ):
-                data_rows.append(row)
-        if not data_rows:
-            raise ValueError(f"{sheet_name}: KPI veri satırları bulunamadı.")
-        return {
-            "sheet_name": sheet_name,
-            "sheet_type": SheetType.MONTHLY_COMPETITION_UNITS.value,
-            "period_type": "MONTHLY",
-            "year": int(self.year), "month": int(self.month),
-            "header_row": header_row,
-            "data_start_row": data_rows[0], "data_end_row": data_rows[-1],
-            "data_rows": data_rows, "max_columns": max_col,
-            "territory_column": 1, "subterritory_column": 3,
-            "product_columns": {col: name for name, col in products},
-            "product_groups": {group: products},
-        }
+        return [name for name in original_supported(self) if not is_product_kpi_sheet(name)]
 
     CompetitionImportService.get_supported_sheets = supported_with_kpi
-    CompetitionImportService.get_sheet_type = type_with_kpi
-    CompetitionImportService._parse_sheet_structure = structure_with_kpi
     IMSImportService._kpi_workbook_compat_installed = True
