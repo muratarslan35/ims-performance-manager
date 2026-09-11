@@ -3,8 +3,8 @@
 The legacy readers remain untouched.  When the workbook exposes the paired
 ``2-TTS-BRICK ... REA%`` matrices, this adapter joins their actual columns into
 the canonical wide brick-sales shape consumed by :class:`IMSImportService`.
-Product KPI sheets are validation evidence only. Their calculated
-PAZAR/PP/RANK and competitor columns are never persisted as business data.
+Product KPI sheets supply the named competitor unit observations and the
+authoritative PAZAR subtotal.  PP/RANK remain validation-only fields.
 Changes here require the same production acceptance gates as other IMS importers.
 """
 from __future__ import annotations
@@ -17,6 +17,9 @@ from app.services.alias_service import AliasService
 
 
 COMPAT_SHEET_NAME = "IMS COMPAT BRICK SATIS"
+COMPAT_BALANCE_NAME = "IMS COMPAT BAKIYE"
+COMPAT_WEEKLY_NAME = "IMS COMPAT HAFTALIK CIKIS"
+COMPAT_COMPETITION_PREFIX = "AYLIK REKABET KUTU IMS COMPAT"
 _KPI_RE = re.compile(r"^2 KUTU .+ KPI$")
 
 
@@ -142,6 +145,128 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
     return pd.DataFrame(output, columns=headers), {tl_name, unit_name}
 
 
+def _summary_rows(frame, plan):
+    """Return source-authoritative national/region rows plus rep brick sums."""
+    products = sorted(plan["products"])
+    records = []
+    representative_totals = {}
+    for source_index in range(plan["data_start"], len(frame)):
+        row = frame.iloc[source_index]
+        territory = "" if pd.isna(row.iloc[plan["region"]]) else str(row.iloc[plan["region"]]).strip()
+        brick = "" if pd.isna(row.iloc[plan["brick"]]) else str(row.iloc[plan["brick"]]).strip()
+        representative = "" if pd.isna(row.iloc[plan["primary_rep"]]) else str(row.iloc[plan["primary_rep"]]).strip()
+        normalized_brick = _norm(brick)
+        normalized_rep = _norm(representative)
+        values = {
+            product: {
+                "target": pd.to_numeric(pd.Series([row.iloc[plan["products"][product] - 1]]), errors="coerce").fillna(0).iloc[0],
+                "actual": pd.to_numeric(pd.Series([row.iloc[plan["products"][product]]]), errors="coerce").fillna(0).iloc[0],
+            }
+            for product in products
+        }
+        if normalized_brick == "NATIONAL":
+            records.append(("", "NATIONAL", values))
+        elif "SUBTOTAL" in normalized_brick and normalized_rep == _norm(territory):
+            records.append((territory, representative, values))
+        elif representative and normalized_rep not in {"NATIONAL", _norm(territory)}:
+            key = (territory, representative)
+            bucket = representative_totals.setdefault(
+                key, {product: {"target": 0.0, "actual": 0.0} for product in products}
+            )
+            for product in products:
+                bucket[product]["target"] += float(values[product]["target"] or 0)
+                bucket[product]["actual"] += float(values[product]["actual"] or 0)
+    records.extend((territory, representative, values) for (territory, representative), values in representative_totals.items())
+    return products, records
+
+
+def build_legacy_summary_frames(workbook, *, file_path=None):
+    """Build the legacy BAKIYE/TTS views consumed by existing KPI services."""
+    tl_name, tl_frame = _find_matrix(workbook, "tl")
+    unit_name, unit_frame = _find_matrix(workbook, "unit")
+    if not tl_name or not unit_name:
+        return {}
+    if file_path:
+        raw_pair = pd.read_excel(file_path, sheet_name=[tl_name, unit_name], header=None)
+        tl_frame, unit_frame = raw_pair[tl_name], raw_pair[unit_name]
+    tl_plan, unit_plan = _matrix_plan(tl_frame, "tl"), _matrix_plan(unit_frame, "unit")
+    tl_products, tl_rows = _summary_rows(tl_frame, tl_plan)
+    unit_products, unit_rows = _summary_rows(unit_frame, unit_plan)
+    if tl_products != unit_products:
+        raise ValueError("Yeni IMS özet TL/KUTU ürün kapsamı aynı değil.")
+    unit_map = {(territory, representative): values for territory, representative, values in unit_rows}
+    if {(t, r) for t, r, _ in tl_rows} != set(unit_map):
+        raise ValueError("Yeni IMS özet TL/KUTU temsilci kapsamı aynı değil.")
+
+    products = tl_products
+    balance_header = [
+        None, "AYLIK HEDEF TL", *products,
+        None, "AYLIK CIKIS TL", *products,
+        None, "AYLIK KUTU HEDEF", *products,
+    ]
+    weekly_sections = [None, None, "AYLIK TL CIKISI", *([None] * (len(products) - 1)), "AYLIK KUTU CIKISI", *([None] * (len(products) - 1))]
+    weekly_products = [None, None, *products, *products]
+    balance_rows = [[None] * len(balance_header), balance_header]
+    weekly_rows = [weekly_sections, weekly_products]
+    for territory, representative, tl_values in tl_rows:
+        units = unit_map[(territory, representative)]
+        balance_rows.append([
+            territory, representative,
+            *[tl_values[product]["target"] for product in products], None,
+            representative,
+            *[tl_values[product]["actual"] for product in products],
+            None, representative,
+            *[units[product]["target"] for product in products],
+        ])
+        weekly_rows.append([
+            territory, representative,
+            *[tl_values[product]["actual"] for product in products],
+            *[units[product]["actual"] for product in products],
+        ])
+    return {
+        COMPAT_BALANCE_NAME: pd.DataFrame(balance_rows),
+        COMPAT_WEEKLY_NAME: pd.DataFrame(weekly_rows),
+    }
+
+
+def build_competition_frames(workbook):
+    """Translate product KPI tabs into legacy monthly brick competition tabs."""
+    result = {}
+    for sheet_name, frame in workbook.items():
+        if not is_product_kpi_sheet(sheet_name):
+            continue
+        product = _norm(sheet_name).removeprefix("2 KUTU ").removesuffix(" KPI")
+        header_row = next((
+            row for row in range(min(12, len(frame)))
+            if any(_norm(value) == "PAZAR" for value in frame.iloc[row].tolist())
+        ), None)
+        if header_row is None:
+            raise ValueError(f"{sheet_name}: KPI ürün başlığı bulunamadı.")
+        columns = []
+        for column in range(5, frame.shape[1]):
+            label = _norm(frame.iloc[header_row, column])
+            if not label or label in {"PP", "RANK"}:
+                continue
+            columns.append((column, f"{product} SUBTOTAL" if label == "PAZAR" else str(frame.iloc[header_row, column]).strip()))
+        rows = [
+            [None] * (5 + len(columns)),
+            [None] * 5 + [product] + [None] * (len(columns) - 1),
+            ["BOLGE", "IL", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI", *[label for _, label in columns]],
+            [None] * (5 + len(columns)),
+        ]
+        for row_index in range(header_row + 1, len(frame)):
+            source = frame.iloc[row_index]
+            brick = "" if pd.isna(source.iloc[2]) else str(source.iloc[2]).strip()
+            if not brick or _norm(brick) == "NATIONAL" or "SUBTOTAL" in _norm(brick):
+                continue
+            rows.append([
+                *[None if pd.isna(source.iloc[column]) else source.iloc[column] for column in range(5)],
+                *[None if pd.isna(source.iloc[column]) else source.iloc[column] for column, _ in columns],
+            ])
+        result[f"{COMPAT_COMPETITION_PREFIX} {product}"] = pd.DataFrame(rows)
+    return result
+
+
 def validate_product_kpi_sheets(workbook, canonical):
     """Use optional KPI sheets only as a NATIONAL control for core units."""
     checked = 0
@@ -221,9 +346,14 @@ def install_kpi_workbook_compat():
         self.statistics["kpi_validation_sheets"] = validate_product_kpi_sheets(
             self.workbook or {}, canonical
         )
+        compat_frames = build_legacy_summary_frames(
+            self.workbook or {}, file_path=self.file_path
+        )
+        compat_frames.update(build_competition_frames(self.workbook or {}))
+        self.workbook.update(compat_frames)
         analyses = []
         for sheet_name, frame in (self.workbook or {}).items():
-            if sheet_name in consumed or is_product_kpi_sheet(sheet_name):
+            if sheet_name in consumed or is_product_kpi_sheet(sheet_name) or sheet_name in compat_frames:
                 continue
             # The temporary workbook's representative summary and trend tabs
             # are filtered pivots. The paired brick matrices are the complete

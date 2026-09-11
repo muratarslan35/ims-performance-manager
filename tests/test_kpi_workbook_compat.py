@@ -3,6 +3,8 @@ import pytest
 
 from app.services.kpi_workbook_compat import (
     build_canonical_brick_frame,
+    build_competition_frames,
+    build_legacy_summary_frames,
     is_product_kpi_sheet,
     validate_product_kpi_sheets,
 )
@@ -71,6 +73,43 @@ def test_kpi_extra_columns_are_validation_only():
         ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 30, 1, 3, 7],
     ])
     assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
+
+
+def test_new_layout_builds_legacy_dashboard_target_and_actual_views():
+    workbook = {
+        "2-TTS-BRİCK TL-REA%": _matrix("tl"),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
+    }
+    frames = build_legacy_summary_frames(workbook)
+
+    balance = frames["IMS COMPAT BAKIYE"]
+    weekly = frames["IMS COMPAT HAFTALIK CIKIS"]
+    assert "HEDEF" in str(balance.iloc[1, 1])
+    assert balance.iloc[2, 1] == "NATIONAL"
+    assert balance.iloc[3, 1] == "AYŞE TEST"
+    assert balance.iloc[3, 2] == 8
+    assert balance.iloc[3, -1] == 8
+    assert weekly.iloc[2, 1] == "NATIONAL"
+    assert weekly.iloc[3, 2] == 300
+    assert weekly.iloc[3, 3] == 3
+
+
+def test_kpi_market_and_named_rivals_are_translated_but_pp_rank_are_not():
+    kpi = pd.DataFrame([
+        ["1-9 AĞUSTOS", None, None, None, None, None, None, None, None, None],
+        [None, None, None, None, None, "TRAVAZOL", None, None, None, None],
+        [None] * 10,
+        [None, None, None, None, None, "PAZAR", "PP", "RANK", "TRAVAZOL KREM", "RAKIP"],
+        ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, 30, 70],
+        ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 30, 1, 3, 7],
+    ])
+    frames = build_competition_frames({"2-KUTU-TRAVAZOL KPI": kpi})
+    frame = next(iter(frames.values()))
+
+    assert frame.iloc[2].tolist()[-3:] == ["TRAVAZOL SUBTOTAL", "TRAVAZOL KREM", "RAKIP"]
+    assert frame.iloc[4].tolist()[-3:] == [10, 3, 7]
+    assert "PP" not in frame.iloc[2].tolist()
+    assert "RANK" not in frame.iloc[2].tolist()
 
 
 def test_kpi_validation_rejects_changed_core_value():

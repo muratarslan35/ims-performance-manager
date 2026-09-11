@@ -1969,7 +1969,7 @@ class IMSImportService:
             label = self.clean_text(frame.iloc[header_row, column])
             normalized_label = AliasService.normalize(label)
             if "HEDEF" in normalized_label:
-                current = "target_tl"
+                current = "target_unit" if ("KUTU" in normalized_label or "UNIT" in normalized_label) else "target_tl"
             elif "CIKIS" in normalized_label:
                 current = "actual_tl"
             elif "BAKIYE" in normalized_label:
@@ -2013,6 +2013,8 @@ class IMSImportService:
                 section = sections[column]
                 if section == "target_tl":
                     values.setdefault(product_id, {})["target"] = metric
+                elif section == "target_unit":
+                    values.setdefault(product_id, {})["target_unit"] = metric
                 elif section == "actual_tl":
                     values.setdefault(product_id, {})["actual"] = metric
                 elif section == "balance_tl":
@@ -2027,6 +2029,8 @@ class IMSImportService:
                     target = Target(year=year, month=month, quarter=self.quarter_for(month), representative_id=rep_id, product_id=product_id)
                     db.session.add(target); targets[(rep_id, product_id)] = target
                 target.tl_target = item.get("target", target.tl_target or 0.0)
+                if "target_unit" in item:
+                    target.unit_target = item["target_unit"]
                 balance_tl = item.get("balance_tl")
                 balance_unit = item.get("balance_unit")
                 if balance_tl is not None and balance_unit not in (None, 0):
@@ -2236,7 +2240,7 @@ class IMSImportService:
                             continue
                         product_id = product_match["object"].id
                         values = metric_values.setdefault(product_id, {"target_tl": 0.0, "actual_tl": 0.0})
-                        if "HEDEF" in section:
+                        if "HEDEF" in section and not ("KUTU" in section or "UNIT" in section):
                             values["target_tl"] = self.safe_float(row.iloc[column])
                         elif "CIKIS" in section:
                             values["actual_tl"] = self.safe_float(row.iloc[column])
@@ -2721,4 +2725,3 @@ class IMSImportService:
     @classmethod
     def supported_reports(cls):
         return list(cls.REPORT_SHEETS.values())
-
