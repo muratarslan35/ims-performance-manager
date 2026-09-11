@@ -153,7 +153,6 @@ def _summary_rows(frame, plan):
     for source_index in range(plan["data_start"], len(frame)):
         row = frame.iloc[source_index]
         territory = "" if pd.isna(row.iloc[plan["region"]]) else str(row.iloc[plan["region"]]).strip()
-        province = "" if pd.isna(row.iloc[plan["province"]]) else str(row.iloc[plan["province"]]).strip()
         brick = "" if pd.isna(row.iloc[plan["brick"]]) else str(row.iloc[plan["brick"]]).strip()
         representative = "" if pd.isna(row.iloc[plan["primary_rep"]]) else str(row.iloc[plan["primary_rep"]]).strip()
         normalized_brick = _norm(brick)
