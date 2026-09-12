@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   publish:
-    name: Refresh dashboard and competition read models
+    name: Audit current IMS market source
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,87 +34,71 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Publish corrected Week 32 UI read models
+      - name: Audit Week 32 source identities
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          exec 9>instance/.production-maintenance.lock
-          if ! flock -w 300 9; then
-            echo 'UI_PUBLICATION_REFUSED|reason=production_lock_timeout'
-            exit 1
-          fi
-
-          test -z "$(git status --porcelain)"
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
-          export PYTHONUNBUFFERED=1
-          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-
-          active=$(venv/bin/python - <<'PY'
-          from app import create_app
-          from app.models import IMSImportJob
-          from config import Config
-          app=create_app(Config)
-          with app.app_context():
-              print(IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))).count())
-          PY
-          )
-          echo "ACTIVE_IMPORTS|$active"
-          test "$active" = "0"
-
-          venv/bin/python -m py_compile \
-            app/routes/__init__.py \
-            app/services/market_analysis_service.py \
-            scripts/refresh_live_read_models.py
-          venv/bin/python -m pytest -q tests/test_market_analysis_week_fallback.py
-
-          sudo systemctl restart ims-performance-manager.service
-          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
-
-          venv/bin/python -u -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
-          venv/bin/python verify_live_ims_gate.py
-
-          health=$(curl -fsS --max-time 15 http://127.0.0.1:8000/health || true)
-          printf 'HTTP_HEALTH|%s\n' "$health"
-          test -n "$health"
-
           venv/bin/python - <<'PY'
+          from collections import defaultdict
+          from sqlalchemy import desc
           from app import create_app
-          from app.services.market_analysis_service import MarketAnalysisService
-          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.extensions import db
+          from app.models import CompetitionData, IMSRawData, IMSUpload, Product
+          from app.services.alias_service import AliasService
           from config import Config
+
+          def key(v):
+              return ''.join(ch for ch in AliasService.normalize(v) if ch.isalnum())
+
           app=create_app(Config)
           with app.app_context():
-              payload=PersistentDashboardSnapshotService.get_active(2026,8) or {}
-              national=payload.get('executive_metrics') or {}
-              products=national.get('products') or []
-              assert float(national.get('target_tl') or 0)>0
-              assert float(national.get('actual_tl') or 0)>0
-              assert float(national.get('unit_target') or 0)>0
-              assert float(national.get('unit_actual') or 0)>0
-              assert len(products)==7
-              market=MarketAnalysisService(2026,8).build()
-              assert market.get('has_competition') is True
-              assert market.get('source_state')=='CURRENT'
-              assert market.get('metric_mode')=='UNIT'
-              assert len([r for r in market.get('groups',[]) if r.get('market_available')])==7
-              print('UI_FINAL_ACCEPTANCE|PASS'
-                    f"|target_tl={float(national['target_tl']):.2f}"
-                    f"|actual_tl={float(national['actual_tl']):.2f}"
-                    f"|target_box={float(national['unit_target']):.2f}"
-                    f"|actual_box={float(national['unit_actual']):.2f}"
-                    f"|products={len(products)}"
-                    f"|market_mode={market.get('metric_mode')}"
-                    f"|market_products={len(market.get('groups') or [])}"
-                    f"|market_total={float(market.get('market_total_value') or 0):.2f}"
-                    f"|competitor_total={float(market.get('competitor_total_value') or 0):.2f}")
+              upload=(IMSUpload.query.filter_by(year=2026,month=8,status='COMPLETED')
+                      .order_by(desc(IMSUpload.week_number),desc(IMSUpload.completed_at),desc(IMSUpload.id)).first())
+              assert upload and int(upload.week_number)==32
+              products=Product.query.filter_by(is_active=True).order_by(Product.display_order,Product.product_name).all()
+              company={int(pid):float(unit or 0) for pid,unit in db.session.query(
+                  IMSRawData.product_id, db.func.sum(IMSRawData.unit)
+              ).filter(
+                  IMSRawData.upload_id==upload.id,
+                  IMSRawData.sheet_type=='official_actual_aggregate',
+                  IMSRawData.territory=='NATIONAL',
+                  IMSRawData.product_id.isnot(None),
+              ).group_by(IMSRawData.product_id).all()}
+              rows=CompetitionData.query.filter(
+                  CompetitionData.upload_id==upload.id,
+                  CompetitionData.metric_type=='UNIT',
+                  CompetitionData.is_grand_total.is_(False),
+              ).all()
+              print(f'MARKET_SOURCE_AUDIT|upload={upload.id}|week={upload.week_number}|competition_rows={len(rows)}')
+              for product in products:
+                  aliases={key(x) for x in (product.product_name,product.product_code,product.ims_name,getattr(product,'competitor_group',None)) if key(x)}
+                  matched=[]
+                  for row in rows:
+                      g=key(row.product_group)
+                      if any(a in g or g in a for a in aliases):
+                          matched.append(row)
+                  subtotal=sum(float(r.metric_value or 0) for r in matched if r.is_subtotal)
+                  own=0.0; rival=0.0; detail=0.0; rivals=defaultdict(float)
+                  own_names={key(x) for x in (product.product_name,product.product_code,product.ims_name) if key(x)}
+                  for r in matched:
+                      if r.is_subtotal: continue
+                      value=float(r.metric_value or 0); detail+=value
+                      name=key(r.product_name)
+                      is_company=bool(r.is_company_product) or (not bool(r.is_competitor) and any(a in name or name in a for a in own_names))
+                      if is_company: own+=value
+                      else:
+                          rival+=value; rivals[str(r.product_name)]+=value
+                  c=company.get(int(product.id),0.0)
+                  print('MARKET_PRODUCT|product=%s|company_main=%.2f|competition_company=%.2f|rival_detail=%.2f|detail_total=%.2f|subtotal=%.2f|company_plus_rival=%.2f|subtotal_minus_company=%.2f|rivals=%d' % (
+                      product.product_name,c,own,rival,detail,subtotal,c+rival,subtotal-c,len(rivals)))
           PY
           REMOTE
-# keepalive during full durable read-model rebuild 2026-09-12
