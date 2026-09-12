@@ -54,11 +54,11 @@ jobs:
           venv/bin/python -m py_compile app/services/kpi_market_single_source.py app/__init__.py
           venv/bin/python -m pytest -q tests/test_kpi_market_single_source.py tests/test_market_analysis_week_fallback.py
 
-          # Validate the new semantic extractor against the exact retained
-          # upload before changing any live rows.
+          # Validate the exact retained Week 32 archive before changing live rows.
+          # A prior failed retry may leave the same upload status=FAILED, so source
+          # selection must use the immutable period/week identity rather than status.
           venv/bin/python - <<'PY'
           import pandas as pd
-          from sqlalchemy import desc
           from app import create_app
           from app.models import IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
@@ -66,8 +66,8 @@ jobs:
           from config import Config
           app=create_app(Config)
           with app.app_context():
-              upload=(IMSUpload.query.filter_by(year=2026,month=8,status='COMPLETED')
-                      .order_by(desc(IMSUpload.week_number),desc(IMSUpload.completed_at),desc(IMSUpload.id)).first())
+              upload=(IMSUpload.query.filter_by(year=2026,month=8,week_number=32)
+                      .order_by(IMSUpload.id.desc()).first())
               assert upload and int(upload.week_number)==32
               source=IMSUploadLifecycleService.archived_source_for_upload(upload.id)
               assert source and source.is_file()
@@ -83,7 +83,7 @@ jobs:
               ist_market=sum(item['market'] for item in ist)
               assert abs(ist_company-52024.0)<0.01, ist_company
               assert abs(ist_market-137771.0)<0.01, ist_market
-              print(f'KPI_SOURCE_PREFLIGHT|PASS|products={len(authority)}|national_company={company:.2f}|national_market={market:.2f}|istanbul_company={ist_company:.2f}|istanbul_market={ist_market:.2f}')
+              print(f'KPI_SOURCE_PREFLIGHT|PASS|upload={upload.id}|status={upload.status}|products={len(authority)}|national_company={company:.2f}|national_market={market:.2f}|istanbul_company={ist_company:.2f}|istanbul_market={ist_market:.2f}')
           PY
 
           # Normal import route: same verified archive, same upload identity,
@@ -107,7 +107,7 @@ jobs:
           from app import create_app
           from app.extensions import db
           from app.models import CompetitionData, IMSUpload, Representative
-          from app.services.kpi_market_single_source import AUTHORITY_PREFIX, _authority
+          from app.services.kpi_market_single_source import AUTHORITY_PREFIX
           from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
           from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
