@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 
 from app.services.adaptive_kpi_target_authority import _find_pair, _matrix_plan, _source_rows
 
@@ -38,9 +37,8 @@ def test_region_subtotal_is_detected_from_identity_not_subtotal_cell_position():
     assert ("101 ISTANBUL", "AYŞE TEST") in reps
 
 
-def test_pair_detection_fails_closed_when_metric_is_ambiguous():
-    with pytest.raises(ValueError, match="tekil belirlenemedi"):
-        _find_pair({
-            "Rapor A": _matrix("tl"),
-            "Rapor B": _matrix("unit"),
-        })
+def test_pair_detection_does_not_guess_metric_without_semantic_hint():
+    assert _find_pair({
+        "Rapor A": _matrix("tl"),
+        "Rapor B": _matrix("unit"),
+    }) is None
