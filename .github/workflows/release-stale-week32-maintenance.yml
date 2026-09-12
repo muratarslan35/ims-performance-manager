@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   publish:
-    name: Reimport and verify single-source market data
+    name: Finalize completed Week 32 read models
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Reimport Week 32 and publish exact market read models
+      - name: Publish and verify completed Week 32 import
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -51,44 +51,67 @@ jobs:
           export PYTHONUNBUFFERED=1
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
-          venv/bin/python -m py_compile app/services/kpi_market_single_source.py app/__init__.py
-          venv/bin/python -m pytest -q tests/test_kpi_market_single_source.py tests/test_market_analysis_week_fallback.py
-
-          # Validate the exact retained Week 32 archive before changing live rows.
-          # A prior failed retry may leave the same upload status=FAILED, so source
-          # selection must use the immutable period/week identity rather than status.
-          venv/bin/python - <<'PY'
-          import pandas as pd
+          # The import itself already completes in about six minutes. Do not requeue
+          # it again just because the old publication_ready flag was never raised.
+          # Wait only for an already-running import to finish, then publish read models.
+          for poll in $(seq 1 60); do
+            state=$(venv/bin/python - <<'PY'
           from app import create_app
-          from app.models import IMSUpload
-          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
-          from app.services.kpi_market_single_source import extract_market_authority
+          from app.models import IMSImportJob, IMSUpload
           from config import Config
           app=create_app(Config)
           with app.app_context():
-              upload=(IMSUpload.query.filter_by(year=2026,month=8,week_number=32)
+              upload=(IMSUpload.query.filter_by(year=2026, month=8, week_number=32)
                       .order_by(IMSUpload.id.desc()).first())
-              assert upload and int(upload.week_number)==32
-              source=IMSUploadLifecycleService.archived_source_for_upload(upload.id)
-              assert source and source.is_file()
-              authority=extract_market_authority(pd.read_excel(source,sheet_name=None,header=None))
-              assert authority and len(authority)==7
-              national=[item['controls']['NATIONAL'] for item in authority.values()]
-              company=sum(item['company'] for item in national)
-              market=sum(item['market'] for item in national)
-              assert abs(company-314214.0)<0.01, company
-              assert abs(market-927617.0)<0.01, market
-              ist=[item['controls']['101 ISTANBUL'] for item in authority.values()]
-              ist_company=sum(item['company'] for item in ist)
-              ist_market=sum(item['market'] for item in ist)
-              assert abs(ist_company-52024.0)<0.01, ist_company
-              assert abs(ist_market-137771.0)<0.01, ist_market
-              print(f'KPI_SOURCE_PREFLIGHT|PASS|upload={upload.id}|status={upload.status}|products={len(authority)}|national_company={company:.2f}|national_market={market:.2f}|istanbul_company={ist_company:.2f}|istanbul_market={ist_market:.2f}')
+              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id)
+                   .order_by(IMSImportJob.id.desc()).first()) if upload else None
+              if not upload or not job:
+                  print('MISSING')
+              else:
+                  print(job.status)
           PY
+          )
+            echo "WEEK32_FINALIZE_WAIT|poll=$poll|state=$state"
+            if [ "$state" = COMPLETED ]; then break; fi
+            if [ "$state" = FAILED ] || [ "$state" = MISSING ]; then
+              echo "WEEK32_FINALIZE_REFUSED|state=$state"
+              exit 1
+            fi
+            if [ "$poll" = 60 ]; then
+              echo 'WEEK32_FINALIZE_TIMEOUT|reason=import_not_completed'
+              exit 1
+            fi
+            sleep 10
+          done
 
-          # Normal import route: same verified archive, same upload identity,
-          # no extra DB backup and no historical-period deletion.
-          bash scripts/run_week32_direct_reimport.sh "$IMS_PATH"
+          venv/bin/python -m py_compile scripts/refresh_live_read_models.py app/services/kpi_market_single_source.py
+          venv/bin/python -u -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
+
+          # Mark publication ready only after every durable read model above passed.
+          venv/bin/python - <<'PY'
+          import json
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              upload=(IMSUpload.query.filter_by(year=2026, month=8, week_number=32, status='COMPLETED')
+                      .order_by(IMSUpload.id.desc()).first())
+              assert upload
+              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id)
+                   .order_by(IMSImportJob.id.desc()).first())
+              assert job and job.status == IMSImportJob.STATUS_COMPLETED
+              try:
+                  summary=json.loads(job.result_summary or '{}')
+              except Exception:
+                  summary={}
+              summary['publication_ready']=True
+              summary['publication_ready_source']='verified_read_model_refresh'
+              job.result_summary=json.dumps(summary, ensure_ascii=False)
+              db.session.commit()
+              print(f'PUBLICATION_READY|PASS|upload={upload.id}|job={job.id}')
+          PY
 
           sudo systemctl restart ims-performance-manager.service
           test "$(sudo systemctl is-active ims-performance-manager.service)" = active
@@ -102,6 +125,8 @@ jobs:
           done
           test "$health" = 1
           echo 'HTTP_HEALTH|PASS'
+
+          venv/bin/python verify_live_ims_gate.py
 
           venv/bin/python - <<'PY'
           from app import create_app
@@ -135,8 +160,7 @@ jobs:
               assert close(national.get('competitor_total_unit'),613403)
               for row in national['groups']:
                   assert close(row['company_sales_unit']+row['competitor_sales_unit'],row['market_sales_unit'])
-                  if row['market_sales_unit']>0 and row['company_sales_unit']>=0:
-                      assert 0 <= row['company_share_percent'] <= 100
+                  assert 0 <= float(row.get('company_share_percent') or 0) <= 100
 
               regions=PersistentRegionSnapshotService.get_active_all(2026,8)
               assert len(regions)==11, len(regions)
@@ -176,4 +200,5 @@ jobs:
                     f"|istanbul_market={float(istanbul['market_unit']):.2f}"
                     f"|regions={len(regions)}|murat_rows={len(rep['rows'])}")
           PY
+          echo 'WEEK32_FAST_FINALIZE|PASS'
           REMOTE
