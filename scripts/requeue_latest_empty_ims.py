@@ -61,15 +61,21 @@ def main() -> int:
             .order_by(IMSImportJob.id.desc())
             .first()
         )
-        if job is None:
-            raise SystemExit("RECOVERY_REFUSED|reason=retryable_job_not_found")
+        if job is None or not str(job.source_hash or "").strip():
+            raise SystemExit("RECOVERY_REFUSED|reason=retryable_job_hash_not_found")
 
-        source = IMSUploadLifecycleService._validate_archived_source(upload.id)
+        source = IMSUploadLifecycleService.archived_source_for_upload(upload.id)
+        if source is None:
+            raise SystemExit("RECOVERY_REFUSED|reason=archived_source_not_found")
+        expected_hash = str(job.source_hash).strip().lower()
+        if IMSUploadLifecycleService._file_sha256(source) != expected_hash:
+            raise SystemExit("RECOVERY_REFUSED|reason=archived_source_hash_mismatch")
+
         staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         staging.parent.mkdir(parents=True, exist_ok=True)
         temporary = staging.with_suffix(staging.suffix + ".recovery")
         shutil.copy2(source, temporary)
-        if IMSUploadLifecycleService._file_sha256(temporary) != str(job.source_hash).strip().lower():
+        if IMSUploadLifecycleService._file_sha256(temporary) != expected_hash:
             temporary.unlink(missing_ok=True)
             raise SystemExit("RECOVERY_REFUSED|reason=staging_hash_mismatch")
 
