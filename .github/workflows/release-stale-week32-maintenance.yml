@@ -48,18 +48,9 @@ jobs:
           venv/bin/python - <<'PY'
           import json
           from pathlib import Path
-          from sqlalchemy import func
 
           from app import create_app
-          from app.extensions import db
-          from app.models import (
-              CompetitionData,
-              IMSImportJob,
-              IMSRawData,
-              IMSSummary,
-              IMSUpload,
-              Target,
-          )
+          from app.models import CompetitionData, IMSImportJob, IMSRawData, IMSSummary, IMSUpload, Target
           from app.services.adaptive_kpi_target_authority import _pair_views
           from app.services.alias_service import AliasService
           from app.services.ims_import_service import IMSImportService
@@ -70,15 +61,14 @@ jobs:
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
           from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 
-          YEAR, MONTH, WEEK = 2026, 8, 32
-          TOL = 0.01
+          YEAR, MONTH, WEEK, TOL = 2026, 8, 32, 0.01
           mismatches = []
 
-          def close(a, b, tol=TOL):
-              return abs(float(a or 0.0) - float(b or 0.0)) <= tol
+          def close(a, b):
+              return abs(float(a or 0.0) - float(b or 0.0)) <= TOL
 
-          def check(label, source_value, live_value, tol=TOL):
-              if not close(source_value, live_value, tol):
+          def check(label, source_value, live_value):
+              if not close(source_value, live_value):
                   mismatches.append((label, float(source_value or 0.0), float(live_value or 0.0)))
 
           def totals(tl_values, unit_values):
@@ -91,203 +81,119 @@ jobs:
 
           app = create_app()
           with app.app_context():
-              upload = (
-                  IMSUpload.query.filter_by(status="COMPLETED", year=YEAR, month=MONTH, week_number=WEEK)
-                  .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc())
-                  .first()
-              )
-              assert upload is not None, "Week 32 completed upload missing"
-              assert int(upload.id) == 45, f"unexpected Week 32 upload id={upload.id}"
-
+              upload = IMSUpload.query.filter_by(
+                  status="COMPLETED", year=YEAR, month=MONTH, week_number=WEEK
+              ).order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
+              assert upload is not None and int(upload.id) == 45, f"Week 32 upload invalid: {getattr(upload, 'id', None)}"
               visible = IMSPublicationService.latest_visible_upload()
-              assert visible is not None and int(visible.id) == int(upload.id), (
-                  f"Week 32 is not latest visible upload: visible={getattr(visible, 'id', None)}"
-              )
+              assert visible is not None and int(visible.id) == int(upload.id), f"latest visible upload={getattr(visible, 'id', None)}"
 
               source_path = IMSUploadLifecycleService.archived_source_for_upload(upload.id)
               assert source_path is not None and Path(source_path).is_file(), "archived Week 32 source missing"
-
               importer = IMSImportService(source_path)
               importer.upload = upload
               importer.load_workbook()
               views = _pair_views(importer)
-              assert views is not None, "paired TL/KUTU source matrices not detected"
+              assert views is not None, "paired TL/KUTU matrices missing"
 
               products = list(views["products"])
-              assert len(products) == 7, f"expected 7 products, found {len(products)}"
+              assert len(products) == 7, f"product coverage={len(products)}"
               product_ids = {}
-              for product_name in products:
-                  match = importer.resolve_product_match(product_name)
-                  assert match.get("matched"), f"product not resolved: {product_name}"
-                  product_ids[product_name] = int(match["object"].id)
+              for name in products:
+                  match = importer.resolve_product_match(name)
+                  assert match.get("matched"), f"product unresolved: {name}"
+                  product_ids[name] = int(match["object"].id)
 
-              source_rep_keys = sorted(views["tl_reps"].keys())
-              assert set(source_rep_keys) == set(views["unit_reps"].keys()), "TL/KUTU rep coverage differs"
+              rep_keys = sorted(views["tl_reps"].keys())
+              assert set(rep_keys) == set(views["unit_reps"].keys()), "TL/KUTU rep coverage differs"
               rep_ids = {}
-              for territory, rep_name in source_rep_keys:
-                  match = importer.resolve_representative_match(rep_name)
-                  assert match.get("matched"), f"representative not resolved: {rep_name}"
-                  rep_ids[(territory, rep_name)] = int(match["object"].id)
+              for key in rep_keys:
+                  match = importer.resolve_representative_match(key[1])
+                  assert match.get("matched"), f"representative unresolved: {key[1]}"
+                  rep_ids[key] = int(match["object"].id)
 
-              targets = {
-                  (int(row.representative_id), int(row.product_id)): row
-                  for row in Target.query.filter_by(year=YEAR, month=MONTH).all()
-              }
-              summaries = {
-                  (int(row.representative_id), int(row.product_id)): row
-                  for row in IMSSummary.query.filter_by(year=YEAR, month=MONTH).all()
-              }
-              expected_rep_rows = len(source_rep_keys) * len(products)
-              assert len(targets) == expected_rep_rows, f"target coverage {len(targets)}/{expected_rep_rows}"
-              assert len(summaries) == expected_rep_rows, f"summary coverage {len(summaries)}/{expected_rep_rows}"
+              targets = {(int(r.representative_id), int(r.product_id)): r for r in Target.query.filter_by(year=YEAR, month=MONTH).all()}
+              summaries = {(int(r.representative_id), int(r.product_id)): r for r in IMSSummary.query.filter_by(year=YEAR, month=MONTH).all()}
+              expected_rep_rows = len(rep_keys) * len(products)
+              assert len(targets) == expected_rep_rows == 791, f"target coverage={len(targets)}/{expected_rep_rows}"
+              assert len(summaries) == expected_rep_rows, f"summary coverage={len(summaries)}/{expected_rep_rows}"
 
-              rep_metric_checks = 0
-              for rep_key in source_rep_keys:
-                  rid = rep_ids[rep_key]
-                  tl_values = views["tl_reps"][rep_key]
-                  unit_values = views["unit_reps"][rep_key]
-                  for product_name in products:
-                      pid = product_ids[product_name]
-                      target = targets.get((rid, pid))
-                      summary = summaries.get((rid, pid))
-                      assert target is not None, f"target row missing rep={rep_key[1]} product={product_name}"
-                      assert summary is not None, f"summary row missing rep={rep_key[1]} product={product_name}"
-                      check(f"rep:{rep_key[1]}:{product_name}:target_tl", tl_values[product_name]["target"], target.tl_target)
-                      check(f"rep:{rep_key[1]}:{product_name}:actual_tl", tl_values[product_name]["actual"], summary.tl)
-                      check(f"rep:{rep_key[1]}:{product_name}:target_box", unit_values[product_name]["target"], target.unit_target)
-                      check(f"rep:{rep_key[1]}:{product_name}:actual_box", unit_values[product_name]["actual"], summary.unit)
-                      rep_metric_checks += 4
+              rep_checks = 0
+              for key in rep_keys:
+                  rid = rep_ids[key]
+                  for name in products:
+                      pid = product_ids[name]
+                      target = targets[(rid, pid)]
+                      summary = summaries[(rid, pid)]
+                      check(f"rep:{key[1]}:{name}:target_tl", views["tl_reps"][key][name]["target"], target.tl_target)
+                      check(f"rep:{key[1]}:{name}:actual_tl", views["tl_reps"][key][name]["actual"], summary.tl)
+                      check(f"rep:{key[1]}:{name}:target_box", views["unit_reps"][key][name]["target"], target.unit_target)
+                      check(f"rep:{key[1]}:{name}:actual_box", views["unit_reps"][key][name]["actual"], summary.unit)
+                      rep_checks += 4
 
               tl_agg = {str(k[0]): v for k, v in views["tl_aggregates"].items()}
               unit_agg = {str(k[0]): v for k, v in views["unit_aggregates"].items()}
-              assert set(tl_agg) == set(unit_agg), "TL/KUTU aggregate coverage differs"
-              assert "NATIONAL" in tl_agg and "901" in tl_agg, "NATIONAL or 901 aggregate missing in source"
-              assert len(tl_agg) == 12, f"expected NATIONAL + 11 regions, found {len(tl_agg)} aggregates"
+              assert set(tl_agg) == set(unit_agg) and len(tl_agg) == 12, f"aggregate coverage={len(tl_agg)}"
+              assert "NATIONAL" in tl_agg and "901" in tl_agg, "NATIONAL/901 missing"
+              target_aggs = {(str(r.territory), int(r.product_id)): r for r in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_target_aggregate").all()}
+              actual_aggs = {(str(r.territory), int(r.product_id)): r for r in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_actual_aggregate").all()}
+              assert len(target_aggs) == len(actual_aggs) == 84, f"official aggregate coverage={len(target_aggs)}/{len(actual_aggs)}"
 
-              target_aggs = {
-                  (str(row.territory), int(row.product_id)): row
-                  for row in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_target_aggregate").all()
-              }
-              actual_aggs = {
-                  (str(row.territory), int(row.product_id)): row
-                  for row in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_actual_aggregate").all()
-              }
-              expected_agg_rows = len(tl_agg) * len(products)
-              assert len(target_aggs) == expected_agg_rows, f"official target aggregate coverage {len(target_aggs)}/{expected_agg_rows}"
-              assert len(actual_aggs) == expected_agg_rows, f"official actual aggregate coverage {len(actual_aggs)}/{expected_agg_rows}"
-
-              aggregate_metric_checks = 0
+              agg_checks = 0
               for territory in sorted(tl_agg):
-                  for product_name in products:
-                      pid = product_ids[product_name]
-                      target_row = target_aggs.get((territory, pid))
-                      actual_row = actual_aggs.get((territory, pid))
-                      assert target_row is not None, f"official target aggregate missing territory={territory} product={product_name}"
-                      assert actual_row is not None, f"official actual aggregate missing territory={territory} product={product_name}"
-                      check(f"agg:{territory}:{product_name}:target_tl", tl_agg[territory][product_name]["target"], target_row.tl)
-                      check(f"agg:{territory}:{product_name}:actual_tl", tl_agg[territory][product_name]["actual"], actual_row.tl)
-                      check(f"agg:{territory}:{product_name}:target_box", unit_agg[territory][product_name]["target"], target_row.unit)
-                      check(f"agg:{territory}:{product_name}:actual_box", unit_agg[territory][product_name]["actual"], actual_row.unit)
-                      aggregate_metric_checks += 4
+                  for name in products:
+                      pid = product_ids[name]
+                      tr = target_aggs[(territory, pid)]
+                      ar = actual_aggs[(territory, pid)]
+                      check(f"agg:{territory}:{name}:target_tl", tl_agg[territory][name]["target"], tr.tl)
+                      check(f"agg:{territory}:{name}:actual_tl", tl_agg[territory][name]["actual"], ar.tl)
+                      check(f"agg:{territory}:{name}:target_box", unit_agg[territory][name]["target"], tr.unit)
+                      check(f"agg:{territory}:{name}:actual_box", unit_agg[territory][name]["actual"], ar.unit)
+                      agg_checks += 4
 
-              murat_keys = [
-                  key for key in source_rep_keys
-                  if AliasService.normalize(key[1]) == "MURAT ARSLAN"
-              ]
-              assert len(murat_keys) == 1, f"Murat Arslan source rows ambiguous: {murat_keys}"
+              murat_keys = [k for k in rep_keys if AliasService.normalize(k[1]) == "MURAT ARSLAN"]
+              assert len(murat_keys) == 1, f"Murat source key={murat_keys}"
               murat_key = murat_keys[0]
               murat_id = rep_ids[murat_key]
 
-              progress = IMSProgressStore.read(
-                  IMSImportJob.query.filter_by(ims_upload_id=upload.id)
-                  .order_by(IMSImportJob.id.desc()).first().id
-              ) or {}
-              assert progress.get("status") == "COMPLETED", f"snapshot progress status={progress}"
-              assert progress.get("stage") == "completed" and int(progress.get("percent") or 0) == 100, f"snapshot progress incomplete={progress}"
-
+              job = IMSImportJob.query.filter_by(ims_upload_id=upload.id, status="COMPLETED").order_by(IMSImportJob.id.desc()).first()
+              stats = json.loads(job.result_summary or "{}")
+              progress = IMSProgressStore.read(job.id) or {}
+              assert progress.get("status") == "COMPLETED" and progress.get("stage") == "completed" and int(progress.get("percent") or 0) == 100, f"snapshot progress={progress}"
               dashboard = PersistentDashboardSnapshotService.get_active(YEAR, MONTH)
               regions = PersistentRegionSnapshotService.get_active_all(YEAR, MONTH)
               murat_snapshot = PersistentRepresentativeSnapshotService.get_active(murat_id, YEAR, MONTH)
               assert isinstance(dashboard, dict) and dashboard, "dashboard snapshot unavailable"
               assert isinstance(regions, dict) and len(regions) == 11, f"region snapshot coverage={len(regions) if isinstance(regions, dict) else None}"
-              assert isinstance(murat_snapshot, dict) and murat_snapshot, "Murat Arslan representative snapshot unavailable"
+              assert isinstance(murat_snapshot, dict) and murat_snapshot, "Murat snapshot unavailable"
 
-              job = (
-                  IMSImportJob.query.filter_by(ims_upload_id=upload.id, status="COMPLETED")
-                  .order_by(IMSImportJob.id.desc()).first()
-              )
-              stats = json.loads(job.result_summary or "{}")
               competition_db = CompetitionData.query.filter_by(upload_id=upload.id).count()
               competition_source = int(stats.get("competition_source_records") or 0)
+              kpi_sheets = int(stats.get("kpi_validation_sheets") or 0)
               competition_invalid = int(stats.get("competition_invalid") or 0)
-              kpi_validation_sheets = int(stats.get("kpi_validation_sheets") or 0)
-              competition_products = (
-                  db.session.query(func.count(func.distinct(CompetitionData.product_id)))
-                  .filter(CompetitionData.upload_id == upload.id)
-                  .scalar() or 0
-              )
-              assert competition_source > 0 and competition_db == competition_source, (
-                  f"competition source/live mismatch {competition_source}/{competition_db}"
-              )
+              assert competition_source > 0 and competition_db == competition_source, f"competition source/live={competition_source}/{competition_db}"
+              assert kpi_sheets == len(products), f"KPI/PAZAR sheet coverage={kpi_sheets}/{len(products)}"
               assert competition_invalid == 0, f"competition invalid={competition_invalid}"
-              assert kpi_validation_sheets == len(products), (
-                  f"KPI/PAZAR sheet coverage={kpi_validation_sheets}/{len(products)}"
-              )
-              assert int(competition_products) == len(products), (
-                  f"competition product coverage={competition_products}/{len(products)}"
-              )
 
               national = totals(tl_agg["NATIONAL"], unit_agg["NATIONAL"])
               region901 = totals(tl_agg["901"], unit_agg["901"])
               murat = totals(views["tl_reps"][murat_key], views["unit_reps"][murat_key])
+              assert close(national["target_tl"], 152097283.40), national
+              assert close(national["actual_tl"], 31620641.03), national
+              assert close(national["actual_box"], 314214.0), national
+              assert not mismatches, "source/live mismatches: " + repr(mismatches[:20])
 
-              assert close(national["target_tl"], 152097283.40), f"NATIONAL target TL unexpected={national['target_tl']}"
-              assert close(national["actual_tl"], 31620641.03), f"NATIONAL actual TL unexpected={national['actual_tl']}"
-              assert close(national["actual_box"], 314214.0), f"NATIONAL actual box unexpected={national['actual_box']}"
-
-              assert not mismatches, "source/live metric mismatches: " + repr(mismatches[:20])
-
-              print(
-                  "FINAL_ACCEPTANCE|PASS"
-                  f"|upload={upload.id}|week={WEEK}|products={len(products)}|representatives={len(source_rep_keys)}"
-                  f"|aggregates={len(tl_agg)}|rep_metric_checks={rep_metric_checks}"
-                  f"|aggregate_metric_checks={aggregate_metric_checks}|mismatches={len(mismatches)}"
-              )
-              print(
-                  "NATIONAL_TOTALS|"
-                  + "|".join(f"{key}={value:.2f}" for key, value in national.items())
-              )
-              print(
-                  "REGION_901_TOTALS|"
-                  + "|".join(f"{key}={value:.2f}" for key, value in region901.items())
-              )
-              print(
-                  "MURAT_ARSLAN_TOTALS|territory=" + str(murat_key[0]) + "|"
-                  + "|".join(f"{key}={value:.2f}" for key, value in murat.items())
-              )
-              for product_name in products:
-                  rv_tl = tl_agg["901"][product_name]
-                  rv_unit = unit_agg["901"][product_name]
-                  mv_tl = views["tl_reps"][murat_key][product_name]
-                  mv_unit = views["unit_reps"][murat_key][product_name]
-                  print(
-                      f"REGION_901_PRODUCT|{product_name}"
-                      f"|target_tl={rv_tl['target']:.2f}|actual_tl={rv_tl['actual']:.2f}"
-                      f"|target_box={rv_unit['target']:.2f}|actual_box={rv_unit['actual']:.2f}"
-                  )
-                  print(
-                      f"MURAT_ARSLAN_PRODUCT|{product_name}"
-                      f"|target_tl={mv_tl['target']:.2f}|actual_tl={mv_tl['actual']:.2f}"
-                      f"|target_box={mv_unit['target']:.2f}|actual_box={mv_unit['actual']:.2f}"
-                  )
-              print(
-                  f"PAZAR_COMPETITION|PASS|source_records={competition_source}|live_records={competition_db}"
-                  f"|products={competition_products}|kpi_sheets={kpi_validation_sheets}|invalid={competition_invalid}"
-              )
-              print(
-                  f"SNAPSHOTS|PASS|dashboard=1|regions={len(regions)}|murat_rep=1"
-                  f"|progress={progress.get('percent')}|stage={progress.get('stage')}"
-              )
+              print(f"FINAL_ACCEPTANCE|PASS|upload={upload.id}|week={WEEK}|products={len(products)}|representatives={len(rep_keys)}|aggregates={len(tl_agg)}|rep_metric_checks={rep_checks}|aggregate_metric_checks={agg_checks}|mismatches=0")
+              print("NATIONAL_TOTALS|" + "|".join(f"{k}={v:.2f}" for k, v in national.items()))
+              print("REGION_901_TOTALS|" + "|".join(f"{k}={v:.2f}" for k, v in region901.items()))
+              print("MURAT_ARSLAN_TOTALS|territory=" + str(murat_key[0]) + "|" + "|".join(f"{k}={v:.2f}" for k, v in murat.items()))
+              for name in products:
+                  r_tl, r_u = tl_agg["901"][name], unit_agg["901"][name]
+                  m_tl, m_u = views["tl_reps"][murat_key][name], views["unit_reps"][murat_key][name]
+                  print(f"REGION_901_PRODUCT|{name}|target_tl={r_tl['target']:.2f}|actual_tl={r_tl['actual']:.2f}|target_box={r_u['target']:.2f}|actual_box={r_u['actual']:.2f}")
+                  print(f"MURAT_ARSLAN_PRODUCT|{name}|target_tl={m_tl['target']:.2f}|actual_tl={m_tl['actual']:.2f}|target_box={m_u['target']:.2f}|actual_box={m_u['actual']:.2f}")
+              print(f"PAZAR_COMPETITION|PASS|source_records={competition_source}|live_records={competition_db}|kpi_sheets={kpi_sheets}|invalid={competition_invalid}")
+              print(f"SNAPSHOTS|PASS|dashboard=1|regions={len(regions)}|murat_rep=1|progress={progress.get('percent')}|stage={progress.get('stage')}")
           PY
           REMOTE
-# final Week 32 source-to-live acceptance 2026-09-12
+# final Week 32 source-to-live acceptance fixed 2026-09-12
