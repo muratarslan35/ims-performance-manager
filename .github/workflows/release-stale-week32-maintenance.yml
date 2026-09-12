@@ -115,3 +115,4 @@ jobs:
                     f"|competitor_total={float(market.get('competitor_total_value') or 0):.2f}")
           PY
           REMOTE
+# retry after semantic fallback assertion update 2026-09-12
