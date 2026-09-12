@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 failed-import diagnostic trigger: 2026-09-12
+# Week 32 semantic reconciliation retry trigger: 2026-09-12
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
@@ -59,46 +59,18 @@ if [ "$processing" != "0" ]; then
   exit 0
 fi
 
-# If the latest Week 32 retry failed, expose the persisted importer error first.
-# This is read-only and deliberately does not create another backup or retry.
-failed_week32=$(venv/bin/python - <<'PY'
-from app import create_app
-from app.models import IMSImportJob
-from config import Config
-app=create_app(Config)
-with app.app_context():
-    job=IMSImportJob.query.filter_by(year=2026, month=8).order_by(IMSImportJob.id.desc()).first()
-    print('YES' if job and job.status == IMSImportJob.STATUS_FAILED else 'NO')
-PY
-)
-printf 'WEEK32_FAILED_DIAGNOSTIC|%s\n' "$failed_week32" >> "$EVIDENCE_FILE"
-if [ "$failed_week32" = "YES" ]; then
-  venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
-from app import create_app
-from app.models import IMSImportJob, IMSUpload, Target
-from config import Config
-app=create_app(Config)
-with app.app_context():
-    job=IMSImportJob.query.filter_by(year=2026, month=8).order_by(IMSImportJob.id.desc()).first()
-    upload=IMSUpload.query.get(job.ims_upload_id) if job and job.ims_upload_id else None
-    print('FAILED_JOB|id=%s|upload=%s|error=%r|result=%r' % (job.id, job.ims_upload_id, job.error_message, job.result_summary))
-    print('FAILED_UPLOAD|id=%s|status=%s|error=%r|warning=%r' % (getattr(upload,'id',None), getattr(upload,'status',None), getattr(upload,'error_message',None), getattr(upload,'warning_message',None)))
-    print('TARGET_COUNT|%s' % Target.query.filter_by(year=2026, month=8).count())
-PY
-  printf '%s\n' '--- WORKER JOURNAL TAIL ---' >> "$EVIDENCE_FILE"
-  sudo journalctl -u ims-import-worker.service -n 250 --no-pager >> "$EVIDENCE_FILE" 2>&1 || true
-  exit 1
-fi
-
 week32_recovery=$(venv/bin/python - <<'PY'
 from app import create_app
 from app.models import IMSUpload, Target
 from config import Config
 app = create_app(Config)
 with app.app_context():
-    latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
+    latest = IMSUpload.query.order_by(
+        IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.id.desc()
+    ).first()
     targets = Target.query.filter_by(year=2026, month=8).count()
-    eligible = bool(latest and int(latest.year) == 2026 and int(latest.month) == 8 and int(latest.week_number) == 32 and targets == 0)
+    retryable = latest and latest.status in (IMSUpload.STATUS_COMPLETED, IMSUpload.STATUS_FAILED)
+    eligible = bool(retryable and int(latest.year) == 2026 and int(latest.month) == 8 and int(latest.week_number) == 32 and targets == 0)
     print('YES' if eligible else 'NO')
 PY
 )
@@ -123,7 +95,21 @@ PY
     printf 'WEEK32_NORMAL_REIMPORT_STATUS|poll=%s|state=%s\n' "$poll" "$state" >> "$EVIDENCE_FILE"
     case "$state" in
       COMPLETED) break ;;
-      FAILED|MISSING) exit 1 ;;
+      FAILED|MISSING)
+        venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
+from app import create_app
+from app.models import IMSImportJob, IMSUpload, Target
+from config import Config
+app=create_app(Config)
+with app.app_context():
+    job=IMSImportJob.query.order_by(IMSImportJob.id.desc()).first()
+    upload=IMSUpload.query.get(job.ims_upload_id) if job and job.ims_upload_id else None
+    print('FAILED_JOB|id=%s|upload=%s|error=%r|result=%r' % (getattr(job,'id',None), getattr(job,'ims_upload_id',None), getattr(job,'error_message',None), getattr(job,'result_summary',None)))
+    print('FAILED_UPLOAD|id=%s|status=%s|error=%r|warning=%r' % (getattr(upload,'id',None), getattr(upload,'status',None), getattr(upload,'error_message',None), getattr(upload,'warning_message',None)))
+    print('TARGET_COUNT|%s' % Target.query.filter_by(year=2026, month=8).count())
+PY
+        exit 1
+        ;;
     esac
     if [ "$poll" = 180 ]; then printf 'WEEK32_NORMAL_REIMPORT_TIMEOUT\n' >> "$EVIDENCE_FILE"; exit 1; fi
     sleep 10
