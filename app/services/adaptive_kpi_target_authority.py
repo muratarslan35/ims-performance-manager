@@ -1,14 +1,12 @@
 """Adaptive target/aggregate authority for paired KPI-style IMS matrices.
 
-This adapter is content-first. It activates only when a workbook contains one
-TL and one KUTU TTS matrix with the same semantic structure. It persists direct
-representative targets and source-authoritative NATIONAL/region aggregates
-without depending on sheet order or exact sheet names.
+The legacy importer remains unchanged.  When the already-supported paired
+TL/KUTU TTS layout is present, this adapter reads the source rows directly and
+persists targets plus NATIONAL/region aggregates from that same pair.
 """
 from __future__ import annotations
 
 import re
-
 import pandas as pd
 
 from app.extensions import db
@@ -87,13 +85,6 @@ def _find_pair(workbook):
         if metric:
             candidates[metric].append((name, frame, plan))
 
-    # The existing KPI compatibility reader is already the authority deciding
-    # whether this temporary workbook layout is present. Reuse that exact
-    # recognition when generic semantic hints are ambiguous (for example a TL
-    # matrix whose preview also contains the word KUTU). This does not alter the
-    # legacy importer or broaden activation to unrelated workbooks; it only lets
-    # target persistence consume the same pair the normal brick importer already
-    # accepted.
     if len(candidates["tl"]) != 1 or len(candidates["unit"]) != 1:
         from app.services.kpi_workbook_compat import _find_matrix
         tl_name, tl_frame = _find_matrix(workbook or {}, "tl")
@@ -110,11 +101,7 @@ def _find_pair(workbook):
                 "unit": [(unit_name, unit_frame, unit_plan)],
             }
         elif structural:
-            # Structurally relevant matrices exist but cannot be identified
-            # safely. Fail closed instead of silently importing without targets.
-            raise ValueError(
-                "Adaptive IMS: TTS matrisleri bulundu ancak TL/KUTU anlamı tekil belirlenemedi."
-            )
+            raise ValueError("Adaptive IMS: TTS matrisleri bulundu ancak TL/KUTU anlamı tekil belirlenemedi.")
         else:
             return None
 
@@ -252,10 +239,16 @@ def install_adaptive_kpi_target_authority():
         db.session.flush()
 
     def persist_adaptive_aggregates(self, year, month):
-        original_dashboard(self, year, month)
+        # Critical ordering: the generic dashboard path builds/reconciles a
+        # synthetic compatibility summary.  For paired KPI workbooks that
+        # synthetic layer can disagree with the workbook's own NATIONAL/region
+        # KUTU rows and fail before this adapter gets a chance to replace them.
+        # Detect the accepted pair first.  Legacy/non-paired workbooks continue
+        # through the original path unchanged.
         views = _pair_views(self)
         if views is None:
-            return
+            return original_dashboard(self, year, month)
+
         from app.services import official_aggregate_service as official
         product_map = {}
         for product_name in views["products"]:
@@ -263,6 +256,7 @@ def install_adaptive_kpi_target_authority():
             if not match.get("matched"):
                 raise ValueError(f"Adaptive IMS: aggregate ürün eşleşmedi: {product_name}")
             product_map[product_name] = int(match["object"].id)
+
         target_written = actual_written = 0
         for identity, tl_values in views["tl_aggregates"].items():
             territory, representative = identity
@@ -285,6 +279,10 @@ def install_adaptive_kpi_target_authority():
         self.statistics["adaptive_official_target_records"] = target_written
         self.statistics["adaptive_official_actual_records"] = actual_written
         db.session.flush()
+        # Reconcile only after the workbook-authoritative TL and KUTU values are
+        # both persisted.  This keeps the same fail-closed safety gate without
+        # letting the synthetic compatibility aggregate pre-empt the adapter.
+        official.reconcile_national_regions(self)
 
     IMSImportService.apply_balance_summary = apply_adaptive_targets
     IMSImportService.persist_national_dashboard_metrics = persist_adaptive_aggregates
