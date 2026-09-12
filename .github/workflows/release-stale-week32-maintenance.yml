@@ -39,6 +39,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -53,6 +54,7 @@ jobs:
           git checkout main
           git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          export PYTHONUNBUFFERED=1
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
           active=$(venv/bin/python - <<'PY'
@@ -76,7 +78,7 @@ jobs:
           sudo systemctl restart ims-performance-manager.service
           test "$(sudo systemctl is-active ims-performance-manager.service)" = active
 
-          venv/bin/python -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
+          venv/bin/python -u -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
           venv/bin/python verify_live_ims_gate.py
 
           health=$(curl -fsS --max-time 15 http://127.0.0.1:8000/health || true)
@@ -115,4 +117,4 @@ jobs:
                     f"|competitor_total={float(market.get('competitor_total_value') or 0):.2f}")
           PY
           REMOTE
-# retry after semantic fallback assertion update 2026-09-12
+# keepalive during full durable read-model rebuild 2026-09-12
