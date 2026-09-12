@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 semantic reconciliation retry trigger: 2026-09-12
+# Week 32 semantic reconciliation retry trigger: 2026-09-12b
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
@@ -69,7 +69,7 @@ with app.app_context():
         IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.id.desc()
     ).first()
     targets = Target.query.filter_by(year=2026, month=8).count()
-    retryable = latest and latest.status in (IMSUpload.STATUS_COMPLETED, IMSUpload.STATUS_FAILED)
+    retryable = latest and latest.status in (IMSUpload.STATUS_COMPLETED, "FAILED")
     eligible = bool(retryable and int(latest.year) == 2026 and int(latest.month) == 8 and int(latest.week_number) == 32 and targets == 0)
     print('YES' if eligible else 'NO')
 PY
