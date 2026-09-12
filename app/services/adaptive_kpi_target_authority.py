@@ -77,15 +77,47 @@ def _metric_hint(sheet_name, frame):
 
 def _find_pair(workbook):
     candidates = {"tl": [], "unit": []}
+    structural = []
     for name, frame in (workbook or {}).items():
         plan = _matrix_plan(frame)
         if plan is None:
             continue
+        structural.append((name, frame, plan))
         metric = _metric_hint(name, frame)
         if metric:
             candidates[metric].append((name, frame, plan))
-    if not candidates["tl"] and not candidates["unit"]:
-        return None
+
+    # The existing KPI compatibility reader is already the authority deciding
+    # whether this temporary workbook layout is present. Reuse that exact
+    # recognition when generic semantic hints are ambiguous (for example a TL
+    # matrix whose preview also contains the word KUTU). This does not alter the
+    # legacy importer or broaden activation to unrelated workbooks; it only lets
+    # target persistence consume the same pair the normal brick importer already
+    # accepted.
+    if len(candidates["tl"]) != 1 or len(candidates["unit"]) != 1:
+        from app.services.kpi_workbook_compat import _find_matrix
+        tl_name, tl_frame = _find_matrix(workbook or {}, "tl")
+        unit_name, unit_frame = _find_matrix(workbook or {}, "unit")
+        if tl_name or unit_name:
+            if not tl_name or not unit_name:
+                raise ValueError("Adaptive IMS: eşlenik TL/KUTU matrisi birlikte bulunmalıdır.")
+            tl_plan = _matrix_plan(tl_frame)
+            unit_plan = _matrix_plan(unit_frame)
+            if tl_plan is None or unit_plan is None:
+                raise ValueError("Adaptive IMS: kabul edilen TL/KUTU matrisi semantik olarak çözümlenemedi.")
+            candidates = {
+                "tl": [(tl_name, tl_frame, tl_plan)],
+                "unit": [(unit_name, unit_frame, unit_plan)],
+            }
+        elif structural:
+            # Structurally relevant matrices exist but cannot be identified
+            # safely. Fail closed instead of silently importing without targets.
+            raise ValueError(
+                "Adaptive IMS: TTS matrisleri bulundu ancak TL/KUTU anlamı tekil belirlenemedi."
+            )
+        else:
+            return None
+
     if len(candidates["tl"]) != 1 or len(candidates["unit"]) != 1:
         raise ValueError(
             "Adaptive IMS: TL/KUTU TTS matrisi tekil belirlenemedi; "
