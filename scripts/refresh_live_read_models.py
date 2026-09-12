@@ -118,6 +118,15 @@ def _refresh_regions(year: int, month: int):
     if len(prepared) != 11:
         raise RuntimeError(f"region payload coverage={len(prepared)}/11")
 
+    # Region preparation is intentionally read-heavy and may span several
+    # minutes.  Do not try to upgrade that long-lived SQLite read transaction
+    # into the publication writer transaction: SQLite can return BUSY/locked
+    # even when the production web/worker services are quiesced.  The prepared
+    # payloads are already detached JSON strings, so release the read snapshot
+    # and acquire a fresh connection for the short atomic publish below.
+    db.session.rollback()
+    db.session.remove()
+
     existing = PersistentRegionSnapshotService._existing_set(
         year, month, ims_id, production_id
     )
