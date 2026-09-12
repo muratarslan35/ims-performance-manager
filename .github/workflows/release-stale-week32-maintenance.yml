@@ -63,5 +63,20 @@ jobs:
               print('LIVE_COUNTS|targets=%s|facts=%s|summary=%s|competition=%s' % (targets,facts,summary,competition))
           c.close()
           PY
+          latest_job=$(venv/bin/python - <<'PY'
+          import sqlite3
+          c=sqlite3.connect('instance/ipm.db',timeout=30)
+          row=c.execute('SELECT id FROM ims_import_jobs ORDER BY id DESC LIMIT 1').fetchone()
+          print(row[0] if row else '')
+          c.close()
+          PY
+          )
+          if [ -n "$latest_job" ] && [ -f "instance/ims_progress/job-${latest_job}.json" ]; then
+            printf 'PROGRESS|'
+            cat "instance/ims_progress/job-${latest_job}.json"
+            printf '\n'
+          else
+            echo 'PROGRESS|MISSING'
+          fi
           REMOTE
-# probe refresh 2026-09-12
+# probe refresh with snapshot progress 2026-09-12
