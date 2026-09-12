@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Week 32 semantic target persistence reimport trigger: 2026-09-12
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
