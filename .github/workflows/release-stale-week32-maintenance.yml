@@ -1,4 +1,4 @@
-name: Week 32 live import status
+name: Week 32 UI read-path diagnostic
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   probe:
-    name: Final Week 32 source-to-live acceptance
+    name: Inspect live dashboard and market read paths
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Validate Week 32 source against live production
+      - name: Inspect live UI sources
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -44,156 +44,53 @@ jobs:
           cd "$IMS_PATH"
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          venv/bin/python verify_live_ims_gate.py
           venv/bin/python - <<'PY'
           import json
           from pathlib import Path
-
+          from sqlalchemy import func
           from app import create_app
-          from app.models import CompetitionData, IMSImportJob, IMSRawData, IMSSummary, IMSUpload, Target
-          from app.services.adaptive_kpi_target_authority import _pair_views
-          from app.services.alias_service import AliasService
-          from app.services.ims_import_service import IMSImportService
-          from app.services.ims_progress_store import IMSProgressStore
-          from app.services.ims_publication_service import IMSPublicationService
-          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.extensions import db
+          from app.models import CompetitionData, IMSUpload
+          from app.services.dashboard_service import DashboardService
+          from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 
-          YEAR, MONTH, WEEK, TOL = 2026, 8, 32, 0.01
-          mismatches = []
-
-          def close(a, b):
-              return abs(float(a or 0.0) - float(b or 0.0)) <= TOL
-
-          def check(label, source_value, live_value):
-              if not close(source_value, live_value):
-                  mismatches.append((label, float(source_value or 0.0), float(live_value or 0.0)))
-
-          def totals(tl_values, unit_values):
-              return {
-                  "target_tl": sum(float(v["target"] or 0) for v in tl_values.values()),
-                  "actual_tl": sum(float(v["actual"] or 0) for v in tl_values.values()),
-                  "target_box": sum(float(v["target"] or 0) for v in unit_values.values()),
-                  "actual_box": sum(float(v["actual"] or 0) for v in unit_values.values()),
-              }
-
-          app = create_app()
+          app=create_app()
           with app.app_context():
-              upload = IMSUpload.query.filter_by(
-                  status="COMPLETED", year=YEAR, month=MONTH, week_number=WEEK
-              ).order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
-              assert upload is not None and int(upload.id) == 45, f"Week 32 upload invalid: {getattr(upload, 'id', None)}"
-              visible = IMSPublicationService.latest_visible_upload()
-              assert visible is not None and int(visible.id) == int(upload.id), f"latest visible upload={getattr(visible, 'id', None)}"
+              upload=IMSUpload.query.filter_by(year=2026, month=8, week_number=32, status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+              assert upload is not None
+              print(f'UPLOAD|id={upload.id}|completed_at={upload.completed_at}|file={upload.file_name}')
+              rows=(db.session.query(CompetitionData.metric_type, func.count(CompetitionData.id), func.count(func.distinct(CompetitionData.sheet_name)))
+                    .filter(CompetitionData.upload_id==upload.id)
+                    .group_by(CompetitionData.metric_type).order_by(CompetitionData.metric_type).all())
+              for metric,count,sheets in rows:
+                  print(f'COMP_METRIC|type={metric}|rows={count}|sheets={sheets}')
+              sheet_rows=(db.session.query(CompetitionData.sheet_name, CompetitionData.metric_type, func.count(CompetitionData.id))
+                          .filter(CompetitionData.upload_id==upload.id)
+                          .group_by(CompetitionData.sheet_name, CompetitionData.metric_type)
+                          .order_by(CompetitionData.sheet_name, CompetitionData.metric_type).all())
+              for sheet,metric,count in sheet_rows:
+                  print(f'COMP_SHEET|{sheet}|{metric}|rows={count}')
 
-              source_path = IMSUploadLifecycleService.archived_source_for_upload(upload.id)
-              assert source_path is not None and Path(source_path).is_file(), "archived Week 32 source missing"
-              importer = IMSImportService(source_path)
-              importer.upload = upload
-              importer.load_workbook()
-              views = _pair_views(importer)
-              assert views is not None, "paired TL/KUTU matrices missing"
+              direct=DashboardService(year=2026, month=8).run()
+              snap=PersistentDashboardSnapshotService.get_active(2026,8)
+              print('DIRECT_KEYS|' + ','.join(sorted(direct.keys())))
+              print('SNAP_KEYS|' + ','.join(sorted((snap or {}).keys())))
+              for label,payload in [('DIRECT',direct),('SNAP',snap or {})]:
+                  nm=payload.get('national_metrics') or payload.get('national') or {}
+                  prime=payload.get('prime_summary') or payload.get('prime') or {}
+                  products=payload.get('product_performance') or payload.get('products') or []
+                  print(f'{label}_READ|national={json.dumps(nm,ensure_ascii=False,default=str)[:1800]}')
+                  print(f'{label}_PRIME|{json.dumps(prime,ensure_ascii=False,default=str)[:1200]}')
+                  print(f'{label}_PRODUCTS|count={len(products) if isinstance(products,list) else -1}|sample={json.dumps(products[:2] if isinstance(products,list) else products,ensure_ascii=False,default=str)[:1200]}')
 
-              products = list(views["products"])
-              assert len(products) == 7, f"product coverage={len(products)}"
-              product_ids = {}
-              for name in products:
-                  match = importer.resolve_product_match(name)
-                  assert match.get("matched"), f"product unresolved: {name}"
-                  product_ids[name] = int(match["object"].id)
+              market=MarketAnalysisService(2026,8).build()
+              print('MARKET_STATE|' + json.dumps({k:market.get(k) for k in ('latest_week','source_week','source_state','is_current','is_fallback','has_competition','market_total_tl','company_total_tl','competitor_total_tl','company_share_percent','source_file','source_message')},ensure_ascii=False,default=str))
+              print('MARKET_GROUPS|' + json.dumps(market.get('groups',[])[:7],ensure_ascii=False,default=str)[:5000])
 
-              rep_keys = sorted(views["tl_reps"].keys())
-              assert set(rep_keys) == set(views["unit_reps"].keys()), "TL/KUTU rep coverage differs"
-              rep_ids = {}
-              for key in rep_keys:
-                  match = importer.resolve_representative_match(key[1])
-                  assert match.get("matched"), f"representative unresolved: {key[1]}"
-                  rep_ids[key] = int(match["object"].id)
-
-              targets = {(int(r.representative_id), int(r.product_id)): r for r in Target.query.filter_by(year=YEAR, month=MONTH).all()}
-              summaries = {(int(r.representative_id), int(r.product_id)): r for r in IMSSummary.query.filter_by(year=YEAR, month=MONTH).all()}
-              expected_rep_rows = len(rep_keys) * len(products)
-              assert len(targets) == expected_rep_rows == 791, f"target coverage={len(targets)}/{expected_rep_rows}"
-              assert len(summaries) == expected_rep_rows, f"summary coverage={len(summaries)}/{expected_rep_rows}"
-
-              rep_checks = 0
-              for key in rep_keys:
-                  rid = rep_ids[key]
-                  for name in products:
-                      pid = product_ids[name]
-                      target = targets[(rid, pid)]
-                      summary = summaries[(rid, pid)]
-                      check(f"rep:{key[1]}:{name}:target_tl", views["tl_reps"][key][name]["target"], target.tl_target)
-                      check(f"rep:{key[1]}:{name}:actual_tl", views["tl_reps"][key][name]["actual"], summary.tl)
-                      check(f"rep:{key[1]}:{name}:target_box", views["unit_reps"][key][name]["target"], target.unit_target)
-                      check(f"rep:{key[1]}:{name}:actual_box", views["unit_reps"][key][name]["actual"], summary.unit)
-                      rep_checks += 4
-
-              tl_agg = {str(k[0]): v for k, v in views["tl_aggregates"].items()}
-              unit_agg = {str(k[0]): v for k, v in views["unit_aggregates"].items()}
-              assert set(tl_agg) == set(unit_agg) and len(tl_agg) == 12, f"aggregate coverage={len(tl_agg)}"
-              assert "NATIONAL" in tl_agg and "901" in tl_agg, "NATIONAL/901 missing"
-              target_aggs = {(str(r.territory), int(r.product_id)): r for r in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_target_aggregate").all()}
-              actual_aggs = {(str(r.territory), int(r.product_id)): r for r in IMSRawData.query.filter_by(upload_id=upload.id, sheet_type="official_actual_aggregate").all()}
-              assert len(target_aggs) == len(actual_aggs) == 84, f"official aggregate coverage={len(target_aggs)}/{len(actual_aggs)}"
-
-              agg_checks = 0
-              for territory in sorted(tl_agg):
-                  for name in products:
-                      pid = product_ids[name]
-                      tr = target_aggs[(territory, pid)]
-                      ar = actual_aggs[(territory, pid)]
-                      check(f"agg:{territory}:{name}:target_tl", tl_agg[territory][name]["target"], tr.tl)
-                      check(f"agg:{territory}:{name}:actual_tl", tl_agg[territory][name]["actual"], ar.tl)
-                      check(f"agg:{territory}:{name}:target_box", unit_agg[territory][name]["target"], tr.unit)
-                      check(f"agg:{territory}:{name}:actual_box", unit_agg[territory][name]["actual"], ar.unit)
-                      agg_checks += 4
-
-              murat_keys = [k for k in rep_keys if AliasService.normalize(k[1]) == "MURAT ARSLAN"]
-              assert len(murat_keys) == 1, f"Murat source key={murat_keys}"
-              murat_key = murat_keys[0]
-              murat_id = rep_ids[murat_key]
-
-              job = IMSImportJob.query.filter_by(ims_upload_id=upload.id, status="COMPLETED").order_by(IMSImportJob.id.desc()).first()
-              stats = json.loads(job.result_summary or "{}")
-              progress = IMSProgressStore.read(job.id) or {}
-              assert progress.get("status") == "COMPLETED" and progress.get("stage") == "completed" and int(progress.get("percent") or 0) == 100, f"snapshot progress={progress}"
-              dashboard = PersistentDashboardSnapshotService.get_active(YEAR, MONTH)
-              regions = PersistentRegionSnapshotService.get_active_all(YEAR, MONTH)
-              murat_snapshot = PersistentRepresentativeSnapshotService.get_active(murat_id, YEAR, MONTH)
-              assert isinstance(dashboard, dict) and dashboard, "dashboard snapshot unavailable"
-              assert isinstance(regions, dict) and len(regions) == 11, f"region snapshot coverage={len(regions) if isinstance(regions, dict) else None}"
-              assert isinstance(murat_snapshot, dict) and murat_snapshot, "Murat snapshot unavailable"
-
-              competition_db = CompetitionData.query.filter_by(upload_id=upload.id).count()
-              competition_source = int(stats.get("competition_source_records") or 0)
-              kpi_sheets = int(stats.get("kpi_validation_sheets") or 0)
-              competition_invalid = int(stats.get("competition_invalid") or 0)
-              assert competition_source > 0 and competition_db == competition_source, f"competition source/live={competition_source}/{competition_db}"
-              assert kpi_sheets == len(products), f"KPI/PAZAR sheet coverage={kpi_sheets}/{len(products)}"
-              assert competition_invalid == 0, f"competition invalid={competition_invalid}"
-
-              national = totals(tl_agg["NATIONAL"], unit_agg["NATIONAL"])
-              region901 = totals(tl_agg["901"], unit_agg["901"])
-              murat = totals(views["tl_reps"][murat_key], views["unit_reps"][murat_key])
-              assert close(national["target_tl"], 152097283.40), national
-              assert close(national["actual_tl"], 31620641.03), national
-              assert close(national["actual_box"], 314214.0), national
-              assert not mismatches, "source/live mismatches: " + repr(mismatches[:20])
-
-              print(f"FINAL_ACCEPTANCE|PASS|upload={upload.id}|week={WEEK}|products={len(products)}|representatives={len(rep_keys)}|aggregates={len(tl_agg)}|rep_metric_checks={rep_checks}|aggregate_metric_checks={agg_checks}|mismatches=0")
-              print("NATIONAL_TOTALS|" + "|".join(f"{k}={v:.2f}" for k, v in national.items()))
-              print("REGION_901_TOTALS|" + "|".join(f"{k}={v:.2f}" for k, v in region901.items()))
-              print("MURAT_ARSLAN_TOTALS|territory=" + str(murat_key[0]) + "|" + "|".join(f"{k}={v:.2f}" for k, v in murat.items()))
-              for name in products:
-                  r_tl, r_u = tl_agg["901"][name], unit_agg["901"][name]
-                  m_tl, m_u = views["tl_reps"][murat_key][name], views["unit_reps"][murat_key][name]
-                  print(f"REGION_901_PRODUCT|{name}|target_tl={r_tl['target']:.2f}|actual_tl={r_tl['actual']:.2f}|target_box={r_u['target']:.2f}|actual_box={r_u['actual']:.2f}")
-                  print(f"MURAT_ARSLAN_PRODUCT|{name}|target_tl={m_tl['target']:.2f}|actual_tl={m_tl['actual']:.2f}|target_box={m_u['target']:.2f}|actual_box={m_u['actual']:.2f}")
-              print(f"PAZAR_COMPETITION|PASS|source_records={competition_source}|live_records={competition_db}|kpi_sheets={kpi_sheets}|invalid={competition_invalid}")
-              print(f"SNAPSHOTS|PASS|dashboard=1|regions={len(regions)}|murat_rep=1|progress={progress.get('percent')}|stage={progress.get('stage')}")
+              p=PersistentDashboardSnapshotService._path(2026,8)
+              if p.exists():
+                  env=json.loads(p.read_text(encoding='utf-8'))
+                  print('SNAP_ENVELOPE|' + json.dumps({k:env.get(k) for k in ('version','year','month','ims_upload_id','production_upload_id','created_at')},ensure_ascii=False))
           PY
           REMOTE
-# final Week 32 source-to-live acceptance fixed 2026-09-12
