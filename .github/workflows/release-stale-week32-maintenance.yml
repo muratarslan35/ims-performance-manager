@@ -49,15 +49,21 @@ jobs:
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           venv/bin/python - <<'PY'
           from collections import defaultdict
+          from pathlib import Path
           from sqlalchemy import desc
+          import pandas as pd
+          from flask import current_app
           from app import create_app
           from app.extensions import db
           from app.models import CompetitionData, IMSRawData, IMSUpload, Product
           from app.services.alias_service import AliasService
+          from app.services.kpi_workbook_compat import is_product_kpi_sheet
           from config import Config
 
           def key(v):
               return ''.join(ch for ch in AliasService.normalize(v) if ch.isalnum())
+          def norm(v):
+              return AliasService.normalize(v) if v is not None and not (isinstance(v,float) and pd.isna(v)) else ''
 
           app=create_app(Config)
           with app.app_context():
@@ -81,24 +87,40 @@ jobs:
               print(f'MARKET_SOURCE_AUDIT|upload={upload.id}|week={upload.week_number}|competition_rows={len(rows)}')
               for product in products:
                   aliases={key(x) for x in (product.product_name,product.product_code,product.ims_name,getattr(product,'competitor_group',None)) if key(x)}
-                  matched=[]
-                  for row in rows:
-                      g=key(row.product_group)
-                      if any(a in g or g in a for a in aliases):
-                          matched.append(row)
+                  matched=[r for r in rows if any(a in key(r.product_group) or key(r.product_group) in a for a in aliases)]
                   subtotal=sum(float(r.metric_value or 0) for r in matched if r.is_subtotal)
-                  own=0.0; rival=0.0; detail=0.0; rivals=defaultdict(float)
-                  own_names={key(x) for x in (product.product_name,product.product_code,product.ims_name) if key(x)}
+                  by_name=defaultdict(float)
                   for r in matched:
-                      if r.is_subtotal: continue
-                      value=float(r.metric_value or 0); detail+=value
-                      name=key(r.product_name)
-                      is_company=bool(r.is_company_product) or (not bool(r.is_competitor) and any(a in name or name in a for a in own_names))
-                      if is_company: own+=value
-                      else:
-                          rival+=value; rivals[str(r.product_name)]+=value
-                  c=company.get(int(product.id),0.0)
-                  print('MARKET_PRODUCT|product=%s|company_main=%.2f|competition_company=%.2f|rival_detail=%.2f|detail_total=%.2f|subtotal=%.2f|company_plus_rival=%.2f|subtotal_minus_company=%.2f|rivals=%d' % (
-                      product.product_name,c,own,rival,detail,subtotal,c+rival,subtotal-c,len(rivals)))
+                      if not r.is_subtotal: by_name[str(r.product_name)]+=float(r.metric_value or 0)
+                  print('MARKET_PRODUCT|product=%s|company_main=%.2f|subtotal=%.2f|names=%s' % (
+                      product.product_name,company.get(int(product.id),0.0),subtotal,
+                      ';'.join('%s=%.2f' % item for item in sorted(by_name.items()))))
+
+              candidates=[]
+              for base in (Path(current_app.config['UPLOAD_FOLDER']), Path('instance/uploads'), Path('uploads')):
+                  for name in (upload.file_name, getattr(upload,'stored_file_name',None)):
+                      if name:
+                          p=base/name
+                          if p.is_file(): candidates.append(p)
+              source=next(iter(candidates),None)
+              print(f'SOURCE_PATH|{source}')
+              if source:
+                  workbook=pd.read_excel(source,sheet_name=None,header=None)
+                  for sheet_name,frame in workbook.items():
+                      if not is_product_kpi_sheet(sheet_name): continue
+                      header=next((r for r in range(min(15,len(frame))) if any(norm(v)=='PAZAR' for v in frame.iloc[r].tolist())),None)
+                      if header is None: continue
+                      labels=[norm(v) for v in frame.iloc[header].tolist()]
+                      product=norm(sheet_name).removeprefix('2 KUTU ').removesuffix(' KPI')
+                      product_cols=[i for i,v in enumerate(labels) if v.startswith(product)]
+                      pazar_cols=[i for i,v in enumerate(labels) if v=='PAZAR']
+                      for r in range(header+1,len(frame)):
+                          brick=norm(frame.iloc[r,2]) if frame.shape[1]>2 else ''
+                          province=norm(frame.iloc[r,1]) if frame.shape[1]>1 else ''
+                          territory=norm(frame.iloc[r,0]) if frame.shape[1]>0 else ''
+                          if brick=='NATIONAL' or 'SUBTOTAL' in brick or 'SUBTOTAL' in province:
+                              own=frame.iloc[r,product_cols[0]] if product_cols else None
+                              pazar=frame.iloc[r,pazar_cols[0]] if pazar_cols else None
+                              print(f'KPI_CONTROL|sheet={sheet_name}|territory={territory}|province={province}|brick={brick}|own={own}|pazar={pazar}')
           PY
           REMOTE
