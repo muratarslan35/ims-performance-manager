@@ -24,14 +24,7 @@ _LEGACY_TEMPLATE_NUMERIC_KEYS = {
 
 
 def _legacy_template_safe_report(report):
-    """Return a render-only copy safe for the legacy parent region template.
-
-    The quarter template is the visible/current UI and already renders incomplete
-    metrics as an em dash. Its parent template is still evaluated by Jinja before
-    JavaScript hides the legacy period panels; old ``format(None)`` expressions
-    therefore used to raise a 500 before the current UI could render. This helper
-    changes only that hidden parent copy and never mutates business/report values.
-    """
+    """Return a render-only copy safe for the legacy parent region template."""
     safe = deepcopy(report)
 
     def visit(value):
@@ -57,20 +50,22 @@ def detail(region_key):
     month = request.args.get("month", active["month"], type=int)
     try:
         performance_service = RegionPerformanceService(region_key, year, month)
-        report = performance_service.report()
+        current_report = performance_service.report()
     except ValueError as exc:
         flash(str(exc), "warning")
         return redirect(url_for("dashboard.index"))
     ai_report = ScopedAIInsightService.build(
-        scope_type="region", scope_name=report["region_name"], periods=report["periods"]
+        scope_type="region", scope_name=current_report["region_name"], periods=current_report["periods"]
     )
     market_analysis = RegionMarketService(
-        report["region_key"], performance_service.rep_ids, year, month
+        current_report["region_key"], performance_service.rep_ids, year, month
     ).build()
+    safe_report = _legacy_template_safe_report(current_report)
     return render_template(
         "region_performance_quarter.html",
-        report=report,
-        legacy_report=_legacy_template_safe_report(report),
+        report=safe_report,
+        legacy_report=safe_report,
+        current_report=current_report,
         ai_report=ai_report,
         market_analysis=market_analysis,
     )
