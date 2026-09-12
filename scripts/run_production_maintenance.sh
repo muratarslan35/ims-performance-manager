@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 semantic target persistence reimport trigger: 2026-09-12
+# Week 32 semantic target persistence reimport trigger: 2026-09-12 worker reload
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
@@ -83,6 +83,13 @@ PY
 printf 'WEEK32_NORMAL_REIMPORT_ELIGIBLE|%s\n' "$week32_recovery" >> "$EVIDENCE_FILE"
 if [ "$week32_recovery" = "YES" ]; then
   printf 'WEEK32_BACKUP_REUSED|new_backup=NO|reason=validated_pre_recovery_backup_exists\n' >> "$EVIDENCE_FILE"
+  # The worker is a long-lived Python process. The previous retry fast-forwarded
+  # repository code but could still execute the already-loaded pre-fix importer.
+  # No import is active here, so reload only the worker before queuing the same
+  # verified archive through the normal import path.
+  sudo systemctl restart ims-import-worker.service
+  test "$(sudo systemctl is-active ims-import-worker.service)" = "active"
+  printf 'IMS_WORKER_RELOADED|commit=%s\n' "$(git rev-parse HEAD)" >> "$EVIDENCE_FILE"
   venv/bin/python -m scripts.requeue_latest_empty_ims --year 2026 --month 8 --week 32 >> "$EVIDENCE_FILE" 2>&1
   for poll in $(seq 1 180); do
     state=$(venv/bin/python - <<'PY'
