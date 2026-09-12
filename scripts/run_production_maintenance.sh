@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 semantic reconciliation retry trigger: 2026-09-12b
+# Week 32 semantic reconciliation retry trigger: 2026-09-12c
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
