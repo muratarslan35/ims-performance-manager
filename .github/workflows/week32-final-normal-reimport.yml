@@ -1,3 +1,4 @@
+# One-time production trigger: 2026-09-12T13:11Z
 name: Week 32 Final Normal Reimport
 
 on:
@@ -59,8 +60,6 @@ jobs:
           cd "$IMS_PATH"
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
 
-          # Do not interrupt the already-running maintenance job. Wait for its
-          # server lock, then run only the normal IMS import/publication path.
           exec 9>instance/.production-maintenance.lock
           if ! flock -w 1800 9; then
             echo 'WEEK32_DIRECT_REIMPORT_REFUSED|reason=maintenance_lock_timeout'
