@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   publish:
-    name: Patch Week 32 representative snapshots
+    name: Diagnose Week 32 final acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,16 +34,15 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Patch active snapshots and verify live Week 32
+      - name: Read final Week 32 state
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          test -z "$(git status --porcelain)"
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
@@ -51,36 +50,9 @@ jobs:
           export PYTHONUNBUFFERED=1
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
-          active=$(venv/bin/python - <<'PY'
-          from app import create_app
-          from app.models import IMSImportJob
-          from config import Config
-          app=create_app(Config)
-          with app.app_context():
-              print(IMSImportJob.query.filter(
-                  IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
-              ).count())
-          PY
-          )
-          echo "ACTIVE_IMPORTS|$active"
-          test "$active" = 0
-
-          # Stop only the long one-off Python snapshot rebuild left by the prior
-          # finalizer. Business import is already COMPLETED and systemd services
-          # are not matched by this exact command shape.
-          stale_pids=$(ps -eo pid=,etimes=,args= | awk '$2 > 60 && $0 ~ /ims_system\/venv\/bin\/python -u -$/ {print $1}')
-          if [ -n "$stale_pids" ]; then
-            echo "STALE_SNAPSHOT_REBUILD|stop|pids=$(echo "$stale_pids" | tr '\n' ',')"
-            kill -TERM $stale_pids || true
-            sleep 2
-          fi
-
           venv/bin/python -u - <<'PY'
           import json
-          from collections import defaultdict
-          from datetime import datetime
           import sqlalchemy as sa
-
           from app import create_app
           from app.extensions import db
           from app.models import CompetitionData, IMSImportJob, IMSUpload, Representative
@@ -88,209 +60,65 @@ jobs:
           from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          from app.services.persistent_representative_snapshot_service import (
-              PersistentRepresentativeSnapshotService,
-              representative_snapshot_sets,
-              representative_snapshots,
-          )
-          from app.services.realization_rounding import realization_percent
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshot_sets, representative_snapshots
           from config import Config
-
-          def key(value):
-              return ''.join(ch for ch in str(value or '').upper() if ch.isalnum())
-
-          def close(a,b,tol=0.01):
-              return abs(float(a or 0)-float(b or 0)) <= tol
 
           app=create_app(Config)
           with app.app_context():
-              upload=IMSUpload.query.filter_by(year=2026,month=8,week_number=32,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              assert upload
-              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first())
-              assert job and job.status == IMSImportJob.STATUS_COMPLETED
+              upload=IMSUpload.query.filter_by(year=2026,month=8,week_number=32).order_by(IMSUpload.id.desc()).first()
+              print(f'UPLOAD|id={getattr(upload,"id",None)}|status={getattr(upload,"status",None)}')
+              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()) if upload else None
+              print(f'JOB|id={getattr(job,"id",None)}|status={getattr(job,"status",None)}|summary={getattr(job,"result_summary",None)}')
+              active=IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED,IMSImportJob.STATUS_PROCESSING))).count()
+              print(f'ACTIVE_IMPORTS|{active}')
 
-              ims_id, production_id=PersistentRepresentativeSnapshotService.source_identity(2026,8)
-              assert ims_id == upload.id
-              ids=PersistentRepresentativeSnapshotService.representative_ids(2026,8,ims_id)
-              assert len(ids)==113, len(ids)
+              authority_count=CompetitionData.query.filter(CompetitionData.upload_id==upload.id,CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%')).count() if upload else -1
+              print(f'AUTHORITY_ROWS|{authority_count}')
 
-              # Any BUILDING generation belonged to the stopped continuation. The
-              # previous ACTIVE generation remains complete and is patched atomically.
-              db.session.execute(
-                  representative_snapshot_sets.update().where(
-                      representative_snapshot_sets.c.year==2026,
-                      representative_snapshot_sets.c.month==8,
-                      representative_snapshot_sets.c.source_upload_id==ims_id,
-                      representative_snapshot_sets.c.production_upload_id==production_id,
-                      representative_snapshot_sets.c.status==PersistentRepresentativeSnapshotService.STATUS_BUILDING,
-                  ).values(status=PersistentRepresentativeSnapshotService.STATUS_FAILED)
-              )
-              db.session.commit()
-
-              set_id=PersistentRepresentativeSnapshotService._visible_set_id(2026,8)
-              assert set_id, 'no visible representative snapshot set'
-              rows=db.session.execute(
-                  sa.select(
-                      representative_snapshots.c.id,
-                      representative_snapshots.c.representative_id,
-                      representative_snapshots.c.payload_json,
-                  ).where(representative_snapshots.c.set_id==set_id)
-              ).all()
-              assert len(rows)==113, len(rows)
-
-              patched=0
-              for snapshot_id, representative_id, raw in rows:
-                  workspace=json.loads(raw)
-                  monthly=((workspace.get('snapshots') or {}).get('monthly') or {})
-                  market=monthly.get('market_analysis') or {}
-                  brick_rows=market.get('brick_product_rows') or []
-                  product_rows=market.get('rows') or []
-                  if len(product_rows)!=7 or not brick_rows:
-                      raise RuntimeError(f'rep={representative_id} monthly market payload incomplete')
-
-                  source=defaultdict(lambda: {'company':0.0,'market':0.0})
-                  for brick in brick_rows:
-                      name=brick.get('product_name')
-                      source[key(name)]['company'] += float(brick.get('company_unit') or 0)
-                      source[key(name)]['market'] += float(brick.get('market_unit') or 0)
-
-                  for item in product_rows:
-                      product=item.get('product') or {}
-                      name=product.get('product_name') if isinstance(product,dict) else getattr(product,'product_name','')
-                      values=source.get(key(name))
-                      if not values:
-                          raise RuntimeError(f'rep={representative_id} product={name} brick source missing')
-                      company=float(values['company'])
-                      total_market=float(values['market'])
-                      competitor=total_market-company
-                      target=float(item.get('target_unit') or 0)
-                      item.update({
-                          'actual_unit': round(company,2),
-                          'market_unit': round(total_market,2),
-                          'competitor_unit': round(competitor,2),
-                          'share_percent': round(company*100.0/total_market,1) if total_market else 0.0,
-                          'gap_unit': round(competitor-company,2),
-                          'realization_percent': realization_percent(company,target) if target else 0,
-                          'realization_source': 'IMS_KPI',
-                      })
-
-                  market['chart_rows']=[{
-                      'product_name': ((item.get('product') or {}).get('product_name') if isinstance(item.get('product'),dict) else getattr(item.get('product'),'product_name','')),
-                      'actual_unit': float(item.get('actual_unit') or 0),
-                      'competitor_unit': float(item.get('competitor_unit') or 0),
-                  } for item in product_rows]
-                  company_total=sum(float(item.get('actual_unit') or 0) for item in product_rows)
-                  market_total=sum(float(item.get('market_unit') or 0) for item in product_rows)
-                  market['totals']={
-                      'actual_unit': round(company_total,2),
-                      'market_unit': round(market_total,2),
-                      'competitor_unit': round(market_total-company_total,2),
-                      'share_percent': round(company_total*100.0/market_total,1) if market_total else 0.0,
-                  }
-                  monthly['market_analysis']=market
-                  workspace['snapshots']['monthly']=monthly
-                  db.session.execute(
-                      representative_snapshots.update().where(
-                          representative_snapshots.c.id==snapshot_id
-                      ).values(payload_json=json.dumps(workspace,ensure_ascii=False,separators=(',',':')))
-                  )
-                  patched += 1
-                  if patched % 20 == 0:
-                      db.session.commit()
-                      print(f'REP_SNAPSHOT_PATCH|progress={patched}/113')
-              db.session.commit()
-              assert patched==113
-
-              # Dashboard and region snapshots were already successfully refreshed;
-              # verify rather than rebuild them again.
               dashboard=PersistentDashboardSnapshotService.get_active(2026,8) or {}
               executive=dashboard.get('executive_metrics') or {}
-              assert float(executive.get('target_tl') or 0)>0
-              assert float(executive.get('actual_tl') or 0)>0
-              assert float(executive.get('unit_target') or 0)>0
-              assert float(executive.get('unit_actual') or 0)>0
-              assert len(executive.get('products') or [])==7
+              print('DASHBOARD|target_tl=%s|actual_tl=%s|unit_target=%s|unit_actual=%s|products=%s' % (
+                  executive.get('target_tl'),executive.get('actual_tl'),executive.get('unit_target'),executive.get('unit_actual'),len(executive.get('products') or [])))
 
-              authority_count=CompetitionData.query.filter(
-                  CompetitionData.upload_id==upload.id,
-                  CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%'),
-              ).count()
-              assert authority_count==168, authority_count
               national=MarketAnalysisService(2026,8).build()
-              assert national.get('metric_mode')=='UNIT'
-              assert len(national.get('groups') or [])==7
-              assert close(national.get('company_total_unit'),314214)
-              assert close(national.get('market_total_unit'),927617)
-              assert close(national.get('competitor_total_unit'),613403)
-              for item in national['groups']:
-                  assert close(item['company_sales_unit']+item['competitor_sales_unit'],item['market_sales_unit'])
-                  assert 0 <= float(item.get('company_share_percent') or 0) <= 100
+              print('NATIONAL|mode=%s|groups=%s|company=%s|competitor=%s|market=%s|share=%s' % (
+                  national.get('metric_mode'),len(national.get('groups') or []),national.get('company_total_unit'),national.get('competitor_total_unit'),national.get('market_total_unit'),national.get('company_share_percent')))
+              for row in national.get('groups') or []:
+                  print('NATIONAL_ROW|%s|company=%s|competitor=%s|market=%s|ok=%s' % (
+                      row.get('group_name') or row.get('product_name'),row.get('company_sales_unit'),row.get('competitor_sales_unit'),row.get('market_sales_unit'),
+                      abs(float(row.get('company_sales_unit') or 0)+float(row.get('competitor_sales_unit') or 0)-float(row.get('market_sales_unit') or 0))<0.01))
 
               regions=PersistentRegionSnapshotService.get_active_all(2026,8)
-              assert len(regions)==11
-              istanbul=None
+              print(f'REGIONS|count={len(regions)}')
               for region_key,snapshot in regions.items():
-                  market=(snapshot.get('market_analysis') or {})
-                  rrows=market.get('rows') or []
-                  totals=market.get('totals') or {}
-                  assert len(rrows)==7, (region_key,len(rrows))
-                  for item in rrows:
-                      assert close(item['company_unit']+item['competitor_unit'],item['market_unit'])
-                  assert close(totals.get('company_unit')+totals.get('competitor_unit'),totals.get('market_unit'))
-                  if str(region_key).startswith('101'):
-                      istanbul=totals
-              assert istanbul
-              assert close(istanbul.get('company_unit'),52024)
-              assert close(istanbul.get('market_unit'),137771)
-              assert close(istanbul.get('competitor_unit'),85747)
+                  market=snapshot.get('market_analysis') or {}
+                  rr=market.get('rows') or []
+                  tt=market.get('totals') or {}
+                  ok_rows=all(abs(float(x.get('company_unit') or 0)+float(x.get('competitor_unit') or 0)-float(x.get('market_unit') or 0))<0.01 for x in rr)
+                  ok_tot=abs(float(tt.get('company_unit') or 0)+float(tt.get('competitor_unit') or 0)-float(tt.get('market_unit') or 0))<0.01
+                  print('REGION|%s|rows=%s|company=%s|competitor=%s|market=%s|rows_ok=%s|tot_ok=%s' % (region_key,len(rr),tt.get('company_unit'),tt.get('competitor_unit'),tt.get('market_unit'),ok_rows,ok_tot))
 
+              ims_id,prod_id=PersistentRepresentativeSnapshotService.source_identity(2026,8)
+              print(f'REP_SOURCE|ims={ims_id}|prod={prod_id}')
+              sets=db.session.execute(sa.select(representative_snapshot_sets.c.id,representative_snapshot_sets.c.status,representative_snapshot_sets.c.representative_count).where(representative_snapshot_sets.c.year==2026,representative_snapshot_sets.c.month==8).order_by(representative_snapshot_sets.c.id.desc())).all()
+              print('REP_SETS|'+json.dumps([list(x) for x in sets[:6]]))
+              set_id=PersistentRepresentativeSnapshotService._visible_set_id(2026,8)
+              cnt=db.session.execute(sa.select(sa.func.count()).select_from(representative_snapshots).where(representative_snapshots.c.set_id==set_id)).scalar() if set_id else 0
+              print(f'REP_VISIBLE|set={set_id}|rows={cnt}')
               murat=Representative.query.filter(db.func.upper(Representative.rep_name)=='MURAT ARSLAN').first()
-              assert murat
-              snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
-              assert snap
-              monthly=((snap.get('snapshots') or {}).get('monthly') or {})
+              snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8) if murat else None
+              monthly=(((snap or {}).get('snapshots') or {}).get('monthly') or {})
               mkt=monthly.get('market_analysis') or {}
-              assert len(mkt.get('rows') or [])==7
-              for item in mkt['rows']:
-                  assert close(item['actual_unit']+item['competitor_unit'],item['market_unit']), item
               mt=mkt.get('totals') or {}
-              assert close(mt.get('actual_unit')+mt.get('competitor_unit'),mt.get('market_unit'))
-
-              try:
-                  summary=json.loads(job.result_summary or '{}')
-              except Exception:
-                  summary={}
-              summary['publication_ready']=True
-              summary['publication_ready_source']='patched_verified_single_source_snapshots'
-              job.result_summary=json.dumps(summary,ensure_ascii=False)
-              db.session.execute(
-                  representative_snapshot_sets.update().where(
-                      representative_snapshot_sets.c.id==set_id
-                  ).values(activated_at=datetime.utcnow())
-              )
-              db.session.commit()
-
-              print('KPI_SINGLE_SOURCE_ACCEPTANCE|PASS'
-                    f'|rep_snapshots={patched}'
-                    f'|authority_rows={authority_count}'
-                    f"|national_company={national['company_total_unit']:.2f}"
-                    f"|national_market={national['market_total_unit']:.2f}"
-                    f"|national_competitor={national['competitor_total_unit']:.2f}"
-                    f"|istanbul_company={float(istanbul['company_unit']):.2f}"
-                    f"|istanbul_market={float(istanbul['market_unit']):.2f}"
-                    '|regions=11|murat_rows=7|publication_ready=1')
+              print('MURAT|id=%s|rows=%s|actual=%s|competitor=%s|market=%s|ok=%s' % (
+                  getattr(murat,'id',None),len(mkt.get('rows') or []),mt.get('actual_unit'),mt.get('competitor_unit'),mt.get('market_unit'),
+                  abs(float(mt.get('actual_unit') or 0)+float(mt.get('competitor_unit') or 0)-float(mt.get('market_unit') or 0))<0.01))
+              for row in mkt.get('rows') or []:
+                  print('MURAT_ROW|%s|actual=%s|competitor=%s|market=%s|ok=%s' % (
+                      ((row.get('product') or {}).get('product_name') if isinstance(row.get('product'),dict) else ''),row.get('actual_unit'),row.get('competitor_unit'),row.get('market_unit'),
+                      abs(float(row.get('actual_unit') or 0)+float(row.get('competitor_unit') or 0)-float(row.get('market_unit') or 0))<0.01))
           PY
 
-          sudo systemctl restart ims-performance-manager.service
-          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then
-              echo 'HTTP_HEALTH|PASS'
-              break
-            fi
-            if [ "$attempt" = 20 ]; then exit 1; fi
-            sleep 2
-          done
-          venv/bin/python verify_live_ims_gate.py
-          echo 'WEEK32_FINAL_PUBLICATION|PASS'
+          if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then echo 'HTTP_HEALTH|PASS'; else echo 'HTTP_HEALTH|FAIL'; fi
+          venv/bin/python verify_live_ims_gate.py || echo 'LIVE_GATE|FAIL'
           REMOTE
