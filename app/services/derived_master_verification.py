@@ -5,6 +5,7 @@ Independent pivots remain explicit masters when no upstream equivalent exists.
 Once a high-confidence relationship is discovered, any value mismatch or small
 missing-cell gap fails closed before publication.
 """
+# Production acceptance trigger after Week 32 publication: 2026-09-12.
 import time
 
 from app.services.compiled_import_semantic_reconciliation import (
@@ -20,8 +21,8 @@ def _seed_adaptive_official_aggregates(importer, year, month):
     """Seed source-authoritative KPI aggregates before the legacy reconcile gate.
 
     The temporary KPI workbook places the region subtotal marker outside the
-    legacy brick column.  The adaptive reader already resolves those rows by
-    semantic identity (region == representative).  Persist that exact source
+    legacy brick column. The adaptive reader already resolves those rows by
+    semantic identity (region == representative). Persist that exact source
     view before the existing official reconciliation runs; legacy workbooks are
     untouched because _pair_views returns None for them.
     """
