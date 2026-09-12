@@ -94,7 +94,7 @@ def _empty_market_analysis(year, month, message):
 @main_bp.route("/")
 @login_required
 def home():
-    """The home screen is the canonical populated dashboard, never an empty template."""
+    """Always enter through the canonical dashboard route with a populated payload."""
     return redirect(url_for("dashboard.index"))
 
 
@@ -256,3 +256,76 @@ def market_analysis_region(region_key):
         return _render_region_snapshot(snapshot)
     except ValueError as exc:
         return render_template("partials/market_region_workspace_error.html", message=str(exc)), 404
+    except Exception:
+        current_app.logger.exception(
+            "Türkiye Pazar Analizi region detail failed: region=%s period=%s/%s",
+            region_key, year, month,
+        )
+        try:
+            snapshot = _build_region_snapshot(region_key, year, month)
+            return _render_region_snapshot(snapshot)
+        except Exception:
+            current_app.logger.exception(
+                "Türkiye Pazar Analizi fresh region fallback failed: region=%s period=%s/%s",
+                region_key, year, month,
+            )
+            return render_template(
+                "partials/market_region_workspace_error.html",
+                message="Bölge verisi geçici olarak hazırlanamadı. Ana Türkiye Pazar Analizi ekranı kullanılabilir.",
+            ), 503
+
+
+@main_bp.route("/prime")
+@login_required
+def prime():
+    return render_template(
+        "prime.html",
+        user=current_user
+    )
+
+
+@main_bp.route("/reports")
+@login_required
+def reports():
+    return render_template(
+        "reports.html",
+        user=current_user
+    )
+
+
+@main_bp.route("/quarter")
+@login_required
+def quarter():
+    representatives = Representative.query.filter_by(active=True).order_by(Representative.rep_name.asc()).all()
+    year = request.args.get("year", type=int) or 2026
+    quarter = request.args.get("quarter", type=int) or 2
+    representative_id = request.args.get("representative_id", type=int)
+    report = None
+    selected_representative = None
+    if representative_id:
+        selected_representative = Representative.query.get_or_404(representative_id)
+        report = QuarterEntitlementService(representative_id, year, quarter).report()
+    return render_template(
+        "quarter.html",
+        representatives=representatives,
+        selected_representative=selected_representative,
+        report=report,
+        selected_year=year,
+        selected_quarter=quarter,
+    )
+
+
+@main_bp.route("/recovery")
+@login_required
+def recovery():
+    return redirect(
+        url_for("simulation.index")
+    )
+
+
+@main_bp.route("/settings")
+@login_required
+def settings():
+    return redirect(
+        url_for("settings.index")
+    )
