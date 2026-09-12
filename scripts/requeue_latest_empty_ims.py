@@ -1,9 +1,10 @@
-"""Requeue the latest empty-target IMS through the normal worker.
+"""Requeue the latest IMS through the normal worker.
 
-The exact archived workbook and original queue identity are reused. A previous
-COMPLETED or FAILED attempt is eligible, but only when it is still the newest
-IMS upload, no import is active, and the period still has zero targets. The
-regular worker remains the only component that performs replacement import and
+The exact archived workbook and original queue identity are reused. By default
+this remains the empty-target recovery path. An explicit
+--allow-existing-targets flag permits an operator-approved replacement reimport
+of the newest period while preserving all other safety gates. The regular
+worker remains the only component that performs replacement import and
 snapshot/publication.
 """
 from __future__ import annotations
@@ -26,6 +27,11 @@ def main() -> int:
     parser.add_argument("--month", type=int, required=True)
     parser.add_argument("--week", type=int, required=True)
     parser.add_argument("--actor", default="GitHub production recovery")
+    parser.add_argument(
+        "--allow-existing-targets",
+        action="store_true",
+        help="Explicitly allow replacement reimport when the selected period already has targets.",
+    )
     args = parser.parse_args()
 
     app = create_app(Config)
@@ -52,7 +58,7 @@ def main() -> int:
             raise SystemExit("RECOVERY_REFUSED|reason=upload_is_not_global_latest")
 
         target_count = Target.query.filter_by(year=args.year, month=args.month).count()
-        if target_count:
+        if target_count and not args.allow_existing_targets:
             raise SystemExit(f"RECOVERY_REFUSED|reason=targets_not_empty|targets={target_count}")
 
         job = (
@@ -106,7 +112,8 @@ def main() -> int:
         print(
             "IMS_NORMAL_REIMPORT_QUEUED|"
             f"upload={upload.id}|job={job.id}|period={args.year:04d}-{args.month:02d}|"
-            f"week={args.week}|clear_before_import=1|source=verified_archive"
+            f"week={args.week}|clear_before_import=1|source=verified_archive|"
+            f"existing_targets={target_count}|explicit_replace={int(args.allow_existing_targets)}"
         )
     return 0
 
