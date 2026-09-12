@@ -1,9 +1,10 @@
-"""Safely requeue the latest completed IMS whose published targets are empty.
+"""Requeue the latest completed IMS with empty targets through the normal worker.
 
-This is an operational recovery for a completed import produced by an older
-parser version.  It first uses the normal, guarded rollback path, then reuses
-the archived workbook and its verified queue identity.  The regular worker
-performs the replacement import and publishes read models atomically.
+This recovery deliberately does not roll the database back. It validates the
+archived workbook and its original queue identity, stages that exact workbook,
+and queues the existing upload/job with clear_before_import=True. The regular
+IMS worker remains the only component that performs the replacement import and
+snapshot/publication flow.
 """
 from __future__ import annotations
 
@@ -71,10 +72,6 @@ def main() -> int:
             raise SystemExit("RECOVERY_REFUSED|reason=completed_job_not_found")
 
         source = IMSUploadLifecycleService._validate_archived_source(upload.id)
-        can_rollback, reason = IMSUploadLifecycleService.can_rollback(upload)
-        if not can_rollback:
-            raise SystemExit(f"RECOVERY_REFUSED|reason=rollback_not_ready|detail={reason}")
-
         staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
         staging.parent.mkdir(parents=True, exist_ok=True)
         temporary = staging.with_suffix(staging.suffix + ".recovery")
@@ -83,7 +80,6 @@ def main() -> int:
             temporary.unlink(missing_ok=True)
             raise SystemExit("RECOVERY_REFUSED|reason=staging_hash_mismatch")
 
-        result = IMSUploadLifecycleService.rollback_to_previous(upload.id, actor=args.actor)
         now = datetime.utcnow()
         try:
             temporary.replace(staging)
@@ -109,9 +105,9 @@ def main() -> int:
             raise
 
         print(
-            "IMS_RECOVERY_QUEUED|"
+            "IMS_NORMAL_REIMPORT_QUEUED|"
             f"upload={upload.id}|job={job.id}|period={args.year:04d}-{args.month:02d}|"
-            f"week={args.week}|rollback_to={result.get('active_upload_id')}"
+            f"week={args.week}|clear_before_import=1|source=verified_archive"
         )
     return 0
 
