@@ -1,4 +1,4 @@
-name: Week 32 UI read-path diagnostic
+name: Week 32 UI publication fix
 
 on:
   push:
@@ -11,10 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  probe:
-    name: Inspect live dashboard and market read paths
+  publish:
+    name: Refresh dashboard and competition read models
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect live UI sources
+      - name: Publish corrected Week 32 UI read models
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -42,55 +42,76 @@ jobs:
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          exec 9>instance/.production-maintenance.lock
+          if ! flock -w 300 9; then
+            echo 'UI_PUBLICATION_REFUSED|reason=production_lock_timeout'
+            exit 1
+          fi
+
+          test -z "$(git status --porcelain)"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          venv/bin/python - <<'PY'
-          import json
-          from pathlib import Path
-          from sqlalchemy import func
+
+          active=$(venv/bin/python - <<'PY'
           from app import create_app
-          from app.extensions import db
-          from app.models import CompetitionData, IMSUpload
-          from app.services.dashboard_service import DashboardService
+          from app.models import IMSImportJob
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              print(IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))).count())
+          PY
+          )
+          echo "ACTIVE_IMPORTS|$active"
+          test "$active" = "0"
+
+          venv/bin/python -m py_compile \
+            app/routes/__init__.py \
+            app/services/market_analysis_service.py \
+            scripts/refresh_live_read_models.py
+          venv/bin/python -m pytest -q tests/test_market_analysis_week_fallback.py
+
+          sudo systemctl restart ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+
+          venv/bin/python -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
+          venv/bin/python verify_live_ims_gate.py
+
+          health=$(curl -fsS --max-time 15 http://127.0.0.1:8000/health || true)
+          printf 'HTTP_HEALTH|%s\n' "$health"
+          test -n "$health"
+
+          venv/bin/python - <<'PY'
+          from app import create_app
           from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-
-          app=create_app()
+          from config import Config
+          app=create_app(Config)
           with app.app_context():
-              upload=IMSUpload.query.filter_by(year=2026, month=8, week_number=32, status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              assert upload is not None
-              print(f'UPLOAD|id={upload.id}|completed_at={upload.completed_at}|file={upload.file_name}')
-              rows=(db.session.query(CompetitionData.metric_type, func.count(CompetitionData.id), func.count(func.distinct(CompetitionData.sheet_name)))
-                    .filter(CompetitionData.upload_id==upload.id)
-                    .group_by(CompetitionData.metric_type).order_by(CompetitionData.metric_type).all())
-              for metric,count,sheets in rows:
-                  print(f'COMP_METRIC|type={metric}|rows={count}|sheets={sheets}')
-              sheet_rows=(db.session.query(CompetitionData.sheet_name, CompetitionData.metric_type, func.count(CompetitionData.id))
-                          .filter(CompetitionData.upload_id==upload.id)
-                          .group_by(CompetitionData.sheet_name, CompetitionData.metric_type)
-                          .order_by(CompetitionData.sheet_name, CompetitionData.metric_type).all())
-              for sheet,metric,count in sheet_rows:
-                  print(f'COMP_SHEET|{sheet}|{metric}|rows={count}')
-
-              direct=DashboardService(year=2026, month=8).run()
-              snap=PersistentDashboardSnapshotService.get_active(2026,8)
-              print('DIRECT_KEYS|' + ','.join(sorted(direct.keys())))
-              print('SNAP_KEYS|' + ','.join(sorted((snap or {}).keys())))
-              for label,payload in [('DIRECT',direct),('SNAP',snap or {})]:
-                  nm=payload.get('national_metrics') or payload.get('national') or {}
-                  prime=payload.get('prime_summary') or payload.get('prime') or {}
-                  products=payload.get('product_performance') or payload.get('products') or []
-                  print(f'{label}_READ|national={json.dumps(nm,ensure_ascii=False,default=str)[:1800]}')
-                  print(f'{label}_PRIME|{json.dumps(prime,ensure_ascii=False,default=str)[:1200]}')
-                  print(f'{label}_PRODUCTS|count={len(products) if isinstance(products,list) else -1}|sample={json.dumps(products[:2] if isinstance(products,list) else products,ensure_ascii=False,default=str)[:1200]}')
-
+              payload=PersistentDashboardSnapshotService.get_active(2026,8) or {}
+              national=payload.get('executive_metrics') or {}
+              products=national.get('products') or []
+              assert float(national.get('target_tl') or 0)>0
+              assert float(national.get('actual_tl') or 0)>0
+              assert float(national.get('unit_target') or 0)>0
+              assert float(national.get('unit_actual') or 0)>0
+              assert len(products)==7
               market=MarketAnalysisService(2026,8).build()
-              print('MARKET_STATE|' + json.dumps({k:market.get(k) for k in ('latest_week','source_week','source_state','is_current','is_fallback','has_competition','market_total_tl','company_total_tl','competitor_total_tl','company_share_percent','source_file','source_message')},ensure_ascii=False,default=str))
-              print('MARKET_GROUPS|' + json.dumps(market.get('groups',[])[:7],ensure_ascii=False,default=str)[:5000])
-
-              p=PersistentDashboardSnapshotService._path(2026,8)
-              if p.exists():
-                  env=json.loads(p.read_text(encoding='utf-8'))
-                  print('SNAP_ENVELOPE|' + json.dumps({k:env.get(k) for k in ('version','year','month','ims_upload_id','production_upload_id','created_at')},ensure_ascii=False))
+              assert market.get('has_competition') is True
+              assert market.get('source_state')=='CURRENT'
+              assert market.get('metric_mode')=='UNIT'
+              assert len([r for r in market.get('groups',[]) if r.get('market_available')])==7
+              print('UI_FINAL_ACCEPTANCE|PASS'
+                    f"|target_tl={float(national['target_tl']):.2f}"
+                    f"|actual_tl={float(national['actual_tl']):.2f}"
+                    f"|target_box={float(national['unit_target']):.2f}"
+                    f"|actual_box={float(national['unit_actual']):.2f}"
+                    f"|products={len(products)}"
+                    f"|market_mode={market.get('metric_mode')}"
+                    f"|market_products={len(market.get('groups') or [])}"
+                    f"|market_total={float(market.get('market_total_value') or 0):.2f}"
+                    f"|competitor_total={float(market.get('competitor_total_value') or 0):.2f}")
           PY
           REMOTE
