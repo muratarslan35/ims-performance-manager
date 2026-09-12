@@ -1,0 +1,64 @@
+name: Week32 Archive Layout Diagnostic
+
+on:
+  push:
+    paths:
+      - '.github/workflows/week32-archive-layout-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          chmod 600 ~/.ssh/ims_diag_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Inspect archived Week 32 workbook read only
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from app import create_app
+          from app.models import IMSUpload, IMSImportJob
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          app=create_app()
+          with app.app_context():
+              active=IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED,IMSImportJob.STATUS_PROCESSING))).count()
+              print(f'ACTIVE_IMS_JOBS|{active}')
+              u=(IMSUpload.query.filter_by(year=2026,month=8,week_number=32).order_by(IMSUpload.id.desc()).first())
+              if not u: raise SystemExit('WEEK32_UPLOAD_NOT_FOUND')
+              p=Path(IMSUploadLifecycleService._validate_archived_source(u.id))
+              print(f'UPLOAD|id={u.id}|status={u.status}|file={u.file_name}|archive={p}|size={p.stat().st_size}')
+              wb=load_workbook(p,read_only=True,data_only=True)
+              print('SHEETS|'+'|'.join(wb.sheetnames))
+              for ws in wb.worksheets:
+                  print(f'SHEET|{ws.title}|rows={ws.max_row}|cols={ws.max_column}')
+                  for r in range(1,min(ws.max_row,25)+1):
+                      vals=[]
+                      for c in range(1,min(ws.max_column,30)+1):
+                          v=ws.cell(r,c).value
+                          if v not in (None,''): vals.append(f'{c}:{str(v)[:80]}')
+                      if vals: print(f'ROW|{ws.title}|{r}|'+ ' || '.join(vals))
+              wb.close()
+          PY
+          REMOTE
