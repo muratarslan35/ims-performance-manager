@@ -74,12 +74,19 @@ PY
  exit 0
 fi
 
-# Normal weekly maintenance path. Week 32 recovery exits above and therefore
-# never creates another backup or runs expensive capacity work during recovery.
+# From this point onward the weekly work is read-only against the live IMS DB
+# (plus filesystem backup retention). Do not hold the global import lock while
+# integrity/capacity scans traverse a multi-GB SQLite file. This keeps uploads
+# responsive while preserving exclusivity for actual import/recovery writes.
+flock -u 9
+printf 'MAINTENANCE_IMPORT_LOCK_RELEASED|reason=read_only_weekly_checks\n' >> "$EVIDENCE_FILE"
+
 BACKUPS_BEFORE=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l | tr -d ' ')
 STORAGE_BEFORE=$(du -sb instance 2>/dev/null | awk '{print $1}')
 printf 'BACKUPS_BEFORE|%s\nSTORAGE_BEFORE|%s\n' "$BACKUPS_BEFORE" "${STORAGE_BEFORE:-0}" >> "$EVIDENCE_FILE"
-venv/bin/python database_capacity_audit.py --additional-uploads 49 --optimize >> "$EVIDENCE_FILE" 2>&1
+# Do not run PRAGMA optimize here: the capacity audit must remain read-only once
+# the import lock has been released.
+venv/bin/python database_capacity_audit.py --additional-uploads 49 >> "$EVIDENCE_FILE" 2>&1
 venv/bin/python cleanup_old_backups.py --keep-latest 1 >> "$EVIDENCE_FILE" 2>&1
 printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1\n' >> "$EVIDENCE_FILE"
 
@@ -90,9 +97,29 @@ try:
  c.execute('PRAGMA busy_timeout=30000')
  print('SQLITE_JOURNAL_MODE|%s' % c.execute('PRAGMA journal_mode').fetchone()[0])
  print('SQLITE_BUSY_TIMEOUT|%s' % c.execute('PRAGMA busy_timeout').fetchone()[0])
+finally: c.close()
+PY
+
+# The capacity audit above already performs a full integrity_check. A second
+# full-table quick_check is redundant and previously kept maintenance alive for
+# too long. Keep it best-effort and bounded so it can never delay an import.
+set +e
+timeout 60s venv/bin/python - <<'PY' >> "$EVIDENCE_FILE" 2>&1
+import sqlite3
+c=sqlite3.connect('instance/ipm.db',timeout=30)
+try:
+ c.execute('PRAGMA busy_timeout=30000')
  print('SQLITE_QUICK_CHECK|%s' % c.execute('PRAGMA quick_check(1)').fetchone()[0])
 finally: c.close()
 PY
+quick_rc=$?
+set -e
+if [ "$quick_rc" -eq 124 ]; then
+ printf 'SQLITE_QUICK_CHECK|TIMEOUT_NONBLOCKING|limit_seconds=60\n' >> "$EVIDENCE_FILE"
+elif [ "$quick_rc" -ne 0 ]; then
+ printf 'SQLITE_QUICK_CHECK|ERROR_NONBLOCKING|exit_code=%s\n' "$quick_rc" >> "$EVIDENCE_FILE"
+fi
+
 WEB_ACTIVE=$(sudo systemctl is-active ims-performance-manager.service)
 WORKER_ACTIVE=$(sudo systemctl is-active ims-import-worker.service)
 printf 'WEB_ACTIVE|%s\nWORKER_ACTIVE|%s\n' "$WEB_ACTIVE" "$WORKER_ACTIVE" >> "$EVIDENCE_FILE"
