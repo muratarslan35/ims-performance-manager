@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 aggregate ordering retry trigger: 2026-09-12d
+# Week 32 aggregate ordering retry trigger: 2026-09-12e
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
@@ -119,4 +119,66 @@ PY
   exit 0
 fi
 
-printf 'MAINTENANCE_SKIPPED|reason=no_week32_action\n' >> "$EVIDENCE_FILE"
+printf '%s\n' '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---' >> "$EVIDENCE_FILE"
+venv/bin/python database_capacity_audit.py \
+  --database instance/ipm.db \
+  --additional-uploads 49 \
+  --optimize >> "$EVIDENCE_FILE" 2>&1
+
+printf '%s\n' 'BACKUPS_BEFORE' >> "$EVIDENCE_FILE"
+find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'STORAGE_BEFORE' >> "$EVIDENCE_FILE"
+du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
+df -h / >> "$EVIDENCE_FILE"
+
+printf '%s\n' 'ROOT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+sudo du -x -B1 --max-depth=1 / 2>/dev/null | sort -nr | head -n 30 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'HOME_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+sudo du -x -B1 --max-depth=2 /home 2>/dev/null | sort -nr | head -n 60 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'PROJECT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
+du -x -B1 --max-depth=3 "$IMS_PATH" 2>/dev/null | sort -nr | head -n 120 >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'LARGE_FILES_OVER_100M_BYTES' >> "$EVIDENCE_FILE"
+sudo find / -xdev -type f -size +100M -printf '%s %p\n' 2>/dev/null | sort -nr | head -n 120 >> "$EVIDENCE_FILE" || true
+
+backup_count=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l)
+printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
+if [ "$backup_count" -gt 0 ]; then
+  venv/bin/python cleanup_old_backups.py \
+    --backup-dir instance/backups \
+    --keep-latest 1 \
+    --purge-unmanaged-db >> "$EVIDENCE_FILE" 2>&1
+else
+  printf 'MAINTENANCE_BACKUP_SET|status=none\n' >> "$EVIDENCE_FILE"
+fi
+
+printf '%s\n' 'KEPT_BACKUPS' >> "$EVIDENCE_FILE"
+find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
+printf '%s\n' 'STORAGE_AFTER' >> "$EVIDENCE_FILE"
+du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
+df -h / >> "$EVIDENCE_FILE"
+free -h >> "$EVIDENCE_FILE"
+
+venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
+from app import create_app
+from app.extensions import db
+app = create_app()
+with app.app_context():
+    connection = db.session.connection()
+    mode = str(connection.exec_driver_sql('PRAGMA journal_mode').scalar())
+    timeout = int(connection.exec_driver_sql('PRAGMA busy_timeout').scalar())
+    quick = str(connection.exec_driver_sql('PRAGMA quick_check(1)').scalar())
+    print('SQLITE_JOURNAL_MODE|' + mode)
+    print('SQLITE_BUSY_TIMEOUT|' + str(timeout))
+    print('SQLITE_QUICK_CHECK|' + quick)
+    assert mode.lower() == 'wal'
+    assert timeout == 30000
+    assert quick.lower() == 'ok'
+PY
+
+printf 'WEB_ACTIVE|%s\n' "$(sudo systemctl is-active ims-performance-manager.service)" >> "$EVIDENCE_FILE"
+printf 'WORKER_ACTIVE|%s\n' "$(sudo systemctl is-active ims-import-worker.service)" >> "$EVIDENCE_FILE"
+test "$(sudo systemctl is-active ims-performance-manager.service)" = "active"
+test "$(sudo systemctl is-active ims-import-worker.service)" = "active"
+curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
+printf 'HTTP_HEALTH|PASS\n' >> "$EVIDENCE_FILE"
+venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0 >> "$EVIDENCE_FILE" 2>&1
