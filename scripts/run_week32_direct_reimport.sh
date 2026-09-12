@@ -5,11 +5,12 @@ IMS_PATH=${1:-/home/ubuntu/ims_system}
 cd "$IMS_PATH"
 export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
 
-# Do not interrupt production maintenance. Wait for its lock, then run only the
-# normal IMS replacement import and the worker-owned snapshot publication path.
+# Do not interrupt production maintenance, but also do not let a stale/long
+# maintenance task hide an import problem for an hour. Five minutes is enough
+# for a normal critical section; after that fail fast so the blocker is visible.
 exec 9>instance/.production-maintenance.lock
-if ! flock -w 3600 9; then
-  echo 'WEEK32_DIRECT_REIMPORT_REFUSED|reason=maintenance_lock_timeout'
+if ! flock -w 300 9; then
+  echo 'WEEK32_DIRECT_REIMPORT_REFUSED|reason=maintenance_lock_timeout|wait_seconds=300'
   exit 1
 fi
 
