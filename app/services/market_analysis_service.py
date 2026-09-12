@@ -24,7 +24,7 @@ from typing import Dict, Iterable, Optional
 from sqlalchemy import case, desc, func
 
 from app.extensions import db
-from app.models import CompetitionData, IMSFact, IMSSummary, IMSUpload, Product
+from app.models import CompetitionData, IMSFact, IMSRawData, IMSSummary, IMSUpload, Product
 
 
 class MarketAnalysisService:
@@ -156,9 +156,6 @@ class MarketAnalysisService:
 
         result = []
         for group, values in buckets.items():
-            # Product KPI sheets contain an explicit PAZAR subtotal column. It is
-            # the market authority. Older unit-only sheets without that subtotal
-            # retain the deterministic detail-sum fallback.
             market_value = values["subtotal"] if values["subtotal"] > 0 else values["detail"]
             if market_value <= 0:
                 continue
@@ -179,9 +176,32 @@ class MarketAnalysisService:
         return self._competition_groups_tl(int(upload_id))
 
     def _company_metric_by_product(self, upload_id: Optional[int], metric_mode: str) -> Dict[int, float]:
-        """Read company TL or KUTU from the exact IMS upload used by the market view."""
+        """Read the exact upload's official NATIONAL company metric when available."""
         if not upload_id:
             return {}
+
+        official_column = IMSRawData.unit if metric_mode == self.METRIC_UNIT else IMSRawData.tl
+        official_rows = (
+            self.session.query(
+                IMSRawData.product_id,
+                func.coalesce(func.sum(official_column), 0.0),
+            )
+            .filter(
+                IMSRawData.upload_id == int(upload_id),
+                IMSRawData.sheet_type == "official_actual_aggregate",
+                IMSRawData.territory == "NATIONAL",
+                IMSRawData.product_id.isnot(None),
+            )
+            .group_by(IMSRawData.product_id)
+            .all()
+        )
+        if official_rows:
+            return {
+                int(product_id): float(value or 0.0)
+                for product_id, value in official_rows
+                if product_id is not None
+            }
+
         metric_column = IMSFact.unit if metric_mode == self.METRIC_UNIT else IMSFact.tl
         fact_rows = (
             self.session.query(
