@@ -78,5 +78,6 @@ jobs:
           else
             echo 'PROGRESS|MISSING'
           fi
+          venv/bin/python verify_live_ims_gate.py
           REMOTE
-# probe refresh with snapshot progress 2026-09-12
+# probe refresh with live gate 2026-09-12
