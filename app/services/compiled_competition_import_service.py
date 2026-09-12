@@ -296,7 +296,11 @@ class CompiledCompetitionImportService(CompetitionImportService):
                     f"numeric={self.parse_statistics['numeric_cells']}, inserted={total_inserted}, "
                     f"duplicates={total_duplicates}, invalid={total_invalid}"
                 )
-            if total_inserted == 0:
+            # Duplicate observations are valid transferred records when an
+            # earlier semantic adapter in the same upload already persisted the
+            # exact business keys. Only fail when the workbook yielded no
+            # numeric competition observations at all.
+            if total_inserted + total_duplicates == 0:
                 raise ValueError("Rekabet sayfalarında aktarılabilir sayısal kayıt bulunamadı.")
 
             return {
