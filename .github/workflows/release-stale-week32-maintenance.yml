@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   publish:
-    name: Finalize completed Week 32 read models
+    name: Finish Week 32 durable snapshots
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Publish and verify completed Week 32 import
+      - name: Finish snapshots and verify live Week 32
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -51,9 +51,9 @@ jobs:
           export PYTHONUNBUFFERED=1
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
 
-          # The import itself already completes in about six minutes. Do not requeue
-          # it again just because the old publication_ready flag was never raised.
-          # Wait only for an already-running import to finish, then publish read models.
+          # The business import has already completed. Never re-import just because
+          # the asynchronous representative snapshot generation did not raise the
+          # publication flag. Wait briefly if an import is still finishing.
           for poll in $(seq 1 60); do
             state=$(venv/bin/python - <<'PY'
           from app import create_app
@@ -61,79 +61,95 @@ jobs:
           from config import Config
           app=create_app(Config)
           with app.app_context():
-              upload=(IMSUpload.query.filter_by(year=2026, month=8, week_number=32)
+              upload=(IMSUpload.query.filter_by(year=2026,month=8,week_number=32)
                       .order_by(IMSUpload.id.desc()).first())
               job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id)
                    .order_by(IMSImportJob.id.desc()).first()) if upload else None
-              if not upload or not job:
-                  print('MISSING')
-              else:
-                  print(job.status)
+              print(job.status if job else 'MISSING')
           PY
           )
-            echo "WEEK32_FINALIZE_WAIT|poll=$poll|state=$state"
+            echo "WEEK32_IMPORT_STATE|poll=$poll|state=$state"
             if [ "$state" = COMPLETED ]; then break; fi
-            if [ "$state" = FAILED ] || [ "$state" = MISSING ]; then
-              echo "WEEK32_FINALIZE_REFUSED|state=$state"
-              exit 1
-            fi
-            if [ "$poll" = 60 ]; then
-              echo 'WEEK32_FINALIZE_TIMEOUT|reason=import_not_completed'
-              exit 1
-            fi
+            if [ "$state" = FAILED ] || [ "$state" = MISSING ]; then exit 1; fi
+            if [ "$poll" = 60 ]; then exit 1; fi
             sleep 10
           done
 
-          venv/bin/python -m py_compile scripts/refresh_live_read_models.py app/services/kpi_market_single_source.py
-          venv/bin/python -u -m scripts.refresh_live_read_models --year 2026 --month 8 --week 32
+          # No active business import may be interrupted. Once it is zero, stop the
+          # old snapshot continuation and rebuild only the durable rep read model.
+          active=$(venv/bin/python - <<'PY'
+          from app import create_app
+          from app.models import IMSImportJob
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              print(IMSImportJob.query.filter(
+                  IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
+              ).count())
+          PY
+          )
+          echo "ACTIVE_IMPORTS|$active"
+          test "$active" = 0
+          sudo systemctl restart ims-import-worker.service
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
 
-          # Mark publication ready only after every durable read model above passed.
+          venv/bin/python -u - <<'PY'
+          import sqlalchemy as sa
+          from datetime import datetime
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSUpload, Representative
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshot_sets,
+          )
+          from config import Config
+
+          app=create_app(Config)
+          with app.app_context():
+              upload=(IMSUpload.query.filter_by(year=2026,month=8,week_number=32,status='COMPLETED')
+                      .order_by(IMSUpload.id.desc()).first())
+              assert upload
+              ims_id, production_id = PersistentRepresentativeSnapshotService.source_identity(2026,8)
+              assert ims_id == upload.id
+              ids=PersistentRepresentativeSnapshotService.representative_ids(2026,8,ims_id)
+              assert len(ids) == 113, len(ids)
+
+              # Any BUILDING generation at this point belonged to the stopped
+              # continuation above. Mark only that exact current-source generation
+              # failed, then build one clean atomic ACTIVE generation.
+              db.session.execute(
+                  representative_snapshot_sets.update().where(
+                      representative_snapshot_sets.c.year == 2026,
+                      representative_snapshot_sets.c.month == 8,
+                      representative_snapshot_sets.c.source_upload_id == ims_id,
+                      representative_snapshot_sets.c.production_upload_id == production_id,
+                      representative_snapshot_sets.c.status == PersistentRepresentativeSnapshotService.STATUS_BUILDING,
+                  ).values(status=PersistentRepresentativeSnapshotService.STATUS_FAILED)
+              )
+              db.session.commit()
+
+              result=PersistentRepresentativeSnapshotService.build_for_period(2026,8,force=True)
+              assert result.get('status') == 'ACTIVE', result
+              assert int(result.get('representatives') or 0) == 113, result
+
+              murat=Representative.query.filter(db.func.upper(Representative.rep_name)=='MURAT ARSLAN').first()
+              assert murat is not None
+              snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
+              assert isinstance(snap,dict) and snap
+              print(f"REPRESENTATIVE_READ_MODEL|PASS|set={result.get('set_id')}|representatives=113|murat_snapshot=1")
+          PY
+
+          # Verify the dashboard/region read models already published by the prior
+          # finalizer, and the exact single-source market controls, before exposing.
           venv/bin/python - <<'PY'
           import json
           from app import create_app
           from app.extensions import db
-          from app.models import IMSImportJob, IMSUpload
-          from config import Config
-          app=create_app(Config)
-          with app.app_context():
-              upload=(IMSUpload.query.filter_by(year=2026, month=8, week_number=32, status='COMPLETED')
-                      .order_by(IMSUpload.id.desc()).first())
-              assert upload
-              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id)
-                   .order_by(IMSImportJob.id.desc()).first())
-              assert job and job.status == IMSImportJob.STATUS_COMPLETED
-              try:
-                  summary=json.loads(job.result_summary or '{}')
-              except Exception:
-                  summary={}
-              summary['publication_ready']=True
-              summary['publication_ready_source']='verified_read_model_refresh'
-              job.result_summary=json.dumps(summary, ensure_ascii=False)
-              db.session.commit()
-              print(f'PUBLICATION_READY|PASS|upload={upload.id}|job={job.id}')
-          PY
-
-          sudo systemctl restart ims-performance-manager.service
-          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
-          health=0
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then
-              health=1
-              break
-            fi
-            sleep 2
-          done
-          test "$health" = 1
-          echo 'HTTP_HEALTH|PASS'
-
-          venv/bin/python verify_live_ims_gate.py
-
-          venv/bin/python - <<'PY'
-          from app import create_app
-          from app.extensions import db
-          from app.models import CompetitionData, IMSUpload, Representative
+          from app.models import CompetitionData, IMSImportJob, IMSUpload, Representative
           from app.services.kpi_market_single_source import AUTHORITY_PREFIX
           from app.services.market_analysis_service import MarketAnalysisService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
           from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
           from app.services.representative_market_service import RepresentativeMarketService
@@ -146,6 +162,15 @@ jobs:
           with app.app_context():
               upload=IMSUpload.query.filter_by(year=2026,month=8,week_number=32,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
               assert upload
+
+              dashboard=PersistentDashboardSnapshotService.get_active(2026,8) or {}
+              executive=dashboard.get('executive_metrics') or {}
+              assert float(executive.get('target_tl') or 0) > 0
+              assert float(executive.get('actual_tl') or 0) > 0
+              assert float(executive.get('unit_target') or 0) > 0
+              assert float(executive.get('unit_actual') or 0) > 0
+              assert len(executive.get('products') or []) == 7
+
               authority_count=CompetitionData.query.filter(
                   CompetitionData.upload_id==upload.id,
                   CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%'),
@@ -182,14 +207,24 @@ jobs:
 
               murat=Representative.query.filter(db.func.upper(Representative.rep_name)=='MURAT ARSLAN').first()
               assert murat is not None
-              snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
-              assert isinstance(snap,dict) and snap
               rep=RepresentativeMarketService(murat,2026,8).build()
               assert len(rep.get('rows') or [])==7
               for row in rep['rows']:
                   assert close(row['actual_unit']+row['competitor_unit'],row['market_unit']), row
               totals=rep.get('totals') or {}
               assert close(totals.get('actual_unit')+totals.get('competitor_unit'),totals.get('market_unit')), totals
+
+              job=(IMSImportJob.query.filter_by(ims_upload_id=upload.id)
+                   .order_by(IMSImportJob.id.desc()).first())
+              assert job and job.status == IMSImportJob.STATUS_COMPLETED
+              try:
+                  summary=json.loads(job.result_summary or '{}')
+              except Exception:
+                  summary={}
+              summary['publication_ready']=True
+              summary['publication_ready_source']='verified_single_source_snapshots'
+              job.result_summary=json.dumps(summary,ensure_ascii=False)
+              db.session.commit()
 
               print('KPI_SINGLE_SOURCE_ACCEPTANCE|PASS'
                     f"|authority_rows={authority_count}"
@@ -198,7 +233,21 @@ jobs:
                     f"|national_competitor={national['competitor_total_unit']:.2f}"
                     f"|istanbul_company={float(istanbul['company_unit']):.2f}"
                     f"|istanbul_market={float(istanbul['market_unit']):.2f}"
-                    f"|regions={len(regions)}|murat_rows={len(rep['rows'])}")
+                    f"|regions={len(regions)}|murat_rows={len(rep['rows'])}"
+                    '|publication_ready=1')
           PY
-          echo 'WEEK32_FAST_FINALIZE|PASS'
+
+          sudo systemctl restart ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then
+              echo 'HTTP_HEALTH|PASS'
+              break
+            fi
+            if [ "$attempt" = 20 ]; then exit 1; fi
+            sleep 2
+          done
+
+          venv/bin/python verify_live_ims_gate.py
+          echo 'WEEK32_FINAL_PUBLICATION|PASS'
           REMOTE
