@@ -33,6 +33,10 @@ from app.services.workbook_preflight import install_workbook_preflight
 from app.services.official_brick_spread_atomic import install_official_brick_spread_atomic
 from app.services.kpi_workbook_compat import install_kpi_workbook_compat
 from app.services.adaptive_kpi_target_authority import install_adaptive_kpi_target_authority
+from app.services.kpi_market_single_source import (
+    install_kpi_market_import_authority,
+    install_kpi_market_read_authority,
+)
 from app.services.derived_master_verification import install_derived_verification_gate
 from app.services.ims_delta_audit import install_previous_ims_delta_audit
 from app.services.compact_brick_sales_metric_authority import install_compact_brick_sales_metric_authority
@@ -199,6 +203,9 @@ def create_app(config_object=Config):
     install_official_brick_spread_atomic()
     install_kpi_workbook_compat()
     install_adaptive_kpi_target_authority()
+    # Persist KPI NATIONAL/region PAZAR controls during the normal import so
+    # manager audit counts and the live gate see the same immutable source rows.
+    install_kpi_market_import_authority()
     install_derived_verification_gate()
     install_previous_ims_delta_audit()
     install_compact_brick_sales_metric_authority()
@@ -209,6 +216,9 @@ def create_app(config_object=Config):
     install_manager_import_report_alignment()
     install_sqlite_import_maintenance()
     install_dashboard_runtime_optimizer()
+    # Install after the historical/runtime market adapters so the final screen
+    # contract cannot mix production company boxes with an IMS market denominator.
+    install_kpi_market_read_authority()
     install_region_performance_bulk_optimizer()
     install_period_result_sum_guard()
     install_realization_rounding_guard()
