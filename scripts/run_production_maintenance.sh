@@ -31,6 +31,7 @@ if ! flock -n 9; then
 fi
 
 cd "$IMS_PATH"
+export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
 printf 'LIVE_COMMIT|%s\n' "$(git rev-parse HEAD)" >> "$EVIDENCE_FILE"
 test "$(git branch --show-current)" = "main"
 test -z "$(git status --porcelain)"
@@ -63,10 +64,6 @@ if [ "$processing" != "0" ]; then
   exit 0
 fi
 
-# One-time, idempotent Week 32 repair.  This rides the long-established
-# production-maintenance workflow because that workflow already has the
-# production environment, SSH credentials, detached execution and polling.
-# Once 2026/08 targets exist this block is a permanent no-op.
 week32_recovery=$(venv/bin/python - <<'PY'
 from app import create_app
 from app.models import IMSUpload, Target
@@ -87,7 +84,7 @@ if [ "$week32_recovery" = "YES" ]; then
   mkdir -p instance/backups
   stamp=$(date +%Y%m%d-%H%M%S)
   venv/bin/python sqlite_online_backup.py instance/ipm.db "instance/backups/ipm-week32-recovery-${stamp}.db" >> "$EVIDENCE_FILE" 2>&1
-  venv/bin/python scripts/requeue_latest_empty_ims.py --year 2026 --month 8 --week 32 >> "$EVIDENCE_FILE" 2>&1
+  venv/bin/python -m scripts.requeue_latest_empty_ims --year 2026 --month 8 --week 32 >> "$EVIDENCE_FILE" 2>&1
   for poll in $(seq 1 180); do
     state=$(venv/bin/python - <<'PY'
 from app import create_app
@@ -115,10 +112,7 @@ PY
 fi
 
 printf '%s\n' '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---' >> "$EVIDENCE_FILE"
-venv/bin/python database_capacity_audit.py \
-  --database instance/ipm.db \
-  --additional-uploads 49 \
-  --optimize >> "$EVIDENCE_FILE" 2>&1
+venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize >> "$EVIDENCE_FILE" 2>&1
 
 printf '%s\n' 'BACKUPS_BEFORE' >> "$EVIDENCE_FILE"
 find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
@@ -126,29 +120,11 @@ printf '%s\n' 'STORAGE_BEFORE' >> "$EVIDENCE_FILE"
 du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
 df -h / >> "$EVIDENCE_FILE"
 
-printf '%s\n' 'ROOT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
-sudo du -x -B1 --max-depth=1 / 2>/dev/null | sort -nr | head -n 30 >> "$EVIDENCE_FILE" || true
-printf '%s\n' 'HOME_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
-sudo du -x -B1 --max-depth=2 /home 2>/dev/null | sort -nr | head -n 60 >> "$EVIDENCE_FILE" || true
-printf '%s\n' 'PROJECT_STORAGE_BREAKDOWN_BYTES' >> "$EVIDENCE_FILE"
-du -x -B1 --max-depth=3 "$IMS_PATH" 2>/dev/null | sort -nr | head -n 120 >> "$EVIDENCE_FILE" || true
-printf '%s\n' 'LARGE_FILES_OVER_100M_BYTES' >> "$EVIDENCE_FILE"
-sudo find / -xdev -type f -size +100M -printf '%s %p\n' 2>/dev/null | sort -nr | head -n 120 >> "$EVIDENCE_FILE" || true
-
 backup_count=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l)
 printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
 if [ "$backup_count" -gt 0 ]; then
   venv/bin/python cleanup_old_backups.py --backup-dir instance/backups --keep-latest 1 --purge-unmanaged-db >> "$EVIDENCE_FILE" 2>&1
-else
-  printf 'MAINTENANCE_BACKUP_SET|status=none\n' >> "$EVIDENCE_FILE"
 fi
-
-printf '%s\n' 'KEPT_BACKUPS' >> "$EVIDENCE_FILE"
-find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
-printf '%s\n' 'STORAGE_AFTER' >> "$EVIDENCE_FILE"
-du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
-df -h / >> "$EVIDENCE_FILE"
-free -h >> "$EVIDENCE_FILE"
 
 venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
 from app import create_app
