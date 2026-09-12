@@ -53,7 +53,7 @@ jobs:
           exec 9>instance/.production-maintenance.lock
           flock -w 300 9
 
-          venv/bin/python -m py_compile app/services/kpi_region_authority_resolver.py app/services/dashboard_runtime_optimizer.py
+          venv/bin/python -m py_compile app/services/kpi_region_authority_resolver.py app/services/dashboard_runtime_optimizer.py scripts/refresh_live_read_models.py
           venv/bin/python -m pytest -q tests/test_kpi_market_single_source.py tests/test_market_analysis_week_fallback.py
 
           active=$(venv/bin/python - <<'PY'
@@ -68,11 +68,11 @@ jobs:
           echo "ACTIVE_IMPORTS|$active"
           test "$active" = 0
 
-          # This publication mutates only durable read-model tables.  The prior
-          # failures were SQLite writer contention, not importer failures.  With
-          # the Week 32 import already COMPLETED and no queued/processing import,
-          # quiesce both production writers for this bounded transaction instead
-          # of re-importing or touching Week 31/older business facts.
+          # The normal Week 32 import is already COMPLETED.  The remaining lock
+          # has been traced to durable-snapshot writers, including the detached
+          # representative warmup started by backend deploys.  Stop only those
+          # exact production snapshot writers before the bounded region publish;
+          # do not re-import, back up, or touch Week 31/older business facts.
           sudo systemctl stop ims-performance-manager.service
           sudo systemctl stop ims-import-worker.service
           cleanup_services() {
@@ -80,7 +80,51 @@ jobs:
             sudo systemctl restart ims-performance-manager.service || true
           }
           trap cleanup_services EXIT
+
+          stop_exact_snapshot_writer() {
+            pattern="$1"
+            label="$2"
+            pids=$(pgrep -f "$pattern" || true)
+            if [ -z "$pids" ]; then
+              echo "SNAPSHOT_WRITER|$label|none"
+              return 0
+            fi
+            for pid in $pids; do
+              cmd=$(ps -p "$pid" -o args= || true)
+              cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)
+              case "$cmd" in
+                *"$IMS_PATH"*"$pattern"*) ;;
+                *) echo "SNAPSHOT_WRITER_REFUSED|pid=$pid|label=$label|cmd=$cmd"; exit 1 ;;
+              esac
+              if [ "$cwd" != "$IMS_PATH" ]; then
+                echo "SNAPSHOT_WRITER_REFUSED|pid=$pid|label=$label|cwd=$cwd"; exit 1
+              fi
+              echo "SNAPSHOT_WRITER_STOP|pid=$pid|label=$label|cmd=$cmd"
+              kill -TERM "$pid"
+            done
+            for wait_round in $(seq 1 20); do
+              remaining=0
+              for pid in $pids; do
+                if kill -0 "$pid" 2>/dev/null; then remaining=1; fi
+              done
+              [ "$remaining" = 0 ] && break
+              sleep 1
+            done
+            for pid in $pids; do
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "SNAPSHOT_WRITER_KILL|pid=$pid|label=$label"
+                kill -KILL "$pid"
+              fi
+            done
+          }
+
+          stop_exact_snapshot_writer "scripts/backfill_active_representative_snapshots.py --force" "representative_force_warmup"
+          stop_exact_snapshot_writer "scripts/backfill_active_region_snapshots.py" "region_backfill"
           sleep 2
+          echo 'DB_HOLDERS_AFTER_QUIESCE'
+          if command -v fuser >/dev/null 2>&1; then
+            sudo fuser -v instance/ipm.db instance/ipm.db-wal instance/ipm.db-shm || true
+          fi
 
           venv/bin/python -u - <<'PY'
           from app import create_app
@@ -196,7 +240,6 @@ jobs:
                     '|regions=11|representatives=113|murat_rows=7|publication_ready=1')
           PY
 
-          # Bring writers back only after all snapshot/read-model assertions pass.
           trap - EXIT
           sudo systemctl start ims-import-worker.service
           sudo systemctl restart ims-performance-manager.service
