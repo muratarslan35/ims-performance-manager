@@ -38,7 +38,7 @@ def main() -> int:
 
         upload = (
             IMSUpload.query.filter_by(year=args.year, month=args.month, week_number=args.week)
-            .filter(IMSUpload.status.in_((IMSUpload.STATUS_COMPLETED, IMSUpload.STATUS_FAILED)))
+            .filter(IMSUpload.status.in_((IMSUpload.STATUS_COMPLETED, "FAILED")))
             .order_by(IMSUpload.id.desc())
             .first()
         )
