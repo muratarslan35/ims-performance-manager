@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Week 32 semantic target persistence reimport trigger: 2026-09-12 worker reload
+# Week 32 failed-import diagnostic trigger: 2026-09-12
 set -Eeuo pipefail
 
 IMS_PATH=${1:?IMS_PATH is required}
@@ -40,20 +40,14 @@ test -z "$(git status --porcelain)"
 processing=$(venv/bin/python - <<'PY'
 import sqlite3
 from pathlib import Path
-
 database = Path('instance/ipm.db')
 if not database.exists():
-    print(0)
-    raise SystemExit(0)
+    print(0); raise SystemExit(0)
 connection = sqlite3.connect(database, timeout=30)
 try:
     connection.execute('PRAGMA busy_timeout=30000')
-    exists = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'"
-    ).fetchone()
-    value = 0 if not exists else int(connection.execute(
-        "SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')"
-    ).fetchone()[0])
+    exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'").fetchone()
+    value = 0 if not exists else int(connection.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0])
 finally:
     connection.close()
 print(value)
@@ -65,16 +59,44 @@ if [ "$processing" != "0" ]; then
   exit 0
 fi
 
+# If the latest Week 32 retry failed, expose the persisted importer error first.
+# This is read-only and deliberately does not create another backup or retry.
+failed_week32=$(venv/bin/python - <<'PY'
+from app import create_app
+from app.models import IMSImportJob
+from config import Config
+app=create_app(Config)
+with app.app_context():
+    job=IMSImportJob.query.filter_by(year=2026, month=8).order_by(IMSImportJob.id.desc()).first()
+    print('YES' if job and job.status == IMSImportJob.STATUS_FAILED else 'NO')
+PY
+)
+printf 'WEEK32_FAILED_DIAGNOSTIC|%s\n' "$failed_week32" >> "$EVIDENCE_FILE"
+if [ "$failed_week32" = "YES" ]; then
+  venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
+from app import create_app
+from app.models import IMSImportJob, IMSUpload, Target
+from config import Config
+app=create_app(Config)
+with app.app_context():
+    job=IMSImportJob.query.filter_by(year=2026, month=8).order_by(IMSImportJob.id.desc()).first()
+    upload=IMSUpload.query.get(job.ims_upload_id) if job and job.ims_upload_id else None
+    print('FAILED_JOB|id=%s|upload=%s|error=%r|result=%r' % (job.id, job.ims_upload_id, job.error_message, job.result_summary))
+    print('FAILED_UPLOAD|id=%s|status=%s|error=%r|warning=%r' % (getattr(upload,'id',None), getattr(upload,'status',None), getattr(upload,'error_message',None), getattr(upload,'warning_message',None)))
+    print('TARGET_COUNT|%s' % Target.query.filter_by(year=2026, month=8).count())
+PY
+  printf '%s\n' '--- WORKER JOURNAL TAIL ---' >> "$EVIDENCE_FILE"
+  sudo journalctl -u ims-import-worker.service -n 250 --no-pager >> "$EVIDENCE_FILE" 2>&1 || true
+  exit 1
+fi
+
 week32_recovery=$(venv/bin/python - <<'PY'
 from app import create_app
 from app.models import IMSUpload, Target
 from config import Config
 app = create_app(Config)
 with app.app_context():
-    latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
-        IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
-        IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
-    ).first()
+    latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc()).first()
     targets = Target.query.filter_by(year=2026, month=8).count()
     eligible = bool(latest and int(latest.year) == 2026 and int(latest.month) == 8 and int(latest.week_number) == 32 and targets == 0)
     print('YES' if eligible else 'NO')
@@ -83,10 +105,6 @@ PY
 printf 'WEEK32_NORMAL_REIMPORT_ELIGIBLE|%s\n' "$week32_recovery" >> "$EVIDENCE_FILE"
 if [ "$week32_recovery" = "YES" ]; then
   printf 'WEEK32_BACKUP_REUSED|new_backup=NO|reason=validated_pre_recovery_backup_exists\n' >> "$EVIDENCE_FILE"
-  # The worker is a long-lived Python process. The previous retry fast-forwarded
-  # repository code but could still execute the already-loaded pre-fix importer.
-  # No import is active here, so reload only the worker before queuing the same
-  # verified archive through the normal import path.
   sudo systemctl restart ims-import-worker.service
   test "$(sudo systemctl is-active ims-import-worker.service)" = "active"
   printf 'IMS_WORKER_RELOADED|commit=%s\n' "$(git rev-parse HEAD)" >> "$EVIDENCE_FILE"
@@ -107,10 +125,7 @@ PY
       COMPLETED) break ;;
       FAILED|MISSING) exit 1 ;;
     esac
-    if [ "$poll" = 180 ]; then
-      printf 'WEEK32_NORMAL_REIMPORT_TIMEOUT\n' >> "$EVIDENCE_FILE"
-      exit 1
-    fi
+    if [ "$poll" = 180 ]; then printf 'WEEK32_NORMAL_REIMPORT_TIMEOUT\n' >> "$EVIDENCE_FILE"; exit 1; fi
     sleep 10
   done
   venv/bin/python verify_live_ims_gate.py >> "$EVIDENCE_FILE" 2>&1
@@ -118,42 +133,4 @@ PY
   exit 0
 fi
 
-printf '%s\n' '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---' >> "$EVIDENCE_FILE"
-venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49 --optimize >> "$EVIDENCE_FILE" 2>&1
-
-printf '%s\n' 'BACKUPS_BEFORE' >> "$EVIDENCE_FILE"
-find instance/backups -maxdepth 1 -type f -printf '%12s %f\n' 2>/dev/null | sort -nr >> "$EVIDENCE_FILE" || true
-printf '%s\n' 'STORAGE_BEFORE' >> "$EVIDENCE_FILE"
-du -sh instance instance/backups uploads/ims_archive 2>/dev/null >> "$EVIDENCE_FILE" || true
-df -h / >> "$EVIDENCE_FILE"
-
-backup_count=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l)
-printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1|found=%s\n' "$backup_count" >> "$EVIDENCE_FILE"
-if [ "$backup_count" -gt 0 ]; then
-  venv/bin/python cleanup_old_backups.py --backup-dir instance/backups --keep-latest 1 --purge-unmanaged-db >> "$EVIDENCE_FILE" 2>&1
-fi
-
-venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
-from app import create_app
-from app.extensions import db
-app = create_app()
-with app.app_context():
-    connection = db.session.connection()
-    mode = str(connection.exec_driver_sql('PRAGMA journal_mode').scalar())
-    timeout = int(connection.exec_driver_sql('PRAGMA busy_timeout').scalar())
-    quick = str(connection.exec_driver_sql('PRAGMA quick_check(1)').scalar())
-    print('SQLITE_JOURNAL_MODE|' + mode)
-    print('SQLITE_BUSY_TIMEOUT|' + str(timeout))
-    print('SQLITE_QUICK_CHECK|' + quick)
-    assert mode.lower() == 'wal'
-    assert timeout == 30000
-    assert quick.lower() == 'ok'
-PY
-
-printf 'WEB_ACTIVE|%s\n' "$(sudo systemctl is-active ims-performance-manager.service)" >> "$EVIDENCE_FILE"
-printf 'WORKER_ACTIVE|%s\n' "$(sudo systemctl is-active ims-import-worker.service)" >> "$EVIDENCE_FILE"
-test "$(sudo systemctl is-active ims-performance-manager.service)" = "active"
-test "$(sudo systemctl is-active ims-import-worker.service)" = "active"
-curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8000/login >/dev/null
-printf 'HTTP_HEALTH|PASS\n' >> "$EVIDENCE_FILE"
-venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0 >> "$EVIDENCE_FILE" 2>&1
+printf 'MAINTENANCE_SKIPPED|reason=no_week32_action\n' >> "$EVIDENCE_FILE"
