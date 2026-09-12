@@ -162,7 +162,8 @@ def test_missing_current_competition_falls_back_to_previous_week_as_one_snapshot
             assert result["source_week"] == 16
             assert row["company_sales_tl"] == 20_000_000
             assert row["market_sales_tl"] == 100_000_000
-            assert "17. hafta IMS verisinde rakip analizi mevcut değil" in result["source_message"]
+            assert "17. hafta IMS verisinde" in result["source_message"]
+            assert "rekabet analizi mevcut değil" in result["source_message"]
             assert "16. hafta IMS dosyasına aittir" in result["source_message"]
     finally:
         temp.cleanup()
