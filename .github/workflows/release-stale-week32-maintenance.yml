@@ -14,7 +14,7 @@ jobs:
   publish:
     name: Finalize Week 32 single-source publication
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -68,6 +68,20 @@ jobs:
           echo "ACTIVE_IMPORTS|$active"
           test "$active" = 0
 
+          # This publication mutates only durable read-model tables.  The prior
+          # failures were SQLite writer contention, not importer failures.  With
+          # the Week 32 import already COMPLETED and no queued/processing import,
+          # quiesce both production writers for this bounded transaction instead
+          # of re-importing or touching Week 31/older business facts.
+          sudo systemctl stop ims-performance-manager.service
+          sudo systemctl stop ims-import-worker.service
+          cleanup_services() {
+            sudo systemctl start ims-import-worker.service || true
+            sudo systemctl restart ims-performance-manager.service || true
+          }
+          trap cleanup_services EXIT
+          sleep 2
+
           venv/bin/python -u - <<'PY'
           from app import create_app
           from scripts.refresh_live_read_models import _refresh_regions
@@ -87,7 +101,7 @@ jobs:
           from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshot_sets, representative_snapshots
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshots
           from config import Config
 
           def close(a,b,tol=0.01):
@@ -182,7 +196,11 @@ jobs:
                     '|regions=11|representatives=113|murat_rows=7|publication_ready=1')
           PY
 
+          # Bring writers back only after all snapshot/read-model assertions pass.
+          trap - EXIT
+          sudo systemctl start ims-import-worker.service
           sudo systemctl restart ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
           test "$(sudo systemctl is-active ims-performance-manager.service)" = active
           health=0
           for attempt in $(seq 1 30); do
