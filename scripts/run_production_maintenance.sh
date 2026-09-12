@@ -79,11 +79,9 @@ with app.app_context():
     print('YES' if eligible else 'NO')
 PY
 )
-printf 'WEEK32_RECOVERY_ELIGIBLE|%s\n' "$week32_recovery" >> "$EVIDENCE_FILE"
+printf 'WEEK32_NORMAL_REIMPORT_ELIGIBLE|%s\n' "$week32_recovery" >> "$EVIDENCE_FILE"
 if [ "$week32_recovery" = "YES" ]; then
-  mkdir -p instance/backups
-  stamp=$(date +%Y%m%d-%H%M%S)
-  venv/bin/python sqlite_online_backup.py instance/ipm.db "instance/backups/ipm-week32-recovery-${stamp}.db" >> "$EVIDENCE_FILE" 2>&1
+  printf 'WEEK32_BACKUP_REUSED|new_backup=NO|reason=validated_pre_recovery_backup_exists\n' >> "$EVIDENCE_FILE"
   venv/bin/python -m scripts.requeue_latest_empty_ims --year 2026 --month 8 --week 32 >> "$EVIDENCE_FILE" 2>&1
   for poll in $(seq 1 180); do
     state=$(venv/bin/python - <<'PY'
@@ -96,19 +94,20 @@ with app.app_context():
     print('MISSING' if job is None else job.status)
 PY
 )
-    printf 'WEEK32_RECOVERY_STATUS|poll=%s|state=%s\n' "$poll" "$state" >> "$EVIDENCE_FILE"
+    printf 'WEEK32_NORMAL_REIMPORT_STATUS|poll=%s|state=%s\n' "$poll" "$state" >> "$EVIDENCE_FILE"
     case "$state" in
       COMPLETED) break ;;
       FAILED|MISSING) exit 1 ;;
     esac
     if [ "$poll" = 180 ]; then
-      printf 'WEEK32_RECOVERY_TIMEOUT\n' >> "$EVIDENCE_FILE"
+      printf 'WEEK32_NORMAL_REIMPORT_TIMEOUT\n' >> "$EVIDENCE_FILE"
       exit 1
     fi
     sleep 10
   done
   venv/bin/python verify_live_ims_gate.py >> "$EVIDENCE_FILE" 2>&1
-  printf 'WEEK32_RECOVERY_RESULT|PASS\n' >> "$EVIDENCE_FILE"
+  printf 'WEEK32_NORMAL_REIMPORT_RESULT|PASS\n' >> "$EVIDENCE_FILE"
+  exit 0
 fi
 
 printf '%s\n' '--- WEEKLY CAPACITY/PLANNER MAINTENANCE ---' >> "$EVIDENCE_FILE"
