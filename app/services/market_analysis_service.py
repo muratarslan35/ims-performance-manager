@@ -2,20 +2,23 @@
 
 The dashboard itself should stay compact. This service owns only the dedicated
 Türkiye Pazar Analizi read model. It resolves the newest completed IMS upload for
-the selected month, uses its competition rows when present, otherwise falls back
-to the newest earlier week in the same month that contains real competition TL
-rows. If the month has no competition rows at all, company IMS values from the
-latest completed upload are still returned so the screen never becomes a blank
-or misleading zero-market table.
+the selected month and uses the newest real competition source from that month.
+
+Legacy workbooks can provide TL competition directly. New KPI-style workbooks
+provide authoritative product/competitor KUTU observations instead. The read
+model must never call those rows "missing" merely because TL competition is not
+present. TL is preferred when available; otherwise the screen switches openly to
+KUTU mode. No synthetic TL market value is fabricated from box counts.
 
 Every company product is emitted at most once. Duplicate/legacy competition group
 labels are collapsed onto the canonical Product row and the strongest real market
-row (largest positive TL market) is selected; rows are never summed across two
-aliases of the same company product.
+row is selected; rows are never summed across two aliases of the same company
+product.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Dict, Iterable, Optional
 
 from sqlalchemy import case, desc, func
@@ -30,6 +33,9 @@ class MarketAnalysisService:
     SOURCE_CURRENT = "CURRENT"
     SOURCE_FALLBACK = "FALLBACK"
     SOURCE_IMS_ONLY = "IMS_ONLY"
+
+    METRIC_TL = "TL"
+    METRIC_UNIT = "UNIT"
 
     def __init__(self, year: int, month: int, session=None):
         self.year = int(year)
@@ -56,19 +62,26 @@ class MarketAnalysisService:
             .all()
         )
 
-    def _has_real_competition(self, upload_id: int) -> bool:
-        return bool(
-            self.session.query(CompetitionData.id)
-            .filter(
-                CompetitionData.upload_id == int(upload_id),
-                CompetitionData.metric_type == "TL",
-                CompetitionData.metric_value != 0,
-                CompetitionData.is_subtotal.is_(False),
-                CompetitionData.is_grand_total.is_(False),
+    def _competition_metric(self, upload_id: int) -> Optional[str]:
+        """Prefer real TL competition; fall back to authoritative KUTU rows."""
+        for metric in (self.METRIC_TL, self.METRIC_UNIT):
+            exists = (
+                self.session.query(CompetitionData.id)
+                .filter(
+                    CompetitionData.upload_id == int(upload_id),
+                    CompetitionData.metric_type == metric,
+                    CompetitionData.metric_value != 0,
+                    CompetitionData.is_grand_total.is_(False),
+                )
+                .limit(1)
+                .scalar()
             )
-            .limit(1)
-            .scalar()
-        )
+            if exists:
+                return metric
+        return None
+
+    def _has_real_competition(self, upload_id: int) -> bool:
+        return self._competition_metric(upload_id) is not None
 
     def _resolve_source(self):
         uploads = self._completed_uploads()
@@ -85,21 +98,19 @@ class MarketAnalysisService:
             return latest, competition_upload, self.SOURCE_CURRENT
         return latest, competition_upload, self.SOURCE_FALLBACK
 
-    def _competition_groups(self, upload_id: Optional[int]):
-        if not upload_id:
-            return []
+    def _competition_groups_tl(self, upload_id: int):
         return (
             self.session.query(
                 CompetitionData.product_group.label("product_group"),
                 func.coalesce(
                     func.sum(
                         case(
-                            (CompetitionData.metric_type == "TL", CompetitionData.metric_value),
+                            (CompetitionData.metric_type == self.METRIC_TL, CompetitionData.metric_value),
                             else_=0.0,
                         )
                     ),
                     0.0,
-                ).label("market_tl"),
+                ).label("market_value"),
                 func.avg(
                     case(
                         (CompetitionData.metric_type == "MARKET_SHARE", CompetitionData.metric_value),
@@ -111,27 +122,71 @@ class MarketAnalysisService:
                 CompetitionData.upload_id == int(upload_id),
                 CompetitionData.is_subtotal.is_(False),
                 CompetitionData.is_grand_total.is_(False),
-                CompetitionData.metric_type.in_(("TL", "MARKET_SHARE")),
+                CompetitionData.metric_type.in_((self.METRIC_TL, "MARKET_SHARE")),
             )
             .group_by(CompetitionData.product_group)
             .all()
         )
 
-    def _company_tl_by_product(self, upload_id: Optional[int]) -> Dict[int, float]:
-        """Read company TL from the exact IMS upload used by the market snapshot.
+    def _competition_groups_unit(self, upload_id: int):
+        """Use PAZAR/subtotal KUTU as authority, with detail sum as safe fallback."""
+        rows = (
+            self.session.query(
+                CompetitionData.product_group,
+                CompetitionData.metric_value,
+                CompetitionData.is_subtotal,
+            )
+            .filter(
+                CompetitionData.upload_id == int(upload_id),
+                CompetitionData.metric_type == self.METRIC_UNIT,
+                CompetitionData.is_grand_total.is_(False),
+            )
+            .all()
+        )
+        buckets = {}
+        for group, value, is_subtotal in rows:
+            key = str(group or "").strip()
+            if not key:
+                continue
+            bucket = buckets.setdefault(key, {"subtotal": 0.0, "detail": 0.0})
+            if bool(is_subtotal):
+                bucket["subtotal"] += float(value or 0.0)
+            else:
+                bucket["detail"] += float(value or 0.0)
 
-        ``IMSSummary`` is intentionally monthly-unique and is rebuilt to the newest
-        weekly snapshot, so it cannot preserve an older week's company values after
-        a later IMS arrives. ``IMSFact`` is upload-scoped and therefore remains the
-        authoritative historical source for a fallback week. Legacy/test data that
-        has no facts still falls back to its upload-linked summary.
-        """
+        result = []
+        for group, values in buckets.items():
+            # Product KPI sheets contain an explicit PAZAR subtotal column. It is
+            # the market authority. Older unit-only sheets without that subtotal
+            # retain the deterministic detail-sum fallback.
+            market_value = values["subtotal"] if values["subtotal"] > 0 else values["detail"]
+            if market_value <= 0:
+                continue
+            result.append(
+                SimpleNamespace(
+                    product_group=group,
+                    market_value=market_value,
+                    market_share=None,
+                )
+            )
+        return result
+
+    def _competition_groups(self, upload_id: Optional[int], metric_mode: Optional[str]):
+        if not upload_id or metric_mode not in {self.METRIC_TL, self.METRIC_UNIT}:
+            return []
+        if metric_mode == self.METRIC_UNIT:
+            return self._competition_groups_unit(int(upload_id))
+        return self._competition_groups_tl(int(upload_id))
+
+    def _company_metric_by_product(self, upload_id: Optional[int], metric_mode: str) -> Dict[int, float]:
+        """Read company TL or KUTU from the exact IMS upload used by the market view."""
         if not upload_id:
             return {}
+        metric_column = IMSFact.unit if metric_mode == self.METRIC_UNIT else IMSFact.tl
         fact_rows = (
             self.session.query(
                 IMSFact.product_id,
-                func.coalesce(func.sum(IMSFact.tl), 0.0),
+                func.coalesce(func.sum(metric_column), 0.0),
             )
             .filter(
                 IMSFact.upload_id == int(upload_id),
@@ -146,16 +201,21 @@ class MarketAnalysisService:
                 for product_id, value in fact_rows
                 if product_id is not None
             }
+
+        summary_column = IMSSummary.unit if metric_mode == self.METRIC_UNIT else IMSSummary.tl
         rows = (
             self.session.query(
                 IMSSummary.product_id,
-                func.coalesce(func.sum(IMSSummary.tl), 0.0),
+                func.coalesce(func.sum(summary_column), 0.0),
             )
             .filter(IMSSummary.upload_id == int(upload_id))
             .group_by(IMSSummary.product_id)
             .all()
         )
         return {int(product_id): float(value or 0.0) for product_id, value in rows if product_id is not None}
+
+    def _company_tl_by_product(self, upload_id: Optional[int]) -> Dict[int, float]:
+        return self._company_metric_by_product(upload_id, self.METRIC_TL)
 
     @staticmethod
     def _product_aliases(product: Product) -> Iterable[str]:
@@ -180,8 +240,8 @@ class MarketAnalysisService:
         return max(
             candidates,
             key=lambda row: (
-                float(getattr(row, "market_tl", 0.0) or 0.0) > 0,
-                float(getattr(row, "market_tl", 0.0) or 0.0),
+                float(getattr(row, "market_value", 0.0) or 0.0) > 0,
+                float(getattr(row, "market_value", 0.0) or 0.0),
                 float(getattr(row, "market_share", 0.0) or 0.0),
             ),
         )
@@ -191,18 +251,20 @@ class MarketAnalysisService:
         value = getattr(upload, "week_number", None) if upload is not None else None
         return int(value) if value is not None else None
 
-    def _source_message(self, state, latest, source) -> str:
+    def _source_message(self, state, latest, source, metric_mode=None) -> str:
         latest_week = self._week(latest)
         source_week = self._week(source)
+        metric_text = "KUTU bazlı " if metric_mode == self.METRIC_UNIT else ""
         if state == self.SOURCE_CURRENT:
             return (
                 f"Veriler güncel {source_week}. hafta IMS dosyasından alınmıştır. "
-                "Rekabet ve şirket IMS değerleri aynı haftaya aittir."
-            ) if source_week else "Veriler güncel IMS dosyasından alınmıştır."
+                f"{metric_text}rekabet ve şirket IMS değerleri aynı haftaya aittir."
+            ) if source_week else f"Veriler güncel IMS dosyasından alınmıştır. {metric_text}rekabet verisi aktiftir."
         if state == self.SOURCE_FALLBACK:
             return (
-                f"{latest_week}. hafta IMS verisinde rakip analizi mevcut değil. "
-                f"Tablodaki rekabet ve şirket IMS verileri son kullanılabilir kaynak olan {source_week}. hafta IMS dosyasına aittir."
+                f"{latest_week}. hafta IMS verisinde kullanılabilir rekabet analizi mevcut değil. "
+                f"Tablodaki {metric_text}rekabet ve şirket IMS verileri son kullanılabilir kaynak olan "
+                f"{source_week}. hafta IMS dosyasına aittir."
             )
         if latest_week:
             return (
@@ -215,8 +277,22 @@ class MarketAnalysisService:
     def build(self) -> dict:
         latest, source, state = self._resolve_source()
         data_upload = source if source is not None else latest
-        competition_rows = self._competition_groups(source.id if source and state != self.SOURCE_IMS_ONLY else None)
-        company_by_product = self._company_tl_by_product(data_upload.id if data_upload else None)
+        metric_mode = (
+            self._competition_metric(source.id)
+            if source is not None and state != self.SOURCE_IMS_ONLY
+            else None
+        )
+        competition_rows = self._competition_groups(
+            source.id if source and state != self.SOURCE_IMS_ONLY else None,
+            metric_mode,
+        )
+
+        company_tl_by_product = self._company_metric_by_product(
+            data_upload.id if data_upload else None, self.METRIC_TL
+        )
+        company_unit_by_product = self._company_metric_by_product(
+            data_upload.id if data_upload else None, self.METRIC_UNIT
+        )
 
         products = (
             self.session.query(Product)
@@ -226,41 +302,60 @@ class MarketAnalysisService:
         )
 
         groups = []
-        market_total = 0.0
-        company_market_total = 0.0
-        company_total = 0.0
-        for product in products:
-            company_tl = float(company_by_product.get(int(product.id), 0.0) or 0.0)
-            selected = self._choose_market_row(self._match_candidates(product, competition_rows))
-            market_available = selected is not None and float(getattr(selected, "market_tl", 0.0) or 0.0) > 0
-            market_tl = float(getattr(selected, "market_tl", 0.0) or 0.0) if market_available else None
-            reported_share = float(getattr(selected, "market_share", 0.0) or 0.0) if selected is not None else None
-            competitor_tl = max(float(market_tl) - company_tl, 0.0) if market_available else None
-            company_share = round(company_tl * 100.0 / float(market_tl), 2) if market_available and market_tl else None
+        market_total_value = 0.0
+        company_market_total_value = 0.0
+        company_total_tl = 0.0
+        company_total_unit = 0.0
 
-            company_total += company_tl
+        for product in products:
+            company_tl = float(company_tl_by_product.get(int(product.id), 0.0) or 0.0)
+            company_unit = float(company_unit_by_product.get(int(product.id), 0.0) or 0.0)
+            company_value = company_unit if metric_mode == self.METRIC_UNIT else company_tl
+
+            selected = self._choose_market_row(self._match_candidates(product, competition_rows))
+            market_available = selected is not None and float(getattr(selected, "market_value", 0.0) or 0.0) > 0
+            market_value = float(getattr(selected, "market_value", 0.0) or 0.0) if market_available else None
+            reported_share = float(getattr(selected, "market_share", 0.0) or 0.0) if selected is not None and getattr(selected, "market_share", None) is not None else None
+            competitor_value = max(float(market_value) - company_value, 0.0) if market_available else None
+            company_share = round(company_value * 100.0 / float(market_value), 2) if market_available and market_value else None
+
+            company_total_tl += company_tl
+            company_total_unit += company_unit
             if market_available:
-                market_total += float(market_tl)
-                company_market_total += company_tl
+                market_total_value += float(market_value)
+                company_market_total_value += company_value
 
             groups.append(
                 {
                     "product_id": int(product.id),
                     "company_product": product.product_name,
                     "product_group": getattr(selected, "product_group", None) if selected is not None else None,
+                    "metric_mode": metric_mode,
+                    "company_value": round(company_value, 2),
+                    "market_value": round(float(market_value), 2) if market_value is not None else None,
+                    "competitor_value": round(float(competitor_value), 2) if competitor_value is not None else None,
                     "company_sales_tl": round(company_tl, 2),
-                    "market_sales_tl": round(float(market_tl), 2) if market_tl is not None else None,
-                    "competitor_sales_tl": round(float(competitor_tl), 2) if competitor_tl is not None else None,
+                    "company_sales_unit": round(company_unit, 2),
+                    "market_sales_tl": round(float(market_value), 2) if metric_mode == self.METRIC_TL and market_value is not None else None,
+                    "competitor_sales_tl": round(float(competitor_value), 2) if metric_mode == self.METRIC_TL and competitor_value is not None else None,
+                    "market_sales_unit": round(float(market_value), 2) if metric_mode == self.METRIC_UNIT and market_value is not None else None,
+                    "competitor_sales_unit": round(float(competitor_value), 2) if metric_mode == self.METRIC_UNIT and competitor_value is not None else None,
                     "company_share_percent": company_share,
                     "reported_market_share_percent": round(reported_share, 2) if reported_share is not None else None,
                     "market_available": bool(market_available),
-                    "data_status": "REKABET + IMS" if market_available else "YALNIZ IMS",
+                    "data_status": (
+                        "REKABET KUTU + IMS" if market_available and metric_mode == self.METRIC_UNIT
+                        else "REKABET TL + IMS" if market_available
+                        else "YALNIZ IMS"
+                    ),
                 }
             )
 
-        competitor_total = max(market_total - company_market_total, 0.0)
+        competitor_total_value = max(market_total_value - company_market_total_value, 0.0)
         source_week = self._week(source)
         latest_week = self._week(latest)
+        company_total_value = company_total_unit if metric_mode == self.METRIC_UNIT else company_total_tl
+
         return {
             "year": self.year,
             "month": self.month,
@@ -270,11 +365,20 @@ class MarketAnalysisService:
             "is_current": state == self.SOURCE_CURRENT,
             "is_fallback": state == self.SOURCE_FALLBACK,
             "has_competition": state != self.SOURCE_IMS_ONLY and bool(competition_rows),
-            "source_message": self._source_message(state, latest, source),
+            "metric_mode": metric_mode,
+            "metric_label": "Kutu" if metric_mode == self.METRIC_UNIT else "TL",
+            "metric_suffix": "kutu" if metric_mode == self.METRIC_UNIT else "₺",
+            "source_message": self._source_message(state, latest, source, metric_mode),
             "source_file": getattr(data_upload, "file_name", None) if data_upload is not None else None,
-            "market_total_tl": round(market_total, 2),
-            "company_total_tl": round(company_total, 2),
-            "competitor_total_tl": round(competitor_total, 2),
-            "company_share_percent": round(company_market_total * 100.0 / market_total, 2) if market_total else 0.0,
+            "company_total_value": round(company_total_value, 2),
+            "market_total_value": round(market_total_value, 2),
+            "competitor_total_value": round(competitor_total_value, 2),
+            "market_total_tl": round(market_total_value, 2) if metric_mode == self.METRIC_TL else 0.0,
+            "company_total_tl": round(company_total_tl, 2),
+            "competitor_total_tl": round(competitor_total_value, 2) if metric_mode == self.METRIC_TL else 0.0,
+            "market_total_unit": round(market_total_value, 2) if metric_mode == self.METRIC_UNIT else 0.0,
+            "company_total_unit": round(company_total_unit, 2),
+            "competitor_total_unit": round(competitor_total_value, 2) if metric_mode == self.METRIC_UNIT else 0.0,
+            "company_share_percent": round(company_market_total_value * 100.0 / market_total_value, 2) if market_total_value else 0.0,
             "groups": groups,
         }
