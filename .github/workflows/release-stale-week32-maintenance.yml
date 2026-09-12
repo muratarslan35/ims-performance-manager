@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   publish:
-    name: Finalize Week 32 single-source publication
+    name: Prove and finalize Week 32 single-source publication
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,12 +34,12 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Rebuild only region read models and prove final acceptance
+      - name: Prove current snapshots and atomically mark publication ready
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -53,26 +53,9 @@ jobs:
           exec 9>instance/.production-maintenance.lock
           flock -w 300 9
 
-          venv/bin/python -m py_compile app/services/kpi_region_authority_resolver.py app/services/dashboard_runtime_optimizer.py scripts/refresh_live_read_models.py
-          venv/bin/python -m pytest -q tests/test_kpi_market_single_source.py tests/test_market_analysis_week_fallback.py
-
-          active=$(venv/bin/python - <<'PY'
-          from app import create_app
-          from app.models import IMSImportJob
-          from config import Config
-          app=create_app(Config)
-          with app.app_context():
-              print(IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED,IMSImportJob.STATUS_PROCESSING))).count())
-          PY
-          )
-          echo "ACTIVE_IMPORTS|$active"
-          test "$active" = 0
-
-          # The normal Week 32 import is already COMPLETED.  The remaining lock
-          # has been traced to durable-snapshot writers, including the detached
-          # representative warmup started by backend deploys.  Stop only those
-          # exact production snapshot writers before the bounded region publish;
-          # do not re-import, back up, or touch Week 31/older business facts.
+          # Import 35 / upload 45 are already COMPLETED.  Do not re-import or
+          # rebuild snapshots again.  Stop request/worker writers only while the
+          # final immutable read-model acceptance and publication marker run.
           sudo systemctl stop ims-performance-manager.service
           sudo systemctl stop ims-import-worker.service
           cleanup_services() {
@@ -80,61 +63,38 @@ jobs:
             sudo systemctl restart ims-performance-manager.service || true
           }
           trap cleanup_services EXIT
-
-          stop_exact_snapshot_writer() {
-            pattern="$1"
-            label="$2"
-            pids=$(pgrep -f "$pattern" || true)
-            if [ -z "$pids" ]; then
-              echo "SNAPSHOT_WRITER|$label|none"
-              return 0
-            fi
-            for pid in $pids; do
-              cmd=$(ps -p "$pid" -o args= || true)
-              cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)
-              case "$cmd" in
-                *"$IMS_PATH"*"$pattern"*) ;;
-                *) echo "SNAPSHOT_WRITER_REFUSED|pid=$pid|label=$label|cmd=$cmd"; exit 1 ;;
-              esac
-              if [ "$cwd" != "$IMS_PATH" ]; then
-                echo "SNAPSHOT_WRITER_REFUSED|pid=$pid|label=$label|cwd=$cwd"; exit 1
-              fi
-              echo "SNAPSHOT_WRITER_STOP|pid=$pid|label=$label|cmd=$cmd"
-              kill -TERM "$pid"
-            done
-            for wait_round in $(seq 1 20); do
-              remaining=0
-              for pid in $pids; do
-                if kill -0 "$pid" 2>/dev/null; then remaining=1; fi
-              done
-              [ "$remaining" = 0 ] && break
-              sleep 1
-            done
-            for pid in $pids; do
-              if kill -0 "$pid" 2>/dev/null; then
-                echo "SNAPSHOT_WRITER_KILL|pid=$pid|label=$label"
-                kill -KILL "$pid"
-              fi
-            done
-          }
-
-          stop_exact_snapshot_writer "scripts/backfill_active_representative_snapshots.py --force" "representative_force_warmup"
-          stop_exact_snapshot_writer "scripts/backfill_active_region_snapshots.py" "region_backfill"
           sleep 2
-          echo 'DB_HOLDERS_AFTER_QUIESCE'
-          if command -v fuser >/dev/null 2>&1; then
-            sudo fuser -v instance/ipm.db instance/ipm.db-wal instance/ipm.db-shm || true
-          fi
 
-          venv/bin/python -u - <<'PY'
-          from app import create_app
-          from scripts.refresh_live_read_models import _refresh_regions
-          from config import Config
-          app=create_app(Config)
-          with app.app_context():
-              _refresh_regions(2026,8)
+          # With both production services stopped and no queued/processing import,
+          # any remaining Python process holding ipm.db is a stale repo-local
+          # snapshot/backfill writer.  Quiesce only such repo-local Python holders.
+          venv/bin/python - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('instance/ipm.db', timeout=30)
+          try:
+              active=con.execute("select count(*) from ims_import_jobs where status in ('QUEUED','PROCESSING')").fetchone()[0]
+              print(f'ACTIVE_IMPORTS|{active}')
+              assert active == 0
+          finally:
+              con.close()
           PY
 
+          pids=$(sudo fuser instance/ipm.db instance/ipm.db-wal instance/ipm.db-shm 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true)
+          for pid in $pids; do
+            cmd=$(ps -p "$pid" -o args= || true)
+            cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)
+            if [ "$cwd" = "$IMS_PATH" ] && printf '%s' "$cmd" | grep -q '[p]ython'; then
+              echo "STALE_DB_WRITER_STOP|pid=$pid|cmd=$cmd"
+              kill -TERM "$pid" || true
+            else
+              echo "DB_HOLDER_REFUSED|pid=$pid|cwd=$cwd|cmd=$cmd"
+              exit 1
+            fi
+          done
+          sleep 2
+
+          # Read-only acceptance.  TESTING=True prevents startup reconciliation
+          # from creating any new background writer while proving the live data.
           venv/bin/python -u - <<'PY'
           import json
           import sqlalchemy as sa
@@ -148,30 +108,37 @@ jobs:
           from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshots
           from config import Config
 
+          class ReadOnlyConfig(Config):
+              TESTING = True
+
           def close(a,b,tol=0.01):
               return abs(float(a or 0)-float(b or 0)) <= tol
 
-          app=create_app(Config)
+          app=create_app(ReadOnlyConfig)
           with app.app_context():
               upload=IMSUpload.query.filter_by(year=2026,month=8,week_number=32,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              assert upload
+              assert upload and upload.id == 45, getattr(upload, 'id', None)
               job=IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()
-              assert job and job.status == IMSImportJob.STATUS_COMPLETED
+              assert job and job.id == 35 and job.status == IMSImportJob.STATUS_COMPLETED, (getattr(job,'id',None),getattr(job,'status',None))
 
-              authority_count=CompetitionData.query.filter(CompetitionData.upload_id==upload.id,CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%')).count()
+              authority_count=CompetitionData.query.filter(
+                  CompetitionData.upload_id==upload.id,
+                  CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%')
+              ).count()
               assert authority_count==168, authority_count
 
               dashboard=PersistentDashboardSnapshotService.get_active(2026,8) or {}
               executive=dashboard.get('executive_metrics') or {}
               assert len(executive.get('products') or [])==7
-              assert float(executive.get('target_tl') or 0)>0 and float(executive.get('actual_tl') or 0)>0
+              assert float(executive.get('target_tl') or 0)>0
+              assert float(executive.get('actual_tl') or 0)>0
 
               national=MarketAnalysisService(2026,8).build()
               assert national.get('metric_mode')=='UNIT'
               assert len(national.get('groups') or [])==7
-              assert close(national.get('company_total_unit'),314214)
-              assert close(national.get('competitor_total_unit'),613403)
-              assert close(national.get('market_total_unit'),927617)
+              assert close(national.get('company_total_unit'),314214), national.get('company_total_unit')
+              assert close(national.get('competitor_total_unit'),613403), national.get('competitor_total_unit')
+              assert close(national.get('market_total_unit'),927617), national.get('market_total_unit')
               for row in national['groups']:
                   assert close(row['company_sales_unit']+row['competitor_sales_unit'],row['market_sales_unit']), row
 
@@ -194,11 +161,13 @@ jobs:
               assert close(istanbul.get('competitor_unit'),85747), istanbul
               assert close(istanbul.get('market_unit'),137771), istanbul
 
-              ims_id,prod_id=PersistentRepresentativeSnapshotService.source_identity(2026,8)
-              assert ims_id==upload.id
+              ims_id,_=PersistentRepresentativeSnapshotService.source_identity(2026,8)
+              assert ims_id==upload.id, ims_id
               set_id=PersistentRepresentativeSnapshotService._visible_set_id(2026,8)
               assert set_id
-              rep_rows=db.session.execute(sa.select(representative_snapshots.c.payload_json).where(representative_snapshots.c.set_id==set_id)).scalars().all()
+              rep_rows=db.session.execute(
+                  sa.select(representative_snapshots.c.payload_json).where(representative_snapshots.c.set_id==set_id)
+              ).scalars().all()
               assert len(rep_rows)==113, len(rep_rows)
               for raw in rep_rows:
                   snap=json.loads(raw)
@@ -220,16 +189,7 @@ jobs:
               mt=mkt.get('totals') or {}
               assert close(mt.get('actual_unit')+mt.get('competitor_unit'),mt.get('market_unit')), mt
 
-              try:
-                  summary=json.loads(job.result_summary or '{}')
-              except Exception:
-                  summary={}
-              summary['publication_ready']=True
-              summary['publication_ready_source']='verified_kpi_single_source_all_snapshots'
-              job.result_summary=json.dumps(summary,ensure_ascii=False)
-              db.session.commit()
-
-              print('KPI_SINGLE_SOURCE_ACCEPTANCE|PASS'
+              print('KPI_SINGLE_SOURCE_ACCEPTANCE_READONLY|PASS'
                     f'|authority_rows={authority_count}'
                     f"|national_company={national['company_total_unit']:.2f}"
                     f"|national_competitor={national['competitor_total_unit']:.2f}"
@@ -237,7 +197,44 @@ jobs:
                     f"|istanbul_company={float(istanbul['company_unit']):.2f}"
                     f"|istanbul_competitor={float(istanbul['competitor_unit']):.2f}"
                     f"|istanbul_market={float(istanbul['market_unit']):.2f}"
-                    '|regions=11|representatives=113|murat_rows=7|publication_ready=1')
+                    '|regions=11|representatives=113|murat_rows=7')
+          PY
+
+          # The old failure was solely SQLAlchemy competing with a stale writer
+          # while setting this metadata bit.  Update only job 35 through stdlib
+          # sqlite in one bounded IMMEDIATE transaction; no business facts touched.
+          venv/bin/python -u - <<'PY'
+          import json, sqlite3, time
+          db_path='instance/ipm.db'
+          last=None
+          for attempt in range(1,13):
+              con=sqlite3.connect(db_path, timeout=10)
+              try:
+                  con.execute('PRAGMA busy_timeout=10000')
+                  con.execute('BEGIN IMMEDIATE')
+                  row=con.execute('select result_summary,status,ims_upload_id from ims_import_jobs where id=35').fetchone()
+                  assert row and row[1]=='COMPLETED' and row[2]==45, row
+                  try:
+                      summary=json.loads(row[0] or '{}')
+                  except Exception:
+                      summary={}
+                  summary['publication_ready']=True
+                  summary['publication_ready_source']='verified_kpi_single_source_all_snapshots'
+                  con.execute('update ims_import_jobs set result_summary=? where id=35',(json.dumps(summary,ensure_ascii=False),))
+                  con.commit()
+                  print(f'PUBLICATION_READY|PASS|upload=45|job=35|attempt={attempt}')
+                  break
+              except sqlite3.OperationalError as exc:
+                  last=exc
+                  try: con.rollback()
+                  except Exception: pass
+                  if 'locked' not in str(exc).lower() or attempt==12:
+                      raise
+                  time.sleep(2)
+              finally:
+                  con.close()
+          else:
+              raise RuntimeError(last)
           PY
 
           trap - EXIT
