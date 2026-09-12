@@ -1,10 +1,10 @@
-"""Requeue the latest completed IMS with empty targets through the normal worker.
+"""Requeue the latest empty-target IMS through the normal worker.
 
-This recovery deliberately does not roll the database back. It validates the
-archived workbook and its original queue identity, stages that exact workbook,
-and queues the existing upload/job with clear_before_import=True. The regular
-IMS worker remains the only component that performs the replacement import and
-snapshot/publication flow.
+The exact archived workbook and original queue identity are reused. A previous
+COMPLETED or FAILED attempt is eligible, but only when it is still the newest
+IMS upload, no import is active, and the period still has zero targets. The
+regular worker remains the only component that performs replacement import and
+snapshot/publication.
 """
 from __future__ import annotations
 
@@ -37,21 +37,16 @@ def main() -> int:
             raise SystemExit(f"RECOVERY_REFUSED|active_jobs={active}")
 
         upload = (
-            IMSUpload.query.filter_by(
-                year=args.year,
-                month=args.month,
-                week_number=args.week,
-                status=IMSUpload.STATUS_COMPLETED,
-            )
-            .order_by(IMSUpload.completed_at.desc(), IMSUpload.id.desc())
+            IMSUpload.query.filter_by(year=args.year, month=args.month, week_number=args.week)
+            .filter(IMSUpload.status.in_((IMSUpload.STATUS_COMPLETED, IMSUpload.STATUS_FAILED)))
+            .order_by(IMSUpload.id.desc())
             .first()
         )
         if upload is None:
-            raise SystemExit("RECOVERY_REFUSED|reason=completed_upload_not_found")
+            raise SystemExit("RECOVERY_REFUSED|reason=retryable_upload_not_found")
 
-        global_latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
-            IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
-            IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
+        global_latest = IMSUpload.query.order_by(
+            IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.id.desc()
         ).first()
         if global_latest is None or int(global_latest.id) != int(upload.id):
             raise SystemExit("RECOVERY_REFUSED|reason=upload_is_not_global_latest")
@@ -61,15 +56,13 @@ def main() -> int:
             raise SystemExit(f"RECOVERY_REFUSED|reason=targets_not_empty|targets={target_count}")
 
         job = (
-            IMSImportJob.query.filter_by(
-                ims_upload_id=upload.id,
-                status=IMSImportJob.STATUS_COMPLETED,
-            )
-            .order_by(IMSImportJob.completed_at.desc(), IMSImportJob.id.desc())
+            IMSImportJob.query.filter_by(ims_upload_id=upload.id)
+            .filter(IMSImportJob.status.in_((IMSImportJob.STATUS_COMPLETED, IMSImportJob.STATUS_FAILED)))
+            .order_by(IMSImportJob.id.desc())
             .first()
         )
         if job is None:
-            raise SystemExit("RECOVERY_REFUSED|reason=completed_job_not_found")
+            raise SystemExit("RECOVERY_REFUSED|reason=retryable_job_not_found")
 
         source = IMSUploadLifecycleService._validate_archived_source(upload.id)
         staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
