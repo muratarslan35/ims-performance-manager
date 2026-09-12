@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   publish:
-    name: Audit archived KPI controls
+    name: Reimport and verify single-source market data
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -34,33 +34,36 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect source aggregate rows
+      - name: Reimport Week 32 and publish exact market read models
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=40 \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          test -z "$(git status --porcelain)"
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          export PYTHONUNBUFFERED=1
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+
+          venv/bin/python -m py_compile app/services/kpi_market_single_source.py app/__init__.py
+          venv/bin/python -m pytest -q tests/test_kpi_market_single_source.py tests/test_market_analysis_week_fallback.py
+
+          # Validate the new semantic extractor against the exact retained
+          # upload before changing any live rows.
           venv/bin/python - <<'PY'
           import pandas as pd
           from sqlalchemy import desc
           from app import create_app
           from app.models import IMSUpload
-          from app.services.alias_service import AliasService
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
-          from app.services.kpi_workbook_compat import is_product_kpi_sheet
+          from app.services.kpi_market_single_source import extract_market_authority
           from config import Config
-
-          def norm(v):
-              if v is None or (isinstance(v,float) and pd.isna(v)): return ''
-              return AliasService.normalize(v)
-
           app=create_app(Config)
           with app.app_context():
               upload=(IMSUpload.query.filter_by(year=2026,month=8,status='COMPLETED')
@@ -68,27 +71,109 @@ jobs:
               assert upload and int(upload.week_number)==32
               source=IMSUploadLifecycleService.archived_source_for_upload(upload.id)
               assert source and source.is_file()
-              print(f'SOURCE_ARCHIVE|upload={upload.id}|path={source}')
-              workbook=pd.read_excel(source,sheet_name=None,header=None)
-              for sheet_name,frame in workbook.items():
-                  if not is_product_kpi_sheet(sheet_name): continue
-                  header=next((r for r in range(min(15,len(frame))) if any(norm(v)=='PAZAR' for v in frame.iloc[r].tolist())),None)
-                  if header is None: continue
-                  labels=[norm(v) for v in frame.iloc[header].tolist()]
-                  product=norm(sheet_name).removeprefix('2 KUTU ').removesuffix(' KPI')
-                  product_cols=[i for i,v in enumerate(labels) if v.startswith(product)]
-                  pazar_cols=[i for i,v in enumerate(labels) if v=='PAZAR']
-                  rivals=[(i,labels[i]) for i in range(5,len(labels)) if labels[i] and i not in product_cols+pazar_cols and labels[i] not in {'PP','RANK'}]
-                  for r in range(header+1,len(frame)):
-                      territory=norm(frame.iloc[r,0]) if frame.shape[1]>0 else ''
-                      province=norm(frame.iloc[r,1]) if frame.shape[1]>1 else ''
-                      brick=norm(frame.iloc[r,2]) if frame.shape[1]>2 else ''
-                      if brick=='NATIONAL' or 'SUBTOTAL' in brick or 'SUBTOTAL' in province:
-                          own=pd.to_numeric(pd.Series([frame.iloc[r,product_cols[0]] if product_cols else None]),errors='coerce').fillna(0).iloc[0]
-                          pazar=pd.to_numeric(pd.Series([frame.iloc[r,pazar_cols[0]] if pazar_cols else None]),errors='coerce').fillna(0).iloc[0]
-                          rival_sum=0.0
-                          for col,_name in rivals:
-                              rival_sum += float(pd.to_numeric(pd.Series([frame.iloc[r,col]]),errors='coerce').fillna(0).iloc[0])
-                          print(f'KPI_CONTROL|sheet={sheet_name}|territory={territory}|province={province}|brick={brick}|own={float(own):.2f}|rivals={rival_sum:.2f}|pazar={float(pazar):.2f}|own_plus_rivals={float(own)+rival_sum:.2f}')
+              authority=extract_market_authority(pd.read_excel(source,sheet_name=None,header=None))
+              assert authority and len(authority)==7
+              national=[item['controls']['NATIONAL'] for item in authority.values()]
+              company=sum(item['company'] for item in national)
+              market=sum(item['market'] for item in national)
+              assert abs(company-314214.0)<0.01, company
+              assert abs(market-927617.0)<0.01, market
+              ist=[item['controls']['101 ISTANBUL'] for item in authority.values()]
+              ist_company=sum(item['company'] for item in ist)
+              ist_market=sum(item['market'] for item in ist)
+              assert abs(ist_company-52024.0)<0.01, ist_company
+              assert abs(ist_market-137771.0)<0.01, ist_market
+              print(f'KPI_SOURCE_PREFLIGHT|PASS|products={len(authority)}|national_company={company:.2f}|national_market={market:.2f}|istanbul_company={ist_company:.2f}|istanbul_market={ist_market:.2f}')
+          PY
+
+          # Normal import route: same verified archive, same upload identity,
+          # no extra DB backup and no historical-period deletion.
+          bash scripts/run_week32_direct_reimport.sh "$IMS_PATH"
+
+          sudo systemctl restart ims-performance-manager.service
+          test "$(sudo systemctl is-active ims-performance-manager.service)" = active
+          health=0
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/login >/dev/null; then
+              health=1
+              break
+            fi
+            sleep 2
+          done
+          test "$health" = 1
+          echo 'HTTP_HEALTH|PASS'
+
+          venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import CompetitionData, IMSUpload, Representative
+          from app.services.kpi_market_single_source import AUTHORITY_PREFIX, _authority
+          from app.services.market_analysis_service import MarketAnalysisService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+          from app.services.representative_market_service import RepresentativeMarketService
+          from config import Config
+
+          def close(a,b,tol=0.01):
+              return abs(float(a or 0)-float(b or 0)) <= tol
+
+          app=create_app(Config)
+          with app.app_context():
+              upload=IMSUpload.query.filter_by(year=2026,month=8,week_number=32,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+              assert upload
+              authority_count=CompetitionData.query.filter(
+                  CompetitionData.upload_id==upload.id,
+                  CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%'),
+              ).count()
+              assert authority_count==168, authority_count
+
+              national=MarketAnalysisService(2026,8).build()
+              assert national.get('metric_mode')=='UNIT'
+              assert len(national.get('groups') or [])==7
+              assert close(national.get('company_total_unit'),314214)
+              assert close(national.get('market_total_unit'),927617)
+              assert close(national.get('competitor_total_unit'),613403)
+              for row in national['groups']:
+                  assert close(row['company_sales_unit']+row['competitor_sales_unit'],row['market_sales_unit'])
+                  if row['market_sales_unit']>0 and row['company_sales_unit']>=0:
+                      assert 0 <= row['company_share_percent'] <= 100
+
+              regions=PersistentRegionSnapshotService.get_active_all(2026,8)
+              assert len(regions)==11, len(regions)
+              istanbul=None
+              for region_key,snapshot in regions.items():
+                  market=snapshot.get('market_analysis') or {}
+                  rows=market.get('rows') or []
+                  totals=market.get('totals') or {}
+                  assert len(rows)==7, (region_key,len(rows))
+                  for row in rows:
+                      assert close(row['company_unit']+row['competitor_unit'],row['market_unit']), (region_key,row)
+                  assert close(totals.get('company_unit')+totals.get('competitor_unit'),totals.get('market_unit')), (region_key,totals)
+                  if str(region_key).startswith('101'):
+                      istanbul=totals
+              assert istanbul is not None
+              assert close(istanbul.get('company_unit'),52024), istanbul
+              assert close(istanbul.get('market_unit'),137771), istanbul
+              assert close(istanbul.get('competitor_unit'),85747), istanbul
+
+              murat=Representative.query.filter(db.func.upper(Representative.rep_name)=='MURAT ARSLAN').first()
+              assert murat is not None
+              snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
+              assert isinstance(snap,dict) and snap
+              rep=RepresentativeMarketService(murat,2026,8).build()
+              assert len(rep.get('rows') or [])==7
+              for row in rep['rows']:
+                  assert close(row['actual_unit']+row['competitor_unit'],row['market_unit']), row
+              totals=rep.get('totals') or {}
+              assert close(totals.get('actual_unit')+totals.get('competitor_unit'),totals.get('market_unit')), totals
+
+              print('KPI_SINGLE_SOURCE_ACCEPTANCE|PASS'
+                    f"|authority_rows={authority_count}"
+                    f"|national_company={national['company_total_unit']:.2f}"
+                    f"|national_market={national['market_total_unit']:.2f}"
+                    f"|national_competitor={national['competitor_total_unit']:.2f}"
+                    f"|istanbul_company={float(istanbul['company_unit']):.2f}"
+                    f"|istanbul_market={float(istanbul['market_unit']):.2f}"
+                    f"|regions={len(regions)}|murat_rows={len(rep['rows'])}")
           PY
           REMOTE
