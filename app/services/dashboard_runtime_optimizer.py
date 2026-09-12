@@ -18,6 +18,7 @@ def install_dashboard_runtime_optimizer() -> None:
     """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
     from app.services.kpi_market_raw_source_override import install_kpi_market_raw_source_override
+    from app.services.kpi_region_authority_resolver import install_kpi_region_authority_resolver
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
     from app.services.representative_comparison_availability_guard import install_representative_comparison_availability_guard
@@ -72,6 +73,10 @@ def install_dashboard_runtime_optimizer() -> None:
     # filters. Persist them from the exact retained XLSX bytes rather than the
     # loader's display-filtered in-memory view.
     install_kpi_market_raw_source_override()
+    # The KPI aggregate rows are persisted as labels such as "101 ISTANBUL"
+    # while RegionMarketService uses compact keys such as "101". Resolve that
+    # exact identity mismatch after the base KPI read authority is installed.
+    install_kpi_region_authority_resolver()
     # Partial weekly TL-only IMS imports must derive boxes from the price frozen
     # for that business month, even when the master price is edited mid-month.
     install_partial_ims_period_price_guard()
