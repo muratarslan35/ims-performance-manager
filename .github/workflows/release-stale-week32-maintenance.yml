@@ -45,28 +45,22 @@ jobs:
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           venv/bin/python - <<'PY'
-from app import create_app
-from app.models import IMSImportJob, IMSUpload, IMSFact, IMSSummary, Target, IMSCompetitionData
-from config import Config
-app=create_app(Config)
-with app.app_context():
-    job=IMSImportJob.query.order_by(IMSImportJob.id.desc()).first()
-    upload=IMSUpload.query.get(job.ims_upload_id) if job and job.ims_upload_id else None
-    print('LATEST_JOB|id=%s|status=%s|upload=%s|error=%r|result=%r' % (
-        getattr(job,'id',None), getattr(job,'status',None), getattr(job,'ims_upload_id',None),
-        getattr(job,'error_message',None), getattr(job,'result_summary',None)))
-    print('LATEST_UPLOAD|id=%s|status=%s|period=%s-%s-w%s|source=%s|facts=%s|summary=%s|error=%r' % (
-        getattr(upload,'id',None), getattr(upload,'status',None), getattr(upload,'year',None),
-        getattr(upload,'month',None), getattr(upload,'week_number',None), getattr(upload,'source_record_count',None),
-        getattr(upload,'fact_record_count',None), getattr(upload,'summary_record_count',None), getattr(upload,'error_message',None)))
-    if upload:
-        uid=upload.id
-        print('LIVE_COUNTS|targets=%s|facts=%s|summary=%s|competition=%s' % (
-            Target.query.filter_by(year=upload.year, month=upload.month).count(),
-            IMSFact.query.filter_by(upload_id=uid).count(),
-            IMSSummary.query.filter_by(year=upload.year, month=upload.month).count(),
-            IMSCompetitionData.query.filter_by(upload_id=uid).count()))
-    active=IMSImportJob.query.filter(IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))).count()
-    print('ACTIVE_IMPORTS|%s' % active)
-PY
+          import sqlite3
+          c=sqlite3.connect('instance/ipm.db',timeout=30)
+          c.execute('PRAGMA busy_timeout=30000')
+          job=c.execute("SELECT id,status,ims_upload_id,error_message,result_summary FROM ims_import_jobs ORDER BY id DESC LIMIT 1").fetchone()
+          upload=c.execute("SELECT id,status,year,month,week_number,source_record_count,fact_record_count,summary_record_count,error_message FROM ims_uploads ORDER BY id DESC LIMIT 1").fetchone()
+          active=c.execute("SELECT COUNT(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+          print('LATEST_JOB|%r' % (job,))
+          print('LATEST_UPLOAD|%r' % (upload,))
+          print('ACTIVE_IMPORTS|%s' % active)
+          if upload:
+              uid,_,year,month,*_=upload
+              targets=c.execute('SELECT COUNT(*) FROM targets WHERE year=? AND month=?',(year,month)).fetchone()[0]
+              facts=c.execute('SELECT COUNT(*) FROM ims_facts WHERE upload_id=?',(uid,)).fetchone()[0]
+              summary=c.execute('SELECT COUNT(*) FROM ims_summary WHERE year=? AND month=?',(year,month)).fetchone()[0]
+              competition=c.execute('SELECT COUNT(*) FROM ims_competition_data WHERE upload_id=?',(uid,)).fetchone()[0]
+              print('LIVE_COUNTS|targets=%s|facts=%s|summary=%s|competition=%s' % (targets,facts,summary,competition))
+          c.close()
+          PY
           REMOTE
