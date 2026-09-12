@@ -140,6 +140,7 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
             elapsed = max(now - started, 0.001)
             recent_seconds.append(max(now - previous_tick, 0.001))
             previous_tick = now
+            rate = done / elapsed
             remaining = max(total - done, 0)
             eta_seconds = (
                 int(round(remaining * sum(recent_seconds) / len(recent_seconds)))
