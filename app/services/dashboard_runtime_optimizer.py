@@ -17,6 +17,7 @@ from app.models import CompetitionData, IMSUpload
 def install_dashboard_runtime_optimizer() -> None:
     """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
+    from app.services.kpi_market_raw_source_override import install_kpi_market_raw_source_override
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
     from app.services.representative_comparison_availability_guard import install_representative_comparison_availability_guard
@@ -67,6 +68,10 @@ def install_dashboard_runtime_optimizer() -> None:
         DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
         DashboardQuery._bounded_competition_lookup_installed = True
 
+    # KPI aggregate controls can be physically hidden by workbook display
+    # filters. Persist them from the exact retained XLSX bytes rather than the
+    # loader's display-filtered in-memory view.
+    install_kpi_market_raw_source_override()
     # Partial weekly TL-only IMS imports must derive boxes from the price frozen
     # for that business month, even when the master price is edited mid-month.
     install_partial_ims_period_price_guard()
