@@ -24,14 +24,7 @@ _LEGACY_TEMPLATE_NUMERIC_KEYS = {
 
 
 def _legacy_template_safe_report(report):
-    """Return a render-only copy safe for the legacy parent region template.
-
-    The quarter template is the visible/current UI and already renders incomplete
-    metrics as an em dash. Its parent template is still evaluated by Jinja before
-    JavaScript hides the legacy period panels; old ``format(None)`` expressions
-    therefore used to raise a 500 before the current UI could render. This helper
-    changes only that hidden parent copy and never mutates business/report values.
-    """
+    """Return a render-only copy safe for the legacy parent region template."""
     safe = deepcopy(report)
 
     def visit(value):
@@ -67,9 +60,11 @@ def detail(region_key):
     market_analysis = RegionMarketService(
         current_report["region_key"], performance_service.rep_ids, year, month
     ).build()
+    safe_report = _legacy_template_safe_report(current_report)
     return render_template(
         "region_performance_quarter.html",
-        report=_legacy_template_safe_report(current_report),
+        report=safe_report,
+        legacy_report=safe_report,
         current_report=current_report,
         ai_report=ai_report,
         market_analysis=market_analysis,
