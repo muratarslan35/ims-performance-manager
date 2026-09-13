@@ -99,6 +99,37 @@
     <div><span>GENEL MÜDÜR YÖNETİM ÖZETİ</span><h3>Türkiye ticari fotoğrafı</h3><div class="exec-summary-items">{% for item in cockpit.summary %}<p><i class="bi bi-check2-circle"></i>{{ item }}</p>{% endfor %}</div></div>
   </div>
 
+  {% set national= cockpit.periods.monthly|default({}, true) %}
+  <section class="exec-national-command" aria-label="Türkiye AI ticari aksiyon merkezi">
+    <div class="exec-ai-head"><div><span>İL → BÖLGE → TÜRKİYE · YÖNETİM PLANI</span><h3>Türkiye AI Ticari Aksiyon Merkezi</h3><p>11 aktif bölge snapshotındaki doğrulanmış ürün, satış ve rekabet sonuçlarını ülke önceliğine dönüştürür; yeni IMS okuması veya tahmin kullanılmaz.</p></div><i class="bi bi-globe2"></i></div>
+    <div class="exec-national-grid">
+      <article class="exec-card">
+        <div class="exec-card-head"><div><span>BÖLGE ÖNCELİĞİ</span><h3>İlk Müdahale Alanları</h3></div><i class="bi bi-exclamation-diamond"></i></div>
+        {% for row in national.risks|default([]) %}<button type="button" class="exec-national-row" data-exec-region-key="{{ row.region_key }}"><span><b>{{ row.region_key }} {{ row.region_name }}</b><small>Realizasyon %{{ row.realization_percent }} · Kutu payı %{{ row.share_percent }}</small></span><strong>{{ '{:,.0f}'.format(row.competitor_unit) }} rakip kutu</strong></button>{% endfor %}
+      </article>
+      <article class="exec-card">
+        <div class="exec-card-head"><div><span>ÜRÜN HEDEF AÇIĞI</span><h3>Türkiye Portföy Öncelikleri</h3></div><i class="bi bi-box-seam"></i></div>
+        {% for product in national.products|sort(attribute='realization_percent') %}{% if loop.index <= 7 %}<div class="exec-national-row"><span><b>{{ product.product_name }}</b><small>Realizasyon {% if product.realization_percent is not none %}%{{ product.realization_percent }}{% else %}—{% endif %} · Güncel pazar payı {% if product.share_percent is not none %}%{{ product.share_percent }}{% else %}—{% endif %}</small></span><strong>{% if product.actual_tl is not none %}{{ '{:,.0f}'.format([product.target_tl-product.actual_tl,0]|max) }} ₺ açık{% else %}Veri bekleniyor{% endif %}</strong></div>{% endif %}{% endfor %}
+      </article>
+      <article class="exec-card">
+        <div class="exec-card-head"><div><span>RAKİP YOĞUNLUĞU</span><h3>Türkiye Rakip Müdahale Listesi</h3></div><i class="bi bi-radar"></i></div>
+        {% for rival in cockpit.rival_pressure %}<div class="exec-national-row"><span><b>{{ rival.name }}</b><small>{{ rival.product_name }} · {{ rival.region_count }} bölge · En güçlü {{ rival.strongest_region }}</small></span><strong>{{ '{:,.0f}'.format(rival.unit) }} kutu</strong></div>{% else %}<div class="exec-empty">Adlandırılmış rakip verisi bulunmuyor.</div>{% endfor %}
+      </article>
+    </div>
+    <article class="exec-national-directions">
+      <h3><i class="bi bi-signpost-split-fill"></i> Türkiye yönetim yönlendirmeleri</h3>
+      <ol>
+        <li>Türkiye hedef açığını ürün bazında bölgelere; bölge açığını il ve temsilci seviyesine dağıt.</li>
+        <li>Düşük realizasyon ve Türkiye ortalaması altı kutu payının birlikte görüldüğü bölgeleri ilk müdahale sırasına al.</li>
+        <li>Yüksek rakip kutusu bulunan ürünlerde rakibin en güçlü olduğu bölgeden başlayarak il kırılımına in.</li>
+        <li>Güçlü bölgelerin saha modelini benzer ürün ve pazar yapısındaki risk bölgelerine aktar.</li>
+        <li>Hedefi güçlü fakat kutu payı zayıf bölgelerde satış kalitesini ve rekabet kazanımını ayrı izle.</li>
+        <li>Kutu payı güçlü fakat hedefi geride bölgelerde mevcut pazar avantajını kapanış satışına dönüştür.</li>
+        <li>Türkiye kararlarını yalnız aynı aktif snapshot setindeki bölge sonuçlarıyla kapat; eksik geçmiş kırılımı tahmin etme.</li>
+      </ol>
+    </article>
+  </section>
+
   <section class="exec-ai-section" aria-label="Dinamik bölgesel yapay zeka yönetim içgörüleri">
     <div class="exec-ai-head"><div><span>GERÇEK VERİ + DİNAMİK YAPAY ZEKA · BÖLGESEL YÖNETİM</span><h3>Bölgesel AI Yönetim İçgörüleri</h3><p>Her kart önce aktif bölge snapshotındaki gerçek hedef, gerçekleşen, kutu pazar ve rekabet değerlerini gösterir; AI yorumu yalnız bu değerlerin yönetim anlamını açıklar. Eksik veri tahmin edilmez.</p></div><i class="bi bi-stars"></i></div>
     {% for period_key, period in cockpit.periods.items() %}
