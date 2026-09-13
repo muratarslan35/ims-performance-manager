@@ -52,6 +52,9 @@ sudo systemctl stop ims-import-worker.service
 sudo systemctl stop ims-performance-manager.service
 test "$(sudo systemctl is-active ims-import-worker.service)" = inactive
 test "$(sudo systemctl is-active ims-performance-manager.service)" = inactive
+echo 'SQLITE_LOCK_HOLDERS_BEGIN'
+sudo fuser -v instance/ipm.db instance/ipm.db-wal instance/ipm.db-shm 2>&1 || true
+echo 'SQLITE_LOCK_HOLDERS_END'
 
 venv/bin/python -m scripts.requeue_latest_empty_ims \
   --year 2026 --month 8 --week 32 --allow-existing-targets
