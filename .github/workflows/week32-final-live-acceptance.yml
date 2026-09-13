@@ -122,11 +122,12 @@ jobs:
                       totals.get("company_unit") + totals.get("competitor_unit"),
                       totals.get("market_unit"),
                   )
-                  html = render_template(
-                      "partials/market_region_workspace.html",
-                      report=snapshot["report"],
-                      market_analysis=market,
-                  )
+                  with app.test_request_context("/market-analysis"):
+                      html = render_template(
+                          "partials/market_region_workspace.html",
+                          report=snapshot["report"],
+                          market_analysis=market,
+                      )
                   assert "Bölgesel şirket toplam kutu çıkışı" in html
                   assert "Bölgesel rakip toplam kutu çıkışı" in html
                   assert "Bölgesel toplam kutu pazarı" in html
