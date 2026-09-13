@@ -113,7 +113,7 @@ def test_annual_realization_uses_ims_zero_as_real_value(tmp_path):
         assert february["source"] == "IMS"
 
 
-def test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_selection(monkeypatch):
+def test_region_periods_use_fixed_h1_while_monthly_keeps_selection(monkeypatch):
     from app.services.region_performance_service import RegionPerformanceService
     service = object.__new__(RegionPerformanceService)
     service.year = 2026
@@ -121,8 +121,13 @@ def test_region_rolling_periods_use_latest_completed_ims_while_monthly_keeps_sel
     monkeypatch.setattr(service, "_latest_completed_period", lambda: (2026, 2))
     assert service.period_months(1) == [(2026, 1)]
     assert service.period_months(3) == [(2025, 12), (2026, 1), (2026, 2)]
-    assert service.period_months(6) == [(2025, 9), (2025, 10), (2025, 11), (2025, 12), (2026, 1), (2026, 2)]
+    assert service.period_months(6) == [(2026, 1), (2026, 2)]
     assert service.period_months(None) == [(2026, 1), (2026, 2)]
+
+    monkeypatch.setattr(service, "_latest_completed_period", lambda: (2026, 8))
+    assert service.period_months(6) == [
+        (2026, 1), (2026, 2), (2026, 3), (2026, 4), (2026, 5), (2026, 6)
+    ]
 
 
 def test_region_product_unit_gap_uses_archived_mf_siz_kutu_balance_not_actual_aggregate(tmp_path, monkeypatch):
