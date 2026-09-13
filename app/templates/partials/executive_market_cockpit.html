@@ -10,6 +10,10 @@
   </div>
 
   {% if cockpit.ready %}
+  {% set market_unit_mode = cockpit.market.metric_mode|default('') == 'UNIT' %}
+  {% set market_total = cockpit.market.market_total_value|default(cockpit.market.market_total_tl|default(0, true), true) %}
+  {% set competitor_total = cockpit.market.competitor_total_value|default(cockpit.market.competitor_total_tl|default(0, true), true) %}
+  {% set market_suffix = 'kutu' if market_unit_mode else '₺' %}
   <div class="exec-period-switch" role="tablist" aria-label="Türkiye yönetim dönemi">
     {% for option in cockpit.period_options %}
       <button type="button" class="exec-period-btn {% if option.key == 'monthly' %}active{% endif %}" data-exec-period-button="{{ option.key }}">{{ option.label }}</button>
@@ -27,10 +31,10 @@
   <div class="exec-period-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-period-panel="{{ period_key }}">
     <div class="exec-kpis">
       <article><span>Türkiye gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>{{ period_key|replace('monthly','1 aylık')|replace('quarterly','3 aylık')|replace('half_year','6 aylık')|replace('yearly','12 aylık') }} kabul edilen gerçekleşme</small></article>
-      <article><span>Türkiye toplam pazar</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(cockpit.market.market_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Güncel doğrulanmış rekabet haftası</small></article>
-      <article><span>Türkiye pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>Şirket TL / toplam TL pazar · güncel hafta</small></article>
+      <article><span>Türkiye toplam {{ 'kutu pazarı' if market_unit_mode else 'pazar' }}</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(market_total) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>Güncel doğrulanmış rekabet haftası</small></article>
+      <article><span>Türkiye pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>Şirket {{ 'kutusu / toplam kutu pazarı' if market_unit_mode else 'TL / toplam TL pazar' }} · güncel hafta</small></article>
       <article><span>Türkiye realizasyonu</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>Seçili dönem gerçekleşen TL / hedef TL{% if period.gap_tl is not none %} · {{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {{ 'hedef açığı' if period.gap_tl > 0 else 'hedef üstü' }}{% endif %}</small></article>
-      <article><span>Rakip alanı</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(cockpit.market.competitor_total_tl|default(0,true)) }} ₺{% else %}—{% endif %}</strong><small>Güncel toplam TL pazar − şirket TL</small></article>
+      <article><span>Rakip {{ 'kutu alanı' if market_unit_mode else 'alanı' }}</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(competitor_total) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>Güncel toplam {{ 'kutu pazarı − şirket kutusu' if market_unit_mode else 'TL pazar − şirket TL' }}</small></article>
     </div>
 
     <div class="exec-section-head">
@@ -59,7 +63,7 @@
           <article class="exec-product-row {{ product.tone }}">
             <div class="exec-product-name"><strong>{{ product.product_name }}</strong><span>{{ product.quadrant }}</span></div>
             <div><small>Seçili dönem realizasyonu</small><b>{% if product.realization_percent is not none %}%{{ product.realization_percent }}{% else %}—{% endif %}</b></div>
-            <div><small>Güncel TL pazar payı</small><b>{% if product.share_percent is not none %}%{{ product.share_percent }}{% else %}—{% endif %}</b></div>
+            <div><small>Güncel {{ 'kutu' if market_unit_mode else 'TL' }} pazar payı</small><b>{% if product.share_percent is not none %}%{{ product.share_percent }}{% else %}—{% endif %}</b></div>
             <div class="exec-meter"><span style="width:{{ [product.realization_percent or 0, 160]|min / 1.6 }}%"></span></div>
           </article>
           {% endfor %}
@@ -90,7 +94,7 @@
     <div class="exec-card">
       <div class="exec-card-head"><div><span>YILLIK YÖN</span><h3>Türkiye Realizasyon Trendi</h3><p>Her ayın değeri o ayın gerçekleşen TL / hedef TL realizasyonudur. Pazar payı yalnız güncel rekabet haftasında gösterilir; geçmiş dönem için veri uydurulmaz.</p></div><i class="bi bi-graph-up-arrow"></i></div>
       <div class="exec-chart-wrap"><canvas data-exec-trend data-rows='{{ cockpit.annual_trend|tojson }}'></canvas></div>
-      <div class="exec-current-share"><span>Güncel Türkiye TL pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>{% if cockpit.source_week %}{{ cockpit.source_week }}. hafta doğrulanmış rekabet kaynağı · şirket TL / toplam TL pazar{% endif %}</small></div>
+      <div class="exec-current-share"><span>Güncel Türkiye {{ 'kutu' if market_unit_mode else 'TL' }} pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>{% if cockpit.source_week %}{{ cockpit.source_week }}. hafta doğrulanmış rekabet kaynağı · şirket {{ 'kutusu / toplam kutu pazarı' if market_unit_mode else 'TL / toplam TL pazar' }}{% endif %}</small></div>
     </div>
   </div>
 
