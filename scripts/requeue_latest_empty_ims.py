@@ -14,6 +14,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+import sqlalchemy as sa
+
 from app import create_app
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload, Target
@@ -97,6 +99,11 @@ def main() -> int:
         now = datetime.utcnow()
         try:
             temporary.replace(staging)
+            # Acquire SQLite's single writer slot before re-reading the queue
+            # rows. A deferred SELECT transaction cannot be safely upgraded if
+            # another connection changes the WAL generation between read and
+            # flush; BEGIN IMMEDIATE makes this handoff deterministic.
+            db.session.execute(sa.text("BEGIN IMMEDIATE"))
             upload = db.session.get(IMSUpload, upload_id)
             job = db.session.get(IMSImportJob, job_id)
             if upload is None or job is None:
