@@ -3,7 +3,7 @@ name: Week 32 UI publication fix
 # Close abandoned representative BUILDING generations before targeted refresh.
 # Refresh same-source snapshots without reimporting Week 32.
 # Inspect persisted Travazol detail before refreshing same-source snapshots.
-# Re-run acceptance after the normal Week 32 import completed without its publication marker.
+# Re-run acceptance and publish the fixed Ocak–Haziran H1 snapshots without a new import.
 
 on:
   push:
@@ -57,6 +57,19 @@ jobs:
 
           exec 9>instance/.production-maintenance.lock
           flock -w 300 9
+
+          # Never interrupt a queued or running IMS import. Check before either
+          # production service is touched; a busy system exits without changes.
+          venv/bin/python - <<'PY'
+          import sqlite3
+          con=sqlite3.connect('instance/ipm.db', timeout=30)
+          try:
+              active=con.execute("select count(*) from ims_import_jobs where status in ('QUEUED','PROCESSING')").fetchone()[0]
+              print(f'PRESTOP_ACTIVE_IMPORTS|{active}')
+              assert active == 0
+          finally:
+              con.close()
+          PY
 
           # Import 35 / upload 45 are already COMPLETED.  Do not re-import or
           # rebuild snapshots again.  Stop request/worker writers only while the
@@ -221,6 +234,9 @@ jobs:
               istanbul=None
               travazol_region_rivals={}
               for region_key,snapshot in regions.items():
+                  h1=((snapshot.get('report') or {}).get('periods') or {}).get('half_year') or {}
+                  h1_months=[int(row.get('month')) for row in h1.get('months') or [] if row.get('month')]
+                  assert h1_months == [1,2,3,4,5,6], (region_key,h1_months)
                   market=snapshot.get('market_analysis') or {}
                   rows=market.get('rows') or []
                   totals=market.get('totals') or {}
@@ -266,6 +282,8 @@ jobs:
               murat=Representative.query.filter(db.func.upper(Representative.rep_name)=='MURAT ARSLAN').first()
               assert murat
               snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
+              murat_h1=(((snap.get('snapshots') or {}).get('half_year')) or {})
+              assert [list(period) for period in murat_h1.get('months') or []] == [[2026,1],[2026,2],[2026,3],[2026,4],[2026,5],[2026,6]], murat_h1.get('months')
               mkt=((((snap.get('snapshots') or {}).get('monthly') or {}).get('market_analysis')) or {})
               assert len(mkt.get('rows') or [])==7
               assert int(mkt.get('upload_id') or 0)==upload.id, mkt.get('upload_id')
@@ -282,7 +300,7 @@ jobs:
                     f"|istanbul_company={float(istanbul['company_unit']):.2f}"
                     f"|istanbul_competitor={float(istanbul['competitor_unit']):.2f}"
                     f"|istanbul_market={float(istanbul['market_unit']):.2f}"
-                    '|regions=11|travazol_named_rival_regions=11|representatives=113|murat_rows=7'
+                    '|regions=11|travazol_named_rival_regions=11|representatives=113|murat_rows=7|h1=jan-jun'
                     f'|murat_company={float(mt.get("actual_unit") or 0):.2f}'
                     f'|murat_competitor={float(mt.get("competitor_unit") or 0):.2f}'
                     f'|murat_market={float(mt.get("market_unit") or 0):.2f}')
