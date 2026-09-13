@@ -251,6 +251,24 @@ def _latest_authority_upload(year, month):
     )
 
 
+def _upload_has_authority(upload_id):
+    """Check KPI authority on the exact already-selected IMS upload."""
+    if not upload_id:
+        return False
+    return (
+        db.session.query(CompetitionData.id)
+        .filter(
+            CompetitionData.upload_id == int(upload_id),
+            CompetitionData.territory.in_(("NATIONAL",)),
+            CompetitionData.sheet_name.like(f"{AUTHORITY_PREFIX}%"),
+            CompetitionData.metric_type == _UNIT,
+        )
+        .limit(1)
+        .scalar()
+        is not None
+    )
+
+
 def _authority(upload_id, territory):
     rows = CompetitionData.query.filter(
         CompetitionData.upload_id == int(upload_id),
@@ -492,8 +510,11 @@ def install_kpi_market_read_authority():
 
         def representative_build(self):
             payload = original_rep(self)
-            upload = _latest_authority_upload(self.year, self.month)
-            if upload is not None and int(payload.get("upload_id") or 0) == int(upload.id):
+            upload_id = payload.get("upload_id")
+            # RepresentativeMarketService already selected the exact source
+            # upload. Scope the KPI-authority check to that id instead of doing
+            # a second period-wide CompetitionData/IMSUpload discovery query.
+            if _upload_has_authority(upload_id):
                 normalize_representative_payload(payload)
             return payload
 
