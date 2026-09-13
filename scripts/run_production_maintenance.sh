@@ -460,9 +460,15 @@ BACKUPS_AFTER=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*
 BACKUP_BYTES_AFTER=$(du -sb instance/backups 2>/dev/null | awk '{print $1}')
 printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1\nBACKUPS_AFTER|%s\nBACKUP_BYTES_AFTER|%s\n' "$BACKUPS_AFTER" "${BACKUP_BYTES_AFTER:-0}" >> "$EVIDENCE_FILE"
 
-# Do not run PRAGMA optimize here: the capacity audit must remain read-only once
-# the import lock has been released.
-venv/bin/python database_capacity_audit.py --additional-uploads 49 >> "$EVIDENCE_FILE" 2>&1
+# A full integrity/dbstat capacity scan can saturate disk I/O for tens of
+# minutes on the multi-GB live database. Keep normal weekly maintenance light;
+# deep capacity qualification is explicit and never runs during user traffic
+# unless the workflow is deliberately launched with this environment flag.
+if [ "${RUN_DEEP_CAPACITY_AUDIT:-0}" = 1 ]; then
+ venv/bin/python database_capacity_audit.py --additional-uploads 49 >> "$EVIDENCE_FILE" 2>&1
+else
+ printf 'CAPACITY_AUDIT|SKIPPED|reason=interactive_performance_protection\n' >> "$EVIDENCE_FILE"
+fi
 
 venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
 import sqlite3
@@ -499,5 +505,5 @@ WORKER_ACTIVE=$(sudo systemctl is-active ims-import-worker.service)
 printf 'WEB_ACTIVE|%s\nWORKER_ACTIVE|%s\n' "$WEB_ACTIVE" "$WORKER_ACTIVE" >> "$EVIDENCE_FILE"
 test "$WEB_ACTIVE" = active
 test "$WORKER_ACTIVE" = active
-curl -fsS --max-time 20 http://127.0.0.1:8000/health >/dev/null
+curl -fsS --max-time 20 http://127.0.0.1:8000/login >/dev/null
 printf 'HTTP_HEALTH|PASS\n' >> "$EVIDENCE_FILE"
