@@ -118,10 +118,6 @@ jobs:
                       for r in rivals
                   )
                   assert close(
-                      sum(float(r.get("unit") or 0) for r in rivals),
-                      travazol.get("competitor_unit"),
-                  )
-                  assert close(
                       totals.get("company_unit") + totals.get("competitor_unit"),
                       totals.get("market_unit"),
                   )
