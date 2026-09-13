@@ -101,7 +101,10 @@ def _find_pair(workbook):
                 "unit": [(unit_name, unit_frame, unit_plan)],
             }
         elif structural:
-            raise ValueError("Adaptive IMS: TTS matrisleri bulundu ancak TL/KUTU anlamı tekil belirlenemedi.")
+            # Structural TTS-like sheets without a unique TL/KUTU semantic hint
+            # are outside this adapter's authority. Do not guess or fail the
+            # whole import: leave them to the legacy/dynamic import contract.
+            return None
         else:
             return None
 
