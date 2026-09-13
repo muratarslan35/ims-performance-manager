@@ -53,3 +53,5 @@ jobs:
             -o TCPKeepAlive=yes \
             "$IMS_USER@$IMS_HOST" \
             "cd '$IMS_PATH' && git fetch origin main && git pull --ff-only origin main && bash scripts/run_week32_direct_reimport.sh '$IMS_PATH'"
+
+# Manual production replay marker: exact Week 32 archive through the normal importer.
