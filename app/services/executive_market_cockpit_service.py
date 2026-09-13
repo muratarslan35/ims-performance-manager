@@ -14,7 +14,7 @@ class ExecutiveMarketCockpitService:
     PERIODS = (
         ("monthly", "1 Aylık"),
         ("quarterly", "3 Aylık"),
-        ("half_year", "6 Aylık"),
+        ("half_year", "6 Aylık · Ocak–Haziran"),
         ("yearly", "12 Aylık"),
     )
     PERIOD_LABELS = dict(PERIODS)
