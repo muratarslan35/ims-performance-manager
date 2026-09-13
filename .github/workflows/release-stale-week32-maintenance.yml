@@ -1,5 +1,6 @@
 name: Week 32 UI publication fix
 
+# Inspect persisted Travazol detail before refreshing same-source snapshots.
 # Re-run acceptance after the normal Week 32 import completed without its publication marker.
 
 on:
@@ -128,6 +129,38 @@ jobs:
                   CompetitionData.sheet_name.like(f'{AUTHORITY_PREFIX}%')
               ).count()
               assert authority_count==168, authority_count
+
+              detail_rows=db.session.query(
+                  CompetitionData.territory,
+                  CompetitionData.product_name,
+                  CompetitionData.metric_value,
+                  CompetitionData.is_company_product,
+                  CompetitionData.is_competitor,
+                  CompetitionData.sheet_name,
+              ).filter(
+                  CompetitionData.upload_id==upload.id,
+                  CompetitionData.metric_type=='UNIT',
+                  CompetitionData.is_subtotal.is_(False),
+                  CompetitionData.is_grand_total.is_(False),
+                  db.func.upper(CompetitionData.product_group).like('%TRAVAZOL%'),
+                  db.func.upper(CompetitionData.sheet_name).like('%IMS COMPAT%'),
+              ).all()
+              detail_regions=sorted({
+                  str(row.territory or '').strip().split()[0]
+                  for row in detail_rows
+                  if str(row.territory or '').strip()
+                  and not bool(row.is_company_product)
+                  and float(row.metric_value or 0)>0
+              })
+              detail_names=sorted({
+                  str(row.product_name or '').strip()
+                  for row in detail_rows
+                  if not bool(row.is_company_product)
+                  and float(row.metric_value or 0)>0
+              })
+              print(f'TRAVAZOL_DB_DETAIL|rows={len(detail_rows)}|regions={detail_regions}|names={detail_names}')
+              assert len(detail_regions)==11, detail_regions
+              assert detail_names, detail_names
 
               dashboard=PersistentDashboardSnapshotService.get_active(2026,8) or {}
               executive=dashboard.get('executive_metrics') or {}
