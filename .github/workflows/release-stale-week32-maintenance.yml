@@ -1,5 +1,6 @@
 name: Week 32 UI publication fix
 
+# Refresh same-source snapshots without reimporting Week 32.
 # Inspect persisted Travazol detail before refreshing same-source snapshots.
 # Re-run acceptance after the normal Week 32 import completed without its publication marker.
 
@@ -17,7 +18,7 @@ jobs:
   publish:
     name: Prove and finalize Week 32 single-source publication
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 35
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -96,8 +97,8 @@ jobs:
           done
           sleep 2
 
-          # Read-only acceptance.  TESTING=True prevents startup reconciliation
-          # from creating any new background writer while proving the live data.
+          # Targeted same-source snapshot refresh and acceptance. TESTING=True
+          # prevents startup reconciliation from creating a background writer.
           venv/bin/python -u - <<'PY'
           import json
           import sqlalchemy as sa
@@ -107,8 +108,8 @@ jobs:
           from app.services.kpi_market_single_source import AUTHORITY_PREFIX
           from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshots
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService, region_snapshot_sets
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshot_sets, representative_snapshots
           from config import Config
 
           class ReadOnlyConfig(Config):
@@ -161,6 +162,34 @@ jobs:
               print(f'TRAVAZOL_DB_DETAIL|rows={len(detail_rows)}|regions={detail_regions}|names={detail_names}')
               assert len(detail_regions)==11, detail_regions
               assert detail_names, detail_names
+
+              # Reimport reused upload 45, so the old region/representative
+              # snapshot identity also matched and was incorrectly reused.
+              # Rebuild only those two read models from the now-complete same
+              # CompetitionData source; no workbook import or business-row edit.
+              db.session.execute(
+                  region_snapshot_sets.update().where(
+                      region_snapshot_sets.c.year==2026,
+                      region_snapshot_sets.c.month==8,
+                      region_snapshot_sets.c.source_upload_id==upload.id,
+                      region_snapshot_sets.c.status=='ACTIVE',
+                  ).values(status='BUILDING')
+              )
+              db.session.commit()
+              region_refresh=PersistentRegionSnapshotService.build_for_period(2026,8)
+              assert region_refresh.get('status')=='ACTIVE', region_refresh
+              representative_refresh=PersistentRepresentativeSnapshotService.build_for_period(2026,8,force=True)
+              assert representative_refresh.get('status')=='ACTIVE', representative_refresh
+              print(f"TARGETED_SNAPSHOT_REFRESH|PASS|region_set={region_refresh.get('set_id')}|representative_set={representative_refresh.get('set_id')}")
+
+              summary=json.loads(job.result_summary or '{}')
+              summary['publication_ready']=True
+              summary['publication_ready_source']='verified_week32_same_source_targeted_snapshot_refresh'
+              job.result_summary=json.dumps(summary,ensure_ascii=False)
+              job.error_message=None
+              db.session.commit()
+              db.session.expire_all()
+              print('PUBLICATION_READY|PASS|upload=45|job=35')
 
               dashboard=PersistentDashboardSnapshotService.get_active(2026,8) or {}
               executive=dashboard.get('executive_metrics') or {}
@@ -247,43 +276,6 @@ jobs:
                     f'|murat_company={float(mt.get("actual_unit") or 0):.2f}'
                     f'|murat_competitor={float(mt.get("competitor_unit") or 0):.2f}'
                     f'|murat_market={float(mt.get("market_unit") or 0):.2f}')
-          PY
-
-          # The old failure was solely SQLAlchemy competing with a stale writer
-          # while setting this metadata bit.  Update only job 35 through stdlib
-          # sqlite in one bounded IMMEDIATE transaction; no business facts touched.
-          venv/bin/python -u - <<'PY'
-          import json, sqlite3, time
-          db_path='instance/ipm.db'
-          last=None
-          for attempt in range(1,13):
-              con=sqlite3.connect(db_path, timeout=10)
-              try:
-                  con.execute('PRAGMA busy_timeout=10000')
-                  con.execute('BEGIN IMMEDIATE')
-                  row=con.execute('select result_summary,status,ims_upload_id from ims_import_jobs where id=35').fetchone()
-                  assert row and row[1]=='COMPLETED' and row[2]==45, row
-                  try:
-                      summary=json.loads(row[0] or '{}')
-                  except Exception:
-                      summary={}
-                  summary['publication_ready']=True
-                  summary['publication_ready_source']='verified_kpi_single_source_all_snapshots'
-                  con.execute('update ims_import_jobs set result_summary=? where id=35',(json.dumps(summary,ensure_ascii=False),))
-                  con.commit()
-                  print(f'PUBLICATION_READY|PASS|upload=45|job=35|attempt={attempt}')
-                  break
-              except sqlite3.OperationalError as exc:
-                  last=exc
-                  try: con.rollback()
-                  except Exception: pass
-                  if 'locked' not in str(exc).lower() or attempt==12:
-                      raise
-                  time.sleep(2)
-              finally:
-                  con.close()
-          else:
-              raise RuntimeError(last)
           PY
 
           trap - EXIT
