@@ -42,6 +42,15 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Inspect Week 32 region snapshot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" \
+            "cd '$IMS_PATH' && git fetch origin main && git pull --ff-only origin main && PYTHONPATH='$IMS_PATH' venv/bin/python scripts/week32_region_diagnostic.py"
+
       - name: Launch detached maintenance job
         id: launch
         shell: bash
