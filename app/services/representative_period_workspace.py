@@ -21,7 +21,7 @@ from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 
 PERIOD_OPTIONS = (
-    ("half_year", "6 Aylık", "wide"),
+    ("half_year", "6 Aylık · Ocak–Haziran", "wide"),
     ("yearly", "YILLIK YTD", "wide"),
     ("monthly", "Aylık", "compact"),
     ("q1", "Q1", "compact"),
@@ -42,7 +42,7 @@ def _period_months(year, month, key):
     if key == "monthly":
         return [(year, month)]
     if key == "half_year":
-        return [_shift_month(year, month, delta) for delta in range(-5, 1)]
+        return [(year, value) for value in range(1, min(month, 6) + 1)]
     if key == "yearly":
         return [(year, value) for value in range(1, month + 1)]
     if key in {"q1", "q2", "q3", "q4"}:
