@@ -16,7 +16,7 @@
   {% set market_suffix = 'kutu' if market_unit_mode else '₺' %}
   <div class="exec-period-switch" role="tablist" aria-label="Türkiye yönetim dönemi">
     {% for option in cockpit.period_options %}
-      <button type="button" class="exec-period-btn {% if option.key == 'monthly' %}active{% endif %}" data-exec-period-button="{{ option.key }}">{{ option.label }}</button>
+      <button type="button" class="exec-period-btn {% if option.key == 'monthly' %}active{% endif %}" data-exec-period-button="{{ option.key }}"{% if option.key == 'half_year' %} title="Ocak–Haziran sabit dönem"{% endif %}>{{ option.label }}</button>
     {% endfor %}
   </div>
 
