@@ -13,7 +13,7 @@ from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 class RegionPerformanceService:
-    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık", 6), ("yearly", "Yıllık", None))
+    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık · Ocak–Haziran", 6), ("yearly", "Yıllık", None))
 
     def __init__(self, region_key, year, month):
         self.region_key = str(region_key).strip()
@@ -70,6 +70,11 @@ class RegionPerformanceService:
         if length == 1:
             return [(self.year, self.month)]
         anchor_year, anchor_month = self._latest_completed_period()
+        if length == 6:
+            # "6 Aylık" is the fixed first half of the selected year (H1),
+            # never a rolling six-month window. Before June, show only the
+            # completed/available H1 months; after June it remains Jan-Jun.
+            return [(anchor_year, month) for month in range(1, min(anchor_month, 6) + 1)]
         if length is None:
             return [(anchor_year, month) for month in range(1, anchor_month + 1)]
         return [self.shift_month(anchor_year, anchor_month, delta) for delta in range(-(length - 1), 1)]
