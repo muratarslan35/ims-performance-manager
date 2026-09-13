@@ -87,7 +87,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
 def test_ops_release_avoids_heavy_db_work_and_service_activation():
     text = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
 
-    assert '.github/workflows/ims-production-maintenance.yml|scripts/run_production_maintenance.sh|tests/*' in text
+    assert '.github/workflows/*|scripts/run_production_maintenance.sh|tests/*' in text
     assert 'if [ "$mode" = "docs" ]; then mode="ops"; fi' in text
     assert 'Ops full suite' in text
     assert 'Ops smoke' in text
@@ -134,11 +134,15 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
 
     assert 'database_capacity_audit.py' in runner
     assert '--additional-uploads 49' in runner
-    assert '--optimize' in runner
+    assert 'Do not run PRAGMA optimize here' in runner
     assert 'cleanup_old_backups.py' in runner
     assert '--keep-latest 1' in runner
     assert 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1' in runner
     assert 'BACKUPS_BEFORE' in runner
+    assert 'BACKUPS_AFTER' in runner
+    assert 'BACKUP_BYTES_BEFORE' in runner
+    assert 'BACKUP_BYTES_AFTER' in runner
+    assert runner.index('cleanup_old_backups.py') < runner.index('database_capacity_audit.py')
     assert 'STORAGE_BEFORE' in runner
     assert 'MAINTENANCE_SKIPPED|reason=active_import' in runner
     assert 'IMS_PROCESSING|' in runner
