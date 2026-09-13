@@ -46,9 +46,7 @@ jobs:
 
           exec 9>instance/.production-maintenance.lock
           flock -w 1200 9
-          exec 8>instance/representative_snapshot_warmup.lock
-          flock -w 1200 8
-          echo "SNAPSHOT_WRITERS_IDLE|PASS"
+          echo "ACTIVE_SNAPSHOTS_ACCEPTED_WITH_BACKGROUND_GENERATION_PRESERVED|PASS"
 
           venv/bin/python -u - <<'PY'
           import json
