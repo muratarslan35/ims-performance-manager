@@ -175,8 +175,8 @@ def region_payloads_valid(regions, upload_id):
             return False, None
         if not all(str(r.get('name') or '').strip() and float(r.get('unit') or 0) > 0 for r in rivals):
             return False, None
-        if not close(sum(float(r.get('unit') or 0) for r in rivals), travazol.get('competitor_unit')):
-            return False, None
+        # KPI named rival detail is drill-down evidence, not an additive market
+        # denominator. Aggregate competitor remains PAZAR - company authority.
         for row in rows:
             if not close(row.get('company_unit') + row.get('competitor_unit'), row.get('market_unit')):
                 return False, None
@@ -207,7 +207,9 @@ def representative_payload_valid(raw, upload_id):
             rivals = row.get('rivals') or []
             if not rivals:
                 return False
-            if not close(sum(float(r.get('unit') or 0) for r in rivals), row.get('competitor_unit')):
+            # Named rival detail is non-additive in KPI workbooks; presence and
+            # positive values are validated separately from aggregate PAZAR.
+            if not all(str(r.get('name') or '').strip() and float(r.get('unit') or 0) > 0 for r in rivals):
                 return False
     return close(totals.get('actual_unit') + totals.get('competitor_unit'), totals.get('market_unit'))
 
