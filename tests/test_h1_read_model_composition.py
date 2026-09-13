@@ -133,3 +133,6 @@ def test_representative_persisted_h1_uses_existing_quarters_and_terminal_q2_scop
     assert "half_year" in h1["ai_report"]["periods"]
     assert result["snapshots"]["q1"] is q1
     assert result["snapshots"]["q2"] is q2
+
+
+# CI refresh after the baseline read-path repair was merged into main.
