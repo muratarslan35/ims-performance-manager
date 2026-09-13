@@ -1,5 +1,6 @@
 name: Week 32 UI publication fix
 
+# Close abandoned representative BUILDING generations before targeted refresh.
 # Refresh same-source snapshots without reimporting Week 32.
 # Inspect persisted Travazol detail before refreshing same-source snapshots.
 # Re-run acceptance after the normal Week 32 import completed without its publication marker.
@@ -178,6 +179,15 @@ jobs:
               db.session.commit()
               region_refresh=PersistentRegionSnapshotService.build_for_period(2026,8)
               assert region_refresh.get('status')=='ACTIVE', region_refresh
+              db.session.execute(
+                  representative_snapshot_sets.update().where(
+                      representative_snapshot_sets.c.year==2026,
+                      representative_snapshot_sets.c.month==8,
+                      representative_snapshot_sets.c.source_upload_id==upload.id,
+                      representative_snapshot_sets.c.status=='BUILDING',
+                  ).values(status='FAILED')
+              )
+              db.session.commit()
               representative_refresh=PersistentRepresentativeSnapshotService.build_for_period(2026,8,force=True)
               assert representative_refresh.get('status')=='ACTIVE', representative_refresh
               print(f"TARGETED_SNAPSHOT_REFRESH|PASS|region_set={region_refresh.get('set_id')}|representative_set={representative_refresh.get('set_id')}")
