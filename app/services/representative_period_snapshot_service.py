@@ -28,7 +28,7 @@ from app.services.realization_rounding import realization_percent
 
 
 class RepresentativePeriodSnapshotService:
-    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık", 6))
+    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık · Ocak–Haziran", 6))
 
     @staticmethod
     def _shift_month(year, month, delta):
@@ -36,7 +36,9 @@ class RepresentativePeriodSnapshotService:
         return ordinal // 12, ordinal % 12 + 1
 
     @classmethod
-    def _months(cls, year, month, length):
+    def _months(cls, year, month, length, *, fixed_first_half=False):
+        if fixed_first_half:
+            return [(int(year), value) for value in range(1, min(int(month), 6) + 1)]
         return [cls._shift_month(year, month, delta) for delta in range(-(length - 1), 1)]
 
     @staticmethod
@@ -54,7 +56,11 @@ class RepresentativePeriodSnapshotService:
     def build(cls, representative_id, year, month):
         representative_id = int(representative_id)
         year, month = int(year), int(month)
-        all_months = cls._months(year, month, 6)
+        period_months = {
+            key: cls._months(year, month, length, fixed_first_half=(key == "half_year"))
+            for key, _label, length in cls.PERIODS
+        }
+        all_months = sorted({period for months in period_months.values() for period in months})
         allowed = set(all_months)
 
         targets = Target.query.filter(
@@ -149,7 +155,7 @@ class RepresentativePeriodSnapshotService:
 
         result = {}
         for key, label, length in cls.PERIODS:
-            months = cls._months(year, month, length)
+            months = period_months[key]
             month_set = set(months)
             product_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
             month_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "complete": True})
