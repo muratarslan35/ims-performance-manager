@@ -259,6 +259,7 @@ def _upload_has_authority(upload_id):
         db.session.query(CompetitionData.id)
         .filter(
             CompetitionData.upload_id == int(upload_id),
+            CompetitionData.territory.in_(("NATIONAL",)),
             CompetitionData.sheet_name.like(f"{AUTHORITY_PREFIX}%"),
             CompetitionData.metric_type == _UNIT,
         )
