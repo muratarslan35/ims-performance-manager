@@ -441,6 +441,7 @@ function initTurkeyMap(regionRealization) {
         regions.forEach((item) => { item.style.pointerEvents = "none"; });
         if (typeof window.showLoading === "function") {
           window.showLoading(`${regionName} bölge analizi yükleniyor...`);
+          document.getElementById("loadingOverlay")?.setAttribute("aria-hidden", "false");
         }
         // Paint the real loading state first; it remains visible until the
         // destination HTML replaces this document. No synthetic percentage.
@@ -606,6 +607,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 window.addEventListener("pageshow", () => {
   if (typeof window.hideLoading === "function") window.hideLoading();
+  document.getElementById("loadingOverlay")?.setAttribute("aria-hidden", "true");
 });
 
 window.addEventListener("beforeunload", () => {
