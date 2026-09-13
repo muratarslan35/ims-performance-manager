@@ -66,7 +66,11 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = "main"
-          test -z "$(git status --porcelain)"
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked production worktree changes detected; maintenance refused."
+            git status --short --untracked-files=no
+            exit 1
+          fi
           git fetch origin main
           git pull --ff-only origin main
           test -f scripts/run_production_maintenance.sh

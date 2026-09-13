@@ -29,6 +29,10 @@ logs/
 uploads/
 reports/
 
+# Local SSH key material
+*.key
+*.key.pub
+
 # Test / Coverage
 .pytest_cache/
 .coverage
