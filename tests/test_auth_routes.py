@@ -1409,3 +1409,12 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
     assert "AI Performans Rehberi" in region_html
     assert "AI ŞEHİR" in region_html
     assert "Başka Temsilci" not in region_html
+
+
+def test_dashboard_map_navigation_uses_real_page_loading_lifecycle():
+    dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+    assert 'window.showLoading' in dashboard_js
+    assert 'region.setAttribute("aria-busy", "true")' in dashboard_js
+    assert 'requestAnimationFrame(() => window.location.assign(detailUrl))' in dashboard_js
+    assert "No synthetic percentage" in dashboard_js
