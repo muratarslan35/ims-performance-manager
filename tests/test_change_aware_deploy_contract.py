@@ -134,7 +134,8 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
 
     assert 'database_capacity_audit.py' in runner
     assert '--additional-uploads 49' in runner
-    assert 'Do not run PRAGMA optimize here' in runner
+    assert 'RUN_DEEP_CAPACITY_AUDIT' in runner
+    assert 'CAPACITY_AUDIT|SKIPPED|reason=interactive_performance_protection' in runner
     assert 'cleanup_old_backups.py' in runner
     assert '--keep-latest 1' in runner
     assert 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1' in runner
@@ -151,6 +152,7 @@ def test_expensive_capacity_and_backup_retention_are_weekly_maintenance():
     assert 'SQLITE_QUICK_CHECK|' in runner
     assert 'WEB_ACTIVE|' in runner
     assert 'WORKER_ACTIVE|' in runner
+    assert 'http://127.0.0.1:8000/login' in runner
     assert 'HTTP_HEALTH|PASS' in runner
     assert 'MAINTENANCE_RESULT|PASS' in runner
 
