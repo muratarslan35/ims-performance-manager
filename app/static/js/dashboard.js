@@ -436,7 +436,16 @@ function initTurkeyMap(regionRealization) {
       }
       const regionCode = String(region.dataset.codes || "").split(",")[0].trim();
       const detailUrl = region.dataset.url || (regionCode ? `/regions/${encodeURIComponent(regionCode)}` : "");
-      if (detailUrl) window.location.assign(detailUrl);
+      if (detailUrl) {
+        region.setAttribute("aria-busy", "true");
+        regions.forEach((item) => { item.style.pointerEvents = "none"; });
+        if (typeof window.showLoading === "function") {
+          window.showLoading(`${regionName} bölge analizi yükleniyor...`);
+        }
+        // Paint the real loading state first; it remains visible until the
+        // destination HTML replaces this document. No synthetic percentage.
+        requestAnimationFrame(() => window.location.assign(detailUrl));
+      }
     });
 
     if (!tooltip) return;
