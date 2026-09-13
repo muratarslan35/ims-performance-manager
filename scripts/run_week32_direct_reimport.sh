@@ -35,28 +35,33 @@ PY
 echo "IMS_PROCESSING|$active"
 test "$active" = 0
 
-# With no active import, keep the queue handoff single-writer. Starting the
-# worker before this transaction allowed its queue polling to race the SQLite
-# update of ims_uploads/import_jobs and intermittently return "database is
-# locked". Always restore the worker if the requeue transaction fails.
-worker_restart_required=1
-restore_import_worker() {
-  if [ "$worker_restart_required" = 1 ]; then
+# With no active import, keep the queue handoff single-writer. Both production
+# services can write SQLite: the import worker polls the queue and the web
+# process records application state. Stop both only for the short requeue
+# transaction, and always restore them if that handoff fails.
+services_restart_required=1
+restore_production_services() {
+  if [ "$services_restart_required" = 1 ]; then
+    sudo systemctl start ims-performance-manager.service || true
     sudo systemctl start ims-import-worker.service || true
   fi
 }
-trap restore_import_worker EXIT
+trap restore_production_services EXIT
 
 sudo systemctl stop ims-import-worker.service
+sudo systemctl stop ims-performance-manager.service
 test "$(sudo systemctl is-active ims-import-worker.service)" = inactive
+test "$(sudo systemctl is-active ims-performance-manager.service)" = inactive
 
 venv/bin/python -m scripts.requeue_latest_empty_ims \
   --year 2026 --month 8 --week 32 --allow-existing-targets
 
+sudo systemctl start ims-performance-manager.service
 sudo systemctl start ims-import-worker.service
+test "$(sudo systemctl is-active ims-performance-manager.service)" = active
 test "$(sudo systemctl is-active ims-import-worker.service)" = active
-worker_restart_required=0
-echo "IMS_WORKER_RELOADED|commit=$(git rev-parse HEAD)"
+services_restart_required=0
+echo "IMS_SERVICES_RELOADED|commit=$(git rev-parse HEAD)"
 
 for poll in $(seq 1 180); do
   state=$(venv/bin/python - <<'PY'
