@@ -234,7 +234,7 @@ def install_period_result_sum_guard():
         from app.services.executive_market_cockpit_service import ExecutiveMarketCockpitService
         ExecutiveMarketCockpitService.PERIODS = (
             ("monthly", "Aylık"), ("q1", "Q1"), ("q2", "Q2"), ("q3", "Q3"), ("q4", "Q4"),
-            ("half_year", "6 Aylık"), ("yearly", "YILLIK YTD"),
+            ("half_year", "6 Aylık · Ocak–Haziran"), ("yearly", "YILLIK YTD"),
         )
         ExecutiveMarketCockpitService.PERIOD_LABELS = dict(ExecutiveMarketCockpitService.PERIODS)
     except ImportError:
