@@ -1,5 +1,7 @@
 name: Week 32 UI publication fix
 
+# Re-run acceptance after the normal Week 32 import completed without its publication marker.
+
 on:
   push:
     branches: [main]
@@ -145,17 +147,27 @@ jobs:
               regions=PersistentRegionSnapshotService.get_active_all(2026,8)
               assert len(regions)==11, len(regions)
               istanbul=None
+              travazol_region_rivals={}
               for region_key,snapshot in regions.items():
                   market=snapshot.get('market_analysis') or {}
                   rows=market.get('rows') or []
                   totals=market.get('totals') or {}
                   assert len(rows)==7, (region_key,len(rows))
+                  assert int(market.get('upload_id') or 0)==upload.id, (region_key,market.get('upload_id'))
                   assert market.get('market_share_source')=='IMS_KPI_AGGREGATE_PAZAR', (region_key,market.get('market_share_source'))
+                  travazol=next((row for row in rows if str(row.get('product_name') or '').upper()=='TRAVAZOL'),None)
+                  assert travazol, (region_key,'TRAVAZOL row missing')
+                  named_rivals=travazol.get('rivals') or []
+                  assert named_rivals, (region_key,'TRAVAZOL named rivals missing')
+                  assert all(str(r.get('name') or '').strip() and float(r.get('unit') or 0)>0 for r in named_rivals), (region_key,named_rivals)
+                  assert close(sum(float(r.get('unit') or 0) for r in named_rivals),travazol.get('competitor_unit')), (region_key,named_rivals,travazol)
+                  travazol_region_rivals[str(region_key)]=[str(r['name']).strip() for r in named_rivals]
                   for row in rows:
                       assert close(row['company_unit']+row['competitor_unit'],row['market_unit']), (region_key,row)
                   assert close(totals.get('company_unit')+totals.get('competitor_unit'),totals.get('market_unit')), (region_key,totals)
                   if str(region_key).startswith('101'):
                       istanbul=totals
+              assert len(travazol_region_rivals)==11, travazol_region_rivals
               assert istanbul
               assert close(istanbul.get('company_unit'),52024), istanbul
               assert close(istanbul.get('competitor_unit'),85747), istanbul
@@ -184,6 +196,7 @@ jobs:
               snap=PersistentRepresentativeSnapshotService.get_active(murat.id,2026,8)
               mkt=((((snap.get('snapshots') or {}).get('monthly') or {}).get('market_analysis')) or {})
               assert len(mkt.get('rows') or [])==7
+              assert int(mkt.get('upload_id') or 0)==upload.id, mkt.get('upload_id')
               for row in mkt['rows']:
                   assert close(row['actual_unit']+row['competitor_unit'],row['market_unit']), row
               mt=mkt.get('totals') or {}
@@ -197,7 +210,10 @@ jobs:
                     f"|istanbul_company={float(istanbul['company_unit']):.2f}"
                     f"|istanbul_competitor={float(istanbul['competitor_unit']):.2f}"
                     f"|istanbul_market={float(istanbul['market_unit']):.2f}"
-                    '|regions=11|representatives=113|murat_rows=7')
+                    '|regions=11|travazol_named_rival_regions=11|representatives=113|murat_rows=7'
+                    f'|murat_company={float(mt.get("actual_unit") or 0):.2f}'
+                    f'|murat_competitor={float(mt.get("competitor_unit") or 0):.2f}'
+                    f'|murat_market={float(mt.get("market_unit") or 0):.2f}')
           PY
 
           # The old failure was solely SQLAlchemy competing with a stale writer
