@@ -604,6 +604,10 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("ims:theme-change", applyDashboardChartTheme);
 });
 
+window.addEventListener("pageshow", () => {
+  if (typeof window.hideLoading === "function") window.hideLoading();
+});
+
 window.addEventListener("beforeunload", () => {
   Object.keys(CHARTS).forEach((key) => destroyChart(key));
 });
