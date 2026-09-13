@@ -60,6 +60,23 @@ def _resolve_authority_territory(upload_id: int, region_key) -> str | None:
     return None
 
 
+def _positive_named_rivals(payload) -> None:
+    """Hide zero/blank rival observations without changing KPI PAZAR totals.
+
+    KPI rival columns are drill-down observations and are not an additive market
+    denominator.  Zero cells are therefore not useful named-rival UI records;
+    the authoritative competitor total remains PAZAR minus company KUTU.
+    """
+    for row in payload.get("rows") or []:
+        rivals = row.get("rivals") or []
+        row["rivals"] = [
+            rival
+            for rival in rivals
+            if str(rival.get("name") or "").strip()
+            and float(rival.get("unit") or 0.0) > 0
+        ]
+
+
 def install_kpi_region_authority_resolver() -> None:
     from app.services.region_market_service import RegionMarketService
 
@@ -71,6 +88,7 @@ def install_kpi_region_authority_resolver() -> None:
     def build_with_region_authority(self):
         payload = original(self)
         if payload.get("market_share_source") == "IMS_KPI_AGGREGATE_PAZAR":
+            _positive_named_rivals(payload)
             return payload
 
         upload = _latest_authority_upload(self.year, self.month)
@@ -84,6 +102,7 @@ def install_kpi_region_authority_resolver() -> None:
             return payload
 
         normalize_region_payload(payload, controls, self._display_integer)
+        _positive_named_rivals(payload)
         payload["upload_id"] = int(upload.id)
         payload["authority_territory"] = territory
         return payload
