@@ -8,11 +8,11 @@ from app.services.representative_period_snapshot_service import RepresentativePe
 class ScopedAIInsightService:
     """Explain verified performance data without changing source calculations."""
 
-    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık", 6))
+    PERIODS = (("monthly", "Aylık", 1), ("quarterly", "3 Aylık", 3), ("half_year", "6 Aylık · Ocak–Haziran", 6))
     PERIOD_LABELS = {
         "monthly": "Aylık",
         "quarterly": "3 Aylık",
-        "half_year": "6 Aylık",
+        "half_year": "6 Aylık · Ocak–Haziran",
         "yearly": "YILLIK YTD",
         "q1": "Q1",
         "q2": "Q2",
@@ -37,6 +37,8 @@ class ScopedAIInsightService:
 
     @classmethod
     def _months(cls, year, month, length):
+        if int(length) == 6:
+            return [(int(year), value) for value in range(1, min(int(month), 6) + 1)]
         return [cls._shift_month(year, month, delta) for delta in range(-(length - 1), 1)]
 
     @staticmethod
