@@ -161,6 +161,17 @@ def install_representative_market_query_optimizer():
                 sql_scopes.append(CompetitionData.territory.in_(sorted(geography_labels)))
             rows = _namespace_rows(query.filter(or_(*sql_scopes)).all()) if sql_scopes else []
 
+            # The exact-brick path executes immediately after this aggregate read
+            # during one representative build. Keep the already-fetched bounded
+            # row set on the service instance so that path can select its monthly
+            # named-rival rows without issuing the same CompetitionData SELECT a
+            # second time. This cache is request/build-local and never shared.
+            raw_cache = getattr(self, "_rep_query_competition_raw_cache", None)
+            if raw_cache is None:
+                raw_cache = {}
+                self._rep_query_competition_raw_cache = raw_cache
+            raw_cache[(year, month, int(upload_id))] = list(rows)
+
             representative_key = self._key(self.representative.rep_name)
             representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
             if representative_rows:
@@ -212,6 +223,21 @@ def install_representative_market_query_optimizer():
         brick_labels = _candidate_set(brick_values)
         if upload_id is None or not brick_keys:
             return None, []
+
+        raw_cache = getattr(self, "_rep_query_competition_raw_cache", {})
+        cached_rows = raw_cache.get((self.year, self.month, int(upload_id)))
+        if cached_rows is not None:
+            exact = [
+                row for row in cached_rows
+                if self._key(row.subterritory) in brick_keys
+                and "AYLIK" in AliasService.normalize(row.sheet_name)
+                and "REKABET" in AliasService.normalize(row.sheet_name)
+                and "KUTU" in AliasService.normalize(row.sheet_name)
+            ]
+            if exact:
+                return upload_id, exact
+            return upload_id, original_workbook_fallback(self, upload_id, brick_keys)
+
         cache_key = (
             f"rep-market:brick-competition:{self.representative.id}:{self.year}:{self.month}:{upload_id}:"
             f"{_scope_signature(set(brick_keys))}"
@@ -252,6 +278,7 @@ def install_representative_market_query_optimizer():
         # must re-resolve period identity rather than carrying stale state.
         self._rep_query_upload_id_cache = {}
         self._rep_query_scope_values_cache = {}
+        self._rep_query_competition_raw_cache = {}
 
         # RepresentativeMarketService renders seven products and historically
         # called effective_product() once per row. Resolve the whole period once
