@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
+import time
+from pathlib import Path
 
 from sqlalchemy import desc
 
@@ -38,6 +41,19 @@ def _drop_current_snapshot_set(year: int, month: int) -> int | None:
     return set_id
 
 
+def _acquire_snapshot_writer_lock(lock_file, wait_seconds: float = 900.0) -> None:
+    """Serialize region writes with representative snapshot generation."""
+    deadline = time.monotonic() + max(0.0, float(wait_seconds))
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Timed out waiting for the representative snapshot writer")
+            time.sleep(1.0)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -48,42 +64,51 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     app = create_app()
-    with app.app_context():
-        latest = IMSUpload.query.filter_by(status="COMPLETED").order_by(
-            desc(IMSUpload.year),
-            desc(IMSUpload.month),
-            desc(IMSUpload.week_number),
-            desc(IMSUpload.completed_at),
-            desc(IMSUpload.id),
-        ).first()
-        if latest is None:
-            print("REGION_SNAPSHOT_BACKFILL|status=SKIPPED|reason=NO_COMPLETED_IMS")
-            return 0
+    # Representative snapshot generation already owns this process lock. Region
+    # invalidation/build must use the same lock so the two SQLite writers cannot
+    # overlap. Readers continue using the current ACTIVE snapshot while waiting.
+    lock_path = Path(app.instance_path) / "representative_snapshot_warmup.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock_file:
+        _acquire_snapshot_writer_lock(lock_file)
+        print("REGION_SNAPSHOT_WRITER_LOCK|status=ACQUIRED", flush=True)
 
-        if args.force:
-            removed_set_id = _drop_current_snapshot_set(latest.year, latest.month)
-            print(
-                "REGION_SNAPSHOT_INVALIDATION|"
-                f"mode=force|year={latest.year}|month={latest.month}|"
-                f"removed_set_id={removed_set_id or 0}",
-                flush=True,
+        with app.app_context():
+            latest = IMSUpload.query.filter_by(status="COMPLETED").order_by(
+                desc(IMSUpload.year),
+                desc(IMSUpload.month),
+                desc(IMSUpload.week_number),
+                desc(IMSUpload.completed_at),
+                desc(IMSUpload.id),
+            ).first()
+            if latest is None:
+                print("REGION_SNAPSHOT_BACKFILL|status=SKIPPED|reason=NO_COMPLETED_IMS")
+                return 0
+
+            if args.force:
+                removed_set_id = _drop_current_snapshot_set(latest.year, latest.month)
+                print(
+                    "REGION_SNAPSHOT_INVALIDATION|"
+                    f"mode=force|year={latest.year}|month={latest.month}|"
+                    f"removed_set_id={removed_set_id or 0}",
+                    flush=True,
+                )
+
+            def progress(done, total, name):
+                print(f"REGION_SNAPSHOT_BACKFILL_PROGRESS|{done}/{total}|{name}", flush=True)
+
+            result = PersistentRegionSnapshotService.build_for_period(
+                latest.year,
+                latest.month,
+                progress=progress,
             )
-
-        def progress(done, total, name):
-            print(f"REGION_SNAPSHOT_BACKFILL_PROGRESS|{done}/{total}|{name}", flush=True)
-
-        result = PersistentRegionSnapshotService.build_for_period(
-            latest.year,
-            latest.month,
-            progress=progress,
-        )
-        print(
-            "REGION_SNAPSHOT_BACKFILL|"
-            f"status={result.get('status')}|year={latest.year}|month={latest.month}|"
-            f"upload_id={latest.id}|regions={result.get('regions', 0)}|"
-            f"set_id={result.get('set_id', 0)}|force={int(args.force)}"
-        )
-        return 0
+            print(
+                "REGION_SNAPSHOT_BACKFILL|"
+                f"status={result.get('status')}|year={latest.year}|month={latest.month}|"
+                f"upload_id={latest.id}|regions={result.get('regions', 0)}|"
+                f"set_id={result.get('set_id', 0)}|force={int(args.force)}"
+            )
+            return 0
 
 
 if __name__ == "__main__":
