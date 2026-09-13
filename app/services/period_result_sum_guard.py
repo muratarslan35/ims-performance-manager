@@ -4,9 +4,14 @@ Business rule: a multi-month period must never rebuild historical box values fro
 one price or from a mixed-period aggregate. Each month is finalized first with
 that month's P2 > P1 > IMS source and period-aware unit price; rolling, quarter
 and YTD views then add those monthly result values.
+
+Persisted H1 read models are normalized at read time from already-published Q1
+and Q2 payloads. This keeps the fixed January-June contract available without
+rebuilding region or representative snapshot generations.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from decimal import Decimal
 
 from app.services.realization_rounding import realization_percent
@@ -164,6 +169,343 @@ def _empty_period():
     }
 
 
+def _compose_region_half_year_snapshot(snapshot):
+    """Return the same persisted region payload with H1 derived from Q1 + Q2."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    report = snapshot.get("report")
+    periods = report.get("periods") if isinstance(report, dict) else None
+    if not isinstance(periods, dict):
+        return snapshot
+
+    q1 = periods.get("q1") or {}
+    q2 = periods.get("q2") or {}
+    if not (q1.get("months") or q2.get("months")):
+        return snapshot
+
+    merged = _merge_monthly_payloads([], [q1, q2])
+    result = dict(snapshot)
+    normalized_report = dict(report)
+    normalized_periods = dict(periods)
+    normalized_periods["half_year"] = {
+        "key": "half_year",
+        "label": "6 Aylık · Ocak–Haziran",
+        "month_count": len(merged.get("months") or []),
+        **merged,
+    }
+    normalized_report["periods"] = normalized_periods
+    result["report"] = normalized_report
+    return result
+
+
+def _representative_product_id(row):
+    product = (row or {}).get("product") or {}
+    value = product.get("id") if isinstance(product, dict) else getattr(product, "id", None)
+    if value is None:
+        value = (row or {}).get("product_id")
+    return int(value) if value is not None else None
+
+
+def _representative_product_name(row, product_id):
+    product = (row or {}).get("product") or {}
+    if isinstance(product, dict):
+        name = product.get("product_name")
+    else:
+        name = getattr(product, "product_name", None)
+    return name or (row or {}).get("product_name") or f"Ürün {product_id}"
+
+
+def _merge_representative_product_rows(periods):
+    rows = {}
+    source_rank = {"IMS": 0, "PRODUCTION_1": 1, "PRODUCTION_2": 2}
+    for period in periods:
+        for item in period.get("products") or []:
+            product_id = _representative_product_id(item)
+            if product_id is None:
+                continue
+            if product_id not in rows:
+                rows[product_id] = {
+                    "product": deepcopy(item.get("product")),
+                    "target_tl": 0.0,
+                    "actual_tl": 0.0,
+                    "target_unit": 0.0,
+                    "actual_unit": 0.0,
+                    "remaining_tl": 0.0,
+                    "source": item.get("source") or "IMS",
+                }
+            bucket = rows[product_id]
+            for key in ("target_tl", "actual_tl", "target_unit", "actual_unit", "remaining_tl"):
+                bucket[key] += float(item.get(key) or 0)
+            candidate = item.get("source") or "IMS"
+            if source_rank.get(candidate, 0) > source_rank.get(bucket.get("source"), 0):
+                bucket["source"] = candidate
+
+    result = []
+    for product_id, bucket in rows.items():
+        if not bucket.get("product"):
+            bucket["product"] = {
+                "id": product_id,
+                "product_name": _representative_product_name({}, product_id),
+            }
+        bucket["percent"] = (
+            realization_percent(bucket["actual_tl"], bucket["target_tl"])
+            if bucket["target_tl"] else 0
+        )
+        result.append(bucket)
+    result.sort(
+        key=lambda row: (
+            int((row.get("product") or {}).get("display_order", 999))
+            if isinstance(row.get("product"), dict) else 999,
+            _representative_product_name(row, _representative_product_id(row)),
+        )
+    )
+    return result
+
+
+def _merge_representative_totals(periods):
+    totals = {
+        "target_tl": 0.0,
+        "actual_tl": 0.0,
+        "target_unit": 0.0,
+        "actual_unit": 0.0,
+        "remaining_tl": 0.0,
+    }
+    for period in periods:
+        source = period.get("totals") or {}
+        for key in totals:
+            totals[key] += float(source.get(key) or 0)
+    totals = {key: round(value, 2) for key, value in totals.items()}
+    totals["percent"] = (
+        realization_percent(totals["actual_tl"], totals["target_tl"])
+        if totals["target_tl"] else 0
+    )
+    return totals
+
+
+def _merge_representative_market(markets):
+    available = [payload for payload in markets if isinstance(payload, dict)]
+    if not available:
+        return {}
+    if len(available) == 1:
+        return deepcopy(available[0])
+
+    result = deepcopy(available[-1])
+    product_rows = {}
+    for payload in available:
+        for row in payload.get("rows") or []:
+            product_id = _representative_product_id(row)
+            if product_id is None:
+                continue
+            if product_id not in product_rows:
+                product_rows[product_id] = deepcopy(row)
+                continue
+            bucket = product_rows[product_id]
+            for key in ("actual_unit", "market_unit", "competitor_unit", "target_unit"):
+                bucket[key] = float(bucket.get(key) or 0) + float(row.get(key) or 0)
+            rivals = {}
+            for rival in bucket.get("rivals") or []:
+                name = str(rival.get("name") or "").strip()
+                if name:
+                    rivals[name] = rivals.get(name, 0.0) + float(rival.get("unit") or 0)
+            for rival in row.get("rivals") or []:
+                name = str(rival.get("name") or "").strip()
+                if name:
+                    rivals[name] = rivals.get(name, 0.0) + float(rival.get("unit") or 0)
+            bucket["rivals"] = [
+                {"name": name, "unit": round(unit, 2)}
+                for name, unit in sorted(rivals.items(), key=lambda item: -item[1])
+            ]
+
+    rows = list(product_rows.values())
+    for row in rows:
+        actual = float(row.get("actual_unit") or 0)
+        market = float(row.get("market_unit") or 0)
+        competitor = float(row.get("competitor_unit") or 0)
+        target = float(row.get("target_unit") or 0)
+        row["share_percent"] = round(actual * 100.0 / market, 1) if market else 0.0
+        row["gap_unit"] = round(competitor - actual, 2)
+        row["realization_percent"] = realization_percent(actual, target) if target else 0
+        row["attention"] = (
+            "critical" if competitor > actual * 1.5 and competitor > 0
+            else "warning" if competitor > actual
+            else "strong"
+        )
+    rows.sort(
+        key=lambda row: (
+            int((row.get("product") or {}).get("display_order", 999))
+            if isinstance(row.get("product"), dict) else 999,
+            _representative_product_name(row, _representative_product_id(row)),
+        )
+    )
+    result["rows"] = rows
+    result["chart_rows"] = [
+        {
+            "product_name": _representative_product_name(row, _representative_product_id(row)),
+            "actual_unit": row.get("actual_unit") or 0,
+            "competitor_unit": row.get("competitor_unit") or 0,
+        }
+        for row in rows
+    ]
+    total_actual = sum(float(row.get("actual_unit") or 0) for row in rows)
+    total_market = sum(float(row.get("market_unit") or 0) for row in rows)
+    result["totals"] = {
+        "actual_unit": round(total_actual, 2),
+        "market_unit": round(total_market, 2),
+        "competitor_unit": round(max(total_market - total_actual, 0.0), 2),
+        "share_percent": round(total_actual * 100.0 / total_market, 1) if total_market else 0.0,
+    }
+    result["period_months"] = [
+        item
+        for payload in available
+        for item in (payload.get("period_months") or [])
+    ]
+    return result
+
+
+def _representative_ai_period(products, totals, month_count):
+    return {
+        "key": "half_year",
+        "label": "6 Aylık · Ocak–Haziran",
+        "month_count": int(month_count),
+        "target_tl": totals["target_tl"],
+        "actual_tl": totals["actual_tl"],
+        "realization_percent": totals["percent"],
+        "gap_tl": totals["target_tl"] - totals["actual_tl"],
+        "complete": True,
+        "products": [
+            {
+                "product_id": _representative_product_id(row),
+                "product_name": _representative_product_name(
+                    row, _representative_product_id(row)
+                ),
+                "target_tl": row.get("target_tl") or 0,
+                "actual_tl": row.get("actual_tl") or 0,
+                "realization_percent": row.get("percent") or 0,
+                "gap_tl": float(row.get("target_tl") or 0) - float(row.get("actual_tl") or 0),
+                "complete": True,
+            }
+            for row in products
+            if _representative_product_id(row) is not None
+        ],
+        "representatives": [],
+    }
+
+
+def _compose_representative_half_year_workspace(workspace):
+    """Derive persisted representative H1 from Q1 + Q2 without a snapshot rebuild."""
+    if not isinstance(workspace, dict):
+        return workspace
+    snapshots = workspace.get("snapshots")
+    if not isinstance(snapshots, dict):
+        return workspace
+
+    q1 = snapshots.get("q1") or {}
+    q2 = snapshots.get("q2") or {}
+    months = list(q1.get("months") or []) + list(q2.get("months") or [])
+    if not months:
+        return workspace
+
+    contributing = [
+        period for period in (q1, q2)
+        if (period.get("products") or period.get("totals") or period.get("months"))
+    ]
+    if not contributing:
+        return workspace
+
+    products = _merge_representative_product_rows(contributing)
+    totals = _merge_representative_totals(contributing)
+    market = _merge_representative_market([
+        period.get("market_analysis") or {} for period in contributing
+    ])
+    terminal = q2 if q2.get("months") else q1
+    source_ai = terminal.get("ai_report") or q1.get("ai_report") or {}
+
+    try:
+        from app.services.scoped_ai_insight_service import ScopedAIInsightService
+        ai_report = ScopedAIInsightService.build(
+            scope_type="representative",
+            scope_name=source_ai.get("scope_name") or "Temsilci",
+            periods={
+                "half_year": _representative_ai_period(
+                    products, totals, len(months)
+                )
+            },
+            market_analysis=market,
+            competitive_intelligence=source_ai.get("competitive_intelligence") or {},
+        )
+    except (ImportError, RuntimeError):
+        ai_report = deepcopy(source_ai)
+        ai_report["periods"] = {
+            "half_year": _representative_ai_period(products, totals, len(months))
+        }
+
+    half_year = {
+        "key": "half_year",
+        "label": "6 Aylık · Ocak–Haziran",
+        "months": months,
+        "products": products,
+        "totals": totals,
+        "assignments": deepcopy(terminal.get("assignments") or []),
+        "market_analysis": market,
+        "has_production_result": any(
+            bool(period.get("has_production_result")) for period in contributing
+        ),
+        "result_source_label": (
+            "Dönemsel P2 > P1 > IMS toplamı"
+            if len(months) > 1
+            else terminal.get("result_source_label") or "Seçili IMS dönemine kadar"
+        ),
+        "ai_report": ai_report,
+    }
+
+    result = dict(workspace)
+    normalized_snapshots = dict(snapshots)
+    normalized_snapshots["half_year"] = half_year
+    result["snapshots"] = normalized_snapshots
+    return result
+
+
+def _install_persisted_h1_read_guard():
+    """Normalize old ACTIVE snapshots in memory only; never rebuild or write them."""
+    from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+    from app.services.persistent_representative_snapshot_service import (
+        PersistentRepresentativeSnapshotService,
+    )
+
+    if not getattr(PersistentRegionSnapshotService, "_h1_read_guard_installed", False):
+        original_region_get_active = PersistentRegionSnapshotService.get_active
+        original_region_get_active_all = PersistentRegionSnapshotService.get_active_all
+
+        def region_get_active(cls, region_key, year, month):
+            return _compose_region_half_year_snapshot(
+                original_region_get_active(region_key, year, month)
+            )
+
+        def region_get_active_all(cls, year, month):
+            payloads = original_region_get_active_all(year, month)
+            return {
+                key: _compose_region_half_year_snapshot(payload)
+                for key, payload in (payloads or {}).items()
+            }
+
+        PersistentRegionSnapshotService.get_active = classmethod(region_get_active)
+        PersistentRegionSnapshotService.get_active_all = classmethod(region_get_active_all)
+        PersistentRegionSnapshotService._h1_read_guard_installed = True
+
+    if not getattr(PersistentRepresentativeSnapshotService, "_h1_read_guard_installed", False):
+        original_representative_get_active = PersistentRepresentativeSnapshotService.get_active
+
+        def representative_get_active(cls, representative_id, year, month):
+            return _compose_representative_half_year_workspace(
+                original_representative_get_active(representative_id, year, month)
+            )
+
+        PersistentRepresentativeSnapshotService.get_active = classmethod(
+            representative_get_active
+        )
+        PersistentRepresentativeSnapshotService._h1_read_guard_installed = True
+
+
 def install_period_result_sum_guard():
     """Make every RegionPerformanceService consumer use finalized monthly sums."""
     global _INSTALLED
@@ -239,4 +581,6 @@ def install_period_result_sum_guard():
         ExecutiveMarketCockpitService.PERIOD_LABELS = dict(ExecutiveMarketCockpitService.PERIODS)
     except ImportError:
         pass
+
+    _install_persisted_h1_read_guard()
     _INSTALLED = True
