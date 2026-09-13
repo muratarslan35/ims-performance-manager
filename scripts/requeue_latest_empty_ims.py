@@ -77,7 +77,10 @@ def main() -> int:
         if IMSUploadLifecycleService._file_sha256(source) != expected_hash:
             raise SystemExit("RECOVERY_REFUSED|reason=archived_source_hash_mismatch")
 
-        staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / job.stored_file_name
+        upload_id = int(upload.id)
+        job_id = int(job.id)
+        stored_file_name = str(job.stored_file_name)
+        staging = Path(app.config["UPLOAD_FOLDER"]) / "ims_queue" / stored_file_name
         staging.parent.mkdir(parents=True, exist_ok=True)
         temporary = staging.with_suffix(staging.suffix + ".recovery")
         shutil.copy2(source, temporary)
@@ -85,11 +88,19 @@ def main() -> int:
             temporary.unlink(missing_ok=True)
             raise SystemExit("RECOVERY_REFUSED|reason=staging_hash_mismatch")
 
+        # All safety checks above are reads. End that transaction before the
+        # queue handoff so SQLite does not have to upgrade a long-lived read
+        # snapshot to a writer after the archive copy. Reload both rows in one
+        # fresh, short write transaction.
+        db.session.rollback()
+
         now = datetime.utcnow()
         try:
             temporary.replace(staging)
-            upload = db.session.get(IMSUpload, upload.id)
-            job = db.session.get(IMSImportJob, job.id)
+            upload = db.session.get(IMSUpload, upload_id)
+            job = db.session.get(IMSImportJob, job_id)
+            if upload is None or job is None:
+                raise RuntimeError("RECOVERY_REFUSED|reason=queue_rows_disappeared")
             upload.status = "PROCESSING"
             upload.error_message = None
             upload.warning_message = None
