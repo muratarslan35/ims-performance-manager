@@ -68,7 +68,7 @@ jobs:
             case "$file" in
               PROJECT_WORK_PROGRESS.md|CODEX_HANDOFF_CURRENT.md|docs/*|*.md)
                 ;;
-              .github/workflows/deploy.yml|.github/workflows/ims-production-maintenance.yml|scripts/run_production_maintenance.sh|tests/*)
+              .github/workflows/*|scripts/run_production_maintenance.sh|tests/*)
                 if [ "$mode" = "docs" ]; then mode="ops"; fi
                 ;;
               app/templates/*|app/static/*)
