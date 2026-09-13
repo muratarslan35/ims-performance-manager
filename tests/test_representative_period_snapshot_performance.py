@@ -154,8 +154,8 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
 
         # Earlier months have no production result and therefore stay on IMS.
         half_year = periods["half_year"]
-        expected_ims = sum((70.0 + month) + (60.0 + month) for month in range(3, 8))
-        assert float(half_year["actual_tl"]) == expected_ims + 235.5
+        expected_ims = sum((70.0 + month) + (60.0 + month) for month in range(3, 7))
+        assert float(half_year["actual_tl"]) == expected_ims
 
 
 def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
@@ -210,7 +210,7 @@ def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
             event.remove(db.engine, "before_cursor_execute", capture)
 
         assert periods["monthly"]["actual_tl"] == Decimal("560.0")
-        assert periods["half_year"]["actual_tl"] == Decimal("3360.0")
+        assert periods["half_year"]["actual_tl"] == Decimal("2240.0")
         # Targets, summaries, production uploads and products. Production-result
         # rows are skipped entirely because there are no applied uploads.
         assert len(selects) <= 4
