@@ -1,10 +1,10 @@
-"""Use the exact retained workbook for KPI market aggregate controls.
+"""Use the exact retained workbook for KPI market source data.
 
 The normal IMS loader intentionally hides display-filtered/hidden rows for legacy
-reports. KPI aggregate rows are source controls, however, and must be read from
-the original workbook bytes exactly like the paired TL/KUTU compatibility path.
-This installer replaces only the persistence helper; legacy workbooks and all
-other importer stages remain unchanged.
+reports. KPI aggregate rows and named rival detail are source data, however, and
+must be read from the original workbook bytes exactly like the paired TL/KUTU
+compatibility path. This installer changes only KPI-format imports; legacy
+workbooks and all other importer stages remain unchanged.
 """
 from __future__ import annotations
 
@@ -18,9 +18,32 @@ from app.models import CompetitionData
 
 def install_kpi_market_raw_source_override() -> None:
     from app.services import kpi_market_single_source as single_source
+    from app.services import kpi_workbook_compat as compat
+    from app.services.ims_import_service import IMSImportService
 
     if getattr(single_source, "_raw_source_override_installed", False):
         return
+
+    # KPI product tabs can contain hidden/detail-filtered rows. Those rows carry
+    # named rival observations used by Region/Representative market drill-downs.
+    # Replace only the KPI product-tab frames with the exact retained workbook
+    # before the already-installed compatibility analyzer builds CompetitionData.
+    # Legacy workbook frames remain untouched.
+    original_analyze = IMSImportService.analyze_workbook
+
+    def analyze_from_exact_kpi_source(service):
+        file_path = Path(str(getattr(service, "file_path", "") or ""))
+        workbook = getattr(service, "workbook", None)
+        if file_path.is_file() and workbook:
+            kpi_sheet_names = [name for name in workbook if compat.is_product_kpi_sheet(name)]
+            if kpi_sheet_names:
+                raw_kpi = pd.read_excel(file_path, sheet_name=kpi_sheet_names, header=None)
+                for sheet_name in kpi_sheet_names:
+                    if sheet_name in raw_kpi:
+                        workbook[sheet_name] = raw_kpi[sheet_name]
+        return original_analyze(service)
+
+    IMSImportService.analyze_workbook = analyze_from_exact_kpi_source
 
     original_persist = single_source.persist_market_authority
 
