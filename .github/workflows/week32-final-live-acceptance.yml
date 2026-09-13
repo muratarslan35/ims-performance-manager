@@ -1,0 +1,190 @@
+name: Week 32 Final Live Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/week32-final-live-acceptance.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Prove and publish Week 32 without reimport or rebuild
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          git pull --ff-only origin main
+          export PYTHONPATH="$IMS_PATH"
+          export PYTHONUNBUFFERED=1
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+
+          exec 9>instance/.production-maintenance.lock
+          flock -w 1200 9
+          exec 8>instance/representative_snapshot_warmup.lock
+          flock -w 1200 8
+          echo "SNAPSHOT_WRITERS_IDLE|PASS"
+
+          venv/bin/python -u - <<'PY'
+          import json
+          import sqlalchemy as sa
+          from app import create_app
+          from app.extensions import db
+          from app.models import CompetitionData, IMSImportJob, IMSUpload, Representative
+          from app.services.kpi_market_single_source import AUTHORITY_PREFIX
+          from app.services.market_analysis_service import MarketAnalysisService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshots,
+          )
+          from config import Config
+
+          class AcceptanceConfig(Config):
+              TESTING = True
+
+          def close(a, b, tol=0.01):
+              return abs(float(a or 0) - float(b or 0)) <= tol
+
+          app = create_app(AcceptanceConfig)
+          with app.app_context():
+              upload = IMSUpload.query.filter_by(
+                  year=2026, month=8, week_number=32, status="COMPLETED"
+              ).order_by(IMSUpload.id.desc()).first()
+              assert upload and upload.id == 45, getattr(upload, "id", None)
+              job = IMSImportJob.query.filter_by(ims_upload_id=45).order_by(
+                  IMSImportJob.id.desc()
+              ).first()
+              assert job and job.id == 35 and job.status == IMSImportJob.STATUS_COMPLETED
+
+              authority = CompetitionData.query.filter(
+                  CompetitionData.upload_id == 45,
+                  CompetitionData.sheet_name.like(f"{AUTHORITY_PREFIX}%"),
+              ).count()
+              assert authority == 168, authority
+
+              dashboard = PersistentDashboardSnapshotService.get_active(2026, 8) or {}
+              executive = dashboard.get("executive_metrics") or {}
+              assert len(executive.get("products") or []) == 7
+              assert float(executive.get("actual_tl") or 0) > 0
+
+              national = MarketAnalysisService(2026, 8).build()
+              assert len(national.get("groups") or []) == 7
+              assert close(national.get("company_total_unit"), 314214)
+              assert close(national.get("competitor_total_unit"), 613403)
+              assert close(national.get("market_total_unit"), 927617)
+
+              regions = PersistentRegionSnapshotService.get_active_all(2026, 8)
+              assert len(regions) == 11, len(regions)
+              for key, snapshot in regions.items():
+                  market = snapshot.get("market_analysis") or {}
+                  rows = market.get("rows") or []
+                  totals = market.get("totals") or {}
+                  assert len(rows) == 7
+                  assert int(market.get("upload_id") or 0) == 45
+                  assert market.get("market_share_source") == "IMS_KPI_AGGREGATE_PAZAR"
+                  travazol = next(
+                      row for row in rows
+                      if str(row.get("product_name") or "").upper() == "TRAVAZOL"
+                  )
+                  rivals = travazol.get("rivals") or []
+                  assert rivals, (key, "missing Travazol rivals")
+                  assert all(
+                      str(r.get("name") or "").strip() and float(r.get("unit") or 0) > 0
+                      for r in rivals
+                  )
+                  assert close(
+                      sum(float(r.get("unit") or 0) for r in rivals),
+                      travazol.get("competitor_unit"),
+                  )
+                  assert close(
+                      totals.get("company_unit") + totals.get("competitor_unit"),
+                      totals.get("market_unit"),
+                  )
+
+              ims_id, _ = PersistentRepresentativeSnapshotService.source_identity(2026, 8)
+              assert ims_id == 45
+              set_id = PersistentRepresentativeSnapshotService._visible_set_id(2026, 8)
+              rep_payloads = db.session.execute(
+                  sa.select(representative_snapshots.c.payload_json).where(
+                      representative_snapshots.c.set_id == set_id
+                  )
+              ).scalars().all()
+              assert len(rep_payloads) == 113, len(rep_payloads)
+              for raw in rep_payloads:
+                  market = (((json.loads(raw).get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {})
+                  rows = market.get("rows") or []
+                  totals = market.get("totals") or {}
+                  assert len(rows) == 7
+                  assert int(market.get("upload_id") or 0) == 45
+                  assert all(close(r["actual_unit"] + r["competitor_unit"], r["market_unit"]) for r in rows)
+                  assert close(
+                      totals.get("actual_unit") + totals.get("competitor_unit"),
+                      totals.get("market_unit"),
+                  )
+
+              murat = Representative.query.filter(
+                  db.func.upper(Representative.rep_name) == "MURAT ARSLAN"
+              ).first()
+              assert murat
+              murat_snapshot = PersistentRepresentativeSnapshotService.get_active(
+                  murat.id, 2026, 8
+              )
+              murat_market = (((murat_snapshot.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {})
+              assert len(murat_market.get("rows") or []) == 7
+              assert int(murat_market.get("upload_id") or 0) == 45
+              mt = murat_market.get("totals") or {}
+              assert close(mt.get("actual_unit") + mt.get("competitor_unit"), mt.get("market_unit"))
+
+              # All reads passed; perform only the exact publication marker write.
+              db.session.rollback()
+              db.session.execute(sa.text("BEGIN IMMEDIATE"))
+              locked_job = db.session.get(IMSImportJob, 35)
+              summary = json.loads(locked_job.result_summary or "{}")
+              summary["publication_ready"] = True
+              summary["publication_ready_source"] = "week32_final_live_acceptance"
+              locked_job.result_summary = json.dumps(summary, ensure_ascii=False)
+              locked_job.error_message = None
+              db.session.commit()
+
+              print(
+                  "WEEK32_SINGLE_SOURCE|PASS|upload=45|job=35|authority=168|"
+                  "dashboard_products=7|regions=11|travazol_regions=11|representatives=113|"
+                  f"murat_company={float(mt.get('actual_unit') or 0):.2f}|"
+                  f"murat_competitor={float(mt.get('competitor_unit') or 0):.2f}|"
+                  f"murat_market={float(mt.get('market_unit') or 0):.2f}"
+              )
+              print("PUBLICATION_READY|PASS|upload=45|job=35")
+          PY
+
+          curl --fail --silent --show-error --max-time 6 http://127.0.0.1:8000/login >/dev/null
+          echo "HTTP_HEALTH|PASS"
+          venv/bin/python verify_live_ims_gate.py
+          echo "WEEK32_FINAL_LIVE_ACCEPTANCE|PASS"
+          REMOTE
