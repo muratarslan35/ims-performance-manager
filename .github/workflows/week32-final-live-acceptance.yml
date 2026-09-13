@@ -51,6 +51,7 @@ jobs:
           venv/bin/python -u - <<'PY'
           import json
           import sqlalchemy as sa
+          from flask import render_template
           from app import create_app
           from app.extensions import db
           from app.models import CompetitionData, IMSImportJob, IMSUpload, Representative
@@ -121,6 +122,17 @@ jobs:
                       totals.get("company_unit") + totals.get("competitor_unit"),
                       totals.get("market_unit"),
                   )
+                  html = render_template(
+                      "partials/market_region_workspace.html",
+                      report=snapshot["report"],
+                      market_analysis=market,
+                  )
+                  assert "Bölgesel şirket toplam kutu çıkışı" in html
+                  assert "Bölgesel rakip toplam kutu çıkışı" in html
+                  assert "Bölgesel toplam kutu pazarı" in html
+                  assert "TRAVAZOL" in html
+                  assert all(str(r["name"]) in html for r in rivals)
+                  assert f'{float(travazol.get("competitor_unit") or 0):,.0f}' in html
 
               ims_id, _ = PersistentRepresentativeSnapshotService.source_identity(2026, 8)
               assert ims_id == 45
@@ -169,7 +181,7 @@ jobs:
 
               print(
                   "WEEK32_SINGLE_SOURCE|PASS|upload=45|job=35|authority=168|"
-                  "dashboard_products=7|regions=11|travazol_regions=11|representatives=113|"
+                  "dashboard_products=7|regions=11|travazol_regions=11|rendered_kpi_regions=11|representatives=113|"
                   f"murat_company={float(mt.get('actual_unit') or 0):.2f}|"
                   f"murat_competitor={float(mt.get('competitor_unit') or 0):.2f}|"
                   f"murat_market={float(mt.get('market_unit') or 0):.2f}"
