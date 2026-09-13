@@ -453,9 +453,13 @@ BACKUP_BYTES_BEFORE=$(du -sb instance/backups 2>/dev/null | awk '{print $1}')
 STORAGE_BEFORE=$(du -sb instance 2>/dev/null | awk '{print $1}')
 printf 'BACKUPS_BEFORE|%s\nBACKUP_BYTES_BEFORE|%s\nSTORAGE_BEFORE|%s\n' "$BACKUPS_BEFORE" "${BACKUP_BYTES_BEFORE:-0}" "${STORAGE_BEFORE:-0}" >> "$EVIDENCE_FILE"
 
-# Reclaim obsolete rollback sets before the expensive read-only capacity scan.
-# The cleanup validates the one retained complete set before deleting anything.
-venv/bin/python cleanup_old_backups.py --keep-latest 1 >> "$EVIDENCE_FILE" 2>&1
+# Avoid rereading the retained multi-GB backup when only one rollback set
+# exists. Validation/deletion is needed only when obsolete generations exist.
+if [ "$BACKUPS_BEFORE" -gt 1 ]; then
+ venv/bin/python cleanup_old_backups.py --keep-latest 1 >> "$EVIDENCE_FILE" 2>&1
+else
+ printf 'BACKUP_RETENTION|PASS|deleted_files=0|reason=single_retained_set\n' >> "$EVIDENCE_FILE"
+fi
 BACKUPS_AFTER=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l | tr -d ' ')
 BACKUP_BYTES_AFTER=$(du -sb instance/backups 2>/dev/null | awk '{print $1}')
 printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1\nBACKUPS_AFTER|%s\nBACKUP_BYTES_AFTER|%s\n' "$BACKUPS_AFTER" "${BACKUP_BYTES_AFTER:-0}" >> "$EVIDENCE_FILE"
