@@ -449,13 +449,20 @@ flock -u 9
 printf 'MAINTENANCE_IMPORT_LOCK_RELEASED|reason=read_only_weekly_checks\n' >> "$EVIDENCE_FILE"
 
 BACKUPS_BEFORE=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l | tr -d ' ')
+BACKUP_BYTES_BEFORE=$(du -sb instance/backups 2>/dev/null | awk '{print $1}')
 STORAGE_BEFORE=$(du -sb instance 2>/dev/null | awk '{print $1}')
-printf 'BACKUPS_BEFORE|%s\nSTORAGE_BEFORE|%s\n' "$BACKUPS_BEFORE" "${STORAGE_BEFORE:-0}" >> "$EVIDENCE_FILE"
+printf 'BACKUPS_BEFORE|%s\nBACKUP_BYTES_BEFORE|%s\nSTORAGE_BEFORE|%s\n' "$BACKUPS_BEFORE" "${BACKUP_BYTES_BEFORE:-0}" "${STORAGE_BEFORE:-0}" >> "$EVIDENCE_FILE"
+
+# Reclaim obsolete rollback sets before the expensive read-only capacity scan.
+# The cleanup validates the one retained complete set before deleting anything.
+venv/bin/python cleanup_old_backups.py --keep-latest 1 >> "$EVIDENCE_FILE" 2>&1
+BACKUPS_AFTER=$(find instance/backups -maxdepth 1 -type f -name 'ipm-predeploy-*.db' 2>/dev/null | wc -l | tr -d ' ')
+BACKUP_BYTES_AFTER=$(du -sb instance/backups 2>/dev/null | awk '{print $1}')
+printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1\nBACKUPS_AFTER|%s\nBACKUP_BYTES_AFTER|%s\n' "$BACKUPS_AFTER" "${BACKUP_BYTES_AFTER:-0}" >> "$EVIDENCE_FILE"
+
 # Do not run PRAGMA optimize here: the capacity audit must remain read-only once
 # the import lock has been released.
 venv/bin/python database_capacity_audit.py --additional-uploads 49 >> "$EVIDENCE_FILE" 2>&1
-venv/bin/python cleanup_old_backups.py --keep-latest 1 >> "$EVIDENCE_FILE" 2>&1
-printf 'MAINTENANCE_BACKUP_RETENTION|keep_latest=1\n' >> "$EVIDENCE_FILE"
 
 venv/bin/python - <<'PY' >> "$EVIDENCE_FILE"
 import sqlite3
