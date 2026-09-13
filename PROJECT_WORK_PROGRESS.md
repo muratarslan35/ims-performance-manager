@@ -1,5 +1,22 @@
 # IMS Performance Manager — Kanonik Çalışma / Devir Kaydı
 
+
+# 0. 13 EYLÜL 2026 — YEDEK / ÇOKLU KULLANICI VE HARİTA GEÇİŞİ
+
+- Production yedek envanteri doğrulandı: yalnız bir tam rollback seti bulunuyor (`20260908-145757`); toplam backup dizini yaklaşık 2,83 GB.
+- Güvenli retention sonucu `PASS`; eski/gereksiz set bulunmadığı için `deleted_files=0`. Son doğrulanmış rollback seti korunmuştur.
+- Yedek dosyalarının sürekli RAM tüketmediği; önceki haftalık tam integrity/dbstat taramalarının yaklaşık 45 dakika disk I/O baskısı oluşturabildiği doğrulandı.
+- Normal haftalık bakımda ağır kapasite taraması kapatıldı; yalnız `RUN_DEEP_CAPACITY_AUDIT=1` ile açıkça istendiğinde çalışır.
+- Tek rollback seti varsa 2,83 GB dosya tekrar bütünlük taramasından geçirilmez; temizlik yalnız birden fazla yedek nesli bulunduğunda çalışır.
+- IMS işi `QUEUED` veya `PROCESSING` ise bakım hiçbir veri/servise dokunmadan çıkar. Web ve import worker kesintisiz korunur.
+- Bakım sağlık kontrolü production sözleşmesiyle uyumlu `/login` yoluna bağlandı.
+- Ana ekran Türkiye haritasında bölge tıklaması ortak loading overlay'i gerçek navigasyon süresince gösterir. Sahte yüzde/zamanlayıcı yoktur; loader hedef HTML belgeyi yükleyene kadar görünür ve `pageshow` ile temizlenir.
+- Harita tıklamasında çift yönlendirme engellenir ve erişilebilirlik için `aria-busy` / `aria-hidden` durumu yönetilir.
+- UI smoke ve production UI deploy PASS: run `34764646093`; canlı UI commit `fbe3045d19ec7ee0d9a26938c1660b0e8225468d`.
+- Bakım güvenlik sözleşmeleri CI ile kilitlendi; ağır tarama ve yedek tekrar okuma normal kullanıcı trafiğinden ayrıldı.
+
+---
+
 > Son güncelleme: **27 Ağustos 2026 05:50 (Europe/Istanbul)**  
 > Repo: `muratarslan35/ims-performance-manager`  
 > Bu dosya PC Codex, mobil ChatGPT ve sonraki çalışma oturumları için **tek güncel checkpoint** olarak kullanılmalıdır.
