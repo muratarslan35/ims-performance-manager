@@ -177,7 +177,15 @@ jobs:
               print("PUBLICATION_READY|PASS|upload=45|job=35")
           PY
 
-          curl --fail --silent --show-error --max-time 6 http://127.0.0.1:8000/login >/dev/null
+          health=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 6 http://127.0.0.1:8000/login >/dev/null; then
+              health=1
+              break
+            fi
+            sleep 2
+          done
+          test "$health" = 1
           echo "HTTP_HEALTH|PASS"
           venv/bin/python verify_live_ims_gate.py
           echo "WEEK32_FINAL_LIVE_ACCEPTANCE|PASS"
