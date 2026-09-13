@@ -17,7 +17,7 @@ from app.models import CompetitionData, IMSUpload
 def install_dashboard_runtime_optimizer() -> None:
     """Install the bounded dashboard lookup and targeted field-read repair."""
     from app.query.dashboard_query import DashboardQuery
-    from app.services.kpi_market_raw_source_override import install_kpi_market_raw_source_override
+    from app.services.kpi_competition_import_source_override import install_kpi_competition_import_source_override
     from app.services.kpi_region_authority_resolver import install_kpi_region_authority_resolver
     from app.services.partial_ims_period_price_guard import install_partial_ims_period_price_guard
     from app.services.period_price_read_guard import install_period_price_read_guard
@@ -69,10 +69,10 @@ def install_dashboard_runtime_optimizer() -> None:
         DashboardQuery._latest_competition_upload_id = bounded_latest_competition_upload_id
         DashboardQuery._bounded_competition_lookup_installed = True
 
-    # KPI aggregate controls can be physically hidden by workbook display
-    # filters. Persist them from the exact retained XLSX bytes rather than the
-    # loader's display-filtered in-memory view.
-    install_kpi_market_raw_source_override()
+    # KPI aggregate controls and named rival detail can be physically hidden by
+    # workbook display filters. Persist them from the exact retained XLSX bytes
+    # while leaving legacy workbook import behavior unchanged.
+    install_kpi_competition_import_source_override()
     # The KPI aggregate rows are persisted as labels such as "101 ISTANBUL"
     # while RegionMarketService uses compact keys such as "101". Resolve that
     # exact identity mismatch after the base KPI read authority is installed.
