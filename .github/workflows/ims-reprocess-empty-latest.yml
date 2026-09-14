@@ -62,6 +62,7 @@ jobs:
             "IMS_PATH='$IMS_PATH' YEAR='$YEAR' MONTH='$MONTH' WEEK='$WEEK' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           test "$(git branch --show-current)" = main
           test -z "$(git status --porcelain)"
           git fetch origin main
@@ -82,7 +83,7 @@ jobs:
             state=$(ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
               -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
               "$IMS_USER@$IMS_HOST" \
-              "cd '$IMS_PATH' && venv/bin/python scripts/verify_week33_intentional_absence.py --status")
+              "cd '$IMS_PATH' && PYTHONPATH='$IMS_PATH' venv/bin/python scripts/verify_week33_intentional_absence.py --status")
             echo "IMS_RECOVERY_STATUS|poll=$poll|state=$state"
             case "$state" in
               COMPLETED) break ;;
@@ -94,4 +95,4 @@ jobs:
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
             -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=10 -o ServerAliveCountMax=6 \
             "$IMS_USER@$IMS_HOST" \
-            "cd '$IMS_PATH' && venv/bin/python verify_live_ims_gate.py && venv/bin/python scripts/verify_week33_intentional_absence.py"
+            "cd '$IMS_PATH' && PYTHONPATH='$IMS_PATH' venv/bin/python verify_live_ims_gate.py && PYTHONPATH='$IMS_PATH' venv/bin/python scripts/verify_week33_intentional_absence.py"
