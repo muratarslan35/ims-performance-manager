@@ -21,6 +21,8 @@ from app.models import IMSImportJob, IMSUpload, Representative
 from app.services.dashboard_service import DashboardService
 from app.services.market_analysis_service import MarketAnalysisService
 from app.services.ims_progress_store import IMSProgressStore
+from app.services.import_roster_sync import IMSRosterSyncService
+from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import (
     PersistentRegionSnapshotService,
@@ -291,6 +293,11 @@ def main() -> int:
         _refresh_regions(args.year, args.month)
         _refresh_representatives(args.year, args.month)
         _verify_market(args.year, args.month, args.week)
+
+        # Only after every durable read model is verified may the imported
+        # roster become visible and the one-click rollback journal be sealed.
+        IMSRosterSyncService.sync_latest()
+        IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=upload.id)
 
         job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(
             IMSImportJob.id.desc()
