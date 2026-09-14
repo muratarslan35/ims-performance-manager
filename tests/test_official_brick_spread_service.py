@@ -172,6 +172,75 @@ def test_official_spread_is_persisted_without_entering_sales_fact_domain(spread_
         ).count() == 8
 
 
+def test_missing_spread_product_is_explicit_zero_when_same_upload_has_no_sales(spread_app):
+    from app.extensions import db
+    from app.services.official_brick_spread_service import OfficialBrickSpreadService
+
+    with spread_app.app_context():
+        representative, products, upload = _seed_master_data()
+        workbook_path = spread_app.config["TEST_ROOT"] / "intentional-missing-product.xlsx"
+        present = [product for product in products if product.product_name != "Fentivag"]
+        _make_workbook(workbook_path, present)
+
+        result = OfficialBrickSpreadService.persist(
+            file_path=workbook_path,
+            upload_id=upload.id,
+            year=2026,
+            month=1,
+            week_number=4,
+        )
+        db.session.commit()
+
+        assert result["product_columns"] == 6
+        assert result["implicit_zero_products"] == ["Fentivag"]
+        official = OfficialBrickSpreadService.for_representative(
+            upload_id=upload.id,
+            representative_id=representative.id,
+        )
+        assert official["products"]["Fentivag"] == 0
+
+
+def test_missing_spread_product_is_hard_error_when_same_upload_has_sales(spread_app):
+    from app.extensions import db
+    from app.models import IMSSummary
+    from app.services.official_brick_spread_service import (
+        OfficialBrickSpreadError,
+        OfficialBrickSpreadService,
+    )
+
+    with spread_app.app_context():
+        representative, products, upload = _seed_master_data()
+        fentivag = next(product for product in products if product.product_name == "Fentivag")
+        db.session.add(IMSSummary(
+            upload_id=upload.id,
+            representative_id=representative.id,
+            product_id=fentivag.id,
+            year=2026,
+            month=1,
+            quarter="Q1",
+            unit=1,
+            tl=100,
+        ))
+        db.session.commit()
+        workbook_path = spread_app.config["TEST_ROOT"] / "damaged-missing-product.xlsx"
+        _make_workbook(
+            workbook_path,
+            [product for product in products if product.product_name != "Fentivag"],
+        )
+
+        with pytest.raises(
+            OfficialBrickSpreadError,
+            match=r"gerçek ürün kapsamı hatası.*Fentivag",
+        ):
+            OfficialBrickSpreadService.persist(
+                file_path=workbook_path,
+                upload_id=upload.id,
+                year=2026,
+                month=1,
+                week_number=4,
+            )
+
+
 def test_active_vacancy_does_not_capture_region_subtotal(spread_app):
     from app.extensions import db
     from app.models import Representative
