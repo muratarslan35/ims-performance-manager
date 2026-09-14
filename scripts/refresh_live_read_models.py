@@ -20,6 +20,7 @@ from app.extensions import db
 from app.models import IMSImportJob, IMSUpload, Representative
 from app.services.dashboard_service import DashboardService
 from app.services.market_analysis_service import MarketAnalysisService
+from app.services.ims_progress_store import IMSProgressStore
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import (
     PersistentRegionSnapshotService,
@@ -290,6 +291,29 @@ def main() -> int:
         _refresh_regions(args.year, args.month)
         _refresh_representatives(args.year, args.month)
         _verify_market(args.year, args.month, args.week)
+
+        job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(
+            IMSImportJob.id.desc()
+        ).first()
+        if job is None or job.status != IMSImportJob.STATUS_COMPLETED:
+            raise RuntimeError("completed import job is missing for publication")
+        try:
+            summary = json.loads(job.result_summary or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            summary = {}
+        summary["publication_ready"] = True
+        summary["publication_ready_source"] = "verified_live_read_model_refresh"
+        summary["publication_ready_upload_id"] = int(upload.id)
+        job.result_summary = json.dumps(summary, ensure_ascii=False, default=str)
+        db.session.commit()
+        IMSProgressStore.write(
+            job.id,
+            percent=100,
+            stage="completed",
+            message="IMS yüklemesi ve ekran güncellemeleri tamamlandı",
+            detail=f"{args.week}. hafta canlı yayında",
+            status=IMSImportJob.STATUS_COMPLETED,
+        )
         print(
             "LIVE_READ_MODEL_REFRESH|PASS|"
             f"upload={upload.id}|period={args.year:04d}-{args.month:02d}|week={args.week}"
