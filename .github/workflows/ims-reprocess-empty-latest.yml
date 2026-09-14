@@ -1,4 +1,4 @@
-name: IMS Reprocess Empty Latest
+name: IMS Reprocess Latest Failed
 
 on:
   push:
