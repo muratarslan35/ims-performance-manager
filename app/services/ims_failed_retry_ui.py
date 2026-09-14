@@ -24,12 +24,7 @@ def _active_job():
 
 
 def _failed_source_for_job(job: IMSImportJob) -> Path | None:
-    root = IMSUploadLifecycleService._archive_root()
-    for suffix in (".xlsx", ".xls"):
-        candidate = root / f"failed-job-{int(job.id)}{suffix}"
-        if candidate.is_file():
-            return candidate
-    return None
+    return IMSUploadLifecycleService.failed_source_for_job(job.id)
 
 
 def _sha256(path: Path) -> str:
