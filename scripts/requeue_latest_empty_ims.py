@@ -45,8 +45,7 @@ def main() -> int:
             raise SystemExit(f"RECOVERY_REFUSED|active_jobs={active}")
 
         upload = (
-            IMSUpload.query.filter_by(year=args.year, month=args.month, week_number=args.week)
-            .filter(IMSUpload.status.in_((IMSUpload.STATUS_COMPLETED, "FAILED")))
+            IMSUpload.query.filter_by(year=args.year, month=args.month)
             .order_by(IMSUpload.id.desc())
             .first()
         )
@@ -58,6 +57,11 @@ def main() -> int:
         ).first()
         if global_latest is None or int(global_latest.id) != int(upload.id):
             raise SystemExit("RECOVERY_REFUSED|reason=upload_is_not_global_latest")
+        if upload.week_number not in (None, int(args.week)):
+            raise SystemExit(
+                f"RECOVERY_REFUSED|reason=upload_week_mismatch|"
+                f"stored={upload.week_number}|requested={args.week}"
+            )
 
         target_count = Target.query.filter_by(year=args.year, month=args.month).count()
         if target_count and not args.allow_existing_targets:
