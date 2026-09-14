@@ -68,8 +68,14 @@ jobs:
           git fetch origin main
           git pull --ff-only origin main
           sudo systemctl restart ims-performance-manager.service ims-import-worker.service
-          venv/bin/python scripts/requeue_latest_empty_ims.py \
-            --year "$YEAR" --month "$MONTH" --week "$WEEK" --allow-existing-targets
+          state=$(venv/bin/python scripts/verify_week33_intentional_absence.py --status)
+          if [ "$state" = COMPLETED ]; then
+            venv/bin/python scripts/repair_latest_week_metadata.py \
+              --year "$YEAR" --month "$MONTH" --week "$WEEK"
+          else
+            venv/bin/python scripts/requeue_latest_empty_ims.py \
+              --year "$YEAR" --month "$MONTH" --week "$WEEK" --allow-existing-targets
+          fi
           REMOTE
 
       - name: Wait for worker and verify live IMS
