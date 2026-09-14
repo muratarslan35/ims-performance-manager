@@ -52,9 +52,10 @@ def main() -> int:
         if upload is None:
             raise SystemExit("RECOVERY_REFUSED|reason=retryable_upload_not_found")
 
-        global_latest = IMSUpload.query.order_by(
-            IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(), IMSUpload.id.desc()
-        ).first()
+        # Upload id is the immutable arrival order. A late-stage failure may
+        # legitimately leave week_number NULL; sorting by week would then make
+        # the prior completed upload look newer than the failed file.
+        global_latest = IMSUpload.query.order_by(IMSUpload.id.desc()).first()
         if global_latest is None or int(global_latest.id) != int(upload.id):
             raise SystemExit("RECOVERY_REFUSED|reason=upload_is_not_global_latest")
         if upload.week_number not in (None, int(args.week)):
