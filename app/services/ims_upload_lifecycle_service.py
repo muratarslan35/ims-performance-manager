@@ -80,6 +80,15 @@ class IMSUploadLifecycleService:
                 return candidate
         return None
 
+    @classmethod
+    def failed_source_for_job(cls, job_id: int) -> Path | None:
+        """Return the preserved source for one failed queue job, if present."""
+        for suffix in (".xlsx", ".xls"):
+            candidate = cls._archive_root() / f"failed-job-{int(job_id)}{suffix}"
+            if candidate.is_file():
+                return candidate
+        return None
+
     @staticmethod
     def _file_sha256(path: Path) -> str:
         digest = hashlib.sha256()
