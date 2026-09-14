@@ -22,6 +22,7 @@ from app.models import (
     IMSUpload,
     Target,
 )
+from app.services.official_brick_spread_service import OfficialBrickSpreadService
 from app.services.import_result_report import latest_import_report
 from config import Config
 
@@ -127,7 +128,7 @@ def main():
             "competition": CompetitionData.query.filter_by(upload_id=upload.id).count(),
             "raw": IMSRawData.query.filter_by(upload_id=upload.id).count(),
             "official_brick_spread": IMSRawData.query.filter_by(
-                upload_id=upload.id, sheet_type="official_brick_spread_master"
+                upload_id=upload.id, sheet_type=OfficialBrickSpreadService.SHEET_TYPE
             ).count(),
             "official_aggregates": IMSRawData.query.filter(
                 IMSRawData.upload_id == upload.id,
