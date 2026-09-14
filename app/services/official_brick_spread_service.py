@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from sqlalchemy import func
 
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, Product, Representative
+from app.models import IMSRawData, IMSSummary, IMSUpload, Product, Representative
 from app.services.alias_service import AliasService
 from app.services.vacancy_matching import vacancy_slot_token
 
@@ -82,7 +83,7 @@ class OfficialBrickSpreadService:
         raise OfficialBrickSpreadError("Satış Brick Yayılımı başlığı (Brick Sayısı) bulunamadı.")
 
     @classmethod
-    def _product_columns(cls, worksheet, header_row: int) -> dict[int, Product]:
+    def _product_columns(cls, worksheet, header_row: int, upload_id: int) -> tuple[dict[int, Product], list[Product]]:
         header_values = [cell.value for cell in worksheet[header_row]]
         products = Product.query.filter_by(is_active=True).all()
         columns: dict[int, Product] = {}
@@ -109,14 +110,37 @@ class OfficialBrickSpreadService:
                     f"'{value}' brick yayılım başlığı birden fazla ürüne eşleşiyor: {names}"
                 )
 
-        expected = {product.id for product in products}
         found = {product.id for product in columns.values()}
-        missing = [product.product_name for product in products if product.id not in found]
-        if expected and found != expected:
+        missing = [product for product in products if product.id not in found]
+        if not missing:
+            return columns, []
+
+        # A managed product can intentionally be absent from the weekly master
+        # when it has no company sale at all. Distinguish that case from a
+        # damaged workbook using only this upload's finalized company summary;
+        # a prior week's product state is never carried forward.
+        activity = {
+            int(product_id): (float(unit_total or 0.0), float(tl_total or 0.0))
+            for product_id, unit_total, tl_total in db.session.query(
+                IMSSummary.product_id,
+                func.sum(func.abs(IMSSummary.unit)),
+                func.sum(func.abs(IMSSummary.tl)),
+            ).filter(
+                IMSSummary.upload_id == int(upload_id),
+                IMSSummary.product_id.in_([product.id for product in missing]),
+            ).group_by(IMSSummary.product_id).all()
+        }
+        active_missing = [
+            product for product in missing
+            if any(value > 1e-9 for value in activity.get(int(product.id), (0.0, 0.0)))
+        ]
+        if active_missing:
             raise OfficialBrickSpreadError(
-                "Satış Brick Yayılımı ürün kapsamı eksik/fazla. Eksik ürünler: " + ", ".join(missing or ["—"])
+                "Satış Brick Yayılımı gerçek ürün kapsamı hatası. Sütunu eksik olduğu halde "
+                "aynı IMS yüklemesinde satışı bulunan ürünler: "
+                + ", ".join(product.product_name for product in active_missing)
             )
-        return columns
+        return columns, missing
 
     @classmethod
     def persist(
@@ -151,7 +175,9 @@ class OfficialBrickSpreadService:
                 raise OfficialBrickSpreadError("Satış Brick Yayılımı master sayfası bulunamadı.")
             worksheet = workbook[sheet_name]
             header_row = cls._header_row(worksheet)
-            product_columns = cls._product_columns(worksheet, header_row)
+            product_columns, implicit_zero_products = cls._product_columns(
+                worksheet, header_row, upload.id
+            )
 
             # Idempotent for retries/backfills on the same upload.
             IMSRawData.query.filter_by(upload_id=upload.id, sheet_type=cls.SHEET_TYPE).delete(synchronize_session=False)
@@ -280,6 +306,40 @@ class OfficialBrickSpreadService:
                     ))
                     inserted += 1
 
+                # Keep the seven-product read contract without inventing a
+                # sale: an omitted product with no activity is an explicit zero.
+                for product in implicit_zero_products:
+                    db.session.add(IMSRawData(
+                        upload_id=upload.id,
+                        year=year,
+                        month=month,
+                        week_number=week_number,
+                        quarter=quarter,
+                        sheet_name=sheet_name,
+                        sheet_type=cls.SHEET_TYPE,
+                        source_row=source_row,
+                        representative_id=representative.id,
+                        product_id=None,
+                        representative=representative_name,
+                        product=product.product_name,
+                        territory=region or representative.region,
+                        unit=0.0,
+                        tl=0.0,
+                        market_share=0.0,
+                        value_share=0.0,
+                        growth=0.0,
+                        raw_json=json.dumps({
+                            **base_payload,
+                            "scope": "representative_product",
+                            "product_id": product.id,
+                            "product_name": product.product_name,
+                            "brick_count": 0,
+                            "intentional_product_absence": True,
+                            "classification": "no_company_sales_in_same_upload",
+                        }, ensure_ascii=False, sort_keys=True),
+                    ))
+                    inserted += 1
+
             if unresolved:
                 sample = ", ".join(f"satır {item['row']}: {item['representative']}" for item in unresolved[:10])
                 raise OfficialBrickSpreadError(
@@ -293,6 +353,7 @@ class OfficialBrickSpreadService:
                 "sheet_name": sheet_name,
                 "representatives": matched_representatives,
                 "product_columns": len(product_columns),
+                "implicit_zero_products": [product.product_name for product in implicit_zero_products],
                 "records": inserted,
                 "aggregate_rows_ignored": aggregate_rows,
             }
