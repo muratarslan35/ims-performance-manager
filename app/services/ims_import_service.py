@@ -52,7 +52,7 @@ from app.services.target_box_calculation_service import TargetBoxCalculationServ
 # Regex to extract week number from typical IMS file names.
 # Examples: "Tayfun-1 24.Hafta Haziran Brick Analizi_.xlsx"
 #           "25.Hafta Mayıs IMS.xlsx"
-_WEEK_REGEX = re.compile(r"(\d{1,2})\s*\.?\s*hafta", re.IGNORECASE)
+_WEEK_REGEX = re.compile(r"(\d{1,2})[\s._-]*hafta", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
