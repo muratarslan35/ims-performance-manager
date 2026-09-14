@@ -78,8 +78,15 @@ def main() -> int:
             raise SystemExit("RECOVERY_REFUSED|reason=retryable_job_hash_not_found")
 
         source = IMSUploadLifecycleService.archived_source_for_upload(upload.id)
+        source_kind = "verified_archive"
         if source is None:
-            raise SystemExit("RECOVERY_REFUSED|reason=archived_source_not_found")
+            # A late validation failure is intentionally not promoted to the
+            # successful-upload archive. The lifecycle wrapper nevertheless
+            # preserves the exact workbook under this immutable queue job id.
+            source = IMSUploadLifecycleService.failed_source_for_job(job.id)
+            source_kind = "verified_failed_job"
+        if source is None:
+            raise SystemExit("RECOVERY_REFUSED|reason=preserved_source_not_found")
         expected_hash = str(job.source_hash).strip().lower()
         if IMSUploadLifecycleService._file_sha256(source) != expected_hash:
             raise SystemExit("RECOVERY_REFUSED|reason=archived_source_hash_mismatch")
@@ -135,7 +142,7 @@ def main() -> int:
         print(
             "IMS_NORMAL_REIMPORT_QUEUED|"
             f"upload={upload.id}|job={job.id}|period={args.year:04d}-{args.month:02d}|"
-            f"week={args.week}|clear_before_import=1|source=verified_archive|"
+            f"week={args.week}|clear_before_import=1|source={source_kind}|"
             f"existing_targets={target_count}|explicit_replace={int(args.allow_existing_targets)}"
         )
     return 0
