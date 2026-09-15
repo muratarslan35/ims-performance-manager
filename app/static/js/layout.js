@@ -355,6 +355,8 @@
         const track = bar.querySelector('[role="progressbar"]');
         const icon = bar.querySelector('.ims-real-progress-icon');
         let timer = null;
+        let observedActive = false;
+        let terminalLatched = false;
 
         function render(payload) {
             if (!payload || !payload.progress) {
@@ -365,6 +367,11 @@
             const value = Math.max(0, Math.min(parseInt(item.percent, 10) || 0, 100));
             const failed = item.status === 'FAILED';
             const completed = item.status === 'COMPLETED';
+            if (completed && !observedActive) {
+                bar.classList.remove('visible');
+                return false;
+            }
+            if (payload.active) observedActive = true;
             bar.classList.add('visible');
             bar.classList.toggle('failed', failed);
             message.textContent = item.message || 'IMS yüklemesi işleniyor';
@@ -373,6 +380,7 @@
             fill.style.width = value + '%';
             track.setAttribute('aria-valuenow', String(value));
             icon.className = 'bi ' + (failed ? 'bi-exclamation-triangle-fill' : completed ? 'bi-check-circle-fill' : 'bi-arrow-repeat') + ' ims-real-progress-icon';
+            terminalLatched = completed;
             return Boolean(payload.active);
         }
 
@@ -382,7 +390,12 @@
                 .then(function (payload) {
                     const active = render(payload);
                     if (timer) window.clearTimeout(timer);
-                    timer = window.setTimeout(refresh, active ? 2500 : 10000);
+                    // Once this page has observed the running job and then its
+                    // successful 100% state, keep that terminal state visible
+                    // until the user explicitly reloads/navigates the page.
+                    if (!terminalLatched) {
+                        timer = window.setTimeout(refresh, active ? 2500 : 10000);
+                    }
                 })
                 .catch(function () {
                     if (timer) window.clearTimeout(timer);
