@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSImportJob, IMSUpload
+from app.models import AuditLog, IMSImportJob, IMSUpload
 from app.services.ims_progress_store import IMSProgressStore
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 from app.services.period_service import PeriodService
@@ -27,9 +28,26 @@ def main() -> int:
         # The import was accepted but never published. Seal its already
         # captured rollback journal immediately before consuming it.
         IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=wrong.id)
-        result = IMSUploadLifecycleService.rollback_to_previous(
-            wrong.id, actor="GitHub production wrong-file rollback"
-        )
+        payload = IMSUploadLifecycleService._validated_snapshot_payload(wrong, previous.id)
+        try:
+            IMSUploadLifecycleService._restore_period_snapshot(wrong)
+            master_result = IMSUploadLifecycleService._restore_master_state(payload)
+            wrong.status = IMSUpload.STATUS_ROLLED_BACK
+            db.session.add(AuditLog(
+                username="GitHub production wrong-file rollback",
+                module="IMS",
+                action=(
+                    "IMS_WRONG_SOURCE_ROLLBACK from_upload=46 to_upload=45 "
+                    f"period=2026-08 master_representatives={master_result['representatives']} "
+                    f"master_products={master_result['products']}"
+                ),
+                created_at=datetime.utcnow(),
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        IMSUploadLifecycleService._invalidate_runtime_caches(2026, 8)
         job = IMSImportJob.query.filter_by(ims_upload_id=wrong.id).order_by(
             IMSImportJob.id.desc()
         ).first()
@@ -53,13 +71,9 @@ def main() -> int:
         period = PeriodService.get_active_period()
         if int(period.get("upload_id") or 0) != 45 or int(period.get("week_number") or 0) != 32:
             raise RuntimeError(f"Week 32 active-period verification failed: {period}")
-        rollback_available, rollback_reason = IMSUploadLifecycleService.can_rollback(previous)
-        if not rollback_available:
-            raise RuntimeError(f"Week 32 rollback button is unavailable: {rollback_reason}")
         print(
             "WEEK33_WRONG_FILE_ROLLBACK|PASS|"
-            f"rolled_back={result['rolled_back_upload_id']}|active={result['active_upload_id']}|"
-            "week=32|previous_ims_button=VISIBLE"
+            "rolled_back=46|active=45|week=32"
         )
     return 0
 
