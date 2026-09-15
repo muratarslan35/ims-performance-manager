@@ -393,6 +393,8 @@
                   <button class="btn btn-sm btn-light ims-lifecycle-cancel" type="button" style="font-size:11px;">Vazgeç</button>
                 </form>
               </div>
+              {% elif can_manage_ims_lifecycle and latest_upload and item.id == latest_upload.id %}
+              <button class="btn btn-sm btn-outline-secondary py-1 px-2" type="button" style="font-size:11px;" disabled title="{{ rollback_permission[1] if rollback_permission else 'Geri dönüş uygunluğu doğrulanamadı.' }}"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
               {% endif %}
               {% if can_manage_ims_lifecycle and item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
               <button class="btn btn-sm btn-outline-danger py-1 px-2 ims-lifecycle-open" type="button" style="font-size:11px;" data-confirm-id="delete-confirm-{{ item.id }}"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
