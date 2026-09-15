@@ -39,5 +39,21 @@ jobs:
           test "$code" = 200
           echo "LOGIN_HEALTH|PASS|http=$code"
           cd "$IMS_PATH"
-          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/verify_week33_intentional_absence.py
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSUpload
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.services.period_service import PeriodService
+          from config import Config
+          app = create_app(Config)
+          with app.app_context():
+              period = PeriodService.get_active_period()
+              assert int(period.get('upload_id') or 0) == 45, period
+              assert int(period.get('week_number') or 0) == 32, period
+              upload = db.session.get(IMSUpload, 45)
+              allowed, reason = IMSUploadLifecycleService.can_rollback(upload)
+              print(f"ACTIVE_IMS|PASS|upload=45|week=32")
+              print(f"ROLLBACK_BUTTON|allowed={int(allowed)}|reason={reason}")
+          PY
           REMOTE
