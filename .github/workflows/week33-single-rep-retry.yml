@@ -1,0 +1,137 @@
+name: Week 33 Single Rep Matrix Retry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/week33-single-rep-retry.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-test-retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Deploy parser, test both layouts, and retry preserved source
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          git fetch origin main
+          git pull --ff-only origin main
+          venv/bin/python -m pytest -q \
+            tests/test_kpi_workbook_compat.py \
+            tests/test_adaptive_kpi_target_authority.py
+          sudo systemctl restart ims-performance-manager.service
+          sudo systemctl restart ims-import-worker.service
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import hashlib
+          import shutil
+          from datetime import datetime
+          from pathlib import Path
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from config import Config
+
+          def digest(path):
+              value = hashlib.sha256()
+              with path.open('rb') as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                      value.update(chunk)
+              return value.hexdigest()
+
+          app = create_app(Config)
+          with app.app_context():
+              job = db.session.get(IMSImportJob, 36)
+              upload = db.session.get(IMSUpload, 46)
+              assert job and upload, 'Week 33 failed job/upload missing'
+              assert job.ims_upload_id == upload.id
+              if job.status == IMSImportJob.STATUS_FAILED:
+                  source = IMSUploadLifecycleService.failed_source_for_job(job.id)
+                  assert source and source.exists(), 'preserved failed source missing'
+                  assert digest(source) == job.source_hash, 'preserved source hash mismatch'
+                  staging = Path(app.config['UPLOAD_FOLDER']) / 'ims_queue' / job.stored_file_name
+                  staging.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, staging)
+                  assert digest(staging) == job.source_hash, 'staging hash mismatch'
+                  upload.file_name = job.file_name
+                  upload.status = 'PROCESSING'
+                  upload.error_message = None
+                  upload.reconciliation_status = 'NOT_AVAILABLE'
+                  upload.completed_at = None
+                  job.status = IMSImportJob.STATUS_QUEUED
+                  job.started_at = None
+                  job.completed_at = None
+                  job.heartbeat_at = None
+                  job.error_message = None
+                  job.result_summary = None
+                  db.session.commit()
+                  print('WEEK33_RETRY|QUEUED|job=36|upload=46|source_hash=verified')
+              else:
+                  assert job.status in {
+                      IMSImportJob.STATUS_QUEUED,
+                      IMSImportJob.STATUS_PROCESSING,
+                      IMSImportJob.STATUS_COMPLETED,
+                  }, job.status
+                  print(f'WEEK33_RETRY|EXISTING|job=36|status={job.status}')
+          PY
+
+          for attempt in $(seq 1 150); do
+            status=$(PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              print(db.session.get(IMSImportJob,36).status)
+          PY
+          )
+            echo "WEEK33_WAIT|attempt=$attempt|status=$status"
+            case "$status" in
+              COMPLETED) break ;;
+              FAILED) exit 1 ;;
+            esac
+            sleep 10
+          done
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload
+          from app.services.period_service import PeriodService
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              job=db.session.get(IMSImportJob,36)
+              upload=db.session.get(IMSUpload,46)
+              assert job.status == IMSImportJob.STATUS_COMPLETED, job.error_message
+              assert upload.status == 'COMPLETED', upload.error_message
+              active=PeriodService.get_active_period()
+              assert int(active.get('upload_id') or 0) == 46, active
+              assert int(active.get('week_number') or 0) == 33, active
+              print(f'WEEK33_IMPORT|PASS|job=36|upload=46|week=33|sheets={upload.sheet_count}')
+          PY
+          code=$(curl --max-time 20 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/login)
+          test "$code" = 200
+          echo "LOGIN_HEALTH|PASS|http=$code"
+          REMOTE
