@@ -29,7 +29,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Verify login and Week 33
+      - name: Verify login, active Week 32, and cleanup state
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes \
@@ -52,8 +52,10 @@ jobs:
               assert int(period.get('upload_id') or 0) == 45, period
               assert int(period.get('week_number') or 0) == 32, period
               upload = db.session.get(IMSUpload, 45)
+              wrong = db.session.get(IMSUpload, 46)
               allowed, reason = IMSUploadLifecycleService.can_rollback(upload)
-              print(f"ACTIVE_IMS|PASS|upload=45|week=32")
+              print("ACTIVE_IMS|PASS|upload=45|week=32")
+              print(f"UPLOAD_46|exists={int(wrong is not None)}|status={getattr(wrong, 'status', 'DELETED')}")
               print(f"ROLLBACK_BUTTON|allowed={int(allowed)}|reason={reason}")
           PY
           REMOTE
