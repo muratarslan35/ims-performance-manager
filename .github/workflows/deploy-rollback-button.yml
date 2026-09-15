@@ -1,4 +1,4 @@
-name: Deploy IMS Rollback Button
+name: Deploy IMS Lifecycle Controls
 
 on:
   push:
