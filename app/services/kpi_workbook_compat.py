@@ -332,8 +332,8 @@ def validate_product_kpi_sheets(workbook, canonical):
             market_value = pd.to_numeric(pd.Series([values.iloc[market_column]]), errors="coerce").iloc[0]
             if pd.isna(kpi_value) or pd.isna(market_value):
                 raise ValueError(f"{sheet_name}: KPI NATIONAL ürün/PAZAR değeri sayısal değil.")
-            if float(kpi_value) < 0 or float(market_value) < 0:
-                raise ValueError(f"{sheet_name}: KPI NATIONAL ürün/PAZAR değeri negatif olamaz.")
+            # Negative observations are valid return/correction movements in
+            # IMS market feeds. Blank/non-numeric cells remain a hard error.
             national_seen = True
         if not national_seen:
             raise ValueError(f"{sheet_name}: KPI NATIONAL doğrulama satırı bulunamadı.")
