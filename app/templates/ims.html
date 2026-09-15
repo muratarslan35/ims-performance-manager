@@ -397,7 +397,7 @@
               <button class="btn btn-sm btn-outline-secondary py-1 px-2" type="button" style="font-size:11px;" disabled title="{{ rollback_permission[1] if rollback_permission else 'Geri dönüş uygunluğu doğrulanamadı.' }}"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
               {% endif %}
               {% if can_manage_ims_lifecycle and item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
-              <form method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}" onsubmit="return window.confirm('Bu geri alınmış IMS ve yalnız ona bağlı kayıtlar kalıcı olarak silinecek. Devam edilsin mi?');">
+              <form class="ims-cleanup-form" method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}" data-page-loader="false" data-upload-id="{{ item.id }}" data-status-url="{{ url_for('ims.cleanup_status', upload_id=item.id) }}">
                 <button class="btn btn-sm btn-outline-danger py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
               </form>
               {% endif %}
@@ -593,6 +593,71 @@
   });
   document.querySelectorAll(".ims-lifecycle-cancel").forEach((button) => {
     button.addEventListener("click", () => { button.closest(".ims-lifecycle-confirm").hidden = true; });
+  });
+
+  document.querySelectorAll(".ims-cleanup-form").forEach((cleanupForm) => {
+    cleanupForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!window.confirm("Bu geri alınmış IMS ve yalnız ona bağlı kayıtlar kalıcı olarak silinecek. Devam edilsin mi?")) return;
+      const button = cleanupForm.querySelector("button[type='submit']");
+      const row = cleanupForm.closest("tr");
+      const original = button ? button.innerHTML : "";
+      const startedAt = Date.now();
+      let finished = false;
+
+      const setState = (text, icon = "bi-hourglass-split") => {
+        if (!button) return;
+        button.disabled = true;
+        button.innerHTML = `<i class="bi ${icon} me-1"></i>${text}`;
+      };
+      const complete = (message) => {
+        if (finished) return;
+        finished = true;
+        if (row) row.remove();
+        if (typeof showToast === "function") showToast("Temizlik tamamlandı", message, "success");
+      };
+      const fail = (message) => {
+        if (finished) return;
+        finished = true;
+        if (button) { button.disabled = false; button.innerHTML = original; }
+        if (typeof showToast === "function") showToast("Temizlik tamamlanamadı", message, "danger");
+      };
+      const poll = async () => {
+        while (!finished && Date.now() - startedAt < 720000) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          try {
+            const response = await fetch(cleanupForm.dataset.statusUrl, {
+              headers: {"Accept": "application/json"}, cache: "no-store"
+            });
+            if (!response.ok) continue;
+            const status = await response.json();
+            if (status.state === "deleted") {
+              complete("Hatalı yükleme ve yalnız ona bağlı kayıtlar kaldırıldı.");
+              return;
+            }
+            setState("Veriler güvenle temizleniyor");
+          } catch (_) {
+            setState("Sunucu sonucu doğrulanıyor", "bi-arrow-repeat");
+          }
+        }
+        if (!finished) fail("Sunucu sonucu doğrulanamadı. Sayfayı yenileyerek kayıt durumunu kontrol edin.");
+      };
+
+      setState("Temizlik başlatılıyor");
+      try {
+        const response = await fetch(cleanupForm.action, {
+          method: "POST",
+          headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+          body: new FormData(cleanupForm)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && payload.state === "deleted") complete(payload.message);
+        else fail(payload.message || "Sunucu temizliği reddetti; dashboard verileri değiştirilmedi.");
+      } catch (_) {
+        setState("Sunucu sonucu doğrulanıyor", "bi-arrow-repeat");
+        poll();
+      }
+    });
   });
 
   const latestReportButton = document.querySelector("[data-open-latest-report]");
