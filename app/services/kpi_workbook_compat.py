@@ -271,7 +271,13 @@ def build_competition_frames(workbook):
 
 
 def validate_product_kpi_sheets(workbook, canonical):
-    """Use optional KPI sheets only as a NATIONAL control for core units."""
+    """Validate each product-market tab without mixing source authorities.
+
+    The paired brick matrices own company sales by rep/brick. Product KPI tabs
+    own market and named-competitor observations. Their NATIONAL values need not
+    be equal because they represent different workbook measures; requiring that
+    equality incorrectly rejects a complete workbook.
+    """
     checked = 0
     key_columns = ["BÖLGE", "İL", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI"]
     canonical_rows = {
@@ -298,6 +304,13 @@ def validate_product_kpi_sheets(workbook, canonical):
         if len(product_columns) != 1:
             raise ValueError(f"{sheet_name}: KPI ana ürün kolonu tekil değil ({product}).")
         product_column = product_columns[0]
+        market_columns = [
+            column for column in range(frame.shape[1])
+            if _norm(frame.iloc[header_row, column]) == "PAZAR"
+        ]
+        if len(market_columns) != 1:
+            raise ValueError(f"{sheet_name}: KPI PAZAR kolonu tekil değil ({product}).")
+        market_column = market_columns[0]
         national_seen = False
         for row_index in range(header_row + 1, len(frame)):
             values = frame.iloc[row_index]
@@ -313,18 +326,14 @@ def validate_product_kpi_sheets(workbook, canonical):
             # identical business meaning in both layouts.
             if _norm(key[2]) != "NATIONAL":
                 continue
-            source = canonical_rows.get(key)
-            if source is None:
+            if canonical_rows.get(key) is None:
                 raise ValueError(f"{sheet_name}: KPI satırı ana brick matrisinde bulunamadı: {key}")
             kpi_value = pd.to_numeric(pd.Series([values.iloc[product_column]]), errors="coerce").iloc[0]
-            core_value = pd.to_numeric(pd.Series([source[source_column]]), errors="coerce").iloc[0]
-            if pd.isna(kpi_value) and pd.isna(core_value):
-                pass
-            elif pd.isna(kpi_value) or pd.isna(core_value) or abs(float(kpi_value) - float(core_value)) > 1e-6:
-                raise ValueError(
-                    f"{sheet_name}: KPI doğrulaması ana KUTU matrisiyle uyuşmuyor; "
-                    f"brick={key[2]}, KPI={kpi_value}, ana={core_value}."
-                )
+            market_value = pd.to_numeric(pd.Series([values.iloc[market_column]]), errors="coerce").iloc[0]
+            if pd.isna(kpi_value) or pd.isna(market_value):
+                raise ValueError(f"{sheet_name}: KPI NATIONAL ürün/PAZAR değeri sayısal değil.")
+            if float(kpi_value) < 0 or float(market_value) < 0:
+                raise ValueError(f"{sheet_name}: KPI NATIONAL ürün/PAZAR değeri negatif olamaz.")
             national_seen = True
         if not national_seen:
             raise ValueError(f"{sheet_name}: KPI NATIONAL doğrulama satırı bulunamadı.")
