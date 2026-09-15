@@ -157,3 +157,16 @@ def test_kpi_validation_rejects_non_numeric_national_market_value():
     ])
     with pytest.raises(ValueError, match="sayısal değil"):
         validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical)
+
+
+def test_kpi_validation_accepts_negative_return_correction():
+    canonical, _ = build_canonical_brick_frame({
+        "2-TTS-BRİCK TL-REA%": _matrix("tl"),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
+    })
+    kpi = pd.DataFrame([
+        [None] * 9, [None] * 9, [None] * 9,
+        [None, None, None, None, None, "PAZAR", "PP", "RANK", "TRAVAZOL"],
+        ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, -1],
+    ])
+    assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
