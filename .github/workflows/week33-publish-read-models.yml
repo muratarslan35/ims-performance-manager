@@ -113,6 +113,7 @@ jobs:
           PY
           venv/bin/python verify_live_ims_gate.py
           venv/bin/python scripts/verify_week33_intentional_absence.py
+          venv/bin/python scripts/verify_week33_live_acceptance.py
           code=$(curl --max-time 20 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/login)
           test "$code" = 200
           echo "LOGIN_HEALTH|PASS|http=$code"
