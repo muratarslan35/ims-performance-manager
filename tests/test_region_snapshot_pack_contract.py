@@ -45,7 +45,7 @@ def test_worker_requires_region_snapshot_before_atomic_publication():
     assert 'Bölge snapshotları hazırlanıyor' in worker
     assert 'dashboard_result, region_result, representative_result' in worker
     assert 'summary["publication_ready"] = True' in worker
-    assert 'value = 42 + round(52 * done / max(total, 1))' in worker
+    assert 'value = 46 + round(48 * done / max(total, 1))' in worker
 
 
 def test_runtime_deploy_refreshes_snapshot_before_web_activation():
