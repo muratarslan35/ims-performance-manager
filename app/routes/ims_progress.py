@@ -31,8 +31,19 @@ def progress():
     selected = active
     if selected is None:
         latest = jobs[0] if jobs else None
-        if latest and latest.completed_at and latest.completed_at >= datetime.utcnow() - timedelta(minutes=15):
-            selected = latest
+        if latest:
+            progress = IMSProgressStore.read(latest.id)
+            progress_updated_at = None
+            try:
+                progress_updated_at = datetime.fromisoformat(str((progress or {}).get("updated_at") or ""))
+            except (TypeError, ValueError):
+                pass
+            cutoff = datetime.utcnow() - timedelta(minutes=15)
+            if (
+                (latest.completed_at and latest.completed_at >= cutoff)
+                or (progress_updated_at and progress_updated_at >= cutoff)
+            ):
+                selected = latest
 
     if selected is None:
         return {"active": False, "progress": None}
