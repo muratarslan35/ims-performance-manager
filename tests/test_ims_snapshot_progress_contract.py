@@ -23,14 +23,15 @@ def test_completed_queue_row_remains_visibly_processing_until_publication():
 
 def test_worker_reports_dashboard_region_and_representative_snapshot_progress():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
-    assert 'percent=95' in worker
+    assert 'percent=42' in worker
     assert 'stage="dashboard_snapshot"' in worker
-    assert 'percent=97' in worker
+    assert 'percent=44' in worker
     assert 'stage="region_snapshots"' in worker
     assert 'Bölge snapshotları hazırlanıyor' in worker
-    assert 'percent=42' in worker
+    assert 'percent=46' in worker
     assert 'stage="representative_snapshots"' in worker
-    assert 'value = 42 + round(52 * done / max(total, 1))' in worker
+    assert 'value = 46 + round(48 * done / max(total, 1))' in worker
+    assert 'remaining / rate' in worker
     assert 'eta_seconds' in worker
     assert 'tahmini' in worker
     assert 'percent=100' in worker
