@@ -397,14 +397,9 @@
               <button class="btn btn-sm btn-outline-secondary py-1 px-2" type="button" style="font-size:11px;" disabled title="{{ rollback_permission[1] if rollback_permission else 'Geri dönüş uygunluğu doğrulanamadı.' }}"><i class="bi bi-arrow-counterclockwise me-1"></i>Önceki IMS'e dön</button>
               {% endif %}
               {% if can_manage_ims_lifecycle and item.status == "ROLLED_BACK" and delete_permissions[item.id][0] %}
-              <button class="btn btn-sm btn-outline-danger py-1 px-2 ims-lifecycle-open" type="button" style="font-size:11px;" data-confirm-id="delete-confirm-{{ item.id }}"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
-              <div class="alert alert-danger py-2 px-2 mb-0 w-100 ims-lifecycle-confirm" id="delete-confirm-{{ item.id }}" hidden>
-                <strong class="d-block mb-1" style="font-size:11px;">Bu işlem geri alınamaz. Kalıcı silme onaylansın mı?</strong>
-                <form class="d-flex gap-1" method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}">
-                  <button class="btn btn-sm btn-danger" type="submit" style="font-size:11px;">Onayla ve kalıcı sil</button>
-                  <button class="btn btn-sm btn-light ims-lifecycle-cancel" type="button" style="font-size:11px;">Vazgeç</button>
-                </form>
-              </div>
+              <form method="post" action="{{ url_for('ims.delete_upload', upload_id=item.id) }}" onsubmit="return window.confirm('Bu geri alınmış IMS ve yalnız ona bağlı kayıtlar kalıcı olarak silinecek. Devam edilsin mi?');">
+                <button class="btn btn-sm btn-outline-danger py-1 px-2" type="submit" style="font-size:11px;"><i class="bi bi-trash me-1"></i>Kalıcı temizle</button>
+              </form>
               {% endif %}
             </div>
           </td>
