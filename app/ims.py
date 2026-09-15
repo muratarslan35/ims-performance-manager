@@ -2,6 +2,7 @@ from flask import Blueprint
 from flask import abort
 from flask import current_app
 from flask import flash
+from flask import jsonify
 from flask import redirect
 from flask import render_template
 from flask import request
@@ -557,12 +558,22 @@ def delete_upload(upload_id):
     try:
         result = IMSUploadLifecycleService.delete_upload(upload_id)
     except LookupError as exc:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, state="missing", message=str(exc)), 404
         flash(str(exc), "warning")
     except RuntimeError as exc:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, state="blocked", message=str(exc)), 409
         flash(str(exc), "warning")
     except Exception:
         db.session.rollback()
         current_app.logger.exception("ims_upload_delete_failed upload_id=%s", upload_id)
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(
+                ok=False,
+                state="failed",
+                message="IMS temizliği tamamlanamadı; mevcut dashboard verileri korundu.",
+            ), 500
         flash("IMS silinemedi; mevcut dashboard verileri korunmuştur.", "danger")
     else:
         cleanup = result.get("master_cleanup") or {}
@@ -579,7 +590,27 @@ def delete_upload(upload_id):
             flash("Dashboard bir önceki doğrulanmış IMS durumuna döndürüldü.", "success")
         else:
             flash("IMS ve ona ait yükleme kayıtları silindi.", "success")
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(
+                ok=True,
+                state="deleted",
+                upload_id=upload_id,
+                message="IMS kaydı ve yalnız ona bağlı veriler kalıcı olarak temizlendi.",
+            )
     return redirect(url_for("ims.index") + "#ims-history")
+
+
+@ims_bp.route("/uploads/<int:upload_id>/cleanup-status", methods=["GET"])
+@login_required
+def cleanup_status(upload_id):
+    _require_ims_lifecycle_admin()
+    upload = db.session.get(IMSUpload, upload_id)
+    return jsonify(
+        ok=True,
+        upload_id=upload_id,
+        state="deleted" if upload is None else "present",
+        status=getattr(upload, "status", None),
+    )
 
 
 @ims_bp.route("/uploads/<int:upload_id>/rollback", methods=["POST"])
