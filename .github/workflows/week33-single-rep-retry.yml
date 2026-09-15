@@ -1,4 +1,4 @@
-name: Week 33 Single Rep Matrix Retry
+name: Week 33 Complete Matrix Retry
 
 on:
   push:
@@ -109,7 +109,19 @@ jobs:
             echo "WEEK33_WAIT|attempt=$attempt|status=$status"
             case "$status" in
               COMPLETED) break ;;
-              FAILED) exit 1 ;;
+              FAILED)
+                PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          from config import Config
+          app=create_app(Config)
+          with app.app_context():
+              job=db.session.get(IMSImportJob,36)
+              print(f'WEEK33_IMPORT|FAILED|job=36|error={job.error_message}')
+          PY
+                exit 1
+                ;;
             esac
             sleep 10
           done
