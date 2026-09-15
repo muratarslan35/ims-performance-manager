@@ -1,4 +1,4 @@
-name: Publish Completed Week 33 Read Models
+name: Inspect Week 33 Read Model Publication
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Publish existing Week 33 data
+      - name: Inspect existing Week 33 publication
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes \
@@ -44,19 +44,30 @@ jobs:
           git fetch origin main
           git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
-          venv/bin/python scripts/refresh_live_read_models.py --year 2026 --month 8 --week 33
-          venv/bin/python verify_live_ims_gate.py
-          venv/bin/python scripts/verify_week33_intentional_absence.py
+          pgrep -af 'refresh_live_read_models.py|ims_import_worker.py' || true
           venv/bin/python - <<'PY'
+          import json
           from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
           from app.services.period_service import PeriodService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
           from config import Config
           app = create_app(Config)
           with app.app_context():
               period = PeriodService.get_active_period()
-              assert int(period.get('upload_id') or 0) == 46, period
-              assert int(period.get('week_number') or 0) == 33, period
-              print(f"ACTIVE_IMS|PASS|upload={period['upload_id']}|week={period['week_number']}")
+              job = db.session.get(IMSImportJob, 36)
+              summary = json.loads(job.result_summary or '{}')
+              progress = IMSProgressStore.read(job.id) or {}
+              dashboard_source = PersistentDashboardSnapshotService.source_identity(2026, 8)
+              region_source = PersistentRegionSnapshotService.source_identity(2026, 8)
+              rep_source = PersistentRepresentativeSnapshotService.source_identity(2026, 8)
+              print(f"ACTIVE_IMS|upload={period.get('upload_id')}|week={period.get('week_number')}")
+              print(f"PUBLICATION|ready={summary.get('publication_ready')}|progress={progress}")
+              print(f"SNAPSHOT_SOURCE|dashboard={dashboard_source}|region={region_source}|representative={rep_source}")
           PY
           code=$(curl --max-time 20 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/login)
           test "$code" = 200
