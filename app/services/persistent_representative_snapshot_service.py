@@ -7,12 +7,14 @@ seven periods, market analysis and AI on every navigation.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Callable
 
 import sqlalchemy as sa
+from flask import current_app
 from sqlalchemy import desc
 from sqlalchemy.inspection import inspect as sa_inspect
 
@@ -61,6 +63,8 @@ class PersistentRepresentativeSnapshotService:
     STATUS_ACTIVE = "ACTIVE"
     STATUS_SUPERSEDED = "SUPERSEDED"
     STATUS_FAILED = "FAILED"
+    BUILD_BATCH_SIZE = 8
+    BUILD_WORKERS = 4
 
     @staticmethod
     def _json_default(value):
@@ -258,34 +262,61 @@ class PersistentRepresentativeSnapshotService:
 
         try:
             total = len(ids)
-            for index, representative_id in enumerate(ids, start=1):
-                representative = db.session.get(Representative, representative_id)
-                if representative is None:
-                    continue
-                workspace = build_representative_workspace_payload(representative, year, month)
-                payload = json.dumps(
-                    cls._json_ready(workspace),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    default=cls._json_default,
-                )
-                db.session.execute(representative_snapshots.insert().values(
-                    set_id=set_id,
-                    representative_id=representative_id,
-                    payload_json=payload,
-                    created_at=datetime.utcnow(),
-                ))
+            app = current_app._get_current_object()
+            batch_size = max(1, int(app.config.get("REPRESENTATIVE_SNAPSHOT_BATCH_SIZE", cls.BUILD_BATCH_SIZE)))
+            workers = max(1, int(app.config.get("REPRESENTATIVE_SNAPSHOT_WORKERS", cls.BUILD_WORKERS)))
+            if app.testing:
+                workers = 1
+
+            def calculate(representative_id):
+                # Every worker owns an application context and therefore its own
+                # scoped SQLAlchemy session. Workers only read; SQLite writes stay
+                # serialized in the parent after the complete batch is ready.
+                with app.app_context():
+                    representative = db.session.get(Representative, representative_id)
+                    if representative is None:
+                        return None
+                    name = str(representative.rep_name or representative_id)
+                    workspace = build_representative_workspace_payload(representative, year, month)
+                    payload = json.dumps(
+                        cls._json_ready(workspace),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=cls._json_default,
+                    )
+                    db.session.rollback()
+                    return representative_id, name, payload
+
+            completed = 0
+            for offset in range(0, total, batch_size):
+                batch_ids = ids[offset:offset + batch_size]
+                if workers == 1:
+                    calculated = [calculate(representative_id) for representative_id in batch_ids]
+                else:
+                    with ThreadPoolExecutor(max_workers=min(workers, len(batch_ids))) as pool:
+                        calculated = list(pool.map(calculate, batch_ids))
+                rows = [item for item in calculated if item is not None]
+                if rows:
+                    db.session.execute(representative_snapshots.insert(), [
+                        {
+                            "set_id": set_id,
+                            "representative_id": representative_id,
+                            "payload_json": payload,
+                            "created_at": datetime.utcnow(),
+                        }
+                        for representative_id, _name, payload in rows
+                    ])
+                completed += len(rows)
                 db.session.execute(
                     representative_snapshot_sets.update().where(
                         representative_snapshot_sets.c.id == set_id
-                    ).values(representative_count=index)
+                    ).values(representative_count=completed)
                 )
-                # Keep writes bounded while avoiding one SQLite fsync/transaction
-                # per representative. Calculations and payloads are unchanged.
-                if index % 8 == 0 or index == total:
-                    db.session.commit()
+                db.session.commit()
                 if progress:
-                    progress(index, total, str(representative.rep_name or representative_id))
+                    first_name = rows[0][1] if rows else str(batch_ids[0])
+                    last_name = rows[-1][1] if rows else str(batch_ids[-1])
+                    progress(completed, total, f"{first_name} – {last_name}")
 
             db.session.execute(
                 representative_snapshot_sets.update().where(
