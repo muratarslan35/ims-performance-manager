@@ -1,4 +1,4 @@
-name: Inspect Week 33 Read Model Publication
+name: Finalize Verified Week 33 Publication
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect existing Week 33 publication
+      - name: Finalize already-built Week 33 snapshots
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" -o BatchMode=yes \
@@ -44,31 +44,75 @@ jobs:
           git fetch origin main
           git pull --ff-only origin main
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
-          pgrep -af 'refresh_live_read_models.py|ims_import_worker.py' || true
           venv/bin/python - <<'PY'
           import json
+          import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
           from app.models import IMSImportJob
+          from app.services.import_roster_sync import IMSRosterSyncService
           from app.services.ims_progress_store import IMSProgressStore
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           from app.services.period_service import PeriodService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService, region_snapshot_sets, region_snapshots
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshot_sets, representative_snapshots
           from config import Config
           app = create_app(Config)
           with app.app_context():
-              period = PeriodService.get_active_period()
               job = db.session.get(IMSImportJob, 36)
+              assert job and job.status == IMSImportJob.STATUS_COMPLETED and job.ims_upload_id == 46
+              production_id = PersistentDashboardSnapshotService.source_identity(2026, 8)[1]
+              assert PersistentDashboardSnapshotService.generation_ready(2026, 8, 46, production_id)
+              region_set = db.session.execute(sa.select(
+                  region_snapshot_sets.c.id, region_snapshot_sets.c.region_count
+              ).where(
+                  region_snapshot_sets.c.year == 2026,
+                  region_snapshot_sets.c.month == 8,
+                  region_snapshot_sets.c.source_upload_id == 46,
+                  region_snapshot_sets.c.production_upload_id == production_id,
+                  region_snapshot_sets.c.status == 'ACTIVE',
+              )).first()
+              assert region_set and int(region_set.region_count) == 11, region_set
+              region_members = db.session.execute(sa.select(sa.func.count()).select_from(
+                  region_snapshots
+              ).where(region_snapshots.c.set_id == region_set.id)).scalar()
+              assert int(region_members or 0) == 11, region_members
+              rep_set = db.session.execute(sa.select(
+                  representative_snapshot_sets.c.id,
+                  representative_snapshot_sets.c.representative_count,
+              ).where(
+                  representative_snapshot_sets.c.year == 2026,
+                  representative_snapshot_sets.c.month == 8,
+                  representative_snapshot_sets.c.source_upload_id == 46,
+                  representative_snapshot_sets.c.production_upload_id == production_id,
+                  representative_snapshot_sets.c.status == 'ACTIVE',
+              )).first()
+              expected_reps = len(PersistentRepresentativeSnapshotService.representative_ids(2026, 8, 46))
+              assert rep_set and int(rep_set.representative_count) == expected_reps, (rep_set, expected_reps)
+              rep_members = db.session.execute(sa.select(sa.func.count()).select_from(
+                  representative_snapshots
+              ).where(representative_snapshots.c.set_id == rep_set.id)).scalar()
+              assert int(rep_members or 0) == expected_reps, (rep_members, expected_reps)
+              IMSRosterSyncService.sync_latest()
+              IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=46)
               summary = json.loads(job.result_summary or '{}')
-              progress = IMSProgressStore.read(job.id) or {}
-              dashboard_source = PersistentDashboardSnapshotService.source_identity(2026, 8)
-              region_source = PersistentRegionSnapshotService.source_identity(2026, 8)
-              rep_source = PersistentRepresentativeSnapshotService.source_identity(2026, 8)
-              print(f"ACTIVE_IMS|upload={period.get('upload_id')}|week={period.get('week_number')}")
-              print(f"PUBLICATION|ready={summary.get('publication_ready')}|progress={progress}")
-              print(f"SNAPSHOT_SOURCE|dashboard={dashboard_source}|region={region_source}|representative={rep_source}")
+              summary['publication_ready'] = True
+              summary['publication_ready_source'] = 'verified_existing_snapshot_finalize'
+              summary['publication_ready_upload_id'] = 46
+              job.result_summary = json.dumps(summary, ensure_ascii=False)
+              job.error_message = None
+              db.session.commit()
+              IMSProgressStore.write(job.id, percent=100, stage='completed',
+                  message='IMS yüklemesi ve ekran güncellemeleri tamamlandı',
+                  detail='33. hafta canlı yayında', status=IMSImportJob.STATUS_COMPLETED)
+              period = PeriodService.get_active_period()
+              assert int(period.get('upload_id') or 0) == 46, period
+              assert int(period.get('week_number') or 0) == 33, period
+              print(f"PUBLICATION|PASS|upload=46|week=33|regions=11|representatives={expected_reps}")
           PY
+          venv/bin/python verify_live_ims_gate.py
+          venv/bin/python scripts/verify_week33_intentional_absence.py
           code=$(curl --max-time 20 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/login)
           test "$code" = 200
           echo "LOGIN_HEALTH|PASS|http=$code"
