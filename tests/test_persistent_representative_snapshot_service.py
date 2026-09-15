@@ -44,6 +44,16 @@ def test_background_worker_warms_representatives_without_first_user_request():
     assert "_warm_representative_snapshots(app, latest.year, latest.month)" in worker
 
 
+def test_snapshot_batches_pin_shared_upload_resolution_once():
+    snapshot = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+    optimizer = (ROOT / "app/services/representative_query_optimizer.py").read_text(encoding="utf-8")
+    assert "snapshot_upload_ids.setdefault" in snapshot
+    assert "use_snapshot_upload_ids(snapshot_upload_ids)" in snapshot
+    assert "_snapshot_upload_ids = ContextVar" in optimizer
+    assert "if pinned is not None and key in pinned" in optimizer
+    assert "BUILD_WORKERS = 2" in snapshot
+
+
 def test_deploy_bootstraps_first_active_generation_before_web_activation():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     bootstrap = installer.index("REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web")
