@@ -6,7 +6,7 @@ import json
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSImportJob, IMSRawData, IMSUpload, Product
+from app.models import CompetitionData, IMSImportJob, IMSRawData, IMSUpload, Product
 from app.services.official_brick_spread_service import OfficialBrickSpreadService
 from config import Config
 
@@ -37,13 +37,24 @@ def main() -> int:
             sheet_type=OfficialBrickSpreadService.SHEET_TYPE,
             product="Fentivag",
         ).all()
-        assert rows and all(float(row.unit or 0) == 0 for row in rows), len(rows)
-        payloads = [json.loads(row.raw_json or "{}") for row in rows]
-        assert all(item.get("intentional_product_absence") is True for item in payloads)
-        print(
-            f"WEEK33_INTENTIONAL_ABSENCE|PASS|upload={upload.id}|"
-            f"product=Fentivag|zero_rows={len(rows)}"
-        )
+        if rows:
+            assert all(float(row.unit or 0) == 0 for row in rows), len(rows)
+            payloads = [json.loads(row.raw_json or "{}") for row in rows]
+            assert all(item.get("intentional_product_absence") is True for item in payloads)
+            mode = f"legacy_intentional_absence|zero_rows={len(rows)}"
+        else:
+            # New KPI workbooks do not contain the legacy official brick-spread
+            # sheet.  Their product status is authoritative in the product KPI
+            # tab; negative numeric observations are valid return/correction
+            # movements and must not be reported as a missing product.
+            kpi_rows = CompetitionData.query.filter(
+                CompetitionData.upload_id == upload.id,
+                db.func.upper(CompetitionData.product_group) == "FENTIVAG",
+            ).all()
+            assert kpi_rows, "Fentivag KPI observations are missing"
+            assert all(row.metric_value is not None for row in kpi_rows)
+            mode = f"kpi_numeric_correction|observations={len(kpi_rows)}"
+        print(f"WEEK33_PRODUCT_STATUS|PASS|upload={upload.id}|product=Fentivag|mode={mode}")
     return 0
 
 
