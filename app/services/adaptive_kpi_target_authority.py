@@ -23,7 +23,7 @@ def _norm(value):
 def _matrix_plan(frame):
     for header_row in range(min(20, len(frame))):
         row = [_norm(value) for value in frame.iloc[header_row].tolist()]
-        if "1 TTS" not in row or "2 TTS" not in row:
+        if "1 TTS" not in row:
             continue
         group_row = header_row - 1
         if group_row < 0:
@@ -40,7 +40,7 @@ def _matrix_plan(frame):
         if not products:
             continue
         primary_rep = row.index("1 TTS")
-        secondary_rep = row.index("2 TTS")
+        secondary_rep = row.index("2 TTS") if "2 TTS" in row else None
         if primary_rep < 3:
             continue
         return {
