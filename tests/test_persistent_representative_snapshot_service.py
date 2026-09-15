@@ -35,6 +35,17 @@ def test_persistent_generation_is_atomic_and_keeps_previous_active_during_build(
     assert "status=cls.STATUS_ACTIVE" in source
 
 
+def test_representative_generation_calculates_in_batches_and_serializes_sqlite_writes():
+    source = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+    assert "BUILD_BATCH_SIZE = 8" in source
+    assert "BUILD_WORKERS = 4" in source
+    assert "ThreadPoolExecutor" in source
+    assert "for offset in range(0, total, batch_size)" in source
+    assert "representative_snapshots.insert(), [" in source
+    assert "db.session.commit()" in source
+    assert "Workers only read; SQLite writes stay" in source
+
+
 def test_background_worker_warms_representatives_without_first_user_request():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_representative_snapshots" in worker
