@@ -7,6 +7,8 @@ labels; it never falls back to loading an entire competition upload into Python.
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 from sqlalchemy import or_
@@ -16,6 +18,25 @@ from app.extensions import db
 from app.models import CompetitionData, IMSRawData, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
 from app.services.production_result_service import ProductionResultService
+
+
+_snapshot_upload_ids = ContextVar("representative_snapshot_upload_ids", default=None)
+
+
+@contextmanager
+def use_snapshot_upload_ids(upload_ids):
+    """Pin period/upload resolution for one immutable snapshot generation.
+
+    A normal page request still resolves the latest upload normally.  The
+    background snapshot builder, however, already has a fixed source generation;
+    resolving the same monthly upload again for every representative created
+    hundreds of identical SELECTs.
+    """
+    token = _snapshot_upload_ids.set(dict(upload_ids or {}))
+    try:
+        yield
+    finally:
+        _snapshot_upload_ids.reset(token)
 
 
 def _key(value):
@@ -67,6 +88,9 @@ def install_representative_market_query_optimizer():
         cross-period state is shared.
         """
         key = (int(year), int(month))
+        pinned = _snapshot_upload_ids.get()
+        if pinned is not None and key in pinned:
+            return pinned[key]
         cache = getattr(self, "_rep_query_upload_id_cache", None)
         if cache is None:
             cache = {}
