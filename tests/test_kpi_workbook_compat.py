@@ -131,7 +131,7 @@ def test_kpi_market_and_named_rivals_are_translated_but_pp_rank_are_not():
     assert "RANK" not in frame.iloc[2].tolist()
 
 
-def test_kpi_validation_rejects_changed_core_value():
+def test_kpi_validation_keeps_market_tab_independent_from_company_sales_matrix():
     canonical, _ = build_canonical_brick_frame({
         "2-TTS-BRİCK TL-REA%": _matrix("tl"),
         "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
@@ -142,5 +142,18 @@ def test_kpi_validation_rejects_changed_core_value():
         ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, 31],
         ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 30, 1, 3],
     ])
-    with pytest.raises(ValueError, match="KPI doğrulaması"):
+    assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
+
+
+def test_kpi_validation_rejects_non_numeric_national_market_value():
+    canonical, _ = build_canonical_brick_frame({
+        "2-TTS-BRİCK TL-REA%": _matrix("tl"),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
+    })
+    kpi = pd.DataFrame([
+        [None] * 9, [None] * 9, [None] * 9,
+        [None, None, None, None, None, "PAZAR", "PP", "RANK", "TRAVAZOL"],
+        ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", "eksik", None, None, 31],
+    ])
+    with pytest.raises(ValueError, match="sayısal değil"):
         validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical)
