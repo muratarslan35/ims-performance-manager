@@ -47,7 +47,9 @@ def is_product_kpi_sheet(sheet_name):
 def _matrix_plan(frame, metric):
     for header_row in range(min(12, len(frame))):
         row = [_norm(value) for value in frame.iloc[header_row].tolist()]
-        if "1 TTS" not in row or "2 TTS" not in row:
+        # The numeric prefixes in ``1-TTS`` and ``2-TTS-BRICK`` identify
+        # workbook sections. They do not require two rep identity columns.
+        if "1 TTS" not in row:
             continue
         group_row = header_row - 1
         if group_row < 0:
@@ -68,9 +70,9 @@ def _matrix_plan(frame, metric):
             "data_start": header_row + 1,
             "region": 0,
             "province": 1,
-            "brick": 2,
+            "brick": row.index("1 TTS") - 1,
             "primary_rep": row.index("1 TTS"),
-            "secondary_rep": row.index("2 TTS"),
+            "secondary_rep": row.index("2 TTS") if "2 TTS" in row else None,
             "products": products,
             "metric": metric,
         }
@@ -97,7 +99,8 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
         for source_index in range(plan["data_start"], len(frame)):
             values = frame.iloc[source_index]
             key = tuple(
-                "" if pd.isna(values.iloc[column]) else str(values.iloc[column]).strip()
+                "" if column is None or pd.isna(values.iloc[column])
+                else str(values.iloc[column]).strip()
                 for column in (
                     plan["region"], plan["province"], plan["brick"],
                     plan["primary_rep"], plan["secondary_rep"],
