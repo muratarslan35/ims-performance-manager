@@ -14,5 +14,8 @@ def test_rolled_back_delete_uses_direct_confirmed_post_form():
     template = Path("app/templates/ims.html").read_text()
 
     assert "url_for('ims.delete_upload', upload_id=item.id)" in template
+    assert 'class="ims-cleanup-form"' in template
+    assert 'data-page-loader="false"' in template
+    assert "cleanup-status" in Path("app/ims.py").read_text(encoding="utf-8")
     assert "onsubmit=\"return window.confirm(" in template
     assert 'data-confirm-id="delete-confirm-' not in template
