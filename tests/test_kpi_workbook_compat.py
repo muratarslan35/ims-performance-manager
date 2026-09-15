@@ -10,15 +10,18 @@ from app.services.kpi_workbook_compat import (
 )
 
 
-def _matrix(metric, rows=None):
+def _matrix(metric, rows=None, *, single_rep=False):
     phase = "TL" if metric == "tl" else "KUTU"
-    return pd.DataFrame([
+    frame = pd.DataFrame([
         ["1-9 AĞUSTOS", None, None, None, None, None, None, None, None, None, None],
         ["32.HAFTA", None, None, None, None, "TOPLAM", None, None, "TRAVAZOL", None, None],
         [None, None, None, "1.TTS", "2.TTS", "EKİP HEDEF", "EKİP ÇIKIŞ", "EKİP REAL", "ÜRÜN HEDEF", "ÜRÜN ÇIKIŞ", "REAL"],
         ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, 40, 40, 80, 30, 37.5],
         ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 4, 40, 8, rows if rows is not None else (300 if phase == "TL" else 3), 37.5],
     ])
+    if single_rep:
+        frame = frame.drop(columns=[4]).reset_index(drop=True)
+    return frame
 
 
 def test_new_kpi_layout_joins_tl_and_unit_by_stable_brick_identity():
@@ -33,6 +36,22 @@ def test_new_kpi_layout_joins_tl_and_unit_by_stable_brick_identity():
         "BÖLGE", "İL", "IAM BRICK", "1 TTS ISMI", "2 TTS ISMI",
         "TRAVAZOL KUTU ÇIKIŞ", "TRAVAZOL TL ÇIKIŞ",
     ]
+    assert frame.iloc[1]["TRAVAZOL KUTU ÇIKIŞ"] == 3
+    assert frame.iloc[1]["TRAVAZOL TL ÇIKIŞ"] == 300
+
+
+def test_numbered_sheet_group_with_one_rep_column_reads_all_bricks():
+    workbook = {
+        "2-TTS-BRİCK TL-REA%": _matrix("tl", single_rep=True),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit", single_rep=True),
+    }
+    frame, consumed = build_canonical_brick_frame(workbook)
+
+    assert consumed == set(workbook)
+    assert len(frame) == 2
+    assert frame.iloc[1]["IAM BRICK"] == "EDİRNE MERKEZ"
+    assert frame.iloc[1]["1 TTS ISMI"] == "AYŞE TEST"
+    assert frame.iloc[1]["2 TTS ISMI"] == ""
     assert frame.iloc[1]["TRAVAZOL KUTU ÇIKIŞ"] == 3
     assert frame.iloc[1]["TRAVAZOL TL ÇIKIŞ"] == 300
 
