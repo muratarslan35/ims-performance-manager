@@ -465,6 +465,10 @@
         window.addEventListener('resize', onResize);
         updateNotificationBadge();
         checkPublishedIMSNotice();
+        // Publication can finish while the user is already on another screen.
+        // Recheck until the server exposes the one-time per-user receipt; the
+        // endpoint itself prevents a dismissed upload from appearing twice.
+        window.setInterval(checkPublishedIMSNotice, 15000);
         refreshImportNotifications();
         window.setInterval(refreshImportNotifications, 15000);
         setupImsProgressBar();

@@ -64,7 +64,11 @@ class PersistentRepresentativeSnapshotService:
     STATUS_SUPERSEDED = "SUPERSEDED"
     STATUS_FAILED = "FAILED"
     BUILD_BATCH_SIZE = 8
-    BUILD_WORKERS = 4
+    # Production currently has two vCPUs and constrained memory.  More reader
+    # threads make the same SQLite pages compete and duplicate per-representative
+    # workspaces in memory; two workers preserve real parallel batches without
+    # the swap/I/O regression seen with four workers.
+    BUILD_WORKERS = 2
 
     @staticmethod
     def _json_default(value):
@@ -259,6 +263,7 @@ class PersistentRepresentativeSnapshotService:
 
         # Import lazily to avoid changing the existing calculator installation order.
         from app.services.representative_period_workspace import build_representative_workspace_payload
+        from app.services.representative_query_optimizer import use_snapshot_upload_ids
 
         try:
             total = len(ids)
@@ -268,11 +273,30 @@ class PersistentRepresentativeSnapshotService:
             if app.testing:
                 workers = 1
 
+            # Resolve every period source once for the whole representative
+            # generation. The workspace may open current and previous market
+            # months for seven UI periods; without this pin each representative
+            # repeated identical "latest completed upload" queries.
+            period_start = (year - 1, 12)
+            period_keys = [period_start] + [(year, value) for value in range(1, month + 1)]
+            source_rows = IMSUpload.query.filter(
+                IMSUpload.status == IMSUpload.STATUS_COMPLETED,
+                sa.tuple_(IMSUpload.year, IMSUpload.month).in_(period_keys),
+            ).order_by(
+                IMSUpload.year.asc(), IMSUpload.month.asc(),
+                IMSUpload.week_number.desc(), IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
+            ).all()
+            snapshot_upload_ids = {}
+            for source in source_rows:
+                snapshot_upload_ids.setdefault((int(source.year), int(source.month)), int(source.id))
+            for period_key in period_keys:
+                snapshot_upload_ids.setdefault(period_key, None)
+
             def calculate(representative_id):
                 # Every worker owns an application context and therefore its own
                 # scoped SQLAlchemy session. Workers only read; SQLite writes stay
                 # serialized in the parent after the complete batch is ready.
-                with app.app_context():
+                with app.app_context(), use_snapshot_upload_ids(snapshot_upload_ids):
                     representative = db.session.get(Representative, representative_id)
                     if representative is None:
                         return None
@@ -288,35 +312,43 @@ class PersistentRepresentativeSnapshotService:
                     return representative_id, name, payload
 
             completed = 0
-            for offset in range(0, total, batch_size):
-                batch_ids = ids[offset:offset + batch_size]
-                if workers == 1:
-                    calculated = [calculate(representative_id) for representative_id in batch_ids]
-                else:
-                    with ThreadPoolExecutor(max_workers=min(workers, len(batch_ids))) as pool:
-                        calculated = list(pool.map(calculate, batch_ids))
-                rows = [item for item in calculated if item is not None]
-                if rows:
-                    db.session.execute(representative_snapshots.insert(), [
-                        {
-                            "set_id": set_id,
-                            "representative_id": representative_id,
-                            "payload_json": payload,
-                            "created_at": datetime.utcnow(),
-                        }
-                        for representative_id, _name, payload in rows
-                    ])
-                completed += len(rows)
-                db.session.execute(
-                    representative_snapshot_sets.update().where(
-                        representative_snapshot_sets.c.id == set_id
-                    ).values(representative_count=completed)
-                )
-                db.session.commit()
-                if progress:
-                    first_name = rows[0][1] if rows else str(batch_ids[0])
-                    last_name = rows[-1][1] if rows else str(batch_ids[-1])
-                    progress(completed, total, f"{first_name} – {last_name}")
+            # Keep one executor for the whole generation. Recreating four DB
+            # reader threads for every eight representatives discarded warm
+            # connections/caches and caused avoidable allocator pressure.
+            pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
+            try:
+                for offset in range(0, total, batch_size):
+                    batch_ids = ids[offset:offset + batch_size]
+                    calculated = (
+                        list(pool.map(calculate, batch_ids))
+                        if pool is not None
+                        else [calculate(representative_id) for representative_id in batch_ids]
+                    )
+                    rows = [item for item in calculated if item is not None]
+                    if rows:
+                        db.session.execute(representative_snapshots.insert(), [
+                            {
+                                "set_id": set_id,
+                                "representative_id": representative_id,
+                                "payload_json": payload,
+                                "created_at": datetime.utcnow(),
+                            }
+                            for representative_id, _name, payload in rows
+                        ])
+                    completed += len(rows)
+                    db.session.execute(
+                        representative_snapshot_sets.update().where(
+                            representative_snapshot_sets.c.id == set_id
+                        ).values(representative_count=completed)
+                    )
+                    db.session.commit()
+                    if progress:
+                        first_name = rows[0][1] if rows else str(batch_ids[0])
+                        last_name = rows[-1][1] if rows else str(batch_ids[-1])
+                        progress(completed, total, f"{first_name} – {last_name}")
+            finally:
+                if pool is not None:
+                    pool.shutdown(wait=True)
 
             db.session.execute(
                 representative_snapshot_sets.update().where(

@@ -142,10 +142,12 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
             previous_tick = now
             rate = done / elapsed
             remaining = max(total - done, 0)
-            eta_seconds = (
-                int(round(remaining * sum(recent_seconds) / len(recent_seconds)))
-                if len(recent_seconds) >= 3 else None
-            )
+            # ``done`` advances by a complete representative batch.  Treating
+            # one callback interval as one representative made the displayed
+            # ETA roughly one batch (normally 8x) too large.  The end-to-end
+            # throughput already includes batch calculation and SQLite write
+            # time, so it is the stable and truthful estimate here.
+            eta_seconds = int(round(remaining / rate)) if done > 0 and rate > 0 else None
             if eta_seconds is None:
                 eta_text = "süre hesaplanıyor"
             elif eta_seconds >= 60:
@@ -154,7 +156,7 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
                 eta_text = f"tahmini {eta_seconds} sn kaldı"
 
             if job_id is not None:
-                value = 42 + round(52 * done / max(total, 1))
+                value = 46 + round(48 * done / max(total, 1))
                 IMSProgressStore.write(
                     job_id,
                     percent=min(value, 94),
@@ -237,20 +239,20 @@ def _snapshot_label(result):
 def _prepare_and_publish(app, completed):
     """Retryable read-model publication; the committed IMS always stays valid."""
     job_id, year, month = completed.id, completed.year, completed.month
-    IMSProgressStore.write(job_id, percent=42, stage="representative_snapshots",
+    IMSProgressStore.write(job_id, percent=42, stage="dashboard_snapshot",
         message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-        detail="Temsilci snapshotları hazırlanıyor", status=IMSImportJob.STATUS_PROCESSING)
-    representative_result = _warm_representative_snapshots(app, year, month, job_id=job_id)
-    IMSProgressStore.write(job_id, percent=95, stage="dashboard_snapshot",
-        message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-        detail="Temsilci snapshotları hazır · Dashboard snapshotı hazırlanıyor",
-        status=IMSImportJob.STATUS_PROCESSING)
+        detail="Dashboard snapshotı hazırlanıyor", status=IMSImportJob.STATUS_PROCESSING)
     dashboard_result = _warm_dashboard_snapshot(app, year, month)
-    IMSProgressStore.write(job_id, percent=97, stage="region_snapshots",
+    IMSProgressStore.write(job_id, percent=44, stage="region_snapshots",
         message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
-        detail="Temsilci ve dashboard snapshotları hazır · Bölge snapshotları hazırlanıyor",
+        detail="Dashboard hazır · Bölge snapshotları hazırlanıyor",
         status=IMSImportJob.STATUS_PROCESSING)
     region_result = _warm_region_snapshots(app, year, month)
+    IMSProgressStore.write(job_id, percent=46, stage="representative_snapshots",
+        message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
+        detail="Dashboard ve Bölge hazır · Temsilci snapshot paketleri hazırlanıyor",
+        status=IMSImportJob.STATUS_PROCESSING)
+    representative_result = _warm_representative_snapshots(app, year, month, job_id=job_id)
     ready = all(result.get("status") in {"ACTIVE", "REUSED"} for result in (
         dashboard_result, region_result, representative_result
     ))
