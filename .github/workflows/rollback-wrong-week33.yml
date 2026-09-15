@@ -1,4 +1,4 @@
-name: Roll Back Wrong Week 33
+name: Restore Safe Week 32
 
 on:
   push:
