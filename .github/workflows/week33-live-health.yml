@@ -42,7 +42,7 @@ jobs:
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload
+          from app.models import IMSImportJob, IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           from app.services.period_service import PeriodService
           from config import Config
@@ -58,5 +58,41 @@ jobs:
               print(f"ACTIVE_IMS|PASS|upload=45|week=32")
               print(f"UPLOAD_46|exists={int(wrong is not None)}|status={getattr(wrong, 'status', 'DELETED')}")
               print(f"ROLLBACK_BUTTON|allowed={int(allowed)}|reason={reason}")
+              latest_job = IMSImportJob.query.order_by(IMSImportJob.id.desc()).first()
+              latest_upload = IMSUpload.query.order_by(IMSUpload.id.desc()).first()
+              print(
+                  "LATEST_JOB|id=%s|status=%s|file=%s|stored=%s|upload=%s|error=%s"
+                  % (
+                      latest_job.id, latest_job.status, latest_job.file_name,
+                      latest_job.stored_file_name, latest_job.ims_upload_id,
+                      latest_job.error_message,
+                  )
+              )
+              print(
+                  "LATEST_UPLOAD|id=%s|status=%s|file=%s|week=%s|sheets=%s|error=%s"
+                  % (
+                      latest_upload.id, latest_upload.status, latest_upload.file_name,
+                      latest_upload.week_number, latest_upload.sheet_count,
+                      latest_upload.error_message,
+                  )
+              )
+              source = IMSUploadLifecycleService.failed_source_for_job(latest_job.id)
+              print(f"FAILED_SOURCE|path={source}|exists={int(bool(source and source.exists()))}|size={source.stat().st_size if source and source.exists() else 0}")
+              if source and source.exists():
+                  import pandas as pd
+                  from app.services.kpi_workbook_compat import _find_matrix, _matrix_plan, _norm
+                  workbook = pd.read_excel(source, sheet_name=None, header=None)
+                  print("SHEETS|" + " || ".join(workbook.keys()))
+                  for metric in ("tl", "unit"):
+                      name, frame = _find_matrix(workbook, metric)
+                      try:
+                          plan = _matrix_plan(frame, metric) if frame is not None else None
+                          print(f"MATRIX|metric={metric}|sheet={name}|plan={plan}")
+                      except Exception as exc:
+                          rows = []
+                          for row_index in range(min(12, len(frame))):
+                              values = [_norm(value) for value in frame.iloc[row_index].tolist()]
+                              rows.append(f"r{row_index + 1}=" + "|".join(value for value in values if value)[:1200])
+                          print(f"MATRIX_ERROR|metric={metric}|sheet={name}|error={exc}|headers={' // '.join(rows)}")
           PY
           REMOTE
