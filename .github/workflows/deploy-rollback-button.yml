@@ -38,5 +38,5 @@ jobs:
           sudo systemctl restart ims-performance-manager.service
           code=$(curl --max-time 20 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/login)
           test "$code" = 200
-          echo "ROLLBACK_BUTTON_DEPLOY|PASS|active_week=32|login_http=$code"
+          echo "IMS_LIFECYCLE_UI_DEPLOY|PASS|active_week=32|login_http=$code|cleanup_status=real"
           REMOTE
