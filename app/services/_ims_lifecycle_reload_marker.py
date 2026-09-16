@@ -1,1 +1,1 @@
-# Temporary deployment marker for the IMS lifecycle confirmation fix.
+# Deployment marker for direct IMS rollback form interaction repair.
