@@ -97,8 +97,22 @@ jobs:
           source = source.replace(old, new, 1)
           template.write_text(source, encoding='utf-8')
 
+          contract = Path('tests/test_ims_upload_lifecycle_contract.py')
+          contract_source = contract.read_text(encoding='utf-8')
+          old_contract = '''    assert 'type="button"' in template
+    assert "Onayla ve geri al" in template
+    assert "Onayla ve kalıcı sil" in template
+    assert "ims-lifecycle-confirm" in template'''
+          new_contract = '''    assert "ims-rollback-direct-form" in template
+    assert 'onsubmit="return window.confirm(' in template
+    assert "Önceki IMS'e dön" in template
+    assert "Onayla ve kalıcı sil" in template'''
+          if old_contract not in contract_source:
+              raise SystemExit('Lifecycle interaction contract block not found; refusing broad edit')
+          contract.write_text(contract_source.replace(old_contract, new_contract, 1), encoding='utf-8')
+
           test_path = Path('tests/test_ims_rollback_interaction_contract.py')
-          test_path.write_text('''from pathlib import Path\n\n\ndef test_standard_rollback_is_direct_confirmed_post():\n    template = Path("app/templates/ims.html").read_text(encoding="utf-8")\n    assert "ims-rollback-direct-form" in template\n    assert "url_for('ims.rollback_upload', upload_id=item.id)" in template\n    assert "onsubmit=\\\"return window.confirm(" in template\n    assert 'data-confirm-id="rollback-confirm-' not in template\n\n\ndef test_first_period_rollback_uses_native_form_submit_not_popup_toggle():\n    source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")\n    assert "data.firstPeriodRollback" not in source\n    assert "rollbackButton.dataset.firstPeriodRollback" in source\n    assert "rollbackForm.method = 'post'" in source\n    assert "rollbackForm.action = `/ims/uploads/${{id}}/rollback-first-period`" in source\n    assert "rollbackForm.addEventListener('submit'" in source\n    assert "window.confirm(" in source\n    assert "panel.hidden = !panel.hidden" not in source\n''', encoding='utf-8')
+          test_path.write_text('''from pathlib import Path\n\n\ndef test_standard_rollback_is_direct_confirmed_post():\n    template = Path("app/templates/ims.html").read_text(encoding="utf-8")\n    assert "ims-rollback-direct-form" in template\n    assert "url_for('ims.rollback_upload', upload_id=item.id)" in template\n    assert "onsubmit=\\\"return window.confirm(" in template\n    assert 'data-confirm-id="rollback-confirm-' not in template\n\n\ndef test_first_period_rollback_uses_native_form_submit_not_popup_toggle():\n    source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")\n    assert "rollbackButton.dataset.firstPeriodRollback" in source\n    assert "rollbackForm.method = 'post'" in source\n    assert "rollbackForm.action = `/ims/uploads/${{id}}/rollback-first-period`" in source\n    assert "rollbackForm.addEventListener('submit'" in source\n    assert "window.confirm(" in source\n    assert "panel.hidden = !panel.hidden" not in source\n''', encoding='utf-8')
           PY
 
           python -m py_compile app/services/ims_upload_lifecycle_ui.py
@@ -115,7 +129,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/services/ims_upload_lifecycle_ui.py app/templates/ims.html tests/test_ims_rollback_interaction_contract.py
+          git add app/services/ims_upload_lifecycle_ui.py app/templates/ims.html tests/test_ims_rollback_interaction_contract.py tests/test_ims_upload_lifecycle_contract.py
           if git diff --cached --quiet; then
             echo 'No change produced'
             exit 1
