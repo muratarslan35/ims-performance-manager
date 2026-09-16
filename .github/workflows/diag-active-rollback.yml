@@ -1,4 +1,4 @@
-name: Temporary active IMS rollback diagnostic
+name: One-shot PR 755 scoped repair
 
 on:
   push:
@@ -7,61 +7,53 @@ on:
     paths:
       - .github/workflows/diag-active-rollback.yml
 
+permissions:
+  contents: write
+
 jobs:
-  inspect:
+  repair:
     runs-on: ubuntu-latest
-    environment: production
-    env:
-      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
-      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
-      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
-      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - name: Configure production SSH key
-        shell: bash
-        env:
-          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ims-rollback-auth-theme
+          fetch-depth: 0
+
+      - name: Apply only rollback continuity and auth theme changes
+        run: python scripts/apply_pr755_patch.py
+
+      - name: Validate scoped changes
+        run: |
+          python -m py_compile \
+            app/services/ims_upload_lifecycle_service.py \
+            app/services/ims_upload_lifecycle_ui.py \
+            ims_import_worker.py
+          git diff --check
+          python -m pip install -q pytest
+          python -m pytest -q \
+            tests/test_ims_rollback_continuity_contract.py \
+            tests/test_auth_theme_toggle_contract.py \
+            tests/test_ims_rollback_button_visibility_contract.py \
+            tests/test_ims_rollback_interaction_contract.py \
+            tests/test_ims_publication_contract.py
+
+      - name: Commit verified scoped repair and remove temporary helpers
         run: |
           set -Eeuo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
-          chmod 600 ~/.ssh/ims_diag_key
-          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-
-      - name: Inspect rollback journals read-only
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" \
-            "cd '$IMS_PATH' && venv/bin/python -" <<'PY'
-          import json
-          from app import create_app
-          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
-
-          app = create_app()
-          with app.app_context():
-              root = IMSUploadLifecycleService._snapshot_root()
-              print('ROLLBACK_FILES_BEGIN')
-              for path in sorted(root.glob('upload-*.json')):
-                  try:
-                      upload_id = int(path.stem.split('-')[-1])
-                  except ValueError:
-                      continue
-                  if upload_id < 45:
-                      continue
-                  try:
-                      payload = json.loads(path.read_text(encoding='utf-8'))
-                  except Exception as exc:
-                      print(json.dumps({'file': path.name, 'read_error': str(exc)}, ensure_ascii=False))
-                      continue
-                  print(json.dumps({
-                      'file': path.name,
-                      'year': payload.get('year'),
-                      'month': payload.get('month'),
-                      'source_upload_id': payload.get('source_upload_id'),
-                      'sealed_upload_id': payload.get('sealed_upload_id'),
-                      'has_master_before': bool(payload.get('master_before')),
-                      'has_master_after': bool(payload.get('master_after')),
-                  }, ensure_ascii=False))
-              print('ROLLBACK_FILES_END')
-          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            app/services/ims_upload_lifecycle_service.py \
+            app/services/ims_upload_lifecycle_ui.py \
+            ims_import_worker.py \
+            app/templates/login.html \
+            app/templates/register.html \
+            app/templates/partials/auth_theme_toggle.html \
+            app/static/js/layout.js \
+            app/static/css/auth-branding.css \
+            tests/test_ims_rollback_continuity_contract.py \
+            tests/test_auth_theme_toggle_contract.py
+          git rm .github/workflows/diag-active-rollback.yml scripts/apply_pr755_patch.py
+          git diff --cached --check
+          git commit -m 'Fix sequential IMS rollback and pre-login theme toggle'
+          git push origin HEAD:fix/ims-rollback-auth-theme
