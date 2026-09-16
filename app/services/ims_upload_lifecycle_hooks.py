@@ -14,12 +14,16 @@ from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_import_service import IMSImportService
 from app.services.ims_progress_store import IMSProgressStore
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+from app.services.snapshot_generation_identity_guard import install_snapshot_generation_identity_guard
 
 
 logger = logging.getLogger(__name__)
 
 
 def install_ims_upload_lifecycle() -> None:
+    # Durable read models outlive one IMS row. Install the source-generation
+    # identity guard even when the queue lifecycle wrapper is already present.
+    install_snapshot_generation_identity_guard()
     if getattr(IMSImportQueue, "_upload_lifecycle_installed", False):
         return
 
