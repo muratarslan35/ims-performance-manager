@@ -1,0 +1,144 @@
+name: Publication Notice Live Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/publication-notice-live
+
+permissions:
+  contents: read
+
+jobs:
+  live_check:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read-only live publication contract check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+          from sqlalchemy import desc
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSUpload, IMSImportJob, User
+          from app.services.ims_publication_service import (
+              IMSPublicationService,
+              ims_publication_receipts,
+          )
+
+          app = create_app()
+          with app.app_context():
+              latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
+                  desc(IMSUpload.year), desc(IMSUpload.month), desc(IMSUpload.week_number),
+                  desc(IMSUpload.completed_at), desc(IMSUpload.id),
+              ).first()
+              visible = IMSPublicationService.latest_visible_upload()
+              ready_job = IMSPublicationService.latest_ready_job()
+              selected = (
+                  db.session.get(IMSUpload, int(ready_job.ims_upload_id))
+                  if ready_job is not None and ready_job.ims_upload_id else None
+              ) or visible
+
+              print(
+                  "PUBLICATION_STATE|"
+                  f"latest_upload_id={getattr(latest, 'id', 0)}|"
+                  f"latest_week={getattr(latest, 'week_number', 0) or 0}|"
+                  f"visible_upload_id={getattr(visible, 'id', 0)}|"
+                  f"ready_job_id={getattr(ready_job, 'id', 0)}|"
+                  f"ready_job_upload_id={getattr(ready_job, 'ims_upload_id', 0) or 0}|"
+                  f"selected_upload_id={getattr(selected, 'id', 0)}"
+              )
+
+              reps = User.query.filter(
+                  sa.func.lower(User.role) == "representative",
+                  User.active.is_(True),
+              ).all()
+              recent_rep = User.query.filter(
+                  sa.func.lower(User.role) == "representative",
+                  User.active.is_(True),
+              ).order_by(desc(User.last_login), desc(User.id)).first()
+
+              ready_at = None if selected is None else (selected.completed_at or selected.uploaded_at)
+              states = {"missing": 0, "stale": 0, "current": 0}
+              recent_state = "no-selected-upload"
+              recent_would_notice = 0
+              if selected is not None:
+                  rows = db.session.execute(
+                      sa.select(
+                          ims_publication_receipts.c.user_id,
+                          ims_publication_receipts.c.dismissed_at,
+                      ).where(ims_publication_receipts.c.upload_id == int(selected.id))
+                  ).all()
+                  receipt_map = {int(uid): dismissed for uid, dismissed in rows}
+                  for rep in reps:
+                      dismissed = receipt_map.get(int(rep.id))
+                      if dismissed is None:
+                          states["missing"] += 1
+                          state = "missing"
+                      elif ready_at is not None and dismissed.replace(microsecond=0) < ready_at.replace(microsecond=0):
+                          states["stale"] += 1
+                          state = "stale"
+                      else:
+                          states["current"] += 1
+                          state = "current"
+                      if recent_rep is not None and int(rep.id) == int(recent_rep.id):
+                          recent_state = state
+                          recent_would_notice = int(state in {"missing", "stale"})
+
+              print(
+                  "REPRESENTATIVE_NOTICE|"
+                  f"active_representatives={len(reps)}|"
+                  f"missing_receipt={states['missing']}|"
+                  f"stale_receipt={states['stale']}|"
+                  f"current_receipt={states['current']}|"
+                  f"recent_rep_id={getattr(recent_rep, 'id', 0)}|"
+                  f"recent_rep_receipt={recent_state}|"
+                  f"recent_rep_would_notice={recent_would_notice}"
+              )
+
+              latest_matches_selected = int(
+                  latest is not None and selected is not None and int(latest.id) == int(selected.id)
+              )
+              print(f"LATEST_SELECTION_MATCH|{latest_matches_selected}")
+
+          from pathlib import Path
+          base = Path("app/templates/base.html").read_text(encoding="utf-8")
+          layout = Path("app/static/js/layout.js").read_text(encoding="utf-8")
+          css = Path("app/static/css/layout.css").read_text(encoding="utf-8")
+          print(
+              "FRONTEND_CONTRACT|"
+              f"base_loads_layout={int("filename='js/layout.js'" in base)}|"
+              f"fetch_endpoint={int("fetch('/ims/publication-notice'" in layout)}|"
+              f"initial_check={int('checkPublishedIMSNotice();' in layout)}|"
+              f"poll_15s={int('window.setInterval(checkPublishedIMSNotice, 15000);' in layout)}|"
+              f"modal_text={int('Yeni IMS başarıyla yüklendi' in layout)}|"
+              f"modal_css={int('.ims-published-notice-layer' in css)}"
+          )
+          PY
+          REMOTE
