@@ -1,0 +1,128 @@
+name: Dashboard Week 35 Read-only Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/dashboard-week35-current-20260916
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Inspect active IMS and dashboard generation read-only
+        run: |
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE' | tee "$RUNNER_TEMP/dashboard35.log"
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+
+          db_path = Path('instance/ipm.db').resolve()
+          conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=10)
+          conn.row_factory = sqlite3.Row
+          conn.execute('PRAGMA query_only=ON')
+
+          def cols(table):
+              return [r['name'] for r in conn.execute(f'PRAGMA table_info({table})')]
+
+          def latest_rows(table, wanted, order_col='id', limit=8):
+              available = set(cols(table))
+              selected = [name for name in wanted if name in available]
+              if not selected:
+                  return []
+              rows = conn.execute(
+                  f"SELECT {', '.join(selected)} FROM {table} ORDER BY {order_col} DESC LIMIT ?",
+                  (limit,),
+              ).fetchall()
+              return [dict(row) for row in rows]
+
+          try:
+              uploads = latest_rows('ims_uploads', [
+                  'id','file_name','year','month','week_number','status','completed_at','created_at'
+              ], limit=10)
+              jobs = latest_rows('ims_import_jobs', [
+                  'id','status','file_name','year','month','ims_upload_id','queued_at','started_at','completed_at','error_message','result_summary'
+              ], limit=10)
+              print('D35_UPLOADS|' + json.dumps(uploads, ensure_ascii=False, default=str))
+              print('D35_JOBS|' + json.dumps(jobs, ensure_ascii=False, default=str))
+
+              completed_aug = [r for r in uploads if str(r.get('status')) == 'COMPLETED' and int(r.get('year') or 0) == 2026 and int(r.get('month') or 0) == 8]
+              latest_aug = completed_aug[0] if completed_aug else None
+              print('D35_LATEST_COMPLETED_AUG|' + json.dumps(latest_aug, ensure_ascii=False, default=str))
+
+              # Source counts by upload, if the canonical tables expose upload_id.
+              for table in ('ims_raw_data','ims_facts','ims_summary'):
+                  available = set(cols(table))
+                  if 'upload_id' in available:
+                      rows = conn.execute(
+                          f"SELECT upload_id, COUNT(*) AS rows FROM {table} GROUP BY upload_id ORDER BY upload_id DESC LIMIT 6"
+                      ).fetchall()
+                      print(f'D35_{table.upper()}_BY_UPLOAD|' + json.dumps([dict(r) for r in rows]))
+                  else:
+                      print(f'D35_{table.upper()}_COLUMNS|' + json.dumps(sorted(available)))
+          finally:
+              conn.close()
+
+          progress_dir = Path('instance/ims_progress')
+          progress = []
+          for path in sorted(progress_dir.glob('job-*.json'), key=lambda p: int(p.stem.split('-')[-1]), reverse=True)[:8]:
+              try:
+                  payload = json.loads(path.read_text(encoding='utf-8'))
+              except Exception as exc:
+                  payload = {'file': path.name, 'error': str(exc)}
+              progress.append(payload)
+          print('D35_PROGRESS|' + json.dumps(progress, ensure_ascii=False, default=str))
+
+          snap_dir = Path('instance/dashboard_snapshots')
+          snapshots = []
+          for path in sorted(snap_dir.glob('dashboard-2026-08*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:12]:
+              try:
+                  envelope = json.loads(path.read_text(encoding='utf-8'))
+                  payload = envelope.get('payload') if isinstance(envelope, dict) else None
+                  snapshots.append({
+                      'file': path.name,
+                      'mtime': path.stat().st_mtime,
+                      'ims_upload_id': envelope.get('ims_upload_id'),
+                      'production_upload_id': envelope.get('production_upload_id'),
+                      'created_at': envelope.get('created_at'),
+                      'payload_period': (payload or {}).get('period') if isinstance(payload, dict) else None,
+                      'last_upload': (payload or {}).get('last_upload') if isinstance(payload, dict) else None,
+                  })
+              except Exception as exc:
+                  snapshots.append({'file': path.name, 'error': str(exc)})
+          print('D35_DASHBOARD_SNAPSHOTS|' + json.dumps(snapshots, ensure_ascii=False, default=str))
+          PY
+          REMOTE
+
+      - name: Publish diagnostic evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          evidence=$(grep '^D35_' "$RUNNER_TEMP/dashboard35.log" || true)
+          body=$(jq -n --arg evidence "$evidence" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{title:"Week 35 dashboard read-only diagnostic",body:("Workflow: "+$run+"\n\nNo writes/restarts were performed on production.\n\n```text\n"+$evidence+"\n```")}')
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
