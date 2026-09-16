@@ -41,6 +41,14 @@ def test_publication_is_atomic_and_notice_is_per_user():
     assert "aria-modal" in layout
 
 
+def test_notice_selects_current_visible_upload_not_historical_ready_job():
+    service = (ROOT / "app/services/ims_publication_service.py").read_text(encoding="utf-8")
+    notice_block = service[service.index("def notice_for_user"):service.index("def dismiss", service.index("def notice_for_user"))]
+    assert "upload = cls.latest_visible_upload()" in notice_block
+    assert "latest_ready_job" not in notice_block
+    assert "db.session.get(IMSUpload" not in notice_block
+
+
 def test_publication_receipt_does_not_hide_a_recycled_upload_id():
     service = (ROOT / "app/services/ims_publication_service.py").read_text(encoding="utf-8")
     assert "def _has_current_receipt" in service
