@@ -1,9 +1,8 @@
 name: Temporary active IMS rollback diagnostic
 
 on:
-  push:
-    branches:
-      - fix/ims-rollback-auth-theme
+  pull_request:
+    branches: [main]
     paths:
       - .github/workflows/diag-active-rollback.yml
 
@@ -37,7 +36,6 @@ jobs:
           import json
           from pathlib import Path
           from app import create_app
-          from app.extensions import db
           from app.models import IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           from app.services.ims_upload_lifecycle_ui import _first_period_rollback_permission
