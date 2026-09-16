@@ -28,57 +28,40 @@ jobs:
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect active rollback eligibility read-only
+      - name: Inspect rollback journals read-only
         shell: bash
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" -o BatchMode=yes "$IMS_USER@$IMS_HOST" \
             "cd '$IMS_PATH' && venv/bin/python -" <<'PY'
           import json
-          from pathlib import Path
           from app import create_app
-          from app.models import IMSImportJob, IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
-          from app.services.ims_upload_lifecycle_ui import _first_period_rollback_permission
 
           app = create_app()
           with app.app_context():
-              rows = IMSUpload.query.filter(IMSUpload.id >= 45).order_by(IMSUpload.id.desc()).all()
-              print('ROLLBACK_DIAGNOSTIC_BEGIN')
-              for row in rows:
-                  standard = IMSUploadLifecycleService.can_rollback(row)
-                  first = _first_period_rollback_permission(row)
-                  previous = IMSUploadLifecycleService._previous_completed_for_period(row)
-                  snapshot = IMSUploadLifecycleService.upload_snapshot_path(row.id)
-                  archive = IMSUploadLifecycleService.archived_source_for_upload(row.id)
-                  payload = {}
-                  if snapshot.is_file():
-                      try:
-                          payload = json.loads(snapshot.read_text(encoding='utf-8'))
-                      except Exception as exc:
-                          payload = {'read_error': str(exc)}
-                  job = IMSImportJob.query.filter_by(ims_upload_id=row.id).order_by(IMSImportJob.id.desc()).first()
+              root = IMSUploadLifecycleService._snapshot_root()
+              print('ROLLBACK_FILES_BEGIN')
+              for path in sorted(root.glob('upload-*.json')):
+                  try:
+                      upload_id = int(path.stem.split('-')[-1])
+                  except ValueError:
+                      continue
+                  if upload_id < 45:
+                      continue
+                  try:
+                      payload = json.loads(path.read_text(encoding='utf-8'))
+                  except Exception as exc:
+                      print(json.dumps({'file': path.name, 'read_error': str(exc)}, ensure_ascii=False))
+                      continue
                   print(json.dumps({
-                      'id': row.id,
-                      'year': row.year,
-                      'month': row.month,
-                      'week': row.week_number,
-                      'status': row.status,
-                      'file': row.file_name,
-                      'previous_same_period_id': previous.id if previous else None,
-                      'snapshot_exists': snapshot.is_file(),
-                      'snapshot_source_upload_id': payload.get('source_upload_id'),
-                      'snapshot_sealed_upload_id': payload.get('sealed_upload_id'),
-                      'snapshot_has_master_before': bool(payload.get('master_before')),
-                      'snapshot_has_master_after': bool(payload.get('master_after')),
-                      'archive_exists': bool(archive and Path(archive).is_file()),
-                      'job_id': job.id if job else None,
-                      'job_status': job.status if job else None,
-                      'job_summary': job.result_summary if job else None,
-                      'standard_allowed': bool(standard[0]),
-                      'standard_reason': standard[1],
-                      'first_allowed': bool(first[0]),
-                      'first_reason': first[1],
+                      'file': path.name,
+                      'year': payload.get('year'),
+                      'month': payload.get('month'),
+                      'source_upload_id': payload.get('source_upload_id'),
+                      'sealed_upload_id': payload.get('sealed_upload_id'),
+                      'has_master_before': bool(payload.get('master_before')),
+                      'has_master_after': bool(payload.get('master_after')),
                   }, ensure_ascii=False))
-              print('ROLLBACK_DIAGNOSTIC_END')
+              print('ROLLBACK_FILES_END')
           PY
