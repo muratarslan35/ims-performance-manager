@@ -51,7 +51,7 @@ jobs:
         if (!rollbackForm) {{
           rollbackForm = document.createElement('form');
           rollbackForm.method = 'post';
-          rollbackForm.action = `/ims/uploads/${{id}}/rollback-first-period`;
+          rollbackForm.action = '/ims/uploads/' + id + '/rollback-first-period';
           rollbackForm.dataset.firstPeriodRollbackForm = '1';
           rollbackForm.style.display = 'inline-block';
           rollbackButton.parentNode.insertBefore(rollbackForm, rollbackButton);
@@ -59,10 +59,10 @@ jobs:
         }}
 
         rollbackForm.addEventListener('submit', (event) => {{
-          const period = `${{row.dataset.year || ''}}/${{row.dataset.month || ''}}`;
-          const week = row.dataset.week ? ` ${{row.dataset.week}}. hafta` : '';
+          const period = (row.dataset.year || '') + '/' + (row.dataset.month || '');
+          const week = row.dataset.week ? ' ' + row.dataset.week + '. hafta' : '';
           const confirmed = window.confirm(
-            `${{period}}${{week}} IMS geri alınacak. ` +
+            period + week + ' IMS geri alınacak. ' +
             'Bu dönem yükleme öncesi temiz duruma dönecek ve bir önceki aktif IMS tekrar öne çıkacak. Devam edilsin mi?'
           );
           if (!confirmed) {{
@@ -112,7 +112,7 @@ jobs:
           contract.write_text(contract_source.replace(old_contract, new_contract, 1), encoding='utf-8')
 
           test_path = Path('tests/test_ims_rollback_interaction_contract.py')
-          test_path.write_text('''from pathlib import Path\n\n\ndef test_standard_rollback_is_direct_confirmed_post():\n    template = Path("app/templates/ims.html").read_text(encoding="utf-8")\n    assert "ims-rollback-direct-form" in template\n    assert "url_for('ims.rollback_upload', upload_id=item.id)" in template\n    assert "onsubmit=\\\"return window.confirm(" in template\n    assert 'data-confirm-id="rollback-confirm-' not in template\n\n\ndef test_first_period_rollback_uses_native_form_submit_not_popup_toggle():\n    source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")\n    assert "rollbackButton.dataset.firstPeriodRollback" in source\n    assert "rollbackForm.method = 'post'" in source\n    assert "rollbackForm.action = `/ims/uploads/${{id}}/rollback-first-period`" in source\n    assert "rollbackForm.addEventListener('submit'" in source\n    assert "window.confirm(" in source\n    assert "panel.hidden = !panel.hidden" not in source\n''', encoding='utf-8')
+          test_path.write_text('''from pathlib import Path\n\n\ndef test_standard_rollback_is_direct_confirmed_post():\n    template = Path("app/templates/ims.html").read_text(encoding="utf-8")\n    assert "ims-rollback-direct-form" in template\n    assert "url_for('ims.rollback_upload', upload_id=item.id)" in template\n    assert "onsubmit=\\\"return window.confirm(" in template\n    assert 'data-confirm-id="rollback-confirm-' not in template\n\n\ndef test_first_period_rollback_uses_native_form_submit_not_popup_toggle():\n    source = Path("app/services/ims_upload_lifecycle_ui.py").read_text(encoding="utf-8")\n    assert "rollbackButton.dataset.firstPeriodRollback" in source\n    assert "rollbackForm.method = 'post'" in source\n    assert "rollbackForm.action = '/ims/uploads/' + id + '/rollback-first-period'" in source\n    assert "rollbackForm.addEventListener('submit'" in source\n    assert "window.confirm(" in source\n    assert "panel.hidden = !panel.hidden" not in source\n''', encoding='utf-8')
           PY
 
           python -m py_compile app/services/ims_upload_lifecycle_ui.py
