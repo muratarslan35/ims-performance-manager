@@ -239,6 +239,49 @@ def _snapshot_label(result):
 def _prepare_and_publish(app, completed):
     """Retryable read-model publication; the committed IMS always stays valid."""
     job_id, year, month = completed.id, completed.year, completed.month
+
+    # Rollback safety is a business-import contract, not a snapshot-readiness
+    # contract. Seal it before the long read-model warm-up so a region/rep
+    # snapshot failure can never leave a valid IMS with a disabled rollback.
+    if completed.ims_upload_id is None:
+        raise RuntimeError("Completed IMS job has no upload id for rollback journal sealing.")
+    if not IMSUploadLifecycleService.snapshot_master_state_sealed(
+        upload_id=completed.ims_upload_id
+    ):
+        try:
+            roster_result = IMSRosterSyncService.sync_latest()
+            if int(roster_result.get("upload_id") or 0) != int(completed.ims_upload_id):
+                raise RuntimeError(
+                    "Rollback journal sealing refused because the completed job is not the active IMS."
+                )
+            app.logger.info("ims_roster_sync_success %s", roster_result)
+            IMSUploadLifecycleService.ensure_snapshot_master_state_sealed(
+                upload_id=completed.ims_upload_id
+            )
+            app.logger.info(
+                "ims_rollback_master_journal_ready upload_id=%s job_id=%s",
+                completed.ims_upload_id, job_id,
+            )
+        except Exception:
+            db.session.rollback()
+            refreshed = db.session.get(IMSImportJob, job_id)
+            if refreshed is not None:
+                refreshed.error_message = (
+                    "IMS başarıyla işlendi; geri dönüş güvenlik günlüğü otomatik olarak yeniden denenecek."
+                )
+                db.session.commit()
+            IMSProgressStore.write(
+                job_id, percent=41, stage="snapshot_retry",
+                message="IMS yüklendi · güvenlik günlüğü yeniden denenecek",
+                detail="Geri dönüş güvenlik günlüğü tamamlanamadı; mevcut IMS verileri korunuyor.",
+                status=IMSImportJob.STATUS_PROCESSING,
+            )
+            app.logger.exception(
+                "ims_rollback_master_journal_failed upload_id=%s job_id=%s",
+                completed.ims_upload_id, job_id,
+            )
+            return False
+
     IMSProgressStore.write(job_id, percent=42, stage="dashboard_snapshot",
         message="IMS yüklemesi tamamlandı · snapshotlar hazırlanıyor",
         detail="Dashboard snapshotı hazırlanıyor", status=IMSImportJob.STATUS_PROCESSING)
@@ -267,9 +310,6 @@ def _prepare_and_publish(app, completed):
             message="IMS yüklendi · snapshotlar yeniden denenecek", detail=detail,
             status=IMSImportJob.STATUS_PROCESSING)
         return False
-    roster_result = IMSRosterSyncService.sync_latest()
-    app.logger.info("ims_roster_sync_success %s", roster_result)
-    IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=completed.ims_upload_id)
     summary = json.loads(completed.result_summary or "{}")
     summary["publication_ready"] = True
     completed.result_summary = json.dumps(summary, ensure_ascii=False)
@@ -282,6 +322,33 @@ def _prepare_and_publish(app, completed):
 
 
 def _retryable_publication_job():
+    # Repair only the currently active IMS when an older deployment completed
+    # the business import without sealing/publishing it. Never seal a historical
+    # upload from today's master state.
+    latest_upload = IMSRosterSyncService.latest_completed_upload()
+    if latest_upload is not None:
+        latest_job = (
+            IMSImportJob.query
+            .filter_by(
+                ims_upload_id=latest_upload.id,
+                status=IMSImportJob.STATUS_COMPLETED,
+            )
+            .order_by(desc(IMSImportJob.completed_at), desc(IMSImportJob.id))
+            .first()
+        )
+        if latest_job is not None:
+            try:
+                summary = json.loads(latest_job.result_summary or "{}")
+            except (TypeError, ValueError):
+                summary = {}
+            if (
+                not IMSUploadLifecycleService.snapshot_master_state_sealed(
+                    upload_id=latest_upload.id
+                )
+                or not summary.get("publication_ready")
+            ):
+                return latest_job
+
     for job in IMSImportJob.query.filter_by(status=IMSImportJob.STATUS_COMPLETED).order_by(
         desc(IMSImportJob.completed_at), desc(IMSImportJob.id)
     ).limit(5):

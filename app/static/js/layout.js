@@ -13,6 +13,7 @@
     const closeBtn       = document.getElementById('sidebarCloseBtn');
     const themeBtn       = document.getElementById('themeToggleBtn');
     const themeIcon      = document.getElementById('themeIcon');
+    const authThemeBtns  = Array.from(document.querySelectorAll('[data-auth-theme-toggle]'));
     const userMenuButton = document.getElementById('userDropdown');
     const userMenu       = userMenuButton ? userMenuButton.nextElementSibling : null;
 
@@ -200,9 +201,18 @@
         if (themeIcon) {
             themeIcon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
         }
+        const themeLabel = theme === 'dark' ? 'Açık Temaya Geç' : 'Koyu Temaya Geç';
         if (themeBtn) {
-            themeBtn.title = theme === 'dark' ? 'Açık Temaya Geç' : 'Koyu Temaya Geç';
+            themeBtn.title = themeLabel;
         }
+        authThemeBtns.forEach(function (button) {
+            const icon = button.querySelector('[data-auth-theme-icon]');
+            if (icon) {
+                icon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
+            }
+            button.title = themeLabel;
+            button.setAttribute('aria-label', themeLabel);
+        });
         window.dispatchEvent(new CustomEvent('ims:theme-change', { detail: { theme: theme } }));
     }
 
@@ -461,6 +471,7 @@
         if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
         if (overlay) overlay.addEventListener('click', closeDrawer);
         if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+        authThemeBtns.forEach(function (button) { button.addEventListener('click', toggleTheme); });
 
         window.addEventListener('resize', onResize);
         updateNotificationBadge();
