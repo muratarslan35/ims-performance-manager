@@ -278,6 +278,7 @@ def _inject_lifecycle_markup(rendered: str) -> str:
 
         const panel = document.createElement('div');
         panel.className = 'alert alert-warning py-2 px-2 mb-0 w-100 ims-first-period-confirm';
+        panel.style.cssText = 'position:fixed;z-index:2200;left:50%;top:50%;transform:translate(-50%,-50%);width:min(420px,calc(100vw - 28px));max-width:none;max-height:calc(100vh - 40px);overflow:auto;box-shadow:0 24px 70px rgba(15,23,42,.30);';
         panel.hidden = true;
         panel.innerHTML = `
           <strong class="d-block mb-1" style="font-size:11px;">Bu dönem için daha eski IMS yok.</strong>
@@ -292,7 +293,7 @@ def _inject_lifecycle_markup(rendered: str) -> str:
               <button class="btn btn-sm btn-light" type="button" data-first-period-cancel style="font-size:11px;">Vazgeç</button>
             </div>
           </form>`;
-        disabledRollback.insertAdjacentElement('afterend', panel);
+        document.body.appendChild(panel);
         disabledRollback.addEventListener('click', (event) => {{
           event.preventDefault();
           event.stopPropagation();
