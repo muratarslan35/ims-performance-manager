@@ -21,22 +21,30 @@ from app.services.production_result_service import ProductionResultService
 
 
 _snapshot_upload_ids = ContextVar("representative_snapshot_upload_ids", default=None)
+_snapshot_read_cache = ContextVar("representative_snapshot_read_cache", default=None)
 
 
 @contextmanager
 def use_snapshot_upload_ids(upload_ids):
-    """Pin period/upload resolution for one immutable snapshot generation.
+    """Pin immutable source identity and reuse one representative's repeated reads.
 
-    A normal page request still resolves the latest upload normally.  The
-    background snapshot builder, however, already has a fixed source generation;
-    resolving the same monthly upload again for every representative created
-    hundreds of identical SELECTs.
+    Normal requests keep their existing request-local behavior. The persistent
+    snapshot builder, however, opens the same representative/month data through
+    both the sales workspace and market workspace. A small context-local cache
+    lets those paths share exact authoritative results without changing any
+    formula, import row, publication rule or rollback state.
     """
-    token = _snapshot_upload_ids.set(dict(upload_ids or {}))
+    upload_token = _snapshot_upload_ids.set(dict(upload_ids or {}))
+    cache_token = _snapshot_read_cache.set({
+        "effective_products": {},
+        "market_products": None,
+        "market_scopes": {},
+    })
     try:
         yield
     finally:
-        _snapshot_upload_ids.reset(token)
+        _snapshot_read_cache.reset(cache_token)
+        _snapshot_upload_ids.reset(upload_token)
 
 
 def _key(value):
@@ -76,6 +84,52 @@ def install_representative_market_query_optimizer():
     original_workbook_fallback = RepresentativeMarketService._brick_competition_rows_from_workbook
     original_build = RepresentativeMarketService.build
     original_latest_upload_id = RepresentativeMarketService._latest_upload_id
+    original_products = RepresentativeMarketService._products
+    original_scope = RepresentativeMarketService._scope
+    original_effective_products = ProductionResultService.effective_products.__func__
+
+    def effective_products(cls, year, month, representative_id, product_ids=None):
+        """Reuse an exact production-aware period result inside one snapshot member.
+
+        The representative workspace asks for the same effective period twice:
+        once while aggregating sales and again while building market rows.  The
+        authoritative resolver is still called for the first request; subsequent
+        requests in that same snapshot member reuse the returned mapping.
+        Outside snapshot generation this wrapper is a transparent pass-through.
+        """
+        cache = _snapshot_read_cache.get()
+        if cache is None:
+            return original_effective_products(cls, year, month, representative_id, product_ids)
+
+        requested = tuple(sorted({int(item) for item in product_ids or ()})) or None
+        key = (int(year), int(month), int(representative_id), requested)
+        effective_cache = cache["effective_products"]
+        if key not in effective_cache:
+            effective_cache[key] = original_effective_products(
+                cls, year, month, representative_id, product_ids
+            )
+        return effective_cache[key]
+
+    def products(self):
+        """Load the seven managed product objects once per representative build."""
+        cache = _snapshot_read_cache.get()
+        if cache is None:
+            return original_products(self)
+        if cache["market_products"] is None:
+            cache["market_products"] = original_products(self)
+        return cache["market_products"]
+
+    def scope(self):
+        """Reuse the market scope already loaded by the canonical market builder."""
+        cache = _snapshot_read_cache.get()
+        if cache is None:
+            return original_scope(self)
+        key = (int(self.representative.id), int(self.year), int(self.month))
+        scoped = cache["market_scopes"].get(key)
+        if scoped is None:
+            scoped = original_scope(self)
+            cache["market_scopes"][key] = scoped
+        return scoped
 
     def latest_upload_id(self, year, month):
         """Resolve one period upload once per market-service build.
@@ -112,6 +166,30 @@ def install_representative_market_query_optimizer():
             # Return copies so downstream normalization cannot mutate the
             # request-local memo used by another path in this same build.
             return set(cached[0]), set(cached[1])
+
+        snapshot_cache = _snapshot_read_cache.get()
+        if snapshot_cache is not None:
+            snapshot_scope = snapshot_cache["market_scopes"].get(
+                (int(self.representative.id), year, month)
+            )
+            if snapshot_scope is not None:
+                assignments, _brick_keys, _fallback_keys = snapshot_scope
+                brick_values = {
+                    str(item.brick).strip()
+                    for item in assignments
+                    if str(getattr(item, "brick", "") or "").strip()
+                }
+                fallback_values = {
+                    str(value).strip()
+                    for value in (
+                        self.representative.territory,
+                        self.representative.city,
+                        self.representative.region,
+                    )
+                    if str(value or "").strip()
+                }
+                cache[key] = (set(brick_values), set(fallback_values))
+                return brick_values, fallback_values
 
         rows = db.session.query(RepresentativeBrickAssignment.brick).filter(
             RepresentativeBrickAssignment.representative_id == self.representative.id,
@@ -316,6 +394,9 @@ def install_representative_market_query_optimizer():
         ):
             return original_build(self)
 
+    ProductionResultService.effective_products = classmethod(effective_products)
+    RepresentativeMarketService._products = products
+    RepresentativeMarketService._scope = scope
     RepresentativeMarketService._competition_rows = competition_rows
     RepresentativeMarketService._brick_raw_rows = brick_raw_rows
     RepresentativeMarketService._brick_competition_rows = brick_competition_rows
