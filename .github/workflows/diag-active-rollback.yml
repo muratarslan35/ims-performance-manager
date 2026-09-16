@@ -1,8 +1,9 @@
 name: Temporary active IMS rollback diagnostic
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - fix/ims-rollback-auth-theme
     paths:
       - .github/workflows/diag-active-rollback.yml
 
