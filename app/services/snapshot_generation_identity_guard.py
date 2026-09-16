@@ -1,11 +1,11 @@
 """Prevent durable read models from accepting a reused IMS upload id.
 
 SQLite can reuse the highest integer primary key after a physically deleted IMS
-upload.  Durable dashboard/region/representative snapshots are intentionally
+upload. Durable dashboard/region/representative snapshots are intentionally
 keyed by upload id, so an old snapshot with the same numeric id must also prove
 that it was created after the *current* upload completed.
 
-This guard keeps the existing read-model architecture intact.  It adds a source
+This guard keeps the existing read-model architecture intact. It adds a source
 freshness check and removes derived artifacts after permanent IMS deletion so a
 later upload cannot collide with stale snapshot generations.
 """
@@ -25,7 +25,13 @@ from app.models import IMSUpload
 def _source_completed_at(upload_id: int | None):
     if not upload_id:
         return None
-    upload = db.session.get(IMSUpload, int(upload_id))
+    try:
+        upload = db.session.get(IMSUpload, int(upload_id))
+    except RuntimeError:
+        # Some isolated filesystem tests exercise dashboard snapshot storage
+        # without initializing the application's SQLAlchemy extension. In that
+        # legacy-compatible mode there is no database identity to strengthen.
+        return None
     if upload is None:
         return None
     return upload.completed_at or upload.uploaded_at
@@ -50,6 +56,10 @@ def _fresh_for_source(*, upload_id: int, created_at) -> bool:
         # Preserve compatibility for legacy rows that predate freshness metadata.
         # New generations always carry both timestamps.
         return True
+    if not isinstance(created_at, datetime):
+        # Dashboard JSON stores ISO timestamps at second precision. Avoid a
+        # same-second false negative against DB timestamps that retain micros.
+        source_completed = source_completed.replace(microsecond=0)
     return generation_created >= source_completed
 
 
@@ -62,7 +72,6 @@ def _install_dashboard_guard():
     if getattr(cls, "_source_generation_identity_guard_installed", False):
         return
 
-    original_get_active = cls.get_active
     original_generation_ready = cls.generation_ready
 
     @classmethod
