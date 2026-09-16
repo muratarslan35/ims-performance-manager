@@ -267,40 +267,43 @@ def _inject_lifecycle_markup(rendered: str) -> str:
     const firstRollback = (cfg.firstPeriodRollbacks || {{}})[String(id)];
     if (firstRollback && firstRollback.allowed) {{
       const actionCell = row.children[8];
-      const disabledRollback = actionCell && Array.from(actionCell.querySelectorAll('button[disabled]')).find((button) =>
+      const rollbackButton = actionCell && Array.from(actionCell.querySelectorAll('button')).find((button) =>
         button.textContent.includes("Önceki IMS'e dön")
       );
-      if (disabledRollback) {{
-        disabledRollback.disabled = false;
-        disabledRollback.removeAttribute('title');
-        disabledRollback.classList.remove('btn-outline-secondary');
-        disabledRollback.classList.add('btn-outline-warning');
+      if (rollbackButton) {{
+        rollbackButton.disabled = false;
+        rollbackButton.removeAttribute('disabled');
+        rollbackButton.removeAttribute('title');
+        rollbackButton.classList.remove('btn-outline-secondary');
+        rollbackButton.classList.add('btn-outline-warning');
+        rollbackButton.type = 'submit';
+        rollbackButton.dataset.firstPeriodRollback = String(id);
 
-        const panel = document.createElement('div');
-        panel.className = 'alert alert-warning py-2 px-2 mb-0 w-100 ims-first-period-confirm';
-        panel.style.cssText = 'position:fixed;z-index:2200;left:50%;top:50%;transform:translate(-50%,-50%);width:min(420px,calc(100vw - 28px));max-width:none;max-height:calc(100vh - 40px);overflow:auto;box-shadow:0 24px 70px rgba(15,23,42,.30);';
-        panel.hidden = true;
-        panel.innerHTML = `
-          <strong class="d-block mb-1" style="font-size:11px;">Bu dönem için daha eski IMS yok.</strong>
-          <div class="small mb-2">Bu yükleme geri alınırsa dönem yükleme öncesi temiz durumuna döner ve bir önceki aktif IMS dönemi tekrar öne çıkar.</div>
-          <form method="post" action="/ims/uploads/${{id}}/rollback-first-period">
-            <div class="form-check mb-2">
-              <input class="form-check-input" type="checkbox" required id="first-period-confirm-${{id}}">
-              <label class="form-check-label" for="first-period-confirm-${{id}}">Bu IMS geri dönüşünü ve dönem temizliğini onaylıyorum.</label>
-            </div>
-            <div class="d-flex gap-1">
-              <button class="btn btn-sm btn-warning" type="submit" style="font-size:11px;">Onayla ve geri al</button>
-              <button class="btn btn-sm btn-light" type="button" data-first-period-cancel style="font-size:11px;">Vazgeç</button>
-            </div>
-          </form>`;
-        document.body.appendChild(panel);
-        disabledRollback.addEventListener('click', (event) => {{
-          event.preventDefault();
-          event.stopPropagation();
-          panel.hidden = !panel.hidden;
+        let rollbackForm = rollbackButton.closest('[data-first-period-rollback-form]');
+        if (!rollbackForm) {{
+          rollbackForm = document.createElement('form');
+          rollbackForm.method = 'post';
+          rollbackForm.action = '/ims/uploads/' + id + '/rollback-first-period';
+          rollbackForm.dataset.firstPeriodRollbackForm = '1';
+          rollbackForm.style.display = 'inline-block';
+          rollbackButton.parentNode.insertBefore(rollbackForm, rollbackButton);
+          rollbackForm.appendChild(rollbackButton);
+        }}
+
+        rollbackForm.addEventListener('submit', (event) => {{
+          const period = (row.dataset.year || '') + '/' + (row.dataset.month || '');
+          const week = row.dataset.week ? ' ' + row.dataset.week + '. hafta' : '';
+          const confirmed = window.confirm(
+            period + week + ' IMS geri alınacak. ' +
+            'Bu dönem yükleme öncesi temiz duruma dönecek ve bir önceki aktif IMS tekrar öne çıkacak. Devam edilsin mi?'
+          );
+          if (!confirmed) {{
+            event.preventDefault();
+            return;
+          }}
+          rollbackButton.disabled = true;
+          rollbackButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Geri alınıyor...';
         }});
-        panel.addEventListener('click', (event) => event.stopPropagation());
-        panel.querySelector('[data-first-period-cancel]')?.addEventListener('click', () => {{ panel.hidden = true; }});
       }}
     }}
 

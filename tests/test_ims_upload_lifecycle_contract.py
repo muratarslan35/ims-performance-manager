@@ -54,10 +54,10 @@ def test_destructive_history_actions_are_single_admin_and_two_step_confirmed():
     assert route.count("_require_ims_lifecycle_admin()") == 3
     assert "can_manage_ims_lifecycle and rollback_permission" in template
     assert "can_manage_ims_lifecycle and item.status" in template
-    assert 'type="button"' in template
-    assert "Onayla ve geri al" in template
+    assert "ims-rollback-direct-form" in template
+    assert 'onsubmit="return window.confirm(' in template
+    assert "Önceki IMS'e dön" in template
     assert "Onayla ve kalıcı sil" in template
-    assert "ims-lifecycle-confirm" in template
 
 
 def test_hide_is_metadata_only_not_an_ims_status_change():
