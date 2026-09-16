@@ -130,12 +130,14 @@ class IMSPublicationService:
     @classmethod
     def notice_for_user(cls, user_id):
         cls.ensure_schema()
-        job = cls.latest_ready_job()
-        upload = db.session.get(IMSUpload, int(job.ims_upload_id)) if job and job.ims_upload_id else None
-        if upload is None:
-            # Uploads completed before the atomic-publication marker was added
-            # are still eligible once no import/snapshot publication is pending.
-            upload = cls.latest_visible_upload()
+        # The notification must follow the currently visible IMS, not the most
+        # recent historical queue row carrying publication_ready=True. Cleanup,
+        # rollback and re-import operations can leave an older ready job as the
+        # newest marker even though a newer IMS is already fully visible.  The
+        # visibility selector already withholds an upload while its import or
+        # durable snapshot publication is still pending, so it is the canonical
+        # source for the one-time user notice as well.
+        upload = cls.latest_visible_upload()
         if upload is None:
             return None
         if cls._has_current_receipt(user_id, upload):
