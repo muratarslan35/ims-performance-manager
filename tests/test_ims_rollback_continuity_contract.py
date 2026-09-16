@@ -26,7 +26,9 @@ def test_rollback_journal_is_sealed_before_snapshot_warmup_and_is_idempotent():
 
 def test_active_legacy_upload_is_retried_but_historical_upload_is_not_sealed_from_current_state():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
-    retry = worker[worker.index("def _retryable_publication_job"):worker.index("def main()")] 
+    retry = worker[
+        worker.index("def _retryable_publication_job"):worker.index("def main()")
+    ]
     publish = worker[
         worker.index("def _prepare_and_publish"):worker.index("def _retryable_publication_job")
     ]
