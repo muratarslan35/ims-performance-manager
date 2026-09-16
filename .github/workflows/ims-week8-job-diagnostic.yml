@@ -1,4 +1,4 @@
-name: IMS Week 8 Job Diagnostic
+name: IMS Dashboard Current Read-only Diagnostic
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -24,40 +24,80 @@ jobs:
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
+          set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read Week 8 jobs
+      - name: Inspect current IMS and dashboard generation read-only
         run: |
           ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" \
-            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE' | tee "$RUNNER_TEMP/week8.log"
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE' | tee "$RUNNER_TEMP/dashboard-current.log"
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
           import json, sqlite3
           from pathlib import Path
 
-          db_path = Path('instance/ipm.db')
-          uri = f'file:{db_path.resolve()}?mode=ro'
-          conn = sqlite3.connect(uri, uri=True, timeout=5)
+          db_path = Path('instance/ipm.db').resolve()
+          conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=10)
           conn.row_factory = sqlite3.Row
-          try:
-              conn.execute('PRAGMA query_only=ON')
-              cols = {r['name'] for r in conn.execute('PRAGMA table_info(ims_import_jobs)')}
-              wanted = ['id','status','file_name','year','month','ims_upload_id','queued_at','started_at','completed_at','error_message','result_summary']
-              select_cols = [c for c in wanted if c in cols]
+          conn.execute('PRAGMA query_only=ON')
+
+          def columns(table):
+              return [r['name'] for r in conn.execute(f'PRAGMA table_info({table})')]
+
+          def latest(table, wanted, limit=10):
+              available = set(columns(table))
+              selected = [c for c in wanted if c in available]
               rows = conn.execute(
-                  f"SELECT {', '.join(select_cols)} FROM ims_import_jobs "
-                  "WHERE file_name LIKE '%8.Hafta%' OR file_name LIKE '%8_Hafta%' "
-                  "ORDER BY id DESC LIMIT 6"
+                  f"SELECT {', '.join(selected)} FROM {table} ORDER BY id DESC LIMIT ?", (limit,)
               ).fetchall()
-              print('WEEK8_JOB_DIAGNOSTIC|' + json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str))
-              print('WEEK8_DB_MODE|' + str(conn.execute('PRAGMA journal_mode').fetchone()[0]))
+              return [dict(row) for row in rows]
+
+          try:
+              uploads = latest('ims_uploads', ['id','file_name','year','month','week_number','status','created_at','completed_at'])
+              jobs = latest('ims_import_jobs', ['id','status','file_name','year','month','ims_upload_id','queued_at','started_at','completed_at','error_message','result_summary'])
+              print('DASH_UPLOADS|' + json.dumps(uploads, ensure_ascii=False, default=str))
+              print('DASH_JOBS|' + json.dumps(jobs, ensure_ascii=False, default=str))
+              for table in ('ims_raw_data','ims_facts','ims_summary'):
+                  available = set(columns(table))
+                  if 'upload_id' in available:
+                      rows = conn.execute(f"SELECT upload_id, COUNT(*) AS rows FROM {table} GROUP BY upload_id ORDER BY upload_id DESC LIMIT 8").fetchall()
+                      print('DASH_' + table.upper() + '_BY_UPLOAD|' + json.dumps([dict(r) for r in rows]))
+                  else:
+                      print('DASH_' + table.upper() + '_COLUMNS|' + json.dumps(sorted(available)))
           finally:
               conn.close()
+
+          progress = []
+          progress_dir = Path('instance/ims_progress')
+          for path in sorted(progress_dir.glob('job-*.json'), key=lambda p: int(p.stem.split('-')[-1]), reverse=True)[:10]:
+              try:
+                  progress.append(json.loads(path.read_text(encoding='utf-8')))
+              except Exception as exc:
+                  progress.append({'file': path.name, 'error': str(exc)})
+          print('DASH_PROGRESS|' + json.dumps(progress, ensure_ascii=False, default=str))
+
+          snapshots = []
+          snap_dir = Path('instance/dashboard_snapshots')
+          for path in sorted(snap_dir.glob('dashboard-2026-08*.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:15]:
+              try:
+                  envelope = json.loads(path.read_text(encoding='utf-8'))
+                  payload = envelope.get('payload') if isinstance(envelope, dict) else None
+                  snapshots.append({
+                      'file': path.name,
+                      'ims_upload_id': envelope.get('ims_upload_id'),
+                      'production_upload_id': envelope.get('production_upload_id'),
+                      'created_at': envelope.get('created_at'),
+                      'last_upload': (payload or {}).get('last_upload') if isinstance(payload, dict) else None,
+                      'period': (payload or {}).get('period') if isinstance(payload, dict) else None,
+                  })
+              except Exception as exc:
+                  snapshots.append({'file': path.name, 'error': str(exc)})
+          print('DASH_SNAPSHOTS|' + json.dumps(snapshots, ensure_ascii=False, default=str))
           PY
           REMOTE
 
@@ -66,6 +106,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          evidence=$(grep -E 'WEEK8_' "$RUNNER_TEMP/week8.log" || true)
-          body=$(jq -n --arg evidence "$evidence" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{title:"IMS Week 8 read-only diagnostic",body:("Workflow: "+$run+"\n\n```text\n"+$evidence+"\n```")}')
+          evidence=$(grep '^DASH_' "$RUNNER_TEMP/dashboard-current.log" || true)
+          body=$(jq -n --arg evidence "$evidence" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{title:"Current dashboard read-only diagnostic",body:("Workflow: "+$run+"\n\nProduction was queried read-only; no service restart or database write was performed.\n\n```text\n"+$evidence+"\n```")}')
           curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
