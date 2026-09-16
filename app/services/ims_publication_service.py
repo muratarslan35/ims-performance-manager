@@ -87,6 +87,46 @@ class IMSPublicationService:
                 return job
         return None
 
+    @staticmethod
+    def _upload_ready_at(upload):
+        return upload.completed_at or upload.uploaded_at
+
+    @classmethod
+    def _has_current_receipt(cls, user_id, upload):
+        """Return True only when the receipt belongs to this upload incarnation.
+
+        SQLite may reuse a physically deleted highest IMSUpload id.  A receipt
+        left by the previous row must not suppress the one-time notice for the
+        newly imported IMS that happens to receive the same numeric id.
+        """
+        dismissed_at = db.session.execute(sa.select(ims_publication_receipts.c.dismissed_at).where(
+            ims_publication_receipts.c.user_id == int(user_id),
+            ims_publication_receipts.c.upload_id == int(upload.id),
+        )).scalar()
+        if dismissed_at is None:
+            return False
+
+        upload_ready_at = cls._upload_ready_at(upload)
+        if upload_ready_at is None:
+            return True
+
+        # SQLite CURRENT_TIMESTAMP is second-precision while ORM timestamps may
+        # retain microseconds.  Normalize both before comparing so a user who
+        # dismisses the notice in the same second does not see it again.
+        dismissed_second = dismissed_at.replace(microsecond=0)
+        upload_ready_second = upload_ready_at.replace(microsecond=0)
+        if dismissed_second >= upload_ready_second:
+            return True
+
+        # Stale receipt from a previously deleted/recycled upload id.  Remove it
+        # once so every user gets the new publication notice exactly once.
+        db.session.execute(ims_publication_receipts.delete().where(
+            ims_publication_receipts.c.user_id == int(user_id),
+            ims_publication_receipts.c.upload_id == int(upload.id),
+        ))
+        db.session.commit()
+        return False
+
     @classmethod
     def notice_for_user(cls, user_id):
         cls.ensure_schema()
@@ -98,11 +138,7 @@ class IMSPublicationService:
             upload = cls.latest_visible_upload()
         if upload is None:
             return None
-        seen = db.session.execute(sa.select(ims_publication_receipts.c.user_id).where(
-            ims_publication_receipts.c.user_id == int(user_id),
-            ims_publication_receipts.c.upload_id == int(upload.id),
-        )).scalar()
-        if seen:
+        if cls._has_current_receipt(user_id, upload):
             return None
         return {
             "upload_id": int(upload.id), "year": int(upload.year), "month": int(upload.month),
@@ -112,11 +148,10 @@ class IMSPublicationService:
     @classmethod
     def dismiss(cls, user_id, upload_id):
         cls.ensure_schema()
-        if db.session.execute(sa.select(ims_publication_receipts.c.user_id).where(
-            ims_publication_receipts.c.user_id == int(user_id),
-            ims_publication_receipts.c.upload_id == int(upload_id),
-        )).scalar() is None:
-            db.session.execute(ims_publication_receipts.insert().values(
-                user_id=int(user_id), upload_id=int(upload_id)
-            ))
-            db.session.commit()
+        upload = db.session.get(IMSUpload, int(upload_id))
+        if upload is None or cls._has_current_receipt(user_id, upload):
+            return
+        db.session.execute(ims_publication_receipts.insert().values(
+            user_id=int(user_id), upload_id=int(upload_id)
+        ))
+        db.session.commit()
