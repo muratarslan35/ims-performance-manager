@@ -45,7 +45,9 @@ def test_publication_receipt_does_not_hide_a_recycled_upload_id():
     service = (ROOT / "app/services/ims_publication_service.py").read_text(encoding="utf-8")
     assert "def _has_current_receipt" in service
     assert "ims_publication_receipts.c.dismissed_at" in service
-    assert "dismissed_at >= upload_ready_at" in service
+    assert "dismissed_at.replace(microsecond=0)" in service
+    assert "upload_ready_at.replace(microsecond=0)" in service
+    assert "dismissed_second >= upload_ready_second" in service
     assert "ims_publication_receipts.delete().where(" in service
     assert "if cls._has_current_receipt(user_id, upload):" in service
     assert "upload is None or cls._has_current_receipt(user_id, upload)" in service
