@@ -21,101 +21,86 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import textwrap
 
           path = Path('app/services/ims_upload_lifecycle_ui.py')
           text = path.read_text(encoding='utf-8')
 
-          old_css = '''.ims-first-period-confirm { margin-top:6px; max-width:360px; }
-.ims-first-period-confirm .form-check-label { font-size:11px; line-height:1.35; }'''
-          new_css = '''.ims-first-period-modal[hidden] { display:none !important; }
-.ims-first-period-modal { position:fixed; inset:0; z-index:2200; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(15,23,42,.58); backdrop-filter:blur(2px); }
-.ims-first-period-dialog { width:min(440px, 100%); border-radius:16px; background:#fff; border:1px solid rgba(245,158,11,.28); box-shadow:0 24px 70px rgba(15,23,42,.28); overflow:hidden; }
-.ims-first-period-dialog-head { padding:16px 18px 10px; font-size:14px; font-weight:800; color:#7c5200; }
-.ims-first-period-dialog-body { padding:0 18px 18px; color:#334155; font-size:12px; line-height:1.5; }
-.ims-first-period-dialog .form-check-label { font-size:12px; line-height:1.4; }
-body.ims-lifecycle-modal-open { overflow:hidden; }'''
+          old_css = ".ims-first-period-confirm { margin-top:6px; max-width:360px; }\n.ims-first-period-confirm .form-check-label { font-size:11px; line-height:1.35; }"
+          new_css = "\n".join([
+              ".ims-first-period-modal[hidden] { display:none !important; }",
+              ".ims-first-period-modal { position:fixed; inset:0; z-index:2200; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(15,23,42,.58); backdrop-filter:blur(2px); }",
+              ".ims-first-period-dialog { width:min(440px, 100%); border-radius:16px; background:#fff; border:1px solid rgba(245,158,11,.28); box-shadow:0 24px 70px rgba(15,23,42,.28); overflow:hidden; }",
+              ".ims-first-period-dialog-head { padding:16px 18px 10px; font-size:14px; font-weight:800; color:#7c5200; }",
+              ".ims-first-period-dialog-body { padding:0 18px 18px; color:#334155; font-size:12px; line-height:1.5; }",
+              ".ims-first-period-dialog .form-check-label { font-size:12px; line-height:1.4; }",
+              "body.ims-lifecycle-modal-open { overflow:hidden; }",
+          ])
           if old_css not in text:
               raise SystemExit('Expected IMS rollback CSS block not found; refusing broad edit')
           text = text.replace(old_css, new_css, 1)
 
-          old_js = '''        const panel = document.createElement('div');
-        panel.className = 'alert alert-warning py-2 px-2 mb-0 w-100 ims-first-period-confirm';
-        panel.hidden = true;
-        panel.innerHTML = `
-          <strong class="d-block mb-1" style="font-size:11px;">Bu dönem için daha eski IMS yok.</strong>
-          <div class="small mb-2">Bu yükleme geri alınırsa dönem yükleme öncesi temiz durumuna döner ve bir önceki aktif IMS dönemi tekrar öne çıkar.</div>
-          <form method="post" action="/ims/uploads/${id}/rollback-first-period">
-            <div class="form-check mb-2">
-              <input class="form-check-input" type="checkbox" required id="first-period-confirm-${id}">
-              <label class="form-check-label" for="first-period-confirm-${id}">Bu IMS geri dönüşünü ve dönem temizliğini onaylıyorum.</label>
-            </div>
-            <div class="d-flex gap-1">
-              <button class="btn btn-sm btn-warning" type="submit" style="font-size:11px;">Onayla ve geri al</button>
-              <button class="btn btn-sm btn-light" type="button" data-first-period-cancel style="font-size:11px;">Vazgeç</button>
-            </div>
-          </form>`;
-        disabledRollback.insertAdjacentElement('afterend', panel);
-        disabledRollback.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          panel.hidden = !panel.hidden;
-        });
-        panel.addEventListener('click', (event) => event.stopPropagation());
-        panel.querySelector('[data-first-period-cancel]')?.addEventListener('click', () => { panel.hidden = true; });'''
-
-          new_js = '''        const modal = document.createElement('div');
-        modal.className = 'ims-first-period-modal';
-        modal.hidden = true;
-        modal.innerHTML = `
-          <div class="ims-first-period-dialog" role="dialog" aria-modal="true" aria-labelledby="first-period-title-${id}" data-first-period-dialog>
-            <div class="ims-first-period-dialog-head" id="first-period-title-${id}"><i class="bi bi-exclamation-triangle-fill me-2"></i>Önceki IMS'e dön</div>
-            <div class="ims-first-period-dialog-body">
-              <div class="mb-3">Bu yükleme geri alınırsa dönem yükleme öncesi temiz durumuna döner ve bir önceki aktif IMS dönemi tekrar öne çıkar.</div>
-              <form method="post" action="/ims/uploads/${id}/rollback-first-period">
-                <div class="form-check mb-3">
-                  <input class="form-check-input" type="checkbox" required id="first-period-confirm-${id}" data-first-period-checkbox>
-                  <label class="form-check-label" for="first-period-confirm-${id}">Bu IMS geri dönüşünü ve dönem temizliğini onaylıyorum.</label>
-                </div>
-                <div class="d-flex justify-content-end gap-2">
-                  <button class="btn btn-sm btn-light" type="button" data-first-period-cancel>Vazgeç</button>
-                  <button class="btn btn-sm btn-warning" type="submit" data-first-period-submit disabled>Onayla ve geri al</button>
-                </div>
-              </form>
-            </div>
-          </div>`;
-        document.body.appendChild(modal);
-
-        const checkbox = modal.querySelector('[data-first-period-checkbox]');
-        const submitButton = modal.querySelector('[data-first-period-submit]');
-        const closeModal = () => {
-          modal.hidden = true;
-          document.body.classList.remove('ims-lifecycle-modal-open');
-          if (checkbox) checkbox.checked = false;
-          if (submitButton) submitButton.disabled = true;
-        };
-        const openModal = () => {
-          modal.hidden = false;
-          document.body.classList.add('ims-lifecycle-modal-open');
-          window.setTimeout(() => checkbox?.focus(), 0);
-        };
-
-        disabledRollback.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          openModal();
-        });
-        checkbox?.addEventListener('change', () => {
-          if (submitButton) submitButton.disabled = !checkbox.checked;
-        });
-        modal.querySelector('[data-first-period-cancel]')?.addEventListener('click', closeModal);
-        modal.addEventListener('click', (event) => {
-          if (event.target === modal) closeModal();
-        });
-        modal.querySelector('[data-first-period-dialog]')?.addEventListener('click', (event) => event.stopPropagation());'''
-
-          if old_js not in text:
+          start_marker = "        const panel = document.createElement('div');"
+          end_marker = "        panel.querySelector('[data-first-period-cancel]')?.addEventListener('click', () => { panel.hidden = true; });"
+          start = text.find(start_marker)
+          end_start = text.find(end_marker, start)
+          if start < 0 or end_start < 0:
               raise SystemExit('Expected IMS rollback JS block not found; refusing broad edit')
-          text = text.replace(old_js, new_js, 1)
+          end = end_start + len(end_marker)
+
+          replacement = textwrap.indent(textwrap.dedent(r'''
+          const modal = document.createElement('div');
+          modal.className = 'ims-first-period-modal';
+          modal.hidden = true;
+          modal.innerHTML = `
+            <div class="ims-first-period-dialog" role="dialog" aria-modal="true" aria-labelledby="first-period-title-${id}" data-first-period-dialog>
+              <div class="ims-first-period-dialog-head" id="first-period-title-${id}"><i class="bi bi-exclamation-triangle-fill me-2"></i>Önceki IMS'e dön</div>
+              <div class="ims-first-period-dialog-body">
+                <div class="mb-3">Bu yükleme geri alınırsa dönem yükleme öncesi temiz durumuna döner ve bir önceki aktif IMS dönemi tekrar öne çıkar.</div>
+                <form method="post" action="/ims/uploads/${id}/rollback-first-period">
+                  <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" required id="first-period-confirm-${id}" data-first-period-checkbox>
+                    <label class="form-check-label" for="first-period-confirm-${id}">Bu IMS geri dönüşünü ve dönem temizliğini onaylıyorum.</label>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2">
+                    <button class="btn btn-sm btn-light" type="button" data-first-period-cancel>Vazgeç</button>
+                    <button class="btn btn-sm btn-warning" type="submit" data-first-period-submit disabled>Onayla ve geri al</button>
+                  </div>
+                </form>
+              </div>
+            </div>`;
+          document.body.appendChild(modal);
+
+          const checkbox = modal.querySelector('[data-first-period-checkbox]');
+          const submitButton = modal.querySelector('[data-first-period-submit]');
+          const closeModal = () => {
+            modal.hidden = true;
+            document.body.classList.remove('ims-lifecycle-modal-open');
+            if (checkbox) checkbox.checked = false;
+            if (submitButton) submitButton.disabled = true;
+          };
+          const openModal = () => {
+            modal.hidden = false;
+            document.body.classList.add('ims-lifecycle-modal-open');
+            window.setTimeout(() => checkbox?.focus(), 0);
+          };
+
+          disabledRollback.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openModal();
+          });
+          checkbox?.addEventListener('change', () => {
+            if (submitButton) submitButton.disabled = !checkbox.checked;
+          });
+          modal.querySelector('[data-first-period-cancel]')?.addEventListener('click', closeModal);
+          modal.addEventListener('click', (event) => {
+            if (event.target === modal) closeModal();
+          });
+          modal.querySelector('[data-first-period-dialog]')?.addEventListener('click', (event) => event.stopPropagation());
+          ''').strip('\n'), '        ')
+
+          text = text[:start] + replacement + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
 
