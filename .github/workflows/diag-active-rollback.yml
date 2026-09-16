@@ -36,16 +36,13 @@ jobs:
           import json
           from pathlib import Path
           from app import create_app
-          from app.models import IMSUpload
+          from app.models import IMSImportJob, IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           from app.services.ims_upload_lifecycle_ui import _first_period_rollback_permission
 
           app = create_app()
           with app.app_context():
-              rows = IMSUpload.query.order_by(
-                  IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
-                  IMSUpload.completed_at.desc(), IMSUpload.id.desc()
-              ).limit(12).all()
+              rows = IMSUpload.query.filter(IMSUpload.id >= 45).order_by(IMSUpload.id.desc()).all()
               print('ROLLBACK_DIAGNOSTIC_BEGIN')
               for row in rows:
                   standard = IMSUploadLifecycleService.can_rollback(row)
@@ -53,6 +50,13 @@ jobs:
                   previous = IMSUploadLifecycleService._previous_completed_for_period(row)
                   snapshot = IMSUploadLifecycleService.upload_snapshot_path(row.id)
                   archive = IMSUploadLifecycleService.archived_source_for_upload(row.id)
+                  payload = {}
+                  if snapshot.is_file():
+                      try:
+                          payload = json.loads(snapshot.read_text(encoding='utf-8'))
+                      except Exception as exc:
+                          payload = {'read_error': str(exc)}
+                  job = IMSImportJob.query.filter_by(ims_upload_id=row.id).order_by(IMSImportJob.id.desc()).first()
                   print(json.dumps({
                       'id': row.id,
                       'year': row.year,
@@ -62,7 +66,14 @@ jobs:
                       'file': row.file_name,
                       'previous_same_period_id': previous.id if previous else None,
                       'snapshot_exists': snapshot.is_file(),
+                      'snapshot_source_upload_id': payload.get('source_upload_id'),
+                      'snapshot_sealed_upload_id': payload.get('sealed_upload_id'),
+                      'snapshot_has_master_before': bool(payload.get('master_before')),
+                      'snapshot_has_master_after': bool(payload.get('master_after')),
                       'archive_exists': bool(archive and Path(archive).is_file()),
+                      'job_id': job.id if job else None,
+                      'job_status': job.status if job else None,
+                      'job_summary': job.result_summary if job else None,
                       'standard_allowed': bool(standard[0]),
                       'standard_reason': standard[1],
                       'first_allowed': bool(first[0]),
