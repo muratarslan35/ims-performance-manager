@@ -107,7 +107,15 @@ class IMSPublicationService:
             return False
 
         upload_ready_at = cls._upload_ready_at(upload)
-        if upload_ready_at is None or dismissed_at >= upload_ready_at:
+        if upload_ready_at is None:
+            return True
+
+        # SQLite CURRENT_TIMESTAMP is second-precision while ORM timestamps may
+        # retain microseconds.  Normalize both before comparing so a user who
+        # dismisses the notice in the same second does not see it again.
+        dismissed_second = dismissed_at.replace(microsecond=0)
+        upload_ready_second = upload_ready_at.replace(microsecond=0)
+        if dismissed_second >= upload_ready_second:
             return True
 
         # Stale receipt from a previously deleted/recycled upload id.  Remove it
