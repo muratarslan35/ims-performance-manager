@@ -22,6 +22,40 @@
   .metric-cell { font-weight:700; color:#163f6f; white-space:nowrap; }
   .submetric { color:#7d8b9e; font-size:.76rem; margin-top:3px; display:block; }
   .prime-product { color:#0754ad; font-weight:700; }
+  .quarter-threshold-title { display:block; }
+  .quarter-threshold-subtitle { display:block; margin-top:2px; font-size:.68rem; font-weight:650; letter-spacing:.02em; opacity:.82; }
+  [data-theme="dark"] .quarter-card,
+  [data-bs-theme="dark"] .quarter-card { background:#152238; color:#e8f0fa; border:1px solid #2c405a; box-shadow:0 10px 26px rgba(0,0,0,.28); }
+  [data-theme="dark"] .quarter-card .card-header,
+  [data-bs-theme="dark"] .quarter-card .card-header { background:#17263d !important; color:#f3f7fc; border-bottom:1px solid #304660 !important; }
+  [data-theme="dark"] .quarter-card .text-muted,
+  [data-bs-theme="dark"] .quarter-card .text-muted { color:#aebed0 !important; }
+  [data-theme="dark"] .quarter-value,
+  [data-bs-theme="dark"] .quarter-value { color:#69b4ff; }
+  [data-theme="dark"] .quarter-card .form-label,
+  [data-bs-theme="dark"] .quarter-card .form-label { color:#dce7f3; }
+  [data-theme="dark"] .quarter-card .form-control,
+  [data-theme="dark"] .quarter-card .form-select,
+  [data-bs-theme="dark"] .quarter-card .form-control,
+  [data-bs-theme="dark"] .quarter-card .form-select { background-color:#101c2e; border-color:#38506d; color:#f1f6fb; }
+  [data-theme="dark"] .quarter-table,
+  [data-bs-theme="dark"] .quarter-table { --bs-table-bg:transparent; --bs-table-color:#e7eef8; --bs-table-border-color:#334963; color:#e7eef8; }
+  [data-theme="dark"] .quarter-table th,
+  [data-bs-theme="dark"] .quarter-table th { background:#102b49; color:#f4f8fc; border-bottom:1px solid #42617f; }
+  [data-theme="dark"] .quarter-table td,
+  [data-bs-theme="dark"] .quarter-table td { background:#15263d; color:#e7eef8; border-color:#334963; }
+  [data-theme="dark"] .quarter-table tbody tr:nth-child(even) td,
+  [data-bs-theme="dark"] .quarter-table tbody tr:nth-child(even) td { background:#182b45; }
+  [data-theme="dark"] .quarter-table tbody tr:hover td,
+  [data-bs-theme="dark"] .quarter-table tbody tr:hover td { background:#1d3553; }
+  [data-theme="dark"] .metric-cell,
+  [data-bs-theme="dark"] .metric-cell { color:#eef5fc; }
+  [data-theme="dark"] .submetric,
+  [data-bs-theme="dark"] .submetric { color:#a9bdd2; }
+  [data-theme="dark"] .prime-product,
+  [data-bs-theme="dark"] .prime-product { color:#77bcff; }
+  [data-theme="dark"] .quarter-card .badge.text-bg-light,
+  [data-bs-theme="dark"] .quarter-card .badge.text-bg-light { background:#223752 !important; border-color:#46627f !important; color:#edf4fb !important; }
 </style>
 
 <div class="quarter-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
@@ -50,7 +84,7 @@
 
 <div class="card quarter-card mb-4"><div class="card-header bg-white border-0 pt-4 px-4"><div class="d-flex justify-content-between align-items-center"><div><h4 class="mb-1">Aylık prim ve Q telafi hakkedişi</h4><p class="text-muted mb-0 small">Q koşulları sağlanırsa kapanış ayında {{ "{:,.0f}".format(report.summary.q_entitlement_cap) }} ₺ tavanından önceki aylık hakedişler düşülür.</p></div><span class="badge text-bg-light border">{{ report.months|length }} ay</span></div></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Dönem</th><th class="text-end">TL hedef</th><th class="text-end">Gerçekleşen</th><th class="text-center">TL rea.</th><th class="text-center">Ürün koşulu</th><th>Prim türü</th><th class="text-end">Brüt hakkediş</th></tr></thead><tbody>{% for row in report.months %}<tr><td class="fw-bold">{{ row.label }}</td>{% if row.has_data %}<td class="text-end metric-cell">{{ "{:,.0f}".format(row.target_tl) }} ₺</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.actual_tl) }} ₺</td><td class="text-center metric-cell">%{{ "%.1f"|format(row.total_percent) }}</td><td class="text-center"><span class="condition-pill {% if row.product_success or row.q_topup %}condition-ok{% else %}condition-fail{% endif %}">{% if row.q_topup %}Q ile sağlandı{% elif row.product_success %}Sağlandı{% else %}Sağlanmadı{% endif %}</span></td><td><span class="status-pill {% if row.main_prime or row.q_topup %}status-main{% elif row.ciro_prime %}status-ciro{% else %}status-none{% endif %}">{{ row.entitlement_type }}</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gross_prime) }} ₺{% if row.q_topup %}<span class="submetric">Q telafi: {{ "{:,.0f}".format(row.q_topup) }} ₺</span>{% endif %}</td>{% else %}<td colspan="6" class="text-center text-muted">Veri yok — bu dönem henüz yüklenmedi</td>{% endif %}</tr>{% endfor %}</tbody></table></div></div>
 
-<div class="card quarter-card"><div class="card-header bg-white border-0 pt-4 px-4"><div class="d-flex justify-content-between align-items-center"><div><h4 class="mb-1">Q ürün telafi bakiyesi</h4><p class="text-muted mb-0 small">Dört ana ürün için üç aylık hedefe göre gereken kutu ve TL miktarı</p></div><span class="badge text-bg-primary">Q{{ report.quarter }}</span></div></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Ürün</th><th class="text-center">Q TL rea.</th><th class="text-end">%75 seviyesi</th><th class="text-end">%90 seviyesi</th><th class="text-end">%100 seviyesi</th><th class="text-end">Gerçekleşen kutu</th></tr></thead><tbody>{% for row in report.products %}<tr><td class="prime-product">{{ row.product }}</td><td class="text-center metric-cell">%{{ "%.1f"|format(row.percent) }}</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_75.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_75.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_90.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_90.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_100.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_100.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.actual_unit) }} adet</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card quarter-card"><div class="card-header bg-white border-0 pt-4 px-4"><div class="d-flex justify-content-between align-items-center"><div><h4 class="mb-1">Q ürün telafi bakiyesi</h4><p class="text-muted mb-0 small">Dört ana ürün için üç aylık hedefe göre gereken kutu ve TL miktarı</p></div><span class="badge text-bg-primary">Q{{ report.quarter }}</span></div></div><div class="table-responsive"><table class="table quarter-table mb-0"><thead><tr><th>Ürün</th><th class="text-center">Q TL rea.</th><th class="text-end"><span class="quarter-threshold-title">%75 için</span><span class="quarter-threshold-subtitle">Kalan</span></th><th class="text-end"><span class="quarter-threshold-title">%90 için</span><span class="quarter-threshold-subtitle">Kalan</span></th><th class="text-end"><span class="quarter-threshold-title">%100 için</span><span class="quarter-threshold-subtitle">Kalan</span></th><th class="text-end">Gerçekleşen kutu</th></tr></thead><tbody>{% for row in report.products %}<tr><td class="prime-product">{{ row.product }}</td><td class="text-center metric-cell">%{{ "%.1f"|format(row.percent) }}</td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_75.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_75.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_90.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_90.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.gap_100.unit) }} adet<span class="submetric">{{ "{:,.0f}".format(row.gap_100.tl) }} ₺</span></td><td class="text-end metric-cell">{{ "{:,.0f}".format(row.actual_unit) }} adet</td></tr>{% endfor %}</tbody></table></div></div>
 {% else %}
 <div class="card quarter-card"><div class="card-body text-center py-5 text-muted"><i class="bi bi-calendar2-week fs-1 d-block mb-2"></i>Bir temsilci ve Q dönemi seçerek aylık prim ve telafi analizini görüntüleyin.</div></div>
 {% endif %}
