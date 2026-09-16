@@ -52,6 +52,8 @@ jobs:
           def latest(table, wanted, limit=10):
               available = set(columns(table))
               selected = [c for c in wanted if c in available]
+              if not selected:
+                  return []
               rows = conn.execute(
                   f"SELECT {', '.join(selected)} FROM {table} ORDER BY id DESC LIMIT ?", (limit,)
               ).fetchall()
@@ -67,8 +69,16 @@ jobs:
                   if 'upload_id' in available:
                       rows = conn.execute(f"SELECT upload_id, COUNT(*) AS rows FROM {table} GROUP BY upload_id ORDER BY upload_id DESC LIMIT 8").fetchall()
                       print('DASH_' + table.upper() + '_BY_UPLOAD|' + json.dumps([dict(r) for r in rows]))
-                  else:
-                      print('DASH_' + table.upper() + '_COLUMNS|' + json.dumps(sorted(available)))
+              for table, count_col in (
+                  ('manager_region_snapshot_sets','region_count'),
+                  ('representative_snapshot_sets','representative_count'),
+              ):
+                  if columns(table):
+                      rows = conn.execute(
+                          f"SELECT id, year, month, source_upload_id, production_upload_id, status, {count_col}, created_at, activated_at "
+                          f"FROM {table} WHERE year=2026 AND month=8 ORDER BY id DESC LIMIT 12"
+                      ).fetchall()
+                      print('DASH_' + table.upper() + '|' + json.dumps([dict(r) for r in rows], ensure_ascii=False, default=str))
           finally:
               conn.close()
 
@@ -107,5 +117,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           evidence=$(grep '^DASH_' "$RUNNER_TEMP/dashboard-current.log" || true)
-          body=$(jq -n --arg evidence "$evidence" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{title:"Current dashboard read-only diagnostic",body:("Workflow: "+$run+"\n\nProduction was queried read-only; no service restart or database write was performed.\n\n```text\n"+$evidence+"\n```")}')
+          body=$(jq -n --arg evidence "$evidence" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{title:"Current dashboard snapshot identity diagnostic",body:("Workflow: "+$run+"\n\nProduction was queried read-only; no service restart or database write was performed.\n\n```text\n"+$evidence+"\n```")}')
           curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
