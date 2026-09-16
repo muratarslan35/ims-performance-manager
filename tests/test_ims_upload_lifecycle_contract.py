@@ -51,7 +51,7 @@ def test_destructive_history_actions_are_single_admin_and_two_step_confirmed():
     template = Path("app/templates/ims.html").read_text(encoding="utf-8")
     assert 'IMS_LIFECYCLE_ADMIN_EMAIL = "murat.arslan@bilimilac.com"' in route
     assert 'role in {"admin", "administrator"}' in route
-    assert route.count("_require_ims_lifecycle_admin()") == 3
+    assert route.count("_require_ims_lifecycle_admin()") == 4
     assert "can_manage_ims_lifecycle and rollback_permission" in template
     assert "can_manage_ims_lifecycle and item.status" in template
     assert "ims-rollback-direct-form" in template

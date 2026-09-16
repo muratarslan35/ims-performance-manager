@@ -142,6 +142,20 @@ def _rollback_first_period(upload_id: int, *, actor: str | None = None) -> dict:
         IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
         IMSUpload.completed_at.desc(), IMSUpload.id.desc(),
     ).first()
+    if previous_global is not None:
+        try:
+            if IMSUploadLifecycleService.ensure_snapshot_master_state_sealed(
+                upload_id=previous_global.id
+            ):
+                current_app.logger.info(
+                    "ims_first_period_previous_master_journal_sealed upload_id=%s",
+                    previous_global.id,
+                )
+        except Exception:
+            current_app.logger.exception(
+                "ims_first_period_previous_master_journal_seal_failed upload_id=%s",
+                previous_global.id,
+            )
     return {
         "rolled_back_upload_id": int(upload.id),
         "active_upload_id": int(previous_global.id) if previous_global else 0,

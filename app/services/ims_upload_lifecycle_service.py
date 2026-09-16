@@ -281,6 +281,31 @@ class IMSUploadLifecycleService:
         return path
 
     @classmethod
+    def snapshot_master_state_sealed(cls, *, upload_id: int) -> bool:
+        """Return whether one finalized upload has a complete immutable master journal."""
+        path = cls.upload_snapshot_path(upload_id)
+        if not path.is_file():
+            return False
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return False
+        return (
+            int(payload.get("version", 0)) == cls.SNAPSHOT_VERSION
+            and int(payload.get("sealed_upload_id", 0) or 0) == int(upload_id)
+            and bool(payload.get("master_before"))
+            and bool(payload.get("master_after"))
+        )
+
+    @classmethod
+    def ensure_snapshot_master_state_sealed(cls, *, upload_id: int) -> bool:
+        """Seal a missing journal once; never overwrite an existing post-import baseline."""
+        if cls.snapshot_master_state_sealed(upload_id=upload_id):
+            return False
+        cls.seal_snapshot_master_state(upload_id=upload_id)
+        return True
+
+    @classmethod
     def prepare_previous_rollback_assets(cls, *, year: int, month: int) -> dict:
         """Guarantee all immutable read models before replacement data can mutate."""
         previous = IMSUpload.query.filter_by(
@@ -677,6 +702,22 @@ class IMSUploadLifecycleService:
         except Exception:
             db.session.rollback()
             raise
+
+        # Legacy imports created before journal sealing was decoupled from the
+        # read-model warm-up can become active after a successful rollback.
+        # At this point the authoritative master state has already been restored
+        # to that previous upload, so seal its missing journal once.  Existing
+        # sealed journals are immutable and are never overwritten.
+        try:
+            if cls.ensure_snapshot_master_state_sealed(upload_id=previous.id):
+                current_app.logger.info(
+                    "ims_rollback_previous_master_journal_sealed upload_id=%s", previous.id
+                )
+        except Exception:
+            current_app.logger.exception(
+                "ims_rollback_previous_master_journal_seal_failed upload_id=%s", previous.id
+            )
+
         cls._invalidate_runtime_caches(year, month)
         return {
             "rolled_back_upload_id": int(upload.id),
