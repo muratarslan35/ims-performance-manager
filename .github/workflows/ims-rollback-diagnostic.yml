@@ -37,6 +37,10 @@ jobs:
           from app.models import IMSUpload
           from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           from app.services.ims_upload_lifecycle_ui import _first_period_rollback_permission
+
+          def by_id(rows):
+              return {int(row['id']): row for row in rows if row.get('id') is not None}
+
           with app.app_context():
               latest = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
                   IMSUpload.year.desc(), IMSUpload.month.desc(), IMSUpload.week_number.desc(),
@@ -59,5 +63,17 @@ jobs:
                       'master_before': bool(payload.get('master_before')),
                       'master_after': bool(payload.get('master_after')),
                   })
+                  current = IMSUploadLifecycleService._master_state()
+                  for key in ('representatives', 'products'):
+                      before = by_id((payload.get('master_before') or {}).get(key) or [])
+                      now = by_id(current.get(key) or [])
+                      added = sorted(set(now) - set(before))
+                      removed = sorted(set(before) - set(now))
+                      changed = {}
+                      for row_id in sorted(set(before) & set(now)):
+                          fields = sorted(name for name in set(before[row_id]) | set(now[row_id]) if before[row_id].get(name) != now[row_id].get(name))
+                          if fields:
+                              changed[row_id] = fields
+                      print('MASTER_DIFF', key, {'added': added, 'removed': removed, 'changed': changed})
           PY
           REMOTE
