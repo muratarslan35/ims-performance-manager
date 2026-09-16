@@ -64,11 +64,11 @@ class PersistentRepresentativeSnapshotService:
     STATUS_SUPERSEDED = "SUPERSEDED"
     STATUS_FAILED = "FAILED"
     BUILD_BATCH_SIZE = 8
-    # Production currently has two vCPUs and constrained memory.  More reader
-    # threads make the same SQLite pages compete and duplicate per-representative
-    # workspaces in memory; two workers preserve real parallel batches without
-    # the swap/I/O regression seen with four workers.
-    BUILD_WORKERS = 2
+    # Snapshot reads are mostly bounded SQLite I/O plus per-representative Python
+    # aggregation. Three readers keep both vCPUs busy while the snapshot-local
+    # read cache removes the duplicate queries that previously pushed four
+    # workers into swap/I/O contention. Config can still override this value.
+    BUILD_WORKERS = 3
 
     @staticmethod
     def _json_default(value):
@@ -312,9 +312,9 @@ class PersistentRepresentativeSnapshotService:
                     return representative_id, name, payload
 
             completed = 0
-            # Keep one executor for the whole generation. Recreating four DB
-            # reader threads for every eight representatives discarded warm
-            # connections/caches and caused avoidable allocator pressure.
+            # Keep one executor for the whole generation. Recreating DB reader
+            # threads for every eight representatives discards warm connections
+            # and caches, and creates avoidable allocator pressure.
             pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
             try:
                 for offset in range(0, total, batch_size):

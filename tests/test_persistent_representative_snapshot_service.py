@@ -51,7 +51,19 @@ def test_snapshot_batches_pin_shared_upload_resolution_once():
     assert "use_snapshot_upload_ids(snapshot_upload_ids)" in snapshot
     assert "_snapshot_upload_ids = ContextVar" in optimizer
     assert "if pinned is not None and key in pinned" in optimizer
-    assert "BUILD_WORKERS = 2" in snapshot
+    assert "BUILD_WORKERS = 3" in snapshot
+
+
+def test_snapshot_reuses_duplicate_representative_reads_without_touching_import_path():
+    optimizer = (ROOT / "app/services/representative_query_optimizer.py").read_text(encoding="utf-8")
+    assert '_snapshot_read_cache = ContextVar("representative_snapshot_read_cache", default=None)' in optimizer
+    assert '"effective_products": {}' in optimizer
+    assert '"market_products": None' in optimizer
+    assert '"market_scopes": {}' in optimizer
+    assert "original_effective_products = ProductionResultService.effective_products.__func__" in optimizer
+    assert "if key not in effective_cache:" in optimizer
+    assert "snapshot_scope = snapshot_cache[\"market_scopes\"].get" in optimizer
+    assert "ProductionResultService.effective_products = classmethod(effective_products)" in optimizer
 
 
 def test_deploy_bootstraps_first_active_generation_before_web_activation():
