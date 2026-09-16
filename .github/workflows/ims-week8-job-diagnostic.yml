@@ -37,6 +37,7 @@ jobs:
             "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE' | tee "$RUNNER_TEMP/dashboard-current.log"
           set -Eeuo pipefail
           cd "$IMS_PATH"
+          echo "DASH_LIVE_COMMIT|$(git rev-parse HEAD)"
           venv/bin/python - <<'PY'
           import json, sqlite3
           from pathlib import Path
