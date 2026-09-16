@@ -1,0 +1,115 @@
+name: Latest IMS Timing Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/publication-notice-live
+
+permissions:
+  contents: read
+
+jobs:
+  timing_check:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH key
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
+          chmod 600 ~/.ssh/ims_deploy_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read latest IMS timing from production
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_deploy_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" \
+            "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          venv/bin/python - <<'PY'
+          import json
+          from datetime import datetime
+          from sqlalchemy import desc
+          from app import create_app
+          from app.models import IMSUpload, IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
+
+          def secs(a, b):
+              if a is None or b is None:
+                  return None
+              return round((b - a).total_seconds(), 3)
+
+          def parse_iso(value):
+              if not value:
+                  return None
+              try:
+                  return datetime.fromisoformat(str(value))
+              except Exception:
+                  return None
+
+          def fmt(value):
+              return "none" if value is None else str(value)
+
+          app = create_app()
+          with app.app_context():
+              upload = IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED).order_by(
+                  desc(IMSUpload.year), desc(IMSUpload.month), desc(IMSUpload.week_number),
+                  desc(IMSUpload.completed_at), desc(IMSUpload.id),
+              ).first()
+              if upload is None:
+                  raise SystemExit("No completed IMS upload")
+              job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(
+                  desc(IMSImportJob.started_at), desc(IMSImportJob.id)
+              ).first()
+              if job is None:
+                  raise SystemExit(f"No import job for upload {upload.id}")
+              progress = IMSProgressStore.read(job.id) or {}
+              progress_at = parse_iso(progress.get("updated_at"))
+              summary = {}
+              try:
+                  summary = json.loads(job.result_summary or "{}")
+              except Exception:
+                  pass
+
+              queue_wait = secs(job.queued_at, job.started_at)
+              import_seconds = secs(job.started_at, job.completed_at)
+              snapshot_seconds = secs(job.completed_at, progress_at)
+              total_started_to_100 = secs(job.started_at, progress_at)
+              total_queued_to_100 = secs(job.queued_at, progress_at)
+
+              print(
+                  "LATEST_IMS_TIMING|"
+                  f"upload_id={upload.id}|job_id={job.id}|year={upload.year}|month={upload.month}|"
+                  f"week={upload.week_number or 0}|file={upload.file_name}|status={job.status}|"
+                  f"queued_at={fmt(job.queued_at)}|started_at={fmt(job.started_at)}|"
+                  f"job_completed_at={fmt(job.completed_at)}|upload_completed_at={fmt(upload.completed_at)}|"
+                  f"progress_percent={progress.get('percent')}|progress_stage={progress.get('stage')}|"
+                  f"progress_status={progress.get('status')}|progress_updated_at={fmt(progress_at)}|"
+                  f"queue_wait_seconds={fmt(queue_wait)}|import_seconds={fmt(import_seconds)}|"
+                  f"snapshot_seconds={fmt(snapshot_seconds)}|started_to_100_seconds={fmt(total_started_to_100)}|"
+                  f"queued_to_100_seconds={fmt(total_queued_to_100)}|"
+                  f"upload_processing_time={fmt(upload.processing_time)}|"
+                  f"background_job_seconds={fmt(summary.get('background_job_seconds'))}|"
+                  f"publication_ready={fmt(summary.get('publication_ready'))}"
+              )
+          PY
+
+          echo '--- SNAPSHOT JOURNAL ---'
+          sudo journalctl -u ims-import-worker.service --since '2026-09-15 00:00:00' --no-pager -o short-iso 2>/dev/null \
+            | grep -E 'dashboard_snapshot_warm|dashboard_snapshot_acceptance|region_snapshot_warm|region_snapshot_acceptance|representative_snapshot_warm status=|representative_snapshot_warm_progress|ims_rollback_master_journal_ready' \
+            | tail -n 160 || true
+          REMOTE
