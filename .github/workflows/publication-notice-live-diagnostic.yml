@@ -41,12 +41,12 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           venv/bin/python - <<'PY'
-          import json
           import sqlalchemy as sa
           from sqlalchemy import desc
+          from pathlib import Path
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, IMSImportJob, User
+          from app.models import IMSUpload, User
           from app.services.ims_publication_service import (
               IMSPublicationService,
               ims_publication_receipts,
@@ -127,18 +127,17 @@ jobs:
               )
               print(f"LATEST_SELECTION_MATCH|{latest_matches_selected}")
 
-          from pathlib import Path
           base = Path("app/templates/base.html").read_text(encoding="utf-8")
           layout = Path("app/static/js/layout.js").read_text(encoding="utf-8")
           css = Path("app/static/css/layout.css").read_text(encoding="utf-8")
-          print(
-              "FRONTEND_CONTRACT|"
-              f"base_loads_layout={int("filename='js/layout.js'" in base)}|"
-              f"fetch_endpoint={int("fetch('/ims/publication-notice'" in layout)}|"
-              f"initial_check={int('checkPublishedIMSNotice();' in layout)}|"
-              f"poll_15s={int('window.setInterval(checkPublishedIMSNotice, 15000);' in layout)}|"
-              f"modal_text={int('Yeni IMS başarıyla yüklendi' in layout)}|"
-              f"modal_css={int('.ims-published-notice-layer' in css)}"
-          )
+          checks = {
+              "base_loads_layout": int("filename='js/layout.js'" in base),
+              "fetch_endpoint": int("fetch('/ims/publication-notice'" in layout),
+              "initial_check": int("checkPublishedIMSNotice();" in layout),
+              "poll_15s": int("window.setInterval(checkPublishedIMSNotice, 15000);" in layout),
+              "modal_text": int("Yeni IMS başarıyla yüklendi" in layout),
+              "modal_css": int(".ims-published-notice-layer" in css),
+          }
+          print("FRONTEND_CONTRACT|" + "|".join(f"{key}={value}" for key, value in checks.items()))
           PY
           REMOTE
