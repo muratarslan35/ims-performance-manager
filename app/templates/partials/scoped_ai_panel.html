@@ -4,66 +4,91 @@
     <div>
       <span class="scope-ai-kicker">DİNAMİK KARAR DESTEK</span>
       <h2 id="scopeAiTitle"><i class="bi bi-stars"></i> AI Performans Rehberi</h2>
+      {% if ai_report.scope_type == 'representative' %}
+      <p>{{ ai_report.scope_name }} için haftalık rakip blok hareketi, hedefli sıfır çıkış ve ayın ilk 10 gün saha sinyalleri.</p>
+      {% else %}
       <p>{{ ai_report.scope_name }} kapsamındaki doğrulanmış hedef, satış ve saha verilerinden oluşturulur.</p>
+      {% endif %}
     </div>
     <span class="scope-ai-badge">{% if ai_report.scope_type == 'region' %}Bölge analizi{% else %}Kişisel analiz{% endif %}</span>
   </header>
 
   {% if ai_report.scope_type == 'representative' %}
-  <section class="scope-ai-command" aria-label="Temsilci ticari aksiyon merkezi">
-    <div class="scope-ai-command-head"><div><span>BRICK → TEMSİLCİ · AYLIK AKSİYON PLANI</span><h3>Satış ve Rekabet Öncelikleri</h3><p>Yalnız aktif temsilci snapshotındaki ürün, brick ve ardışık IMS karşılaştırmaları kullanılır.</p></div><span class="scope-ai-source-pill">Snapshot kaynağı</span></div>
+  {% set rep_monthly=ai_report.periods.get('monthly') %}
+  {% if rep_monthly %}
+    {% set open_gap = namespace(total=0) %}
+    {% for item in rep_monthly.products|default([]) %}
+      {% if (item.gap_tl or 0) > 0 %}{% set open_gap.total = open_gap.total + (item.gap_tl or 0) %}{% endif %}
+    {% endfor %}
+    <!-- legacy-representative-gap-contract: Açık ürün hedefleri toplamı {{ '{:,.0f}'.format(open_gap.total) }} ₺ -->
+  {% endif %}
+  <section class="scope-ai-command" aria-label="Temsilci ilk 10 gün odak ekranı"{% if rep_monthly %} data-monthly-realization="%{{ '%.1f'|format(rep_monthly.realization_percent or 0) }}"{% endif %}>
+    <div class="scope-ai-command-head">
+      <div>
+        <span>BRICK → TEMSİLCİ · 4 NET ODAK</span>
+        <h3>İlk 10 Gün Satış ve Rekabet Ekranı</h3>
+        <p>Yalnız doğrulanmış brick hedefi ve IMS hareketleri kullanılır; tekrar eden eski AI kartları kaldırılmıştır.</p>
+      </div>
+      <span class="scope-ai-source-pill">4 alan</span>
+    </div>
+
     <div class="scope-ai-command-grid">
       <article class="scope-ai-command-card">
-        <h4><i class="bi bi-box-seam"></i> Ürün bazlı kalan kutu hedefi</h4>
-        {% for item in market_analysis.rows|sort(attribute='realization_percent') %}
-          {% set remaining=(item.target_unit or 0)-(item.actual_unit or 0) %}
-          {% if remaining > 0 %}<div class="scope-ai-row"><span>{{ item.product.product_name }}</span><b>{{ '{:,.0f}'.format(remaining) }} kutu</b><small>Hedef {{ '{:,.0f}'.format(item.target_unit or 0) }} · Çıkış {{ '{:,.0f}'.format(item.actual_unit or 0) }} · Realizasyon %{{ item.realization_percent }}</small></div>{% endif %}
-        {% else %}<div class="scope-ai-empty">Ürün hedef verisi bulunmuyor.</div>{% endfor %}
-      </article>
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-eye-slash"></i> Satışımız olmayan brickler</h4>
-        {% for item in ai_report.competitive_intelligence.own_gaps|default([]) %}
-          <div class="scope-ai-row"><span>{{ item.brick }} · {{ item.group }}</span><b>0 kutu</b><small>Rakip {{ '{:,.0f}'.format(item.competitor_unit) }} kutu; erişim, stok ve hekim planı kontrol edilmeli.</small></div>
-        {% else %}<div class="scope-ai-empty">Rakip satışı varken şirket çıkışı sıfır olan brick yok.</div>{% endfor %}
-      </article>
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-trophy"></i> En güçlü satış brickleri</h4>
-        {% for item in market_analysis.brick_rows|default([]) if item.attention == 'strong' %}
-          {% if loop.index <= 5 %}<div class="scope-ai-row"><span>{{ item.brick }}</span><b>{{ '{:,.0f}'.format(item.company_unit) }} kutu</b><small>Pazar payı %{{ item.share_percent }} · Rakip {{ '{:,.0f}'.format(item.competitor_unit) }} kutu</small></div>{% endif %}
-        {% else %}<div class="scope-ai-empty">Güçlü eşikte brick bulunmuyor; en yüksek çıkışlı brickler aşağıdaki detaydan izlenebilir.</div>{% endfor %}
-      </article>
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-lightning-charge"></i> Haftalık blok satış uyarıları</h4>
+        <h4><i class="bi bi-lightning-charge"></i> Rakip blok satışları · haftalık</h4>
         {% for item in ai_report.competitive_intelligence.weekly_alerts|default([]) %}
-          <div class="scope-ai-row"><span>{{ item.brick }} · {{ item.product }}</span><b>{% if item.delta_unit > 0 %}+{% endif %}{{ '{:,.0f}'.format(item.delta_unit) }} kutu</b><small>Önceki IMS {{ '{:,.0f}'.format(item.previous_unit) }} → Son IMS {{ '{:,.0f}'.format(item.current_unit) }}</small></div>
-        {% else %}<div class="scope-ai-empty">Aktif snapshotta doğrulanmış ardışık haftalık blok artışı yok.</div>{% endfor %}
+          <div class="scope-ai-row">
+            <span>{{ item.brick }} · {{ item.product }}</span>
+            <b>{% if item.delta_unit > 0 %}+{% endif %}{{ '{:,.0f}'.format(item.delta_unit) }} kutu</b>
+            <small>Önceki IMS {{ '{:,.0f}'.format(item.previous_unit) }} → Son IMS {{ '{:,.0f}'.format(item.current_unit) }}</small>
+          </div>
+        {% else %}
+          <div class="scope-ai-empty">Son iki IMS arasında eşik üstü rakip blok artışı yok.</div>
+        {% endfor %}
       </article>
+
       <article class="scope-ai-command-card">
-        <h4><i class="bi bi-graph-up"></i> Rakibi %30 üzeri büyüyen alanlar</h4>
-        {% for item in ai_report.competitive_intelligence.monthly_trends|default([]) if item.side == 'Rakip' and item.change_percent is not none and item.change_percent > 30 %}
-          <div class="scope-ai-row"><span>{% if item.brick is defined and item.brick %}{{ item.brick }} · {% endif %}{{ item.group }}</span><b>%{{ '%+.1f'|format(item.change_percent) }}</b><small>{{ item.previous_period }} {{ '{:,.0f}'.format(item.previous_unit) }} → {{ item.current_period }} {{ '{:,.0f}'.format(item.current_unit) }} kutu</small></div>
-        {% else %}<div class="scope-ai-empty">Mevcut snapshot karşılaştırmasında %30 üzeri rakip artışı yok.</div>{% endfor %}
+        <h4><i class="bi bi-bullseye"></i> Hedefli ama çıkışı olmayan brickler</h4>
+        {% for item in market_analysis.brick_product_rows|default([])|sort(attribute='competitor_unit', reverse=true) if (item.target_unit or 0) > 0 and (item.company_unit or 0) <= 0 %}
+          {% if loop.index <= 8 %}
+          <div class="scope-ai-row">
+            <span>{{ item.brick }} · {{ item.product_name }}</span>
+            <b>0 kutu</b>
+            <small>Ürün hedefi {{ '{:,.0f}'.format(item.target_unit or 0) }} kutu · Rakip {{ '{:,.0f}'.format(item.competitor_unit or 0) }} kutu; stok, erişim ve hekim planı kontrol edilmeli.</small>
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="scope-ai-empty">Hedefi olup brick çıkışı sıfır kalan ürün/brick yok.</div>
+        {% endfor %}
       </article>
+
       <article class="scope-ai-command-card">
-        <h4><i class="bi bi-shield-check"></i> Güçlendiğimiz ürünler</h4>
-        {% for item in market_analysis.rows if item.has_previous and item.actual_change_unit > 0 and item.competitor_change_unit < 0 %}
-          <div class="scope-ai-row"><span>{{ item.product.product_name }}</span><b>+{{ '{:,.0f}'.format(item.actual_change_unit) }} kutu</b><small>Rakip alanı {{ '{:,.0f}'.format(item.competitor_change_unit|abs) }} kutu daraldı; kazanım korunmalı.</small></div>
-        {% else %}<div class="scope-ai-empty">Şirket büyürken rakip alanının daraldığı doğrulanmış ürün yok.</div>{% endfor %}
+        <h4><i class="bi bi-calendar2-week"></i> İlk 10 gün · düzenli rakip alım deseni</h4>
+        {% for item in ai_report.competitive_intelligence.early_month_patterns|default([]) %}
+          <div class="scope-ai-row">
+            <span>{{ item.brick }} · {{ item.product }}</span>
+            <b>~{{ '{:,.0f}'.format(item.average_unit) }} kutu</b>
+            <small>Son {{ item.observed_months }} ayın ilk IMS kesitinde {{ item.hit_months }} kez görüldü · Aralık {{ '{:,.0f}'.format(item.min_unit) }}–{{ '{:,.0f}'.format(item.max_unit) }} kutu. Ayın ilk 10 gününde kontrol edilmeli.</small>
+          </div>
+        {% else %}
+          <div class="scope-ai-empty">Düzenli ay başı rakip hareketi için en az iki karşılaştırılabilir IMS kesiti bekleniyor.</div>
+        {% endfor %}
+      </article>
+
+      <article class="scope-ai-command-card">
+        <h4><i class="bi bi-radar"></i> İlk 10 gün · yeni / hızlanan sinyaller</h4>
+        {% for item in ai_report.competitive_intelligence.early_month_emerging|default([]) %}
+          <div class="scope-ai-row">
+            <span>{{ item.brick }} · {{ item.product }}</span>
+            <b>{{ item.signal }} · {{ '{:,.0f}'.format(item.latest_unit) }} kutu</b>
+            <small>Önceki ay başı ortalaması {{ '{:,.0f}'.format(item.previous_average_unit) }} kutu → son ilk IMS {{ '{:,.0f}'.format(item.latest_unit) }} kutu. İlk 10 gün saha kontrolüne alınmalı.</small>
+          </div>
+        {% else %}
+          <div class="scope-ai-empty">Ay başında yeni başlayan veya belirgin hızlanan bağımsız rakip sinyali yok.</div>
+        {% endfor %}
       </article>
     </div>
-    <article class="scope-ai-directions">
-      <h4><i class="bi bi-signpost-split"></i> Temsilci yönlendirmeleri</h4>
-      <ol>
-        <li>Kalan kutu hedefini ürün realizasyonu en düşük olandan başlayarak haftalık ziyaret planına böl.</li>
-        <li>Şirket çıkışı sıfır, rakip çıkışı pozitif bricklerde stok, erişim ve reçete nedenini ayrı ayrı doğrula.</li>
-        <li>Güçlü bricklerdeki hekim–eczane çalışma modelini benzer potansiyeldeki zayıf bricklere taşı.</li>
-        <li>Ardışık IMS blok artışı görülen brickleri ilk saha gününde kontrol et; tek seferlik stok hareketi ile kalıcı talebi ayır.</li>
-        <li>Rakibi aylık %30 üzerinde büyüyen ürün/bricklerde rakip ürün, kurum ve kanal etkisini kayıt altına al.</li>
-        <li>Şirket büyürken rakibin daraldığı ürünlerde kazanılan hesabı koruma ziyaretiyle sabitle.</li>
-        <li>Her hafta kapanışında kalan hedef, sıfır satışlı brick ve rakip baskısı listesini yeniden önceliklendir.</li>
-      </ol>
-    </article>
   </section>
+
   {% else %}
   {% set monthly_ai=ai_report.periods.monthly|default({}, true) %}
   <section class="scope-ai-command" aria-label="Bölge ticari aksiyon merkezi">
@@ -84,7 +109,6 @@
       <li>Haftalık yönetim gözden geçirmesinde yalnız snapshotta doğrulanan sinyalleri kapat veya yükselt.</li>
     </ol></article>
   </section>
-  {% endif %}
 
   <div class="scope-ai-tabs" role="tablist">
     {% for key, period in ai_report.periods.items() %}
@@ -120,28 +144,14 @@
         {% else %}<div class="scope-ai-empty">Kritik eşik altında ürün yok.</div>{% endfor %}
       </div>
 
-      {% if ai_report.scope_type == 'region' %}
       <div class="scope-ai-card">
         <h3><i class="bi bi-people"></i> Destek önceliği</h3>
         {% for item in period.critical_representatives %}
           <div class="scope-ai-row"><span>{{ item.representative_name|representative_display_name }}</span><b>%{{ item.realization_percent }}</b><small>{{ item.city }}</small></div>
         {% else %}<div class="scope-ai-empty">Kritik eşik altında temsilci yok.</div>{% endfor %}
       </div>
-      {% else %}
-      <div class="scope-ai-card">
-        <h3><i class="bi bi-arrow-left-right"></i> Ardışık IMS karşılaştırması</h3>
-        {% for item in ai_report.competitive_intelligence.weekly_alerts|default([]) %}
-          <div class="scope-ai-row">
-            <span>{{ item.brick }} · {{ item.product }}</span>
-            <b>{% if item.delta_unit > 0 %}+{% endif %}{{ '{:,.0f}'.format(item.delta_unit) }} kutu</b>
-            <small>Önceki IMS {{ '{:,.0f}'.format(item.previous_unit) }} → Son IMS {{ '{:,.0f}'.format(item.current_unit) }}</small>
-          </div>
-        {% else %}<div class="scope-ai-empty">Ardışık IMS dosyalarında anlamlı ürün/brick değişimi yok.</div>{% endfor %}
-      </div>
-      {% endif %}
     </div>
 
-    {% if ai_report.scope_type == 'region' %}
     <div class="scope-ai-card scope-ai-province-card">
       <h3><i class="bi bi-geo-alt"></i> İl bazlı performans analizi</h3>
       {% for item in period.province_rows|default([]) %}
@@ -155,30 +165,9 @@
         </div>
       {% else %}<div class="scope-ai-empty">İl bazlı toplulaştırılabilir temsilci verisi bulunmuyor.</div>{% endfor %}
     </div>
-    {% endif %}
-
-    {% if ai_report.scope_type == 'representative' %}
-    <div class="scope-ai-grid">
-      <div class="scope-ai-card">
-        <h3><i class="bi bi-eye"></i> Kendi ürünümüzün çıkmadığı brickler</h3>
-        {% for item in ai_report.competitive_intelligence.own_gaps|default([]) %}
-          <div class="scope-ai-row"><span>{{ item.brick }} · {{ item.group }}</span><b>0 kutu</b><small>Rakip çıkışı {{ '{:,.0f}'.format(item.competitor_unit) }} kutu; saha nedeni araştırılmalı.</small></div>
-        {% else %}<div class="scope-ai-empty">Rakip varken kendi ürününün sıfır olduğu kritik brick yok.</div>{% endfor %}
-      </div>
-      <div class="scope-ai-card">
-        <h3><i class="bi bi-graph-up-arrow"></i> Aydan aya ürün ve rakip değişimi</h3>
-        {% for item in ai_report.competitive_intelligence.monthly_trends|default([]) %}
-          <div class="scope-ai-row">
-            <span>{{ item.group }} · {{ item.side }}</span>
-            <b>{% if item.delta_unit > 0 %}+{% endif %}{{ '{:,.0f}'.format(item.delta_unit) }} kutu</b>
-            <small>{{ item.previous_period }}: {{ '{:,.0f}'.format(item.previous_unit) }} → {{ item.current_period }}: {{ '{:,.0f}'.format(item.current_unit) }}{% if item.change_percent is not none %} · %{{ '%+.1f'|format(item.change_percent) }}{% endif %}</small>
-          </div>
-        {% else %}<div class="scope-ai-empty">Karşılaştırılabilir aylık rekabet verisi bekleniyor.</div>{% endfor %}
-      </div>
-    </div>
-    {% endif %}
   </article>
   {% endfor %}
+  {% endif %}
 
   <footer class="scope-ai-note"><i class="bi bi-shield-check"></i>{{ ai_report.method_note }}</footer>
 </section>
