@@ -15,6 +15,13 @@
 
   {% if ai_report.scope_type == 'representative' %}
   {% set rep_monthly=ai_report.periods.get('monthly') %}
+  {% if rep_monthly %}
+    {% set open_gap = namespace(total=0) %}
+    {% for item in rep_monthly.products|default([]) %}
+      {% if (item.gap_tl or 0) > 0 %}{% set open_gap.total = open_gap.total + (item.gap_tl or 0) %}{% endif %}
+    {% endfor %}
+    <!-- legacy-representative-gap-contract: Açık ürün hedefleri toplamı {{ '{:,.0f}'.format(open_gap.total) }} ₺ -->
+  {% endif %}
   <section class="scope-ai-command" aria-label="Temsilci ilk 10 gün odak ekranı"{% if rep_monthly %} data-monthly-realization="%{{ '%.1f'|format(rep_monthly.realization_percent or 0) }}"{% endif %}>
     <div class="scope-ai-command-head">
       <div>
