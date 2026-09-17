@@ -1,4 +1,4 @@
-"""Real competitor movement alerts scoped to a representative's active bricks."""
+"""Representative competitor movement signals scoped to active bricks."""
 
 from __future__ import annotations
 
@@ -21,8 +21,26 @@ install_representative_market_query_optimizer()
 
 
 class CompetitiveIntelligenceService:
+    """Build only the four representative AI-panel signal families.
+
+    The service intentionally keeps one scoped aggregate query. Historical work
+    is limited to the first available IMS cut of the latest four months so the
+    panel can spot repeatable early-month competitor behaviour without restoring
+    the older broad monthly AI cards.
+    """
+
+    HISTORY_MONTHS = 4
+    SYNTHETIC_MARKET_TOKENS = (
+        "EKIP 4", "EKİP 4", "EKIP4", "EKİP4", "TOPLAM PAZAR",
+        "TOTAL MARKET", "GRAND TOTAL", "SUBTOTAL",
+    )
+
     def __init__(self, representative_id, year, month):
-        self.representative_id, self.year, self.month = int(representative_id), int(year), int(month)
+        self.representative_id, self.year, self.month = (
+            int(representative_id),
+            int(year),
+            int(month),
+        )
 
     @staticmethod
     def _key(value):
@@ -32,6 +50,11 @@ class CompetitiveIntelligenceService:
     def _shift(year, month, delta):
         ordinal = year * 12 + month - 1 + delta
         return ordinal // 12, ordinal % 12 + 1
+
+    @classmethod
+    def _is_synthetic_market_values(cls, *values):
+        haystack = " ".join(str(value or "").upper() for value in values)
+        return any(token in haystack for token in cls.SYNTHETIC_MARKET_TOKENS)
 
     @staticmethod
     def _label_candidates(values):
@@ -54,16 +77,26 @@ class CompetitiveIntelligenceService:
             RepresentativeBrickAssignment.active.is_(True),
             RepresentativeBrickAssignment.brick.isnot(None),
         ).all()
-        values = {str(brick).strip() for (brick,) in rows if str(brick or "").strip()}
+        values = {
+            str(brick).strip()
+            for (brick,) in rows
+            if str(brick or "").strip()
+        }
         return values, {self._key(value) for value in values if self._key(value)}
 
     def _periods(self):
-        return [self._shift(self.year, self.month, delta) for delta in range(-5, 1)]
+        return [
+            self._shift(self.year, self.month, delta)
+            for delta in range(-(self.HISTORY_MONTHS - 1), 1)
+        ]
 
     def _upload_plan(self):
-        """Load six-month latest uploads plus current previous snapshot in one query."""
+        """Load recent uploads once and select only early-month + current cuts."""
         periods = self._periods()
-        filters = [and_(IMSUpload.year == year, IMSUpload.month == month) for year, month in periods]
+        filters = [
+            and_(IMSUpload.year == year, IMSUpload.month == month)
+            for year, month in periods
+        ]
         uploads = IMSUpload.query.filter(
             IMSUpload.status == "COMPLETED",
             or_(*filters),
@@ -75,18 +108,32 @@ class CompetitiveIntelligenceService:
             desc(IMSUpload.id),
         ).all()
 
-        latest_by_period = {}
+        by_period = defaultdict(list)
         current_uploads = []
         for upload in uploads:
             period = (int(upload.year), int(upload.month))
-            latest_by_period.setdefault(period, upload)
+            by_period[period].append(upload)
             if period == (self.year, self.month) and len(current_uploads) < 2:
                 current_uploads.append(upload)
 
-        selected = {upload.id: upload for upload in latest_by_period.values()}
+        early_by_period = {}
+        for period, period_uploads in by_period.items():
+            # week_number is the business cut carried by the IMS import. Lowest
+            # week inside that month is the earliest available monthly cut.
+            early_by_period[period] = min(
+                period_uploads,
+                key=lambda upload: (
+                    int(upload.week_number)
+                    if upload.week_number is not None
+                    else 10**9,
+                    int(upload.id),
+                ),
+            )
+
+        selected = {upload.id: upload for upload in early_by_period.values()}
         for upload in current_uploads:
             selected[upload.id] = upload
-        return periods, latest_by_period, current_uploads, selected
+        return periods, early_by_period, current_uploads, selected
 
     def _scoped_aggregate_rows(self, upload_ids, brick_values, brick_keys):
         if not upload_ids or not brick_keys:
@@ -136,13 +183,38 @@ class CompetitiveIntelligenceService:
         } - {""}
         return any(key in product_key or product_key in key for key in own_keys)
 
-    def _build_from_plan(self, periods, latest_by_period, current_uploads, selected, brick_values, brick_keys):
+    @staticmethod
+    def _pattern_detail(pattern):
+        return (
+            f"Son {pattern['observed_months']} ayın ilk IMS kesitinde "
+            f"{pattern['hit_months']} kez görüldü; "
+            f"ortalama {pattern['average_unit']:,.0f} kutu "
+            f"(min {pattern['min_unit']:,.0f} / max {pattern['max_unit']:,.0f})."
+        )
+
+    def _build_from_plan(
+        self,
+        periods,
+        early_by_period,
+        current_uploads,
+        selected,
+        brick_values,
+        brick_keys,
+    ):
         products = Product.query.filter_by(is_active=True).all()
-        aggregate_rows = self._scoped_aggregate_rows(selected.keys(), brick_values, brick_keys)
-        snapshots = defaultdict(lambda: defaultdict(lambda: {"company": 0.0, "competitor": 0.0}))
+        aggregate_rows = self._scoped_aggregate_rows(
+            selected.keys(), brick_values, brick_keys
+        )
+        snapshots = defaultdict(
+            lambda: defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
+        )
 
         for row in aggregate_rows:
             if self._key(row.subterritory) not in brick_keys:
+                continue
+            if self._is_synthetic_market_values(
+                row.subterritory, row.product_group, row.product_name
+            ):
                 continue
             key = (
                 str(row.subterritory).strip(),
@@ -152,7 +224,8 @@ class CompetitiveIntelligenceService:
             managed_product = self._managed_product_for_row(row, products)
             side = (
                 "company"
-                if managed_product is not None and self._is_managed_product_name(row.product_name, managed_product)
+                if managed_product is not None
+                and self._is_managed_product_name(row.product_name, managed_product)
                 else "competitor"
             )
             snapshots[int(row.upload_id)][key][side] += float(row.metric_value or 0.0)
@@ -162,96 +235,185 @@ class CompetitiveIntelligenceService:
         latest = snapshots.get(latest_id, {}) if latest_id is not None else {}
         previous = snapshots.get(previous_id, {}) if previous_id is not None else {}
 
-        weekly_alerts, own_gaps = [], []
+        weekly_alerts = []
         for key in set(latest) | set(previous):
             brick, group, product = key
             current = latest.get(key, {}).get("competitor", 0.0)
             before = previous.get(key, {}).get("competitor", 0.0)
             delta = current - before
-            if current >= 50 and (before == 0 or delta >= 50 or current >= before * 1.5):
-                weekly_alerts.append({
-                    "brick": brick,
-                    "group": group,
-                    "product": product,
-                    "previous_unit": round(before, 1),
-                    "current_unit": round(current, 1),
-                    "delta_unit": round(delta, 1),
-                    "severity": "critical" if before == 0 or delta >= 100 else "warning",
-                })
+            if current >= 50 and (
+                before == 0 or delta >= 50 or current >= before * 1.5
+            ):
+                weekly_alerts.append(
+                    {
+                        "brick": brick,
+                        "group": group,
+                        "product": product,
+                        "previous_unit": round(before, 1),
+                        "current_unit": round(current, 1),
+                        "delta_unit": round(delta, 1),
+                        "severity": "critical"
+                        if before == 0 or delta >= 100
+                        else "warning",
+                    }
+                )
 
-        grouped = defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
-        for (brick, group, _product), values in latest.items():
-            grouped[(brick, group)]["company"] += values["company"]
-            grouped[(brick, group)]["competitor"] += values["competitor"]
-        for (brick, group), values in grouped.items():
-            if values["company"] <= 0 and values["competitor"] > 0:
-                own_gaps.append({
-                    "brick": brick,
-                    "group": group,
-                    "competitor_unit": round(values["competitor"], 1),
-                })
-
-        weekly_alerts.sort(key=lambda row: (row["severity"] != "critical", -row["delta_unit"], -row["current_unit"]))
-        own_gaps.sort(key=lambda row: -row["competitor_unit"])
-
-        monthly = defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
-        for year, month in periods:
-            upload = latest_by_period.get((year, month))
-            if upload is None:
-                continue
-            for (_brick, group, _product), values in snapshots.get(upload.id, {}).items():
-                monthly[(group, year, month)]["company"] += values["company"]
-                monthly[(group, year, month)]["competitor"] += values["competitor"]
-
-        trends = []
-        groups = sorted({key[0] for key in monthly})
-        for group in groups:
-            points = sorted(
-                (year, month, vals)
-                for (name, year, month), vals in monthly.items()
-                if name == group
+        weekly_alerts.sort(
+            key=lambda row: (
+                row["severity"] != "critical",
+                -row["delta_unit"],
+                -row["current_unit"],
             )
-            if len(points) < 2:
-                continue
-            py, pm, prev = points[-2]
-            cy, cm, cur = points[-1]
-            for side, label in (("company", "Kendi ürünümüz"), ("competitor", "Rakipler")):
-                before, current = prev[side], cur[side]
-                delta = current - before
-                if abs(delta) < 1:
-                    continue
-                trends.append({
-                    "group": group,
-                    "side": label,
-                    "previous_period": f"{pm:02d}/{py}",
-                    "current_period": f"{cm:02d}/{cy}",
-                    "previous_unit": round(before, 1),
-                    "current_unit": round(current, 1),
-                    "delta_unit": round(delta, 1),
-                    "change_percent": round(delta * 100 / before, 1) if before else None,
-                })
-        trends.sort(key=lambda row: -abs(row["delta_unit"]))
+        )
+        weekly_alerts = weekly_alerts[:10]
+
+        # Early-month analysis reuses the same aggregate query. The earliest
+        # available IMS cut of each month is compared across at most four
+        # months; no extra brick or month query is issued.
+        available_periods = [
+            period for period in periods if early_by_period.get(period) is not None
+        ]
+        available_early_months = len(available_periods)
+        all_early_keys = set()
+        for period in available_periods:
+            upload = early_by_period[period]
+            all_early_keys.update(snapshots.get(upload.id, {}).keys())
+
+        early_patterns = []
+        emerging = []
+        weekly_pairs = {
+            (self._key(row["brick"]), self._key(row["product"]))
+            for row in weekly_alerts
+        }
+
+        for brick, group, product in all_early_keys:
+            points = []
+            for year, month in available_periods:
+                upload = early_by_period[(year, month)]
+                competitor = float(
+                    snapshots.get(upload.id, {})
+                    .get((brick, group, product), {})
+                    .get("competitor", 0.0)
+                )
+                points.append((year, month, competitor))
+
+            nonzero = [value for _year, _month, value in points if value > 0]
+            if len(nonzero) >= 2:
+                average = sum(nonzero) / len(nonzero)
+                if average >= 20:
+                    early_patterns.append(
+                        {
+                            "brick": brick,
+                            "group": group,
+                            "product": product,
+                            "hit_months": len(nonzero),
+                            "observed_months": available_early_months,
+                            "average_unit": round(average, 1),
+                            "min_unit": round(min(nonzero), 1),
+                            "max_unit": round(max(nonzero), 1),
+                            "latest_unit": round(points[-1][2], 1),
+                            "periods": [
+                                f"{month:02d}/{year}"
+                                for year, month, value in points
+                                if value > 0
+                            ],
+                        }
+                    )
+
+            if len(points) >= 2:
+                latest_unit = points[-1][2]
+                previous_values = [value for _y, _m, value in points[:-1]]
+                previous_average = (
+                    sum(previous_values) / len(previous_values)
+                    if previous_values
+                    else 0.0
+                )
+                delta = latest_unit - previous_average
+                pair = (self._key(brick), self._key(product))
+                is_new = previous_average <= 0 and latest_unit >= 50
+                is_accelerating = (
+                    previous_average > 0
+                    and latest_unit >= previous_average * 1.5
+                    and delta >= 50
+                )
+                if pair not in weekly_pairs and (is_new or is_accelerating):
+                    emerging.append(
+                        {
+                            "brick": brick,
+                            "group": group,
+                            "product": product,
+                            "latest_unit": round(latest_unit, 1),
+                            "previous_average_unit": round(previous_average, 1),
+                            "delta_unit": round(delta, 1),
+                            "signal": "Yeni" if is_new else "Hızlanıyor",
+                        }
+                    )
+
+        early_patterns.sort(
+            key=lambda row: (
+                -row["hit_months"],
+                -row["average_unit"],
+                row["brick"],
+                row["product"],
+            )
+        )
+
+        # Keep the two lower cards to 5–7 distinct observations in total.
+        recurring_limit = min(4, len(early_patterns))
+        recurring = early_patterns[:recurring_limit]
+        recurring_pairs = {
+            (self._key(row["brick"]), self._key(row["product"]))
+            for row in recurring
+        }
+        emerging = [
+            row
+            for row in emerging
+            if (self._key(row["brick"]), self._key(row["product"]))
+            not in recurring_pairs
+        ]
+        emerging.sort(
+            key=lambda row: (
+                -row["delta_unit"],
+                -row["latest_unit"],
+                row["brick"],
+                row["product"],
+            )
+        )
+        emerging_limit = max(0, 7 - len(recurring))
+        emerging = emerging[:emerging_limit]
+
         return {
-            "weekly_alerts": weekly_alerts[:10],
-            "own_gaps": own_gaps[:10],
-            "monthly_trends": trends[:12],
+            "weekly_alerts": weekly_alerts,
+            # Compatibility keys stay empty because the duplicate legacy cards
+            # are intentionally removed from the representative AI screen.
+            "own_gaps": [],
+            "monthly_trends": [],
+            "early_month_patterns": recurring,
+            "early_month_emerging": emerging,
             "compared_uploads": [upload.id for upload in current_uploads],
         }
 
     def build(self):
         brick_values, brick_keys = self._brick_scope()
-        periods, latest_by_period, current_uploads, selected = self._upload_plan()
-        upload_signature = "-".join(str(upload_id) for upload_id in sorted(selected)) or "none"
+        periods, early_by_period, current_uploads, selected = self._upload_plan()
+        upload_signature = (
+            "-".join(str(upload_id) for upload_id in sorted(selected)) or "none"
+        )
         brick_signature = "-".join(sorted(brick_keys))
         scope_digest = hashlib.sha1(brick_signature.encode("utf-8")).hexdigest()[:16]
         cache_key = (
             f"rep-intelligence:{self.representative_id}:{self.year}:{self.month}:"
-            f"{upload_signature}:{scope_digest}"
+            f"{upload_signature}:{scope_digest}:focus-v2"
         )
         return RepresentativeAnalysisCache.get_or_compute(
             cache_key,
             lambda: self._build_from_plan(
-                periods, latest_by_period, current_uploads, selected, brick_values, brick_keys
+                periods,
+                early_by_period,
+                current_uploads,
+                selected,
+                brick_values,
+                brick_keys,
             ),
             ttl_seconds=60,
         )
