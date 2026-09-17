@@ -25,6 +25,75 @@ auth_bp = Blueprint(
     __name__
 )
 
+CORPORATE_REGISTRATION_DOMAIN = "bilimilac.com"
+
+
+def _registration_regions():
+    """Return public registration choices without changing representative master data."""
+    rows = (
+        db.session.query(Representative.region, Representative.city)
+        .filter(Representative.region.isnot(None), Representative.city.isnot(None))
+        .distinct()
+        .order_by(Representative.region.asc(), Representative.city.asc())
+        .all()
+    )
+    return [
+        (region, city)
+        for region, city in rows
+        if not (
+            str(region).strip() == "602"
+            and str(city).strip().casefold() == "artvin"
+        )
+    ]
+
+
+def _is_corporate_registration_email(email):
+    """Allow registration only with the exact Bilim İlaç corporate domain."""
+    local_part, separator, domain = str(email or "").strip().lower().rpartition("@")
+    return bool(
+        separator
+        and local_part
+        and domain == CORPORATE_REGISTRATION_DOMAIN
+        and "@" not in local_part
+        and not any(char.isspace() for char in local_part)
+    )
+
+
+def _resolve_registration_representative(full_name, selected_region):
+    """Resolve one active IMS representative inside the selected region.
+
+    Registration is fail-closed: an account is created only when name + region
+    identify an existing representative safely. Returning the canonical IMS
+    representative lets the user account inherit the same normalized identity
+    used by representative-page access after login.
+    """
+    from app.services.alias_service import AliasService
+
+    normalized_name = AliasService.normalize(full_name)
+    regional_representatives = Representative.query.filter_by(
+        active=True,
+        region=selected_region,
+    ).all()
+    exact_matches = [
+        representative
+        for representative in regional_representatives
+        if AliasService.normalize(representative.rep_name) == normalized_name
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        return None
+
+    suggestion = AliasService.find_representative(full_name)
+    candidate = suggestion.get("object") if suggestion.get("matched") else None
+    if (
+        candidate is not None
+        and candidate.active
+        and candidate.region == selected_region
+    ):
+        return candidate
+    return None
+
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
@@ -144,13 +213,7 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
 
-    regions = (
-        db.session.query(Representative.region, Representative.city)
-        .filter(Representative.region.isnot(None), Representative.city.isnot(None))
-        .distinct()
-        .order_by(Representative.region.asc(), Representative.city.asc())
-        .all()
-    )
+    regions = _registration_regions()
 
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
@@ -166,8 +229,8 @@ def register():
             flash("Lütfen listeden geçerli bir bölge seçin.", "warning")
         elif len(full_name) < 3:
             flash("Ad soyad en az 3 karakter olmalıdır.", "warning")
-        elif "@" not in email or "." not in email.rsplit("@", 1)[-1]:
-            flash("Geçerli bir e-posta adresi girin.", "warning")
+        elif not _is_corporate_registration_email(email):
+            flash("Kayıt için yalnızca @bilimilac.com kurumsal e-posta adresi kullanılabilir.", "warning")
         elif len(password) < 8:
             flash("Şifre en az 8 karakter olmalıdır.", "warning")
         elif password != password_confirm:
@@ -175,38 +238,32 @@ def register():
         elif User.query.filter_by(email=email).first():
             flash("Bu e-posta adresi zaten kayıtlı.", "danger")
         else:
-            user = User(
-                full_name=full_name,
-                email=email,
-                phone=phone or None,
-                password=generate_password_hash(password),
-                role="Representative",
-                active=True,
-            )
-            db.session.add(user)
-            # Registration owns account credentials; master representative
-            # contact data is updated only on an exact normalized name match.
-            # This prevents a similar-looking name from changing another
-            # representative's card.
-            from app.services.alias_service import AliasService
-            normalized_name = AliasService.normalize(full_name)
-            matches = [rep for rep in Representative.query.all() if AliasService.normalize(rep.rep_name) == normalized_name]
-            representative = matches[0] if len(matches) == 1 and matches[0].region == selected_region else None
-            if representative is None and not matches:
-                suggestion = AliasService.find_representative(full_name)
-                candidate = suggestion.get("object") if suggestion.get("matched") else None
-                if candidate is not None and candidate.region == selected_region:
-                    representative = candidate
-            if representative is not None:
+            representative = _resolve_registration_representative(full_name, selected_region)
+            if representative is None:
+                flash(
+                    "Ad soyad ve bölge bilgileri aktif IMS temsilci kaydıyla eşleşmedi. "
+                    "Lütfen bilgilerinizi kontrol edin.",
+                    "warning",
+                )
+            else:
+                user = User(
+                    full_name=representative.rep_name,
+                    email=email,
+                    phone=phone or None,
+                    password=generate_password_hash(password),
+                    role="Representative",
+                    active=True,
+                )
+                db.session.add(user)
                 representative.email = email
                 if phone:
                     representative.phone = phone
-            db.session.commit()
-            from app.services.user_vault_service import UserVaultService
-            UserVaultService.sync_from_primary()
-            login_user(user, remember=True)
-            flash("Hesabınız oluşturuldu. Hoş geldiniz!", "success")
-            return redirect(url_for("main.dashboard"))
+                db.session.commit()
+                from app.services.user_vault_service import UserVaultService
+                UserVaultService.sync_from_primary()
+                login_user(user, remember=True)
+                flash("Hesabınız oluşturuldu. Hoş geldiniz!", "success")
+                return redirect(url_for("main.dashboard"))
 
     return render_template("register.html", regions=regions)
 
