@@ -382,6 +382,22 @@ class CompetitiveIntelligenceService:
         emerging_limit = max(0, 7 - len(recurring))
         emerging = emerging[:emerging_limit]
 
+        # If new/hızlanan signals are sparse, fill the lower section with more
+        # non-duplicated recurring observations so available data still yields
+        # the requested 5–7 actionable items without inventing a signal.
+        used_pairs = recurring_pairs | {
+            (self._key(row["brick"]), self._key(row["product"]))
+            for row in emerging
+        }
+        for row in early_patterns[recurring_limit:]:
+            if len(recurring) + len(emerging) >= 5:
+                break
+            pair = (self._key(row["brick"]), self._key(row["product"]))
+            if pair in used_pairs:
+                continue
+            recurring.append(row)
+            used_pairs.add(pair)
+
         return {
             "weekly_alerts": weekly_alerts,
             # Compatibility keys stay empty because the duplicate legacy cards
@@ -403,7 +419,7 @@ class CompetitiveIntelligenceService:
         scope_digest = hashlib.sha1(brick_signature.encode("utf-8")).hexdigest()[:16]
         cache_key = (
             f"rep-intelligence:{self.representative_id}:{self.year}:{self.month}:"
-            f"{upload_signature}:{scope_digest}:focus-v2"
+            f"{upload_signature}:{scope_digest}:focus-v3"
         )
         return RepresentativeAnalysisCache.get_or_compute(
             cache_key,
