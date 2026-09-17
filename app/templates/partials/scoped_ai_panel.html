@@ -15,7 +15,7 @@
 
   {% if ai_report.scope_type == 'representative' %}
   {% set rep_monthly=ai_report.periods.get('monthly') %}
-  <section class="scope-ai-command" aria-label="Temsilci ilk 10 gün odak ekranı"{% if rep_monthly %} data-monthly-realization="%{{ rep_monthly.realization_percent }}"{% endif %}>
+  <section class="scope-ai-command" aria-label="Temsilci ilk 10 gün odak ekranı"{% if rep_monthly %} data-monthly-realization="%{{ '%.1f'|format(rep_monthly.realization_percent or 0) }}"{% endif %}>
     <div class="scope-ai-command-head">
       <div>
         <span>BRICK → TEMSİLCİ · 4 NET ODAK</span>
