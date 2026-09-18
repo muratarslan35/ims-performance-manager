@@ -693,8 +693,8 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "auth-layout auth-layout-narrow auth-layout-register" in register_html
     assert 'class="auth-ims-emblem"' in login_html
     assert 'class="auth-ims-emblem"' in register_html
-    assert "img/ims-auth-lockup.svg" in login_html
-    assert "img/ims-auth-lockup.svg" in register_html
+    assert "img/ims-auth-mark.svg" in login_html
+    assert "img/ims-auth-mark.svg" in register_html
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert ".auth-ims-emblem" in css
     assert "@media (max-width: 800px)" in css
