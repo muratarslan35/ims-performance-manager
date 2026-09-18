@@ -722,7 +722,7 @@ def test_login_and_register_show_corporate_system_name(app):
     assert 'html[data-theme="dark"] body.anonymous .auth-brand-stack .auth-system-title' in css
     assert "color: #f5f8fc !important" in css
     assert "background: #142238 !important" in css
-    assert "min-height: 76px" in css
+    assert "min-height: 88px" in css
     assert "max-height: 116px" in css
     assert "object-fit: cover" in css
     assert "height: 112px" in css
