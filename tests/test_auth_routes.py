@@ -852,8 +852,8 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert 'id="monthlyThresholdTable"' in html
     assert "%75 için" in html and "%90 için" in html and "%100 için" in html
     assert "signedBox" in html
-    assert "threshold-balance is-reached" in html
-    assert "threshold-balance is-missing" in html
+    assert ".threshold-balance.is-reached" in html
+    assert ".threshold-balance.is-missing" in html
     assert "simulationShell.addEventListener" in html
 
 
