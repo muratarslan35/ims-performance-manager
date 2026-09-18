@@ -855,6 +855,8 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert ".threshold-balance.is-reached" in html
     assert ".threshold-balance.is-missing" in html
     assert "simulationShell.addEventListener" in html
+    assert 'state=productPercent>=100?"Tamamlandı"' in html
+    assert 'state=item.passed?"Tamamlandı"' not in html
 
 
 def test_simulation_lists_unassigned_representatives_last(app):
