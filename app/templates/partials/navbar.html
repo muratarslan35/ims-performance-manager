@@ -19,21 +19,18 @@
                 <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" alt="Bilim İlaç">
             </a>
 
-            <div class="navbar-page-info d-none d-md-block">
-                <div class="navbar-page-title-line">
-                    <a class="navbar-title-mark" href="{{ url_for('dashboard.index') }}" aria-label="IMS Performans Takip Sistemi ana sayfa">
-                        <img src="{{ url_for('static', filename='img/ims-brand.svg') }}" alt="" aria-hidden="true">
-                    </a>
-                    <div class="navbar-page-title">
-                        {% block navbar_page_title %}IMS PERFORMANS TAKİP SİSTEMİ{% endblock %}
-                    </div>
-                </div>
-                <ol class="navbar-breadcrumb" aria-label="Gezinti yolu">
-                    <li>
-                        <a href="{{ url_for('dashboard.index') }}">Ana Sayfa</a>
-                    </li>
-                    {% block navbar_breadcrumb_extra %}{% endblock %}
-                </ol>
+            <div class="navbar-page-info">
+                <a class="navbar-page-title-line navbar-home-brand"
+                   href="{{ url_for('dashboard.index') }}"
+                   aria-label="IMS Performans Takip Sistemi ana sayfa">
+                    <span class="navbar-title-mark" aria-hidden="true">
+                        <img src="{{ url_for('static', filename='img/ims-brand.svg') }}" alt="">
+                    </span>
+                    <span class="navbar-page-title">
+                        <span>IMS PERFORMANS</span>
+                        <span>TAKİP SİSTEMİ</span>
+                    </span>
+                </a>
             </div>
         </div>
 

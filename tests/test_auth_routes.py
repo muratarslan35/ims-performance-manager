@@ -677,10 +677,17 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert 'class="navbar-mobile-status"' in html
     assert "Aktif" in html
     assert "Son IMS" in html
-    assert "IMS PERFORMANS TAKİP SİSTEMİ" in html
     assert 'class="navbar-title-mark"' in html
-    assert 'class="navbar-page-title-line"' in html
+    assert 'class="navbar-page-title-line navbar-home-brand"' in html
+    assert "<span>IMS PERFORMANS</span>" in html
+    assert "<span>TAKİP SİSTEMİ</span>" in html
     assert "img/ims-brand.svg" in html
+    navbar_template = Path("app/templates/partials/navbar.html").read_text(encoding="utf-8")
+    assert 'class="navbar-breadcrumb"' not in navbar_template
+    assert 'href="{{ url_for(\'dashboard.index\') }}"' in navbar_template
+    layout_css = Path("app/static/css/layout.css").read_text(encoding="utf-8")
+    assert ".navbar-home-brand" in layout_css
+    assert "font-size: 10.5px" in layout_css
     assert 'rel="icon" type="image/svg+xml"' in html
 
 
@@ -714,8 +721,11 @@ def test_login_and_register_show_corporate_system_name(app):
     assert 'html[data-theme="dark"] body.anonymous .auth-brand-stack .auth-system-title' in css
     assert "color: #f5f8fc !important" in css
     assert "background: #142238 !important" in css
-    assert "min-height: 76px" in css
+    assert "min-height: 88px" in css
     assert "max-height: 116px" in css
+    assert "object-fit: cover" in css
+    assert "height: 112px" in css
+    assert "height: 88px" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
