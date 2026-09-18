@@ -95,12 +95,12 @@
 .auth-ims-emblem {
   position: relative;
   z-index: 1;
-  width: clamp(220px, 18vw, 300px);
-  height: clamp(132px, 16vh, 188px);
+  width: clamp(360px, 36vw, 520px);
+  height: clamp(206px, 23vh, 248px);
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  margin: 0 auto clamp(10px, 1.4vh, 18px);
+  margin: 0 auto clamp(8px, 1.2vh, 14px);
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -125,7 +125,7 @@
 
 .auth-ims-emblem img {
   display: block;
-  width: min(72%, 194px);
+  width: min(48%, 224px);
   height: auto;
   max-height: 100%;
   object-fit: contain;
@@ -156,20 +156,20 @@
 /* Tablet / small desktop */
 @media (min-width: 576px) and (max-width: 991.98px) {
   .auth-ims-emblem {
-    width: clamp(260px, 38vw, 360px);
-    height: clamp(142px, 18vh, 190px);
-    margin-bottom: 10px;
+    width: min(70vw, 440px);
+    height: clamp(170px, 21vh, 210px);
+    margin-bottom: 8px;
   }
   .auth-ims-emblem img {
-    width: min(68%, 210px);
+    width: min(48%, 186px);
   }
 }
 
 /* Phone */
 @media (max-width: 575.98px) {
   .auth-ims-emblem {
-    width: min(82vw, 320px);
-    height: clamp(94px, 14vh, 118px);
+    width: min(88vw, 340px);
+    height: clamp(112px, 16vh, 140px);
     margin: 0 auto 5px;
   }
   .auth-ims-emblem::before {
@@ -178,8 +178,8 @@
     opacity: .66;
   }
   .auth-ims-emblem img {
-    width: min(46%, 126px);
-    max-height: 112px;
+    width: min(44%, 142px);
+    max-height: 132px;
     filter: drop-shadow(0 9px 18px rgba(4,30,77,.18));
   }
 }
