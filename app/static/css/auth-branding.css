@@ -463,3 +463,311 @@ body.auth-viewport-locked .page-body > .container-xl {
     min-height: 0;
   }
 }
+
+
+/* === FINAL AUTH REFERENCE LAYOUT =========================================
+   Preserve the card architecture on every device. The exact favicon mark
+   stays prominent above the title; the card itself scales instead of
+   switching to a different mobile structure.
+   ====================================================================== */
+.auth-brand-stack {
+  width: min(92vw, 820px);
+  gap: 10px;
+  margin: 0 auto clamp(14px, 1.8vh, 22px);
+}
+.auth-brand-stack .auth-ims-emblem {
+  width: clamp(156px, 12vw, 196px);
+  height: auto;
+  aspect-ratio: 1;
+}
+.auth-brand-stack .auth-system-title {
+  padding: 0 16px 11px;
+  font-size: clamp(20px, 1.75vw, 27px);
+  letter-spacing: .055em;
+}
+.auth-brand-stack .auth-system-title::after {
+  width: 78px;
+  height: 3px;
+  margin-top: 10px;
+}
+
+.auth-shell-login .auth-layout,
+.auth-shell-register .auth-layout {
+  width: min(92vw, 1120px);
+  max-width: 1120px;
+  min-height: 0;
+  max-height: none;
+  grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
+}
+.auth-shell-register .auth-layout {
+  width: min(92vw, 1040px);
+  max-width: 1040px;
+}
+.auth-shell-login .auth-identity-panel,
+.auth-shell-register .auth-identity-panel {
+  min-height: 0;
+}
+.auth-shell-login .auth-layout .auth-card,
+.auth-shell-register .auth-layout .auth-card {
+  min-width: 0;
+}
+
+/* Tablet: keep the same two-column card architecture, only scale density. */
+@media (min-width: 576px) and (max-width: 991.98px) {
+  .auth-shell-login,
+  .auth-shell-register {
+    justify-content: center;
+    padding: 16px 18px 20px;
+  }
+  .auth-brand-stack {
+    width: min(88vw, 650px);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .auth-brand-stack .auth-ims-emblem {
+    width: clamp(128px, 16vw, 158px);
+  }
+  .auth-brand-stack .auth-system-title {
+    padding-bottom: 9px;
+    font-size: clamp(18px, 2.5vw, 22px);
+  }
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(94vw, 900px);
+    max-width: 900px;
+    grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
+    border-radius: 24px;
+  }
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(94vw, 840px);
+    max-width: 840px;
+  }
+  .auth-shell-login .auth-layout .auth-card {
+    padding: 24px 22px;
+  }
+  .auth-shell-register .auth-layout .auth-card {
+    padding: 18px 20px;
+  }
+  .auth-shell-login .auth-welcome { font-size: 22px; }
+  .auth-shell-register .auth-welcome { font-size: 20px; }
+}
+
+/* Phone: do not stack the card. Scale the existing desktop composition. */
+@media (max-width: 575.98px) {
+  body.auth-viewport-locked {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .auth-shell-login,
+  .auth-shell-register {
+    justify-content: flex-start;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 12px 10px max(18px, env(safe-area-inset-bottom));
+  }
+
+  .auth-brand-stack {
+    width: 100%;
+    gap: 5px;
+    margin: 0 auto 10px;
+  }
+  .auth-brand-stack .auth-ims-emblem {
+    width: clamp(108px, 31vw, 132px);
+  }
+  .auth-brand-stack .auth-system-title {
+    max-width: 96vw;
+    padding: 0 4px 7px;
+    font-size: clamp(13px, 4.1vw, 16px);
+    line-height: 1.18;
+    letter-spacing: .035em;
+    white-space: nowrap;
+  }
+  .auth-brand-stack .auth-system-title::after {
+    width: 58px;
+    height: 2px;
+    margin-top: 6px;
+  }
+
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(94vw, 520px);
+    max-width: 520px;
+    grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
+    align-items: stretch;
+    border-radius: 20px;
+    overflow: hidden;
+    max-height: none;
+  }
+
+  .auth-shell-login .auth-identity-panel,
+  .auth-shell-register .auth-identity-panel {
+    min-height: 0;
+    height: auto;
+    padding: 0;
+    align-self: stretch;
+  }
+  .auth-shell-login .auth-identity-logo,
+  .auth-shell-register .auth-identity-logo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    padding: 8px 8px;
+    object-fit: contain;
+    object-position: center;
+    transform: none;
+  }
+
+  .auth-shell-login .auth-layout .auth-card,
+  .auth-shell-register .auth-layout .auth-card {
+    padding: 12px 11px;
+    overflow: visible;
+  }
+
+  .auth-shell-login .auth-welcome,
+  .auth-shell-register .auth-welcome {
+    margin: 0 0 2px;
+    font-size: 15px;
+    line-height: 1.14;
+  }
+  .auth-shell-login .auth-subtitle,
+  .auth-shell-register .auth-subtitle {
+    margin: 0 0 7px;
+    font-size: 9.5px;
+    line-height: 1.2;
+  }
+
+  .auth-shell-login .portal-selector {
+    margin-bottom: 7px !important;
+  }
+  .auth-shell-login .portal-selector legend {
+    margin-bottom: 4px;
+    font-size: 9.5px;
+  }
+  .auth-shell-login .portal-selector-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
+  .auth-shell-login .portal-option span {
+    min-height: 47px;
+    padding: 5px 6px;
+    border-radius: 9px;
+  }
+  .auth-shell-login .portal-option i {
+    margin-bottom: 1px;
+    font-size: 12px;
+  }
+  .auth-shell-login .portal-option strong {
+    font-size: 9.5px;
+  }
+  .auth-shell-login .portal-option small {
+    margin-top: 1px;
+    font-size: 7.5px;
+    line-height: 1.15;
+  }
+
+  .auth-shell-login .auth-form .form-label,
+  .auth-shell-register .auth-form .form-label {
+    margin-bottom: 2px;
+    font-size: 9.5px;
+    line-height: 1.15;
+  }
+  .auth-shell-login .auth-form .mb-3,
+  .auth-shell-register .auth-form .mb-3 {
+    margin-bottom: 5px !important;
+  }
+  .auth-shell-login .auth-form .form-control,
+  .auth-shell-register .auth-form .form-control,
+  .auth-shell-register .auth-form .form-select {
+    min-height: 30px;
+    height: 30px;
+    padding: 4px 8px;
+    border-radius: 9px;
+    font-size: 10px;
+  }
+  .auth-shell-login .auth-form > .d-flex {
+    margin-bottom: 6px !important;
+  }
+  .auth-shell-login .form-check-label {
+    font-size: 9px;
+  }
+  .auth-shell-login .form-check-input {
+    width: 14px;
+    height: 14px;
+  }
+  .auth-shell-login .btn-auth-submit,
+  .auth-shell-register .btn-auth-submit {
+    min-height: 33px;
+    padding: 5px 8px;
+    border-radius: 9px;
+    font-size: 11px;
+  }
+  .auth-shell-login .auth-footer,
+  .auth-shell-register .auth-footer {
+    margin-top: 6px;
+    font-size: 9px;
+    line-height: 1.15;
+  }
+
+  .auth-shell-register .auth-layout .auth-card {
+    padding: 9px 10px 10px;
+  }
+  .auth-shell-register .auth-welcome {
+    font-size: 14px;
+  }
+  .auth-shell-register .auth-subtitle {
+    margin-bottom: 4px;
+    font-size: 8.5px;
+  }
+  .auth-shell-register .auth-form .mb-3 {
+    margin-bottom: 3px !important;
+  }
+  .auth-shell-register .auth-form .form-label {
+    font-size: 8.5px;
+  }
+  .auth-shell-register .auth-form .form-control,
+  .auth-shell-register .auth-form .form-select {
+    min-height: 27px;
+    height: 27px;
+    padding: 3px 7px;
+    font-size: 9px;
+  }
+  .auth-shell-register .form-hint {
+    margin-bottom: 3px !important;
+    font-size: 7.8px;
+    line-height: 1.1;
+  }
+  .auth-shell-register .row > .col-md-6 {
+    width: 50%;
+  }
+  .auth-shell-register .auth-form .row {
+    --tblr-gutter-x: 7px;
+  }
+  .auth-shell-register .btn-auth-submit {
+    min-height: 31px;
+    font-size: 10px;
+  }
+  .auth-shell-register .auth-footer {
+    margin-top: 4px;
+    font-size: 8.3px;
+  }
+}
+
+@media (max-width: 360px) {
+  .auth-brand-stack .auth-ims-emblem { width: 102px; }
+  .auth-brand-stack .auth-system-title { font-size: 12px; }
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: 96vw;
+    grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+  }
+  .auth-shell-login .auth-layout .auth-card,
+  .auth-shell-register .auth-layout .auth-card { padding-left: 8px; padding-right: 8px; }
+}
