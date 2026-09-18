@@ -1,10 +1,12 @@
-/* Use the supplied Bilim İlaç artwork without resizing or recolouring it. */
+/* Bilim İlaç corporate mark: use the vector artwork as a complete, crisp lockup. */
 .auth-identity-panel {
   min-height: 600px;
   position: relative;
   overflow: hidden;
   padding: 0;
-  background: #0a2456;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(31, 89, 173, .28), transparent 42%),
+    linear-gradient(145deg, #0b2d67 0%, #0a2456 54%, #071b42 100%);
 }
 
 .auth-identity-panel::before {
@@ -13,18 +15,21 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  background: linear-gradient(135deg, rgba(3, 18, 57, .12), rgba(3, 18, 57, .02) 58%, rgba(3, 18, 57, .30));
+  background: linear-gradient(135deg, rgba(255,255,255,.035), transparent 48%, rgba(0,0,0,.12));
 }
 
 .auth-identity-logo {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 50%;
   z-index: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  width: 84%;
+  height: 58%;
+  max-width: 520px;
+  transform: translate(-50%, -50%);
+  object-fit: contain;
   object-position: center;
-  filter: none;
+  filter: drop-shadow(0 12px 24px rgba(0,0,0,.22));
 }
 
 .auth-system-title {
@@ -80,7 +85,12 @@
 
 @media (max-width: 800px) {
   .auth-identity-panel { min-height: 190px; }
-  .auth-identity-logo { object-position: center 48%; }
+  .auth-identity-logo {
+    width: 88%;
+    height: 70%;
+    max-width: 460px;
+    object-position: center;
+  }
   .auth-system-title { padding: 10px; font-size: 15px; margin-bottom: 10px; }
   .portal-selector-grid { grid-template-columns: 1fr; }
 }
@@ -683,14 +693,22 @@ body.auth-viewport-locked .page-body > .container-xl {
   .auth-shell-login .auth-identity-logo,
   .auth-shell-register .auth-identity-logo {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    left: 50%;
+    top: 50%;
+    inset: auto;
+    width: 88%;
+    height: 74%;
     max-width: none;
     padding: 0;
-    object-fit: cover;
-    object-position: center 52%;
-    transform: none;
+    object-fit: contain;
+    object-position: center;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 8px 16px rgba(0,0,0,.22));
+  }
+
+  .auth-shell-register .auth-identity-logo {
+    width: 86%;
+    height: 76%;
   }
 
   .auth-shell-login .auth-layout .auth-card {
@@ -855,8 +873,13 @@ body.auth-viewport-locked .page-body > .container-xl {
   }
 
   .auth-shell-register .auth-identity-panel {
-    min-height: 72px;
-    height: 72px;
+    min-height: 78px;
+    height: 78px;
+  }
+
+  .auth-shell-register .auth-identity-logo {
+    width: 84%;
+    height: 78%;
   }
 
   .auth-shell-register .auth-layout .auth-card {
