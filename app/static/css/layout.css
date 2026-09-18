@@ -363,29 +363,39 @@ body.sidebar-collapsed .app-sidebar {
   min-width: 0;
 }
 
+.navbar-home-brand {
+  color: var(--text);
+  text-decoration: none !important;
+  border-radius: 9px;
+  outline: none;
+}
+
+.navbar-home-brand:hover,
+.navbar-home-brand:focus-visible {
+  color: var(--primary);
+}
+
+.navbar-home-brand:focus-visible {
+  box-shadow: 0 0 0 3px rgba(11, 78, 162, .18);
+}
+
 .navbar-title-mark {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 8px;
-  text-decoration: none;
+  border-radius: 9px;
   box-shadow: 0 4px 10px rgba(8, 62, 134, .14);
   transition: transform .16s ease, box-shadow .16s ease;
 }
 
-.navbar-title-mark:hover,
-.navbar-title-mark:focus-visible {
+.navbar-home-brand:hover .navbar-title-mark,
+.navbar-home-brand:focus-visible .navbar-title-mark {
   transform: translateY(-1px);
   box-shadow: 0 6px 14px rgba(8, 62, 134, .20);
-}
-
-.navbar-title-mark:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
 }
 
 .navbar-title-mark img {
@@ -396,12 +406,12 @@ body.sidebar-collapsed .app-sidebar {
 }
 
 @media (max-width: 991.98px) {
-  .navbar-page-title-line { gap: 7px; }
+  .navbar-page-title-line { gap: 6px; }
   .navbar-title-mark {
-    width: 24px;
-    height: 24px;
-    flex-basis: 24px;
-    border-radius: 7px;
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+    border-radius: 8px;
   }
 }
 
@@ -443,14 +453,22 @@ body.sidebar-collapsed .app-sidebar {
 .navbar-page-info { flex-shrink: 1; min-width: 0; }
 
 .navbar-page-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: inherit;
   margin: 0;
+  line-height: 1.02;
+  letter-spacing: .015em;
+}
+
+.navbar-page-title > span {
+  display: block;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.25;
 }
 
 /* Breadcrumb in navbar */
@@ -903,7 +921,11 @@ body.sidebar-collapsed .app-sidebar {
   .page-header { padding: 10px 12px 0; }
   .app-navbar { height: auto; min-height: var(--navbar-height); }
   .navbar-inner { min-height: var(--navbar-height); height: auto; flex-wrap: wrap; padding-top: 7px; padding-bottom: 8px; }
-  .navbar-inner > .d-flex:first-child { flex: 0 0 auto; }
+  .navbar-inner > .d-flex:first-child { flex: 0 1 auto; min-width: 0; }
+  .navbar-page-info { display: block; min-width: 0; max-width: 150px; }
+  .navbar-home-brand { max-width: 100%; }
+  .navbar-title-mark { width: 30px; height: 30px; flex-basis: 30px; }
+  .navbar-page-title { font-size: 10.5px; line-height: 1.02; }
   .navbar-right { gap: 4px; }
   .navbar-center { display: block; order: 3; flex: 1 0 100%; max-width: none; margin: 0; }
   .navbar-search-input { height: 40px; background: var(--background); }
@@ -938,14 +960,26 @@ body.sidebar-collapsed .app-sidebar {
 
 @media (max-width: 420px) {
   .navbar-inner { padding-left: 8px; padding-right: 8px; gap: 5px; }
-  .navbar-hamburger { width: 36px; }
+  .navbar-hamburger { width: 34px; }
+  .navbar-page-info { max-width: 116px; }
+  .navbar-page-title-line { gap: 5px; }
+  .navbar-title-mark { width: 28px; height: 28px; flex-basis: 28px; }
+  .navbar-page-title { font-size: 9px; letter-spacing: 0; }
   .navbar-icon-btn { width: 34px; height: 36px; }
   .navbar-mobile-status { height: 36px; }
-  .navbar-mobile-status > div { min-width: 54px; padding-left: 5px; padding-right: 5px; }
-  .navbar-mobile-status > div:first-child { min-width: 88px; }
-  .navbar-mobile-status strong { max-width: 62px; font-size: 8px; }
-  .navbar-mobile-status > div:first-child strong { max-width: 96px; }
+  .navbar-mobile-status > div { min-width: 50px; padding-left: 4px; padding-right: 4px; }
+  .navbar-mobile-status > div:first-child { min-width: 78px; }
+  .navbar-mobile-status strong { max-width: 58px; font-size: 7.7px; }
+  .navbar-mobile-status > div:first-child strong { max-width: 86px; }
   .navbar-user-avatar { width: 28px; height: 28px; }
+}
+
+@media (max-width: 350px) {
+  .navbar-page-info { max-width: 96px; }
+  .navbar-title-mark { width: 25px; height: 25px; flex-basis: 25px; }
+  .navbar-page-title { font-size: 8px; }
+  .navbar-mobile-status > div { min-width: 44px; }
+  .navbar-mobile-status > div:first-child { min-width: 68px; }
 }
 
 /* ─── §10  AUTH PAGE (anonymous layout) ──────────────────────── */
