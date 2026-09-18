@@ -209,7 +209,8 @@ def test_login_register_are_locked_to_viewport_and_manual_matching_is_not_in_sid
     assert "overflow: hidden" in auth_css
     assert ".auth-shell-register .auth-identity-logo" in auth_css
     assert "justify-content: flex-start" in auth_css
-    assert "transform: translate(-50%, -50%)" in auth_css
+    assert "object-fit: contain" in auth_css
+    assert "overflow-y: auto" in auth_css
     assert ".auth-shell-register .btn-auth-submit" in auth_css
     assert "Manuel Eşleştirme" not in sidebar
     assert "matching.index" not in sidebar
