@@ -101,8 +101,6 @@
     <div class="scope-ai-command-head">
       <div>
         <span>BÖLGE → İL → TEMSİLCİ · AYLIK YÖNETİM ODAĞI</span>
-        <h3>AY Bölge Yönetim Kokpiti</h3>
-        <p>Tekrarlayan AI özetleri kaldırıldı. Bölge müdürü için yalnız aksiyon gerektiren ürün, temsilci, rakip ve brick sinyalleri gösterilir.</p>
       </div>
       <span class="scope-ai-source-pill">{% if region_data_source|default('snapshot') == 'snapshot' %}Aktif snapshot · tek okuma{% else %}Uyumluluk verisi{% endif %}</span>
     </div>
@@ -181,12 +179,10 @@
       </ol>
     </article>
 
-    <div class="scope-ai-note" style="margin-top:12px">
-      <i class="bi bi-speedometer2"></i>
-      {% if region_data_source|default('snapshot') == 'snapshot' %}Bu kokpit aktif bölge snapshotından hazırlanır; sayfa açılışında performans ve rekabet hesapları yeniden çalıştırılmaz.{% else %}Bu dönem için kalıcı snapshot bulunmadığından uyumluluk okuması kullanıldı; normal güncel dönemlerde kalıcı snapshot tercih edilir.{% endif %}
-    </div>
   </section>
   {% endif %}
 
+  {% if scope_type == 'representative' %}
   <footer class="scope-ai-note"><i class="bi bi-shield-check"></i>{{ ai_report.method_note }}</footer>
+  {% endif %}
 </section>
