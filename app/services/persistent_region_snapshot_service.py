@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy import desc
 
 from app.extensions import db
-from app.models import IMSUpload, Representative, Target
+from app.models import IMSUpload, ProductionResultUpload, Representative, Target
 from app.services.production_result_service import ProductionResultService
 from app.services.region_market_service import RegionMarketService
 from app.services.region_performance_service import RegionPerformanceService
@@ -205,6 +205,59 @@ class PersistentRegionSnapshotService:
             ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
         ).scalar()
         return int(previous) if previous else None
+
+    @classmethod
+    def get_active_for_visible_upload(cls, region_key, year, month, source_upload_id):
+        """Read the published region payload for an already-resolved visible IMS.
+
+        PeriodService has already applied the IMS publication gate before the
+        region route calls this method. Reusing that source id avoids repeating
+        pending-job/progress-file checks on every map click. The current
+        production-result identity is resolved inside the same SQL statement so
+        a newly applied P1/P2 result cannot serve an older ACTIVE payload.
+        """
+        if not source_upload_id:
+            return None
+
+        year, month = int(year), int(month)
+        production_id = (
+            sa.select(ProductionResultUpload.id)
+            .where(
+                ProductionResultUpload.year == year,
+                ProductionResultUpload.month == month,
+                ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+            )
+            .order_by(
+                ProductionResultUpload.production_stage.desc(),
+                ProductionResultUpload.applied_at.desc(),
+                ProductionResultUpload.id.desc(),
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+        raw = db.session.execute(
+            sa.select(region_snapshots.c.payload_json)
+            .select_from(
+                region_snapshots.join(
+                    region_snapshot_sets,
+                    region_snapshot_sets.c.id == region_snapshots.c.set_id,
+                )
+            )
+            .where(
+                region_snapshot_sets.c.year == year,
+                region_snapshot_sets.c.month == month,
+                region_snapshot_sets.c.source_upload_id == int(source_upload_id),
+                region_snapshot_sets.c.production_upload_id == sa.func.coalesce(production_id, 0),
+                region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                region_snapshots.c.region_key == str(region_key).strip(),
+            )
+            .order_by(
+                desc(region_snapshot_sets.c.activated_at),
+                desc(region_snapshot_sets.c.id),
+            )
+            .limit(1)
+        ).scalar()
+        return json.loads(raw) if raw else None
 
     @classmethod
     def get_active(cls, region_key, year, month):
