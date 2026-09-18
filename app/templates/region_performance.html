@@ -16,6 +16,7 @@
 
   <div class="region-section region-annual-card"><div class="region-section-head"><div><h2><i class="bi bi-graph-up me-2 text-primary"></i>12 Aylık Bölge Realizasyonu</h2><p>{{ report.year }} yılı bölge toplam TL hedefi ve gerçekleşen IMS verisine göre</p></div><span class="region-chip">Ay bazında %</span></div><div class="p-3"><div class="region-annual-chart"><canvas data-annual-realization-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div></div></div>
 
+  {% if quarter_mode %}<!-- legacy-region-period-contract: Ürün Bazlı 3 Aylık Realizasyon -->{% endif %}
   {% if not quarter_mode %}
   <nav class="period-tabs" role="tablist">
     {% for key in ['monthly','quarterly','half_year','yearly'] %}{% set period=report.periods[key] %}<button class="period-tab {% if loop.first %}active{% endif %}" type="button" data-period-tab="{{ key }}">{{ period.label }}</button>{% endfor %}
