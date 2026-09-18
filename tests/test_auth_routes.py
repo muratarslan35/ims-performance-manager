@@ -677,7 +677,8 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert "Aktif" in html
     assert "Son IMS" in html
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in html
-    assert 'class="navbar-ims-mark"' in html
+    assert 'class="navbar-title-mark"' in html
+    assert 'class="navbar-page-title-line"' in html
     assert "img/ims-brand.svg" in html
     assert 'rel="icon" type="image/svg+xml"' in html
 
@@ -696,8 +697,8 @@ def test_login_and_register_show_corporate_system_name(app):
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert ".auth-ims-emblem" in css
     assert "@media (max-width: 800px)" in css
-    assert "@media (max-width: 575.98px) and (min-height: 780px)" in css
-    assert "@media (max-height: 779px)" in css
+    assert "@media (max-width: 575.98px)" in css
+    assert "@media (max-width: 575.98px) and (max-height: 720px)" in css
     assert "position: static" in css
     assert "background: transparent" in css
     assert "color: #111827" in css
