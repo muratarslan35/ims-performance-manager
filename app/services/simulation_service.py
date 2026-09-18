@@ -233,6 +233,49 @@ class SimulationService:
         actions.sort(key=lambda row: (row["priority"], -row["remaining_tl"], row["product"]))
         return actions
 
+    def build_monthly_box_thresholds(self, results):
+        """Return signed monthly box balances for the 75/90/100 milestones.
+
+        Positive/zero means the simulated monthly result has reached the
+        threshold; negative means boxes are still missing. The calculation uses
+        the already-resolved selected-month target and effective/simulated box
+        result, so changing representative/year/month or any simulation input
+        updates the same read model automatically.
+        """
+        rows = []
+        for item in results["products"]:
+            target_unit = float(item.get("target_unit") or 0)
+            actual_unit = float(item.get("actual_unit") or 0)
+
+            def threshold(threshold_percent):
+                required_unit = target_unit * float(threshold_percent) / 100.0
+                balance_unit = actual_unit - required_unit
+                return {
+                    "percent": int(threshold_percent),
+                    "required_unit": round(required_unit, 2),
+                    "balance_unit": round(balance_unit, 2),
+                    "reached": balance_unit >= 0,
+                }
+
+            override = self.overrides.get(item["product_id"]) or self.overrides.get(
+                str(item["product_id"])
+            ) or {}
+            quota_exit = (
+                str(override.get("mode", "")).lower() == "replace"
+                and float(override.get("target_percent") or 0) == 100.0
+            )
+            rows.append({
+                "product_id": item["product_id"],
+                "product_name": item["product_name"],
+                "target_unit": round(target_unit, 2),
+                "actual_unit": round(actual_unit, 2),
+                "quota_exit": quota_exit,
+                "threshold_75": threshold(75),
+                "threshold_90": threshold(90),
+                "threshold_100": threshold(100),
+            })
+        return rows
+
     def build_override_report(self):
         report = []
         for product in Product.query.filter_by(is_active=True).order_by(Product.display_order.asc()).all():
@@ -258,6 +301,7 @@ class SimulationService:
         response["dashboard"] = self.build_dashboard(results)
         response["target_snapshot"] = self.build_target_snapshot(results)
         response["action_plan"] = self.build_action_plan(results)
+        response["monthly_box_thresholds"] = self.build_monthly_box_thresholds(results)
         response["overrides"] = self.build_override_report()
         response["generated_at"] = self.today.isoformat()
         return response
