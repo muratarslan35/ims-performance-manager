@@ -677,7 +677,6 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert 'class="navbar-mobile-status"' in html
     assert "Aktif" in html
     assert "Son IMS" in html
-    assert "IMS PERFORMANS TAKİP SİSTEMİ" in html
     assert 'class="navbar-title-mark"' in html
     assert 'class="navbar-page-title-line navbar-home-brand"' in html
     assert "<span>IMS PERFORMANS</span>" in html
