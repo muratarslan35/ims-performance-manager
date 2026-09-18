@@ -686,8 +686,18 @@ def test_login_and_register_show_corporate_system_name(app):
     client = app.test_client()
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/login").get_data(as_text=True)
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in client.get("/register").get_data(as_text=True)
-    assert "auth-layout auth-layout-narrow auth-layout-register" in client.get("/register").get_data(as_text=True)
+    login_html = client.get("/login").get_data(as_text=True)
+    register_html = client.get("/register").get_data(as_text=True)
+    assert "auth-layout auth-layout-narrow auth-layout-register" in register_html
+    assert 'class="auth-ims-emblem"' in login_html
+    assert 'class="auth-ims-emblem"' in register_html
+    assert "img/ims-brand.svg" in login_html
+    assert "img/ims-brand.svg" in register_html
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
+    assert ".auth-ims-emblem" in css
+    assert "@media (max-width: 800px)" in css
+    assert "@media (max-width: 575.98px) and (min-height: 780px)" in css
+    assert "@media (max-height: 779px)" in css
     assert "position: static" in css
     assert "background: transparent" in css
     assert "color: #111827" in css

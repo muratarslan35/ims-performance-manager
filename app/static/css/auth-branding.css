@@ -85,6 +85,112 @@
   .portal-selector-grid { grid-template-columns: 1fr; }
 }
 
+/* IMS brand emblem: decorative only, so login/register geometry stays unchanged. */
+.auth-shell-login,
+.auth-shell-register {
+  position: relative;
+  isolation: isolate;
+}
+
+.auth-ims-emblem {
+  position: absolute;
+  top: clamp(18px, 5.5vh, 64px);
+  left: 50%;
+  z-index: 0;
+  width: clamp(88px, 9vw, 142px);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  padding: clamp(6px, .7vw, 10px);
+  border: 1px solid rgba(11, 78, 162, .12);
+  border-radius: 28%;
+  background:
+    radial-gradient(circle at 35% 25%, rgba(255,255,255,.92), rgba(255,255,255,.56) 50%, rgba(230,241,255,.30) 100%);
+  box-shadow:
+    0 18px 44px rgba(11, 78, 162, .13),
+    inset 0 1px 0 rgba(255,255,255,.72);
+  opacity: .94;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.auth-ims-emblem::before {
+  content: "";
+  position: absolute;
+  inset: -22%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(45,127,249,.16) 0%, rgba(45,127,249,.07) 42%, transparent 72%);
+  filter: blur(8px);
+}
+
+.auth-ims-emblem img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 22%;
+  filter: drop-shadow(0 8px 18px rgba(4, 30, 77, .20));
+}
+
+.auth-shell-login .auth-system-title,
+.auth-shell-login .auth-layout,
+.auth-shell-register .auth-system-title,
+.auth-shell-register .auth-layout {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="dark"] .auth-ims-emblem {
+  border-color: rgba(145,199,255,.18);
+  background:
+    radial-gradient(circle at 35% 25%, rgba(28,45,72,.88), rgba(14,29,52,.72) 58%, rgba(8,17,31,.46) 100%);
+  box-shadow:
+    0 18px 48px rgba(0,0,0,.30),
+    inset 0 1px 0 rgba(145,199,255,.12);
+  opacity: .92;
+}
+[data-theme="dark"] .auth-ims-emblem::before {
+  background: radial-gradient(circle, rgba(64,155,255,.22) 0%, rgba(64,155,255,.08) 44%, transparent 72%);
+}
+
+@media (min-height: 900px) {
+  .auth-ims-emblem {
+    top: clamp(34px, 7vh, 88px);
+    width: clamp(108px, 10vw, 160px);
+  }
+}
+
+@media (max-width: 800px) {
+  .auth-ims-emblem {
+    top: clamp(42px, 8vh, 108px);
+    width: clamp(96px, 19vw, 142px);
+    padding: 7px;
+    opacity: .90;
+    border-radius: 26%;
+  }
+}
+
+@media (max-width: 575.98px) and (min-height: 780px) {
+  .auth-ims-emblem {
+    top: clamp(58px, 10vh, 132px);
+    width: clamp(108px, 26vw, 150px);
+  }
+}
+
+@media (max-height: 779px) {
+  .auth-ims-emblem {
+    top: 10px;
+    width: clamp(60px, 8vh, 76px);
+    padding: 4px;
+    opacity: .38;
+    box-shadow: 0 8px 22px rgba(11,78,162,.08);
+  }
+  .auth-ims-emblem::before { opacity: .45; }
+}
+
 /* Login/register are viewport-contained on phone, tablet and desktop. */
 body.auth-viewport-locked {
   width: 100%;
