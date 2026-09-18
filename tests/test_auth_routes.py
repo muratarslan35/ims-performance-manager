@@ -692,8 +692,8 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "auth-layout auth-layout-narrow auth-layout-register" in register_html
     assert 'class="auth-ims-emblem"' in login_html
     assert 'class="auth-ims-emblem"' in register_html
-    assert "img/ims-brand.svg" in login_html
-    assert "img/ims-brand.svg" in register_html
+    assert "img/ims-auth-lockup.svg" in login_html
+    assert "img/ims-auth-lockup.svg" in register_html
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert ".auth-ims-emblem" in css
     assert "@media (max-width: 800px)" in css
@@ -701,6 +701,9 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "@media (max-width: 575.98px) and (max-height: 720px)" in css
     assert "position: static" in css
     assert "background: transparent" in css
+    assert "overflow-y: auto" in css
+    assert "object-fit: contain" in css
+    assert "max-height: none" in css
     assert "color: #111827" in css
 
 
