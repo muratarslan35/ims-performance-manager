@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 
@@ -10,37 +8,6 @@ from app.services.region_market_service import RegionMarketService
 from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
-
-
-_LEGACY_TEMPLATE_NUMERIC_KEYS = {
-    "target_tl",
-    "actual_tl",
-    "gap_tl",
-    "realization_percent",
-    "target_unit",
-    "actual_unit",
-    "unit_difference",
-    "percent",
-}
-
-
-def _legacy_template_safe_report(report):
-    """Return a render-only copy safe for the legacy parent region template."""
-    safe = deepcopy(report)
-
-    def visit(value):
-        if isinstance(value, dict):
-            for key, child in list(value.items()):
-                if key in _LEGACY_TEMPLATE_NUMERIC_KEYS and child is None:
-                    value[key] = 0
-                else:
-                    visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(safe)
-    return safe
 
 
 def _region_read_model(region_key, year, month, *, source_upload_id=None):
