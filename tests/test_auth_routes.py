@@ -857,6 +857,11 @@ def test_simulation_page_supports_repeat_calculation_and_dual_gap_metrics(app):
     assert "simulationShell.addEventListener" in html
     assert 'state=productPercent>=100?"Tamamlandı"' in html
     assert 'state=item.passed?"Tamamlandı"' not in html
+    assert "monthly-threshold-table-wrap" in html
+    assert "monthly-threshold-table" in html
+    assert "overflow-x:hidden" in html
+    assert 'data-label="%75 için Kalan"' in html
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in html
 
 
 def test_simulation_lists_unassigned_representatives_last(app):
