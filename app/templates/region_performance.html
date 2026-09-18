@@ -16,6 +16,7 @@
 
   <div class="region-section region-annual-card"><div class="region-section-head"><div><h2><i class="bi bi-graph-up me-2 text-primary"></i>12 Aylık Bölge Realizasyonu</h2><p>{{ report.year }} yılı bölge toplam TL hedefi ve gerçekleşen IMS verisine göre</p></div><span class="region-chip">Ay bazında %</span></div><div class="p-3"><div class="region-annual-chart"><canvas data-annual-realization-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div></div></div>
 
+  {% if not quarter_mode %}
   <nav class="period-tabs" role="tablist">
     {% for key in ['monthly','quarterly','half_year','yearly'] %}{% set period=report.periods[key] %}<button class="period-tab {% if loop.first %}active{% endif %}" type="button" data-period-tab="{{ key }}">{{ period.label }}</button>{% endfor %}
   </nav>
@@ -35,6 +36,8 @@
     <div class="region-section"><div class="region-section-head"><h2><i class="bi bi-people-fill me-2 text-primary"></i>Bölge Temsilci Performansı</h2><span class="region-chip">{{ report.representative_count }} aktif temsilci</span></div><div class="table-responsive"><table class="table region-table mb-0"><thead><tr><th>Temsilci</th><th>Hedef ₺</th><th>Gerçekleşen ₺</th><th>Fark</th><th>Realizasyon</th></tr></thead><tbody>{% for item in period.representatives %}<tr><td><a class="rep-link" href="{{ url_for('representatives.view', id=item.representative_id, year=report.year, month=report.month) }}">{{ item.representative_name }}</a><span class="metric-sub">{{ item.city }}</span></td><td>{{ "{:,.0f}".format(item.target_tl) }} ₺</td><td><span class="metric-main">{{ "{:,.0f}".format(item.actual_tl) }} ₺</span></td><td class="{% if item.gap_tl > 0 %}text-danger{% else %}text-success{% endif %}">{{ "{:,.0f}".format(item.gap_tl|abs) }} ₺</td><td><span class="realization-pill {% if item.realization_percent >= 90 %}good{% elif item.realization_percent >= 70 %}watch{% else %}risk{% endif %}">%{{ item.realization_percent }}</span></td></tr>{% else %}<tr><td colspan="5" class="text-center text-secondary py-4">Temsilci performans verisi bulunmuyor.</td></tr>{% endfor %}</tbody></table></div></div>
   </section>
   {% endfor %}
+
+{% endif %}
 
   <section class="region-market" aria-labelledby="region-market-title">
     <div class="region-market-head"><div><small>BÖLGESEL REKABET VE PAZAR MERKEZİ</small><h2 id="region-market-title">{{ report.region_name }} Bölgesel Ürün ve Rakip Analizi</h2><p>{{ report.active_count }} temsilcinin bağlı bricklerindeki gerçek IMS kutu çıkışları; ürün, rakip ve il bazında gösterilir.</p></div><div class="market-head-tools"><div class="market-period-label"><span>ANALİZ DÖNEMİ</span><strong>{{ month_names[report.month - 1] }} {{ report.year }}</strong></div><i class="bi bi-bar-chart-line-fill fs-2"></i></div></div>
