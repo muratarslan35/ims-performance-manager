@@ -85,28 +85,38 @@
   .portal-selector-grid { grid-template-columns: 1fr; }
 }
 
-/* IMS auth mark: transparent, compact and integrated into the page background. */
+/* Exact favicon brand used as the login/register identity. */
 .auth-shell-login,
 .auth-shell-register {
   position: relative;
   isolation: isolate;
 }
 
-.auth-ims-emblem {
+.auth-brand-stack {
   position: relative;
-  z-index: 1;
-  width: clamp(340px, 30vw, 460px);
-  height: clamp(112px, 14vh, 142px);
+  z-index: 2;
+  width: min(100%, 760px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin: 0 auto 12px;
+}
+
+.auth-ims-emblem {
+  width: clamp(132px, 10vw, 164px);
+  aspect-ratio: 1;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  margin: 0 auto clamp(8px, 1.2vh, 14px);
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  opacity: .99;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -115,12 +125,13 @@
 .auth-ims-emblem::before {
   content: "";
   position: absolute;
-  inset: 8% -14%;
-  z-index: -1;
+  width: min(54vw, 360px);
+  height: min(20vw, 150px);
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(45,127,249,.14) 0%, rgba(45,127,249,.055) 45%, transparent 74%);
-  filter: blur(10px);
-  opacity: .76;
+  background: radial-gradient(ellipse at center, rgba(45,127,249,.13) 0%, rgba(45,127,249,.05) 46%, transparent 74%);
+  filter: blur(12px);
+  opacity: .72;
+  z-index: -1;
 }
 
 .auth-ims-emblem img {
@@ -129,58 +140,90 @@
   height: 100%;
   object-fit: contain;
   border: 0;
-  border-radius: 0;
   background: transparent;
-  filter: drop-shadow(0 10px 20px rgba(4,30,77,.16));
+  filter: drop-shadow(0 12px 22px rgba(4,30,77,.18));
 }
 
-.auth-shell-login .auth-system-title,
-.auth-shell-login .auth-layout,
-.auth-shell-register .auth-system-title,
-.auth-shell-register .auth-layout {
-  position: relative;
-  z-index: 1;
+.auth-brand-stack .auth-system-title {
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 16px 10px;
+  font-size: clamp(18px, 1.55vw, 24px);
+  line-height: 1.2;
+}
+
+.auth-brand-stack .auth-system-title::after {
+  width: 72px;
+  height: 3px;
+  margin-top: 9px;
 }
 
 [data-theme="dark"] .auth-ims-emblem::before {
   background: radial-gradient(ellipse at center, rgba(64,155,255,.20) 0%, rgba(64,155,255,.07) 46%, transparent 74%);
 }
 [data-theme="dark"] .auth-ims-emblem img {
-  filter: drop-shadow(0 12px 22px rgba(0,0,0,.30));
+  filter: drop-shadow(0 14px 24px rgba(0,0,0,.32));
 }
 
-/* Tablet / small desktop */
+/* Tablet */
 @media (min-width: 576px) and (max-width: 991.98px) {
+  .auth-brand-stack {
+    gap: 7px;
+    margin-bottom: 10px;
+  }
   .auth-ims-emblem {
-    width: min(62vw, 390px);
-    height: clamp(100px, 13vh, 126px);
-    margin-bottom: 8px;
+    width: clamp(116px, 15vw, 142px);
+  }
+  .auth-brand-stack .auth-system-title {
+    font-size: clamp(17px, 2.5vw, 21px);
   }
 }
 
 /* Phone */
 @media (max-width: 575.98px) {
+  .auth-brand-stack {
+    gap: 5px;
+    margin-bottom: 7px;
+  }
   .auth-ims-emblem {
-    width: min(72vw, 270px);
-    height: clamp(78px, 10.5vh, 92px);
-    margin: 0 auto 5px;
+    width: clamp(78px, 21vw, 94px);
   }
   .auth-ims-emblem::before {
-    inset: 10% -10%;
-    filter: blur(7px);
-    opacity: .60;
+    width: 190px;
+    height: 78px;
+    filter: blur(8px);
+    opacity: .58;
   }
   .auth-ims-emblem img {
-    filter: drop-shadow(0 7px 14px rgba(4,30,77,.14));
+    filter: drop-shadow(0 7px 13px rgba(4,30,77,.16));
+  }
+  .auth-brand-stack .auth-system-title {
+    margin: 0;
+    padding: 0 6px 7px;
+    font-size: clamp(13px, 3.8vw, 15px);
+    letter-spacing: .045em;
+    white-space: nowrap;
+  }
+  .auth-brand-stack .auth-system-title::after {
+    width: 56px;
+    height: 2px;
+    margin-top: 5px;
   }
 }
 
 /* Very short phones */
 @media (max-width: 575.98px) and (max-height: 720px) {
+  .auth-brand-stack {
+    gap: 3px;
+    margin-bottom: 4px;
+  }
   .auth-ims-emblem {
-    width: min(64vw, 230px);
-    height: 68px;
-    margin-bottom: 2px;
+    width: 64px;
+  }
+  .auth-brand-stack .auth-system-title {
+    font-size: 12px;
+    padding-bottom: 5px;
   }
 }
 
@@ -249,16 +292,12 @@ body.auth-viewport-locked .page-body > .container-xl {
     padding-bottom: max(18px, env(safe-area-inset-bottom));
   }
   .auth-shell-login,
-  .auth-shell-register { padding: 8px 12px; }
-  .auth-shell-login .auth-system-title,
-  .auth-shell-register .auth-system-title { margin: 0 0 6px; padding: 3px 8px 7px; font-size: 14px; }
-  .auth-shell-login .auth-system-title::after,
-  .auth-shell-register .auth-system-title::after { height: 2px; margin-top: 5px; }
+  .auth-shell-register { padding: 8px 12px 14px; }
   .auth-shell-login .auth-layout,
   .auth-shell-register .auth-layout { max-height: none; }
   .auth-shell-login .auth-identity-panel,
   .auth-shell-register .auth-identity-panel {
-    min-height: clamp(84px, 12vh, 104px);
+    min-height: clamp(88px, 11vh, 100px);
     background: #0a2456;
   }
   .auth-shell-login .auth-identity-logo,
@@ -269,54 +308,47 @@ body.auth-viewport-locked .page-body > .container-xl {
     width: 100%;
     height: 100%;
     max-width: none;
-    padding: 7px 14px;
+    padding: 6px 10px;
     object-fit: contain;
     object-position: center;
     transform: none;
   }
   .auth-shell-login .auth-layout .auth-card,
-  .auth-shell-register .auth-layout .auth-card { padding: clamp(12px, 2.3vh, 22px) 20px; }
+  .auth-shell-register .auth-layout .auth-card { padding: clamp(11px, 1.8vh, 18px) 18px; }
   .auth-shell-login .auth-welcome,
-  .auth-shell-register .auth-welcome { margin-bottom: 2px; font-size: 20px; }
+  .auth-shell-register .auth-welcome { margin-bottom: 2px; font-size: 19px; line-height: 1.18; }
   .auth-shell-login .auth-subtitle,
-  .auth-shell-register .auth-subtitle { margin-bottom: 10px; font-size: 12px; }
-  .auth-shell-login .portal-selector { margin-bottom: 10px !important; }
+  .auth-shell-register .auth-subtitle { margin-bottom: 8px; font-size: 11px; line-height: 1.25; }
+  .auth-shell-login .portal-selector { margin-bottom: 8px !important; }
   .auth-shell-login .portal-selector-grid { grid-template-columns: 1fr 1fr; gap: 7px; }
-  .auth-shell-login .portal-option span { min-height: 58px; padding: 7px 9px; }
+  .auth-shell-login .portal-option span { min-height: 54px; padding: 6px 8px; }
   .auth-shell-login .portal-option i { margin-bottom: 2px; font-size: 15px; }
   .auth-shell-login .auth-form .mb-3,
-  .auth-shell-register .auth-form .mb-3 { margin-bottom: 7px !important; }
+  .auth-shell-register .auth-form .mb-3 { margin-bottom: 6px !important; }
   .auth-shell-login .auth-form .form-control,
   .auth-shell-register .auth-form .form-control,
-  .auth-shell-register .auth-form .form-select { min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
-  .auth-shell-login .auth-form > .d-flex { margin-bottom: 10px !important; }
+  .auth-shell-register .auth-form .form-select { min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
+  .auth-shell-login .auth-form > .d-flex { margin-bottom: 8px !important; }
   .auth-shell-login .auth-footer,
-  .auth-shell-register .auth-footer { margin-top: 10px; font-size: 12px; }
+  .auth-shell-register .auth-footer { margin-top: 8px; font-size: 11px; line-height: 1.2; }
   .auth-shell-register .row > .col-md-6 { width: 50%; }
   .auth-shell-register .form-hint { margin-bottom: 7px !important; font-size: 11px; }
 
   /* Keep the complete registration action area visible on mobile browsers. */
-  .auth-shell-register { padding: 5px 10px; }
-  .auth-shell-register .auth-system-title {
-    margin-bottom: 4px;
-    padding: 2px 6px 5px;
-    font-size: 13px;
-    letter-spacing: .035em;
-  }
-  .auth-shell-register .auth-system-title::after { width: 56px; margin-top: 4px; }
+  .auth-shell-register { padding: 6px 10px 14px; }
   .auth-shell-register .auth-layout { max-height: none; }
   .auth-shell-register .auth-identity-panel {
-    min-height: clamp(72px, 10vh, 88px);
+    min-height: clamp(74px, 9vh, 86px);
     background: #0a2456;
   }
-  .auth-shell-register .auth-layout .auth-card { padding: 8px 18px; }
-  .auth-shell-register .auth-welcome { font-size: 18px; line-height: 1.15; }
+  .auth-shell-register .auth-layout .auth-card { padding: 7px 16px 8px; }
+  .auth-shell-register .auth-welcome { font-size: 17px; line-height: 1.12; }
   .auth-shell-register .auth-subtitle {
-    margin-bottom: 5px;
-    font-size: 11px;
-    line-height: 1.25;
+    margin-bottom: 4px;
+    font-size: 10.5px;
+    line-height: 1.2;
   }
-  .auth-shell-register .auth-form .mb-3 { margin-bottom: 4px !important; }
+  .auth-shell-register .auth-form .mb-3 { margin-bottom: 3px !important; }
   .auth-shell-register .auth-form .form-label {
     margin-bottom: 2px;
     font-size: 12px;
@@ -324,26 +356,26 @@ body.auth-viewport-locked .page-body > .container-xl {
   }
   .auth-shell-register .auth-form .form-control,
   .auth-shell-register .auth-form .form-select {
-    min-height: 32px;
-    padding: 4px 10px;
-    font-size: 14px;
+    min-height: 31px;
+    padding: 3px 9px;
+    font-size: 13px;
   }
   .auth-shell-register .auth-form .row { --tblr-gutter-x: 10px; }
   .auth-shell-register .form-hint {
-    margin-bottom: 4px !important;
-    font-size: 10px;
-    line-height: 1.2;
+    margin-bottom: 3px !important;
+    font-size: 9.5px;
+    line-height: 1.15;
   }
   .auth-shell-register .btn-auth-submit {
-    min-height: 38px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-    font-size: 14px;
+    min-height: 36px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    font-size: 13px;
   }
   .auth-shell-register .auth-footer {
-    margin-top: 5px;
-    font-size: 11px;
-    line-height: 1.2;
+    margin-top: 4px;
+    font-size: 10px;
+    line-height: 1.15;
   }
 }
 
@@ -414,4 +446,20 @@ body.auth-viewport-locked .page-body > .container-xl {
         width: 40px;
         height: 40px;
     }
+}
+
+@media (min-width: 992px) {
+  .auth-shell-login,
+  .auth-shell-register {
+    padding-top: clamp(16px, 2.2vh, 24px);
+    padding-bottom: clamp(16px, 2.2vh, 24px);
+  }
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout {
+    max-height: none;
+  }
+  .auth-shell-login .auth-identity-panel,
+  .auth-shell-register .auth-identity-panel {
+    min-height: 0;
+  }
 }
