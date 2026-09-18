@@ -622,3 +622,41 @@ class TestSimulationServiceIntegration(PrimeEngineBaseTestCase):
         capabilities = SimulationService.capabilities()
         self.assertTrue(capabilities["exports"])
         self.assertTrue(capabilities["cache"])
+
+
+def test_simulation_monthly_box_threshold_balances_are_signed_and_quota_aware():
+    service = object.__new__(SimulationService)
+    service.overrides = {}
+    results = {
+        "products": [
+            {
+                "product_id": 1,
+                "product_name": "Travazol",
+                "target_unit": 1000,
+                "actual_unit": 800,
+            },
+            {
+                "product_id": 2,
+                "product_name": "Monurol",
+                "target_unit": 0,
+                "actual_unit": 0,
+            },
+        ]
+    }
+
+    rows = service.build_monthly_box_thresholds(results)
+    travazol = rows[0]
+    assert travazol["threshold_75"] == {
+        "percent": 75,
+        "required_unit": 750.0,
+        "balance_unit": 50.0,
+        "reached": True,
+    }
+    assert travazol["threshold_90"]["balance_unit"] == -100.0
+    assert travazol["threshold_90"]["reached"] is False
+    assert travazol["threshold_100"]["balance_unit"] == -200.0
+    assert travazol["quota_exit"] is False
+
+    service.overrides = {1: {"mode": "replace", "target_percent": 100}}
+    quota_rows = service.build_monthly_box_thresholds(results)
+    assert quota_rows[0]["quota_exit"] is True
