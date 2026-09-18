@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">IMS Performans Takip Sistemi</title>
+  <desc id="desc">IMS harfleri, yükselen performans grafiği ve ok.</desc>
+  <defs>
+    <linearGradient id="bg" x1="10" y1="8" x2="88" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b5db8"/>
+      <stop offset=".46" stop-color="#083e86"/>
+      <stop offset="1" stop-color="#061f52"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="18" y1="52" x2="78" y2="16" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#168dff"/>
+      <stop offset=".55" stop-color="#17d7f2"/>
+      <stop offset="1" stop-color="#50f1de"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#001637" flood-opacity=".28"/>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="92" height="92" rx="22" fill="url(#bg)"/>
+  <rect x="2.75" y="2.75" width="90.5" height="90.5" rx="21.25" fill="none" stroke="#4ea8ff" stroke-opacity=".22" stroke-width="1.5"/>
+
+  <g opacity=".98">
+    <rect x="43" y="37" width="9" height="14" rx="2.4" fill="url(#accent)"/>
+    <rect x="56" y="31" width="9" height="20" rx="2.4" fill="url(#accent)"/>
+    <rect x="69" y="24" width="9" height="27" rx="2.4" fill="url(#accent)"/>
+  </g>
+
+  <path d="M15 51 C31 49 45 44 57 37 C65 32 71 27 78 20" fill="none" stroke="url(#accent)" stroke-width="6.5" stroke-linecap="round"/>
+  <path d="M73 16 L86 17 L83 30 Z" fill="#45eadf"/>
+
+  <g fill="#fff" filter="url(#soft)">
+    <rect x="14" y="58" width="8" height="25" rx="1.5"/>
+    <path d="M27 83V58H35L42.5 71L50 58H58V83H50V70L43.5 81H41.5L35 70V83Z"/>
+    <path d="M64 58H83V65H71.5C69.5 65 69.3 68 71.4 68H76.8C82.9 68 86 71.2 86 75.7C86 80.5 82.2 83 76.5 83H63V76H77C79.2 76 79.4 73.2 77 73.2H71.1C65.3 73.2 62 70.2 62 65.8C62 61.3 65.4 58 71 58Z"/>
+  </g>
+</svg>
