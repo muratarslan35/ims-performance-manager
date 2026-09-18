@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 
@@ -12,48 +10,27 @@ from app.services.scoped_ai_insight_service import ScopedAIInsightService
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
 
 
-_LEGACY_TEMPLATE_NUMERIC_KEYS = {
-    "target_tl",
-    "actual_tl",
-    "gap_tl",
-    "realization_percent",
-    "target_unit",
-    "actual_unit",
-    "unit_difference",
-    "percent",
-}
-
-
-def _legacy_template_safe_report(report):
-    """Return a render-only copy safe for the legacy parent region template."""
-    safe = deepcopy(report)
-
-    def visit(value):
-        if isinstance(value, dict):
-            for key, child in list(value.items()):
-                if key in _LEGACY_TEMPLATE_NUMERIC_KEYS and child is None:
-                    value[key] = 0
-                else:
-                    visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(safe)
-    return safe
-
-
-def _region_read_model(region_key, year, month):
+def _region_read_model(region_key, year, month, *, source_upload_id=None):
     """Read the already-published region model before considering live queries.
 
-    The normal production path is a durable snapshot created after IMS/production
-    publication.  That snapshot already contains both the complete regional
-    performance report and the market/competition model, so opening the manager
-    page must not execute those expensive calculations again.  The live builder
-    remains only as a compatibility fallback for a historical period that has no
-    published snapshot yet.
+    For the active period, PeriodService has already resolved the visible IMS
+    upload and publication gate. Reuse that identity so a map click performs one
+    bounded snapshot query instead of repeating IMS/pending-job checks. Historical
+    periods keep the canonical visibility resolver. Live calculation remains only
+    a compatibility fallback when no durable payload is available.
     """
-    snapshot = PersistentRegionSnapshotService.get_active(region_key, year, month)
+    snapshot = None
+    if source_upload_id:
+        snapshot = PersistentRegionSnapshotService.get_active_for_visible_upload(
+            region_key, year, month, source_upload_id
+        )
+        # A production-result snapshot may still be BUILDING. Preserve the
+        # canonical previous-generation visibility rule during that short window.
+        if snapshot is None:
+            snapshot = PersistentRegionSnapshotService.get_active(region_key, year, month)
+    else:
+        snapshot = PersistentRegionSnapshotService.get_active(region_key, year, month)
+
     if snapshot is not None and snapshot.get("report") is not None:
         return snapshot, "snapshot"
 
@@ -71,8 +48,15 @@ def detail(region_key):
     active = PeriodService.get_active_period()
     year = request.args.get("year", active["year"], type=int)
     month = request.args.get("month", active["month"], type=int)
+    visible_upload_id = (
+        active.get("upload_id")
+        if int(year) == int(active["year"]) and int(month) == int(active["month"])
+        else None
+    )
     try:
-        read_model, region_data_source = _region_read_model(region_key, year, month)
+        read_model, region_data_source = _region_read_model(
+            region_key, year, month, source_upload_id=visible_upload_id
+        )
         current_report = read_model["report"]
         market_analysis = read_model.get("market_analysis") or {}
     except ValueError as exc:
@@ -81,19 +65,23 @@ def detail(region_key):
 
     # This enrichment is deterministic and runs only over the already-loaded
     # snapshot dictionaries. It performs no IMS/production/competition reads.
-    ai_report = ScopedAIInsightService.build(
+    ai_report = read_model.get("ai_report") or ScopedAIInsightService.build(
         scope_type="region",
         scope_name=current_report["region_name"],
         periods=current_report["periods"],
         market_analysis=market_analysis,
     )
-    safe_report = _legacy_template_safe_report(current_report)
+
+    # The quarter template suppresses the legacy duplicate period tables in its
+    # parent, so the durable report can be reused directly without a full nested
+    # deepcopy/traversal on every request.
     return render_template(
         "region_performance_quarter.html",
-        report=safe_report,
-        legacy_report=safe_report,
+        report=current_report,
+        legacy_report=current_report,
         current_report=current_report,
         ai_report=ai_report,
         market_analysis=market_analysis,
         region_data_source=region_data_source,
+        quarter_mode=True,
     )

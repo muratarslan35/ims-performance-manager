@@ -92,6 +92,14 @@ def test_complete_set_is_persisted_and_reused(monkeypatch):
             "2026|4": "OFFICIAL_REGION_SUBTOTAL"
         }
 
+        fast_payload = PersistentRegionSnapshotService.get_active_for_visible_upload(
+            "102", 2026, 4, 17
+        )
+        assert fast_payload["report"]["region_key"] == "102"
+        assert PersistentRegionSnapshotService.get_active_for_visible_upload(
+            "102", 2026, 4, 999
+        ) is None
+
         pack = PersistentRegionSnapshotService.get_active_all(2026, 4)
         assert set(pack) == {"101", "102"}
         assert pack["101"]["report"]["region_key"] == "101"

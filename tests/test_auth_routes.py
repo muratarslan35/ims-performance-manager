@@ -1411,10 +1411,12 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
     assert "Başka Temsilci" not in region_html
 
 
-def test_dashboard_map_navigation_uses_real_page_loading_lifecycle():
+def test_dashboard_map_navigation_uses_global_page_progress_lifecycle():
     dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+    region_template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
 
-    assert 'window.showLoading' in dashboard_js
+    assert 'window.IMSPageLoader.show(5)' in dashboard_js
     assert 'region.setAttribute("aria-busy", "true")' in dashboard_js
     assert 'requestAnimationFrame(() => window.location.assign(detailUrl))' in dashboard_js
-    assert "No synthetic percentage" in dashboard_js
+    assert 'window.showLoading(`${regionName} bölge analizi yükleniyor...`)' not in dashboard_js
+    assert "{% if not quarter_mode %}" in region_template

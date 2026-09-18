@@ -475,6 +475,9 @@ def _install_persisted_h1_read_guard():
     if not getattr(PersistentRegionSnapshotService, "_h1_read_guard_installed", False):
         original_region_get_active = PersistentRegionSnapshotService.get_active
         original_region_get_active_all = PersistentRegionSnapshotService.get_active_all
+        original_region_get_active_for_visible_upload = getattr(
+            PersistentRegionSnapshotService, "get_active_for_visible_upload", None
+        )
 
         def region_get_active(cls, region_key, year, month):
             return _compose_region_half_year_snapshot(
@@ -490,6 +493,19 @@ def _install_persisted_h1_read_guard():
 
         PersistentRegionSnapshotService.get_active = classmethod(region_get_active)
         PersistentRegionSnapshotService.get_active_all = classmethod(region_get_active_all)
+        if original_region_get_active_for_visible_upload is not None:
+            def region_get_active_for_visible_upload(
+                cls, region_key, year, month, source_upload_id
+            ):
+                return _compose_region_half_year_snapshot(
+                    original_region_get_active_for_visible_upload(
+                        region_key, year, month, source_upload_id
+                    )
+                )
+
+            PersistentRegionSnapshotService.get_active_for_visible_upload = classmethod(
+                region_get_active_for_visible_upload
+            )
         PersistentRegionSnapshotService._h1_read_guard_installed = True
 
     if not getattr(PersistentRepresentativeSnapshotService, "_h1_read_guard_installed", False):

@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from app import create_app
@@ -41,6 +42,8 @@ def _check(condition, label, failures):
 def main():
     app = create_app()
     failures = []
+    own_region_seconds = None
+    other_region_seconds = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -126,8 +129,15 @@ def main():
             manager_page = client.get("/manager-users/", follow_redirects=True)
             _check(("Kayıtlı Yöneticiler" in manager_page.get_data(as_text=True)) == permission_state["manager_module"],
                    "manager_module_read", failures)
-            _check(client.get(f"/regions/{own_code}").status_code == 200, "own_region_route", failures)
-            other_region_response = client.get(f"/regions/{region_code(other_rep.region)}", follow_redirects=True)
+            own_region_started = time.perf_counter()
+            own_region_response = client.get(f"/regions/{own_code}")
+            own_region_seconds = round(time.perf_counter() - own_region_started, 4)
+            _check(own_region_response.status_code == 200, "own_region_route", failures)
+            other_region_started = time.perf_counter()
+            other_region_response = client.get(
+                f"/regions/{region_code(other_rep.region)}", follow_redirects=True
+            )
+            other_region_seconds = round(time.perf_counter() - other_region_started, 4)
             _check((DENIED_REGION not in other_region_response.get_data(as_text=True)) == cross_region,
                    "other_region_route", failures)
             _check(client.get(f"/representatives/view/{own_rep.id}").status_code == 200,
@@ -174,6 +184,8 @@ def main():
             "processing_jobs": processing,
             "scope_table": bool(table),
             "regional_scope_count": len(scoped),
+            "own_region_seconds": own_region_seconds,
+            "other_region_seconds": other_region_seconds,
             "tested_manager_id": manager.id if manager else None,
             "tested_region": own_code,
             "admin_preserved": admin is not None,
