@@ -707,6 +707,10 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "object-fit: contain" in css
     assert "max-height: none" in css
     assert "color: #111827" in css
+    assert "FINAL AUTH REFERENCE LAYOUT" in css
+    assert "grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr)" in css
+    assert "width: min(94vw, 520px)" in css
+    assert "width: clamp(108px, 31vw, 132px)" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
