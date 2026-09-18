@@ -707,10 +707,15 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "object-fit: contain" in css
     assert "max-height: min(24vh, 238px)" in css
     assert "color: #111827" in css
-    assert "FINAL AUTH REFERENCE LAYOUT" in css
-    assert "grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr)" in css
-    assert "width: min(94vw, 520px)" in css
-    assert "width: clamp(108px, 31vw, 132px)" in css
+    assert "FINAL AUTH FIT + DARK CONTRAST" in css
+    assert "grid-template-columns: 1fr" in css
+    assert "width: min(94vw, 500px)" in css
+    assert "width: min(clamp(150px, 42vw, 178px), calc(100vw - 84px))" in css
+    assert 'html[data-theme="dark"] body.anonymous .auth-brand-stack .auth-system-title' in css
+    assert "color: #f5f8fc !important" in css
+    assert "background: #142238 !important" in css
+    assert "min-height: 76px" in css
+    assert "max-height: 116px" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
