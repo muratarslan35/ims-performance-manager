@@ -439,12 +439,17 @@ function initTurkeyMap(regionRealization) {
       if (detailUrl) {
         region.setAttribute("aria-busy", "true");
         regions.forEach((item) => { item.style.pointerEvents = "none"; });
-        if (typeof window.showLoading === "function") {
-          window.showLoading(`${regionName} bölge analizi yükleniyor...`);
-          document.getElementById("loadingOverlay")?.setAttribute("aria-hidden", "false");
+
+        // Map navigation is programmatic, so it does not pass through the
+        // global anchor-click handler in layout.js. Use the same application
+        // page loader explicitly instead of creating a second spinner-only
+        // loading experience for region navigation.
+        if (window.IMSPageLoader && typeof window.IMSPageLoader.show === "function") {
+          window.IMSPageLoader.show(5);
+        } else if (typeof window.showLoading === "function") {
+          window.showLoading("Yükleniyor...");
         }
-        // Paint the real loading state first; it remains visible until the
-        // destination HTML replaces this document. No synthetic percentage.
+
         requestAnimationFrame(() => window.location.assign(detailUrl));
       }
     });
