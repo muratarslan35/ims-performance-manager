@@ -85,7 +85,7 @@
   .portal-selector-grid { grid-template-columns: 1fr; }
 }
 
-/* Exact favicon brand used as the login/register identity. */
+/* Login/register IMS mark: favicon vektör geometrisinin şeffaf, ekrana uyumlu sürümü. */
 .auth-shell-login,
 .auth-shell-register {
   position: relative;
@@ -95,26 +95,25 @@
 .auth-brand-stack {
   position: relative;
   z-index: 2;
-  width: min(100%, 760px);
+  width: min(100%, 880px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: clamp(5px, .8vh, 9px);
   flex: 0 0 auto;
-  margin: 0 auto 12px;
+  margin: 0 auto clamp(8px, 1.4vh, 14px);
 }
 
 .auth-ims-emblem {
-  width: clamp(132px, 10vw, 164px);
-  aspect-ratio: 1;
+  width: min(clamp(230px, 19vw, 310px), calc(100vw - 56px));
+  max-height: min(24vh, 238px);
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 0;
   background: transparent;
   box-shadow: none;
   pointer-events: none;
@@ -123,30 +122,26 @@
 }
 
 .auth-ims-emblem::before {
-  content: "";
-  position: absolute;
-  width: min(54vw, 360px);
-  height: min(20vw, 150px);
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(45,127,249,.13) 0%, rgba(45,127,249,.05) 46%, transparent 74%);
-  filter: blur(12px);
-  opacity: .72;
-  z-index: -1;
+  content: none;
 }
 
 .auth-ims-emblem img {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: min(24vh, 238px);
   object-fit: contain;
+  object-position: center;
   border: 0;
+  border-radius: 0;
   background: transparent;
-  filter: drop-shadow(0 12px 22px rgba(4,30,77,.18));
+  filter: drop-shadow(0 8px 14px rgba(4,30,77,.12));
 }
 
 .auth-brand-stack .auth-system-title {
   width: auto;
-  max-width: 100%;
+  max-width: calc(100vw - 32px);
   margin: 0;
   padding: 0 16px 10px;
   font-size: clamp(18px, 1.55vw, 24px);
@@ -159,21 +154,22 @@
   margin-top: 9px;
 }
 
-[data-theme="dark"] .auth-ims-emblem::before {
-  background: radial-gradient(ellipse at center, rgba(64,155,255,.20) 0%, rgba(64,155,255,.07) 46%, transparent 74%);
-}
 [data-theme="dark"] .auth-ims-emblem img {
-  filter: drop-shadow(0 14px 24px rgba(0,0,0,.32));
+  filter: brightness(1.34) saturate(1.05) drop-shadow(0 10px 18px rgba(0,0,0,.28));
 }
 
 /* Tablet */
 @media (min-width: 576px) and (max-width: 991.98px) {
   .auth-brand-stack {
-    gap: 7px;
-    margin-bottom: 10px;
+    gap: 6px;
+    margin-bottom: 9px;
   }
   .auth-ims-emblem {
-    width: clamp(116px, 15vw, 142px);
+    width: min(clamp(210px, 34vw, 280px), calc(100vw - 48px));
+    max-height: min(20vh, 210px);
+  }
+  .auth-ims-emblem img {
+    max-height: min(20vh, 210px);
   }
   .auth-brand-stack .auth-system-title {
     font-size: clamp(17px, 2.5vw, 21px);
@@ -183,24 +179,24 @@
 /* Phone */
 @media (max-width: 575.98px) {
   .auth-brand-stack {
-    gap: 5px;
-    margin-bottom: 7px;
+    gap: 4px;
+    margin-bottom: 6px;
   }
   .auth-ims-emblem {
-    width: clamp(78px, 21vw, 94px);
-  }
-  .auth-ims-emblem::before {
-    width: 190px;
-    height: 78px;
-    filter: blur(8px);
-    opacity: .58;
+    width: min(clamp(142px, 42vw, 178px), calc(100vw - 44px));
+    max-height: min(18vh, 156px);
   }
   .auth-ims-emblem img {
-    filter: drop-shadow(0 7px 13px rgba(4,30,77,.16));
+    max-height: min(18vh, 156px);
+    filter: drop-shadow(0 5px 10px rgba(4,30,77,.12));
+  }
+  [data-theme="dark"] .auth-ims-emblem img {
+    filter: brightness(1.34) saturate(1.05) drop-shadow(0 7px 12px rgba(0,0,0,.24));
   }
   .auth-brand-stack .auth-system-title {
     margin: 0;
     padding: 0 6px 7px;
+    max-width: calc(100vw - 28px);
     font-size: clamp(13px, 3.8vw, 15px);
     letter-spacing: .045em;
     white-space: nowrap;
@@ -215,11 +211,15 @@
 /* Very short phones */
 @media (max-width: 575.98px) and (max-height: 720px) {
   .auth-brand-stack {
-    gap: 3px;
-    margin-bottom: 4px;
+    gap: 2px;
+    margin-bottom: 3px;
   }
   .auth-ims-emblem {
-    width: 64px;
+    width: min(132px, 38vw);
+    max-height: 116px;
+  }
+  .auth-ims-emblem img {
+    max-height: 116px;
   }
   .auth-brand-stack .auth-system-title {
     font-size: 12px;
