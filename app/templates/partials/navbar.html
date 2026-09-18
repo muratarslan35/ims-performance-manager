@@ -15,17 +15,18 @@
                 </span>
             </button>
 
-            <a class="navbar-ims-mark" href="{{ url_for('dashboard.index') }}" aria-label="IMS Performans Takip Sistemi ana sayfa">
-                <img src="{{ url_for('static', filename='img/ims-brand.svg') }}" alt="" aria-hidden="true">
-            </a>
-
             <a class="navbar-collapsed-brand" href="{{ url_for('dashboard.index') }}" aria-label="Bilim İlaç ana sayfa">
                 <img src="{{ url_for('static', filename='img/bilim-ilac.jpg') }}" alt="Bilim İlaç">
             </a>
 
             <div class="navbar-page-info d-none d-md-block">
-                <div class="navbar-page-title">
-                    {% block navbar_page_title %}IMS PERFORMANS TAKİP SİSTEMİ{% endblock %}
+                <div class="navbar-page-title-line">
+                    <a class="navbar-title-mark" href="{{ url_for('dashboard.index') }}" aria-label="IMS Performans Takip Sistemi ana sayfa">
+                        <img src="{{ url_for('static', filename='img/ims-brand.svg') }}" alt="" aria-hidden="true">
+                    </a>
+                    <div class="navbar-page-title">
+                        {% block navbar_page_title %}IMS PERFORMANS TAKİP SİSTEMİ{% endblock %}
+                    </div>
                 </div>
                 <ol class="navbar-breadcrumb" aria-label="Gezinti yolu">
                     <li>
