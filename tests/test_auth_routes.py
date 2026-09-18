@@ -677,6 +677,9 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     assert "Aktif" in html
     assert "Son IMS" in html
     assert "IMS PERFORMANS TAKİP SİSTEMİ" in html
+    assert 'class="navbar-ims-mark"' in html
+    assert "img/ims-brand.svg" in html
+    assert 'rel="icon" type="image/svg+xml"' in html
 
 
 def test_login_and_register_show_corporate_system_name(app):
