@@ -235,7 +235,7 @@
       <div class="section-card-header ytd-ranking-header">
         <div>
           <h2 class="section-card-title"><i class="bi bi-award-fill"></i> Yıllık Ürün Bazlı Türkiye Sıralaması</h2>
-          <p class="ranking-subtitle">{{ ytd_ranking.year | default(payload.active_period.year, true) }} yılı · mevcut IMS dönemine kadar temsilci toplam kutu satışı</p>
+          <p class="ranking-subtitle">{{ ytd_ranking.year | default('-', true) }} yılı · mevcut IMS dönemine kadar temsilci toplam kutu satışı</p>
         </div>
         <div class="ytd-ranking-limit" role="group" aria-label="Sıralama uzunluğu">
           <button type="button" data-ytd-limit="5">İlk 5</button>
