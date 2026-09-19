@@ -224,6 +224,37 @@ class PersistentRepresentativeSnapshotService:
             return None
 
     @classmethod
+    def get_active_many(cls, representative_ids, year, month):
+        """Read several representative workspaces with one snapshot member query.
+
+        Region manager pages use this only as a compatibility bridge for ACTIVE
+        region snapshots created before representative-product box rows were
+        embedded. It never recalculates representative data.
+        """
+        ids = sorted({int(item) for item in representative_ids if item is not None})
+        if not ids:
+            return {}
+        set_id = cls._visible_set_id(year, month)
+        if not set_id:
+            return {}
+        rows = db.session.execute(
+            sa.select(
+                representative_snapshots.c.representative_id,
+                representative_snapshots.c.payload_json,
+            ).where(
+                representative_snapshots.c.set_id == int(set_id),
+                representative_snapshots.c.representative_id.in_(ids),
+            )
+        ).all()
+        result = {}
+        for representative_id, raw in rows:
+            try:
+                result[int(representative_id)] = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        return result
+
+    @classmethod
     def build_for_period(
         cls,
         year,
