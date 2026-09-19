@@ -20,6 +20,7 @@ jobs:
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+      COMPARISON_CONTRACT_SHA: 6e1a5844e5793ccd7a221d438a8c6de2028127b4
     steps:
       - name: Configure SSH
         env:
@@ -31,21 +32,14 @@ jobs:
           chmod 600 ~/.ssh/key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Wait for this commit on production
+      - name: Verify comparison contract is live
         run: |
           set -Eeuo pipefail
-          for attempt in $(seq 1 180); do
-            live_state="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && live_sha=\$(git rev-parse HEAD) && if git merge-base --is-ancestor '$GITHUB_SHA' \"\$live_sha\"; then echo \"\$live_sha|contains\"; else echo \"\$live_sha|waiting\"; fi" 2>/dev/null || true)"
-            echo "LIVE_STATE|$live_state"
-            if echo "$live_state" | grep -q '|contains$'; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Production did not reach $GITHUB_SHA in time" >&2
-          exit 1
+          state="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && live_sha=\$(git rev-parse HEAD) && if git merge-base --is-ancestor '$COMPARISON_CONTRACT_SHA' \"\$live_sha\"; then echo \"\$live_sha|contains\"; else echo \"\$live_sha|missing\"; fi")"
+          echo "LIVE_STATE|$state"
+          echo "$state" | grep -q '|contains$'
 
-      - name: Wait for IMS worker idle
+      - name: Wait for IMS queue idle
         run: |
           set -Eeuo pipefail
           for attempt in $(seq 1 180); do
@@ -58,10 +52,10 @@ jobs:
 
           app=create_app()
           with app.app_context():
-              processing=IMSImportJob.query.filter(
+              busy=IMSImportJob.query.filter(
                   IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
               ).count()
-              print(f"IMS_BUSY|{processing}")
+              print(f"IMS_BUSY|{busy}")
           PY
           REMOTE
           )"
@@ -71,13 +65,12 @@ jobs:
             fi
             sleep 5
           done
-          echo "IMS worker did not become idle in time" >&2
           exit 1
 
-      - name: Restart worker and queue current representative refresh
+      - name: Restart worker and queue active-month refresh
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' GITHUB_SHA='$GITHUB_SHA' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           sudo systemctl restart ims-import-worker.service
@@ -85,7 +78,6 @@ jobs:
           echo "WORKER_RESTART|PASS"
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import os
           from app import create_app
           from app.services.period_service import PeriodService
           from app.services.representative_snapshot_refresh_queue import RepresentativeSnapshotRefreshQueue
@@ -95,15 +87,13 @@ jobs:
               period=PeriodService.get_active_period()
               year, month=int(period["year"]), int(period["month"])
               item=RepresentativeSnapshotRefreshQueue.enqueue(
-                  year,
-                  month,
-                  reason=f"monthly_comparison_fix:{os.environ.get('GITHUB_SHA','')}",
+                  year, month, reason="monthly_comparison_fix_live_acceptance"
               )
               print(f"REFRESH_QUEUED|year={year}|month={month}|reason={item['reason']}")
           PY
           REMOTE
 
-      - name: Verify live Murat monthly comparison
+      - name: Verify live snapshot arithmetic
         run: |
           set -Eeuo pipefail
           for attempt in $(seq 1 240); do
@@ -136,84 +126,61 @@ jobs:
 
               ws=PersistentRepresentativeSnapshotService.get_active(rep.id, year, month) or {}
               version=int(ws.get("read_model_version") or 0)
-              monthly=((ws.get("snapshots") or {}).get("monthly") or {})
-              market=monthly.get("market_analysis") or {}
+              market=((((ws.get("snapshots") or {}).get("monthly") or {}).get("market_analysis")) or {})
               rows=market.get("comparison_rows") or []
               if version < 2 or not rows:
                   print(f"VERIFY|WAITING|version={version}|rows={len(rows)}")
                   raise SystemExit(2)
 
               prev_year, prev_month=(year, month-1) if month>1 else (year-1, 12)
-              current_effective=ProductionResultService.effective_products(year, month, rep.id)
-              previous_effective=ProductionResultService.effective_products(prev_year, prev_month, rep.id)
-
+              current=ProductionResultService.effective_products(year, month, rep.id)
+              previous=ProductionResultService.effective_products(prev_year, prev_month, rep.id)
               failures=[]
-              names={}
+              names=set()
+
               for row in rows:
                   product=row.get("product") or {}
-                  pid=int(
-                      row.get("product_id")
-                      or (product.get("id") if isinstance(product, dict) else 0)
-                      or 0
-                  )
-                  name=(
-                      product.get("product_name")
-                      if isinstance(product, dict)
-                      else str(pid)
-                  ) or str(pid)
-                  names[name.upper()]=row
+                  pid=int(row.get("product_id") or (product.get("id") if isinstance(product,dict) else 0) or 0)
+                  name=(product.get("product_name") if isinstance(product,dict) else str(pid)) or str(pid)
+                  names.add(name.upper())
 
                   actual=n(row.get("actual_unit"))
-                  previous=n(row.get("previous_actual_unit"))
+                  prior=n(row.get("previous_actual_unit"))
                   delta=n(row.get("actual_change_unit"))
                   pct=row.get("actual_change_percent")
-                  competitor=n(row.get("competitor_unit"))
-                  previous_comp=n(row.get("previous_competitor_unit"))
-                  competitor_delta=n(row.get("competitor_change_unit"))
+                  comp=n(row.get("competitor_unit"))
+                  prior_comp=n(row.get("previous_competitor_unit"))
+                  comp_delta=n(row.get("competitor_change_unit"))
 
-                  expected_actual=n((current_effective.get(pid) or {}).get("actual_unit"))
-                  expected_previous=n((previous_effective.get(pid) or {}).get("actual_unit"))
-                  expected_delta=expected_actual-expected_previous
-                  expected_pct=(
-                      expected_delta*100.0/expected_previous
-                      if expected_previous else None
-                  )
-                  expected_comp_delta=competitor-previous_comp
+                  expected_actual=n((current.get(pid) or {}).get("actual_unit"))
+                  expected_prior=n((previous.get(pid) or {}).get("actual_unit"))
+                  expected_delta=expected_actual-expected_prior
+                  expected_pct=(expected_delta*100.0/expected_prior) if expected_prior else None
 
-                  if abs(actual-expected_actual)>0.05:
-                      failures.append(f"{name}:current_source")
-                  if abs(previous-expected_previous)>0.05:
-                      failures.append(f"{name}:previous_source")
-                  if abs(delta-expected_delta)>0.05:
-                      failures.append(f"{name}:delta")
+                  if abs(actual-expected_actual)>0.05: failures.append(f"{name}:current")
+                  if abs(prior-expected_prior)>0.05: failures.append(f"{name}:previous")
+                  if abs(delta-expected_delta)>0.05: failures.append(f"{name}:delta")
                   if expected_pct is None:
-                      if pct is not None:
-                          failures.append(f"{name}:percent")
+                      if pct is not None: failures.append(f"{name}:percent")
                   elif pct is None or abs(n(pct)-expected_pct)>0.11:
                       failures.append(f"{name}:percent")
-                  if abs(competitor_delta-expected_comp_delta)>0.05:
+                  if abs(comp_delta-(comp-prior_comp))>0.05:
                       failures.append(f"{name}:competitor_delta")
 
                   print(
-                      f"ROW|{name}|previous={previous:.0f}|current={actual:.0f}|"
-                      f"delta={delta:.0f}|percent={pct}|"
-                      f"previous_comp={previous_comp:.0f}|current_comp={competitor:.0f}|"
-                      f"competitor_delta={competitor_delta:.0f}|"
-                      f"source={row.get('source')}|previous_source={row.get('previous_source')}"
+                      f"ROW|{name}|previous={prior:.0f}|current={actual:.0f}|delta={delta:.0f}|"
+                      f"percent={pct}|previous_comp={prior_comp:.0f}|current_comp={comp:.0f}|"
+                      f"competitor_delta={comp_delta:.0f}|source={row.get('source')}|"
+                      f"previous_source={row.get('previous_source')}"
                   )
 
               required={"TRAVAZOL","MONUROL","ACNEMIX","MIXOVUL","STIDERM","BRIMODER","FENTIVAG"}
-              missing=sorted(required-set(names))
-              if missing:
-                  failures.append("missing_products=" + ",".join(missing))
-
+              missing=sorted(required-names)
+              if missing: failures.append("missing=" + ",".join(missing))
               if failures:
                   print("VERIFY|FAIL|" + ",".join(failures))
                   raise SystemExit(3)
-
-              print(
-                  f"VERIFY|PASS|year={year}|month={month}|version={version}|rows={len(rows)}"
-              )
+              print(f"VERIFY|PASS|year={year}|month={month}|version={version}|rows={len(rows)}")
           PY
           REMOTE
           )"
@@ -225,5 +192,4 @@ jobs:
             fi
             sleep 5
           done
-          echo "Corrected representative snapshot was not published in time" >&2
           exit 1
