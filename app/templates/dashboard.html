@@ -4,7 +4,7 @@
 {% block page_title %}Yönetici Dashboard{% endblock %}
 
 {% block styles %}
-<link href="{{ url_for('static', filename='css/dashboard.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/dashboard.css', v='20260919t') }}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -238,8 +238,8 @@
           <p class="ranking-subtitle">{{ ytd_ranking.year | default('-', true) }} yılı · mevcut IMS dönemine kadar temsilci toplam kutu satışı</p>
         </div>
         <div class="ytd-ranking-limit" role="group" aria-label="Sıralama uzunluğu">
-          <button type="button" data-ytd-limit="5">İlk 5</button>
-          <button type="button" class="active" data-ytd-limit="10">İlk 10</button>
+          <button type="button" class="active" data-ytd-limit="5" aria-pressed="true">İlk 5</button>
+          <button type="button" data-ytd-limit="10" aria-pressed="false">İlk 10</button>
         </div>
       </div>
 
@@ -262,8 +262,30 @@
           <span><i class="bi bi-database-check"></i> Snapshot verisi · tek okuma</span>
         </div>
 
-        <div class="ytd-ranking-list" data-ytd-ranking-list></div>
-        <div class="empty-state ytd-ranking-empty" data-ytd-ranking-empty hidden>
+        {% set first_ytd_product = ytd_products[0] if ytd_products else {} %}
+        {% set first_ytd_rows = first_ytd_product.rankings | default([], true) %}
+        <div class="ytd-ranking-list" data-ytd-ranking-list>
+          {% for item in first_ytd_rows[:5] %}
+          <div class="ytd-ranking-row">
+            <div class="ytd-rank-number {% if loop.index == 1 %}top-1{% elif loop.index == 2 %}top-2{% elif loop.index == 3 %}top-3{% endif %}">#{{ loop.index }}</div>
+            <div class="ytd-rep-main">
+              <div class="ytd-rep-name">
+                {{ item.representative_name | default('-', true) }}
+                {% if loop.index == 1 %}
+                  <span class="ytd-leader-medal gold" title="Lider"><i class="bi bi-trophy-fill"></i></span>
+                {% elif loop.index == 2 %}
+                  <span class="ytd-leader-medal silver" title="İkinci"><i class="bi bi-award-fill"></i></span>
+                {% elif loop.index == 3 %}
+                  <span class="ytd-leader-medal bronze" title="Üçüncü"><i class="bi bi-award-fill"></i></span>
+                {% endif %}
+              </div>
+              <div class="ytd-rep-location">{{ item.city | default('-', true) }} · {{ item.region | default('-', true) }}</div>
+            </div>
+            <div class="ytd-box-total"><strong>{{ "{:,.0f}".format(item.total_unit | default(0, true)) }}</strong><span>kutu</span></div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="empty-state ytd-ranking-empty" data-ytd-ranking-empty {% if first_ytd_rows %}hidden{% endif %}>
           <i class="bi bi-inboxes"></i>
           <p>Bu ürün için yıl içi kutu satışı bulunmuyor.</p>
         </div>
@@ -424,5 +446,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js', v='20260919t') }}"></script>
 {% endblock %}
