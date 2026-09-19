@@ -365,6 +365,12 @@ def production_upload():
         ).parse()
         ProductionResultImportService.apply(upload, report)
         db.session.commit()
+        from app.services.representative_snapshot_refresh_queue import (
+            RepresentativeSnapshotRefreshQueue,
+        )
+        RepresentativeSnapshotRefreshQueue.enqueue_for_production(
+            year, month, upload.id
+        )
     except ProductionWorkbookValidationError as exc:
         db.session.rollback()
         # Preserve rejected source evidence and its reason without applying any result.
