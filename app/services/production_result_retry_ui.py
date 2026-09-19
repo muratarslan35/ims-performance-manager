@@ -98,9 +98,18 @@ def install_production_result_retry_ui(app):
                 from app.services.representative_snapshot_refresh_queue import (
                     RepresentativeSnapshotRefreshQueue,
                 )
-                RepresentativeSnapshotRefreshQueue.enqueue_for_production(
-                    upload.year, upload.month, upload.id
-                )
+                try:
+                    RepresentativeSnapshotRefreshQueue.enqueue_for_production(
+                        upload.year, upload.month, upload.id
+                    )
+                except Exception:
+                    # The retry transaction is already committed. Snapshot
+                    # refresh scheduling is non-authoritative and must not
+                    # downgrade a verified APPLIED production result.
+                    current_app.logger.exception(
+                        "production_retry_representative_refresh_enqueue_failed upload_id=%s",
+                        upload.id,
+                    )
             except ProductionWorkbookValidationError as exc:
                 db.session.rollback()
                 failed = db.session.get(ProductionResultUpload, upload_id)
