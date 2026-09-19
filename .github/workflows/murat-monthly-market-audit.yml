@@ -92,5 +92,18 @@ jobs:
               print(f"PREV_TOTALS|actual={n(pt.get('actual_unit')):.2f}|competitor={n(pt.get('competitor_unit')):.2f}|market={n(pt.get('market_unit')):.2f}")
               print(f"CURR_TOTALS|actual={n(ct.get('actual_unit')):.2f}|competitor={n(ct.get('competitor_unit')):.2f}|market={n(ct.get('market_unit')):.2f}")
               print(f"SUMMARY|company_mismatches={mismatches}|competitor_mismatches={competitor_mismatches}")
+              from app.models import IMSSummary, Product
+              from app.services.production_result_service import ProductionResultService
+              products={p.product_name.upper():p for p in Product.query.all()}
+              for period in ((2026,8),(2026,9)):
+                  eff=ProductionResultService.effective_products(period[0],period[1],rep.id)
+                  for name in names:
+                      p=products.get(name)
+                      if not p:
+                          continue
+                      summ=IMSSummary.query.filter_by(year=period[0],month=period[1],representative_id=rep.id,product_id=p.id).first()
+                      e=eff.get(p.id,{})
+                      print(f"SOURCE_DETAIL|{period[0]}-{period[1]:02d}|{name}|summary_unit={n(getattr(summ,'unit',0)):.2f}|summary_tl={n(getattr(summ,'tl',0)):.2f}|effective_unit={n(e.get('actual_unit')):.2f}|effective_tl={n(e.get('actual_tl')):.2f}|effective_source={e.get('source')}")
+
           PY
           REMOTE
