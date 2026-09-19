@@ -296,3 +296,14 @@ def test_region_box_matrix_controls_and_fixed_layout_contract():
     assert "row.active!==false" in template
     assert "row.active!==false&&row.is_vacant!==true" not in template
 
+def test_region_box_dark_mode_and_centering_contract():
+    template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
+
+    assert "REGION BOX DARK CENTER POLISH 20260919n" in template
+    assert "text-align: center !important" in template
+    assert "background: #143d2c !important" in template
+    assert "background: #4a2428 !important" in template
+    assert "color: #7df0b0 !important" in template
+    assert "color: #ffaaa9 !important" in template
+    assert "table-layout: fixed !important" in template
+
