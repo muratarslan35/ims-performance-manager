@@ -58,14 +58,21 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
     route = Path("app/dashboard.py").read_text(encoding="utf-8")
 
     assert 'id="ytdProductRankingSection"' in template
-    assert 'data-ytd-limit="5"' in template
+    assert 'class="active" data-ytd-limit="5"' in template
     assert 'data-ytd-limit="10"' in template
     assert 'data-ytd-product=' in template
+    assert 'first_ytd_rows[:5]' in template
     assert '"ytdProductRankings"' in template
+    assert "filename='css/dashboard.css', v='20260919t'" in template
+    assert "filename='js/dashboard.js', v='20260919t'" in template
+    assert template.index('id="ytdProductRankingSection"') < template.index('id="imsTurkeyRankingSection"')
 
     assert "initYtdProductRanking" in javascript
     assert "data-ytd-limit" in javascript
     assert "data-ytd-product" in javascript
+    assert "let limit = 5" in javascript
+    assert 'list.style.transition = "height .28s ease"' in javascript
+    assert 'imsRanking.parentElement.insertBefore(ytdRanking, imsRanking)' in javascript
     assert "bi-trophy-fill" in javascript
     assert "bi-award-fill" in javascript
     assert "fetch(" not in javascript[javascript.index("function initYtdProductRanking"):javascript.index("function animateCounters")]
