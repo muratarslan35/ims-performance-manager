@@ -68,7 +68,36 @@ class RegionAISnapshotService:
         return result
 
     @classmethod
-    def _zero_exit_bricks(cls, workspaces):
+    def _national_product_activity(cls, dashboard_payload):
+        """Return nationally selling product keys from the published dashboard snapshot.
+
+        A managed product is nationally active when the NATIONAL snapshot has
+        any box or TL realization. The availability flag prevents a missing
+        legacy dashboard snapshot from accidentally hiding every zero-exit row.
+        """
+        national = (dashboard_payload or {}).get("executive_metrics") or {}
+        seen = set()
+        active = set()
+        for item in national.get("products") or []:
+            key = cls._key(item.get("product_name"))
+            if not key:
+                continue
+            seen.add(key)
+            unit_actual = cls._number(
+                item.get("unit_actual")
+                if item.get("unit_actual") is not None
+                else item.get("actual_unit")
+            )
+            actual_tl = cls._number(item.get("actual_tl"))
+            if unit_actual > 0 or actual_tl > 0:
+                active.add(key)
+        return active, bool(seen)
+
+    @classmethod
+    def _zero_exit_bricks(cls, workspaces, dashboard_payload=None):
+        active_products, national_activity_available = cls._national_product_activity(
+            dashboard_payload
+        )
         rows = {}
         for market in cls._monthly_markets(workspaces):
             for item in market.get("brick_product_rows") or []:
@@ -80,7 +109,13 @@ class RegionAISnapshotService:
                 product = str(item.get("product_name") or "").strip()
                 if not brick or not product:
                     continue
-                key = (cls._key(brick), cls._key(product))
+                product_key = cls._key(product)
+                # A product with no NATIONAL output at all is not a useful
+                # brick-level zero-exit signal. A nationally selling product
+                # stays eligible even when this particular brick is zero.
+                if national_activity_available and product_key not in active_products:
+                    continue
+                key = (cls._key(brick), product_key)
                 bucket = rows.setdefault(key, {
                     "brick": brick,
                     "product_name": product,
@@ -102,31 +137,31 @@ class RegionAISnapshotService:
         return result
 
     @classmethod
-    def _brick_totals(cls, workspaces):
+    def _brick_product_totals(cls, workspaces):
+        """Return one published fact per brick/product, deduping shared bricks."""
         rows = {}
         for market in cls._monthly_markets(workspaces):
-            for item in market.get("brick_rows") or []:
+            for item in market.get("brick_product_rows") or []:
                 brick = str(item.get("brick") or "").strip()
-                if not brick:
+                product = str(item.get("product_name") or "").strip()
+                if not brick or not product:
                     continue
-                key = cls._key(brick)
+                key = (cls._key(brick), cls._key(product))
                 candidate = {
                     "brick": brick,
+                    "product_name": product,
                     "company_unit": cls._number(item.get("company_unit")),
                     "competitor_unit": cls._number(item.get("competitor_unit")),
                     "market_unit": cls._number(item.get("market_unit")),
                     "share_percent": cls._number(item.get("share_percent")),
                 }
                 existing = rows.get(key)
-                # Duplicate shared-brick rows are the same published fact. If a
-                # compatibility snapshot differs, keep the row with the larger
-                # market denominator rather than double counting the brick.
                 if existing is None or candidate["market_unit"] > existing["market_unit"]:
                     rows[key] = candidate
         return rows
 
     @classmethod
-    def _city_competitor_totals(cls, market_analysis):
+    def _city_competitor_totals(cls, market_analysis, workspaces=None):
         result = {}
         for rival in (market_analysis or {}).get("rival_rows") or []:
             for city in rival.get("cities") or []:
@@ -134,12 +169,41 @@ class RegionAISnapshotService:
                 if not name:
                     continue
                 result[name] = result.get(name, 0.0) + cls._number(city.get("unit"))
+        if result or not workspaces:
+            return result
+
+        # Older region snapshot generations may not carry rival_rows/city
+        # rollups even though representative snapshots still contain the same
+        # month's brick competition. Fall back to those already-published
+        # brick/product rows without touching IMS or competition source tables.
+        brick_totals = {}
+        for item in cls._brick_product_totals(workspaces).values():
+            brick_key = cls._key(item.get("brick"))
+            bucket = brick_totals.setdefault(brick_key, {
+                "brick": item.get("brick") or "",
+                "competitor_unit": 0.0,
+            })
+            bucket["competitor_unit"] += cls._number(item.get("competitor_unit"))
+        for item in brick_totals.values():
+            tokens = [token for token in str(item["brick"]).strip().split() if token]
+            city = next((token for token in tokens if not token.isdigit()), "")
+            if not city:
+                continue
+            result[city] = result.get(city, 0.0) + cls._number(item["competitor_unit"])
         return result
 
     @classmethod
-    def _city_pressure_trend(cls, current_market, previous_market):
-        current = cls._city_competitor_totals(current_market)
-        previous = cls._city_competitor_totals(previous_market)
+    def _city_pressure_trend(
+        cls,
+        current_market,
+        previous_market,
+        current_workspaces=None,
+        previous_workspaces=None,
+    ):
+        current = cls._city_competitor_totals(current_market, current_workspaces)
+        previous = cls._city_competitor_totals(previous_market, previous_workspaces)
+        if not previous:
+            return []
         rows = []
         for city, current_unit in current.items():
             if current_unit <= 0:
@@ -167,8 +231,8 @@ class RegionAISnapshotService:
 
     @classmethod
     def _brick_competitor_losses(cls, current_workspaces, previous_workspaces):
-        current = cls._brick_totals(current_workspaces)
-        previous = cls._brick_totals(previous_workspaces)
+        current = cls._brick_product_totals(current_workspaces)
+        previous = cls._brick_product_totals(previous_workspaces)
         rows = []
         for key, previous_item in previous.items():
             previous_unit = previous_item["competitor_unit"]
@@ -181,6 +245,7 @@ class RegionAISnapshotService:
                 continue
             rows.append({
                 "brick": current_item["brick"],
+                "product_name": current_item["product_name"],
                 "previous_unit": round(previous_unit, 2),
                 "current_unit": round(current_unit, 2),
                 "loss_unit": round(loss, 2),
@@ -188,7 +253,9 @@ class RegionAISnapshotService:
                 "company_unit": round(current_item["company_unit"], 2),
                 "share_percent": round(current_item["share_percent"], 1),
             })
-        rows.sort(key=lambda item: (-item["loss_unit"], -item["change_percent"], item["brick"]))
+        rows.sort(key=lambda item: (
+            -item["loss_unit"], -item["change_percent"], item["brick"], item["product_name"]
+        ))
         return rows
 
     @classmethod
@@ -205,10 +272,40 @@ class RegionAISnapshotService:
         month,
     ):
         previous_year, previous_month = cls.previous_period(year, month)
+        current_city_competitor = cls._city_competitor_totals(
+            market_analysis, current_workspaces
+        )
+        previous_city_competitor = cls._city_competitor_totals(
+            previous_market_analysis, previous_workspaces
+        )
+        city_pressure = cls._city_pressure_trend(
+            market_analysis,
+            previous_market_analysis,
+            current_workspaces=current_workspaces,
+            previous_workspaces=previous_workspaces,
+        )
+        if not previous_city_competitor:
+            city_pressure_state = "NO_PREVIOUS_DATA"
+        elif not current_city_competitor:
+            city_pressure_state = "NO_CURRENT_DATA"
+        elif not city_pressure:
+            city_pressure_state = "NO_GROWTH"
+        else:
+            city_pressure_state = "HAS_ROWS"
+        active_products, national_activity_available = cls._national_product_activity(
+            dashboard_payload
+        )
         return {
             "national_underperformance": cls._national_underperformance(report, dashboard_payload),
-            "zero_exit_bricks": cls._zero_exit_bricks(current_workspaces),
-            "city_pressure": cls._city_pressure_trend(market_analysis, previous_market_analysis),
+            "zero_exit_bricks": cls._zero_exit_bricks(
+                current_workspaces, dashboard_payload=dashboard_payload
+            ),
+            "national_active_product_count": len(active_products),
+            "national_product_activity_available": national_activity_available,
+            "city_pressure": city_pressure,
+            "city_pressure_state": city_pressure_state,
+            "previous_competitor_available": bool(previous_city_competitor),
+            "current_competitor_available": bool(current_city_competitor),
             "brick_losses": cls._brick_competitor_losses(current_workspaces, previous_workspaces),
             "previous_period": {
                 "year": previous_year,

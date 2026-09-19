@@ -97,6 +97,7 @@
   {% set brick_losses=region_intel.brick_losses|default([]) %}
   {% set previous_period=region_intel.previous_period|default({}, true) %}
   {% set current_period=region_intel.current_period|default({}, true) %}
+  {% set city_pressure_state=region_intel.city_pressure_state|default('NO_PREVIOUS_DATA', true) %}
 
   <section class="scope-ai-command scope-ai-region-radar" aria-label="Bölge müdürü snapshot karar destek ekranı">
     <div class="scope-ai-command-head">
@@ -140,7 +141,7 @@
             <small>Hedef {{ '{:,.0f}'.format(item.target_unit or 0) }} kutu · Rakip {{ '{:,.0f}'.format(item.competitor_unit or 0) }} kutu. İlgili IMS kesitine kadar şirket çıkışı yok.</small>
           </div>
         {% else %}
-          <div class="scope-ai-empty">Hedefi olup şirket çıkışı sıfır kalan brick/ürün bulunmuyor.</div>
+          <div class="scope-ai-empty">Türkiye genelinde aktif satışı bulunan ürünlerde hedefli sıfır çıkış bricki bulunmuyor.</div>
         {% endfor %}
         </div>
       </article>
@@ -158,7 +159,15 @@
             <small>{{ previous_period.label|default('Önceki ay', true) }}: {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ current_period.label|default('Güncel ay', true) }}: {{ '{:,.0f}'.format(item.current_unit or 0) }} rakip kutu{% if item.change_percent is not none %} · +%{{ '%.1f'|format(item.change_percent) }}{% endif %}</small>
           </div>
         {% else %}
-          <div class="scope-ai-empty">Önceki aya göre rakip kutusunu koruyan veya artıran karşılaştırılabilir il bulunmuyor.</div>
+          {% if city_pressure_state == 'NO_PREVIOUS_DATA' %}
+          <div class="scope-ai-empty"><strong>{{ previous_period.label|default('Önceki ay', true) }}</strong> dönemine ait rakip il verisi yok; aylık karşılaştırma yapılamıyor.</div>
+          {% elif city_pressure_state == 'NO_CURRENT_DATA' %}
+          <div class="scope-ai-empty">Önceki aya ait rakip verisi mevcut; <strong>{{ current_period.label|default('güncel ay', true) }}</strong> için karşılaştırılabilir il verisi yok.</div>
+          {% elif city_pressure_state == 'NO_GROWTH' %}
+          <div class="scope-ai-empty">Önceki aya ait rakip verisi mevcut; bu ay rakip yoğunluğunu koruyan veya artıran il yok.</div>
+          {% else %}
+          <div class="scope-ai-empty">Karşılaştırılabilir rakip il hareketi bulunmuyor.</div>
+          {% endif %}
         {% endfor %}
         </div>
       </article>
@@ -166,12 +175,12 @@
       <article class="scope-ai-command-card scope-ai-region-card">
         <div class="scope-ai-card-head">
           <h4><i class="bi bi-graph-down-arrow"></i> Rakibin satış kaybettiği brickler</h4>
-          <span>{{ brick_losses|length }} brick</span>
+          <span>{{ brick_losses|length }} kayıt</span>
         </div>
         <div class="scope-ai-card-list">
         {% for item in brick_losses %}
           <div class="scope-ai-row">
-            <span>{{ item.brick }}</span>
+            <span>{{ item.brick }} · {{ item.product_name }}</span>
             <b class="scope-ai-positive-value">-{{ '{:,.0f}'.format(item.loss_unit or 0) }} rakip kutu</b>
             <small>Rakip {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ '{:,.0f}'.format(item.current_unit or 0) }} · düşüş %{{ '%.1f'|format(item.change_percent or 0) }} · şirket {{ '{:,.0f}'.format(item.company_unit or 0) }} kutu / pay %{{ '%.1f'|format(item.share_percent or 0) }}</small>
           </div>
