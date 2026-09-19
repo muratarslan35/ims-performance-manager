@@ -317,8 +317,12 @@ def test_region_ai_is_finalized_once_into_region_read_model():
     assert "PersistentDashboardSnapshotService.get_stable" in snapshot_service
     assert "PersistentRepresentativeSnapshotService.get_active_many" in snapshot_service
     assert "RegionAISnapshotService.build" in snapshot_service
+    assert "current_region_workspaces" in snapshot_service
+    assert "previous_region_workspaces" in snapshot_service
+    assert 'enriched["read_model_version"] = 3' in snapshot_service
+    assert "Snapshot-only · 4 alan" not in partial
     assert "NATIONAL altında kalan ürünler" in partial
-    assert "Hedefli ama çıkışı olmayan brickler" in partial
+    assert "Rakip satışı var, şirket çıkışı yok" in partial
     assert "Rakip yoğunluğunu koruyan / artıran iller" in partial
     assert "Rakibin satış kaybettiği brickler" in partial
     assert "Bu ay bölge müdürünün kontrol edeceği 7 sinyal" not in partial
