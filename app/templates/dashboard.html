@@ -4,7 +4,7 @@
 {% block page_title %}Yönetici Dashboard{% endblock %}
 
 {% block styles %}
-<link href="{{ url_for('static', filename='css/dashboard.css', v='20260919t') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/dashboard.css', v='20260919u') }}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -259,7 +259,7 @@
 
         <div class="ytd-ranking-meta">
           <span><i class="bi bi-calendar3"></i> {{ ytd_ranking.year | default('-', true) }} / {{ ytd_ranking.through_month | default('-', true) }}. aya kadar</span>
-          <span><i class="bi bi-database-check"></i> Snapshot verisi · tek okuma</span>
+          <span><i class="bi bi-bar-chart-line"></i> Yıllık toplam kutu sıralaması</span>
         </div>
 
         {% set first_ytd_product = ytd_products[0] if ytd_products else {} %}
@@ -277,6 +277,11 @@
                   <span class="ytd-leader-medal silver" title="İkinci"><i class="bi bi-award-fill"></i></span>
                 {% elif loop.index == 3 %}
                   <span class="ytd-leader-medal bronze" title="Üçüncü"><i class="bi bi-award-fill"></i></span>
+                {% endif %}
+                {% if item.rank_direction == 'up' %}
+                  <span class="ytd-rank-trend up" title="Önceki IMS sıralamasına göre yükseldi"><i class="bi bi-arrow-up"></i></span>
+                {% elif item.rank_direction == 'down' %}
+                  <span class="ytd-rank-trend down" title="Önceki IMS sıralamasına göre geriledi"><i class="bi bi-arrow-down"></i></span>
                 {% endif %}
               </div>
               <div class="ytd-rep-location">{{ item.city | default('-', true) }} · {{ item.region | default('-', true) }}</div>
@@ -446,5 +451,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/dashboard.js', v='20260919t') }}"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js', v='20260919u') }}"></script>
 {% endblock %}

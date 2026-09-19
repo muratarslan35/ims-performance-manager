@@ -11,18 +11,24 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 
 
 def _ensure_ytd_product_rankings(payload, service):
-    """One-time compatibility upgrade for pre-feature dashboard snapshots.
-
-    New snapshots already contain the ranking payload. An older ACTIVE snapshot
-    is upgraded with one aggregate query, re-published, and all later requests
-    read the persisted result without querying again.
-    """
-    if isinstance((payload or {}).get("ytd_product_rankings"), dict):
+    """One-time compatibility upgrade for older dashboard read models."""
+    existing = (payload or {}).get("ytd_product_rankings")
+    if isinstance(existing, dict) and int(existing.get("rank_trend_version") or 0) >= 1:
         return payload
-    rows = service.query_layer.load_ytd_product_rankings(service.year, service.month)
+
     upgraded = dict(payload or {})
-    upgraded["ytd_product_rankings"] = service._ytd_product_rankings(
-        rows, service.year, service.month
+    if isinstance(existing, dict):
+        rankings = existing
+    else:
+        rows = service.query_layer.load_ytd_product_rankings(
+            service.year, service.month
+        )
+        rankings = service._ytd_product_rankings(
+            rows, service.year, service.month
+        )
+
+    upgraded["ytd_product_rankings"] = service._ytd_rankings_with_previous_trend(
+        rankings
     )
     PersistentDashboardSnapshotService.publish(
         service.year, service.month, upgraded

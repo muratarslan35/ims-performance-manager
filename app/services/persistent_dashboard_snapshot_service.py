@@ -130,6 +130,68 @@ class PersistentDashboardSnapshotService:
         return None
 
     @classmethod
+    def get_generation_for_upload(cls, year: int, month: int, ims_id: int) -> dict | None:
+        """Read the newest immutable dashboard generation for one IMS upload."""
+        root = Path(current_app.instance_path) / "dashboard_snapshots"
+        pattern = (
+            f"dashboard-{int(year):04d}-{int(month):02d}"
+            f"-ims{int(ims_id)}-production*.json"
+        )
+        candidates = sorted(
+            root.glob(pattern),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        )
+        for path in candidates:
+            try:
+                envelope = json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, ValueError, TypeError):
+                continue
+            if (
+                envelope.get("version") != cls.VERSION
+                or int(envelope.get("year", 0)) != int(year)
+                or int(envelope.get("month", 0)) != int(month)
+                or int(envelope.get("ims_upload_id", -1)) != int(ims_id)
+            ):
+                continue
+            payload = envelope.get("payload")
+            if isinstance(payload, dict):
+                return payload
+        return None
+
+    @classmethod
+    def previous_completed_upload(cls, current_upload_id: int):
+        """Return the completed IMS upload immediately preceding the current one."""
+        return (
+            IMSUpload.query.filter(
+                IMSUpload.status == IMSUpload.STATUS_COMPLETED,
+                IMSUpload.id != int(current_upload_id),
+            )
+            .order_by(
+                desc(IMSUpload.year),
+                desc(IMSUpload.month),
+                desc(IMSUpload.week_number),
+                desc(IMSUpload.completed_at),
+                desc(IMSUpload.id),
+            )
+            .first()
+        )
+
+    @classmethod
+    def previous_generation_for_current(cls, year: int, month: int) -> tuple[dict | None, object | None]:
+        """Return previous IMS dashboard generation without rebuilding source data."""
+        current_upload_id, _production_id = cls.source_identity(year, month)
+        if not current_upload_id:
+            return None, None
+        previous = cls.previous_completed_upload(current_upload_id)
+        if previous is None:
+            return None, None
+        payload = cls.get_generation_for_upload(
+            int(previous.year), int(previous.month), int(previous.id)
+        )
+        return payload, previous
+
+    @classmethod
     def get_stable(cls, year: int, month: int) -> dict | None:
         """Read the currently published legacy pointer without rebuilding it."""
         try:

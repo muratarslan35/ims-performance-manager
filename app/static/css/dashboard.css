@@ -752,6 +752,9 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
 .ytd-leader-medal.gold{background:#fff1bd;color:#a87500}
 .ytd-leader-medal.silver{background:#edf0f4;color:#68788c}
 .ytd-leader-medal.bronze{background:#f6e0ce;color:#9b5420}
+.ytd-rank-trend{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:11px;font-weight:900}
+.ytd-rank-trend.up{background:rgba(24,179,104,.12);color:#149658}
+.ytd-rank-trend.down{background:rgba(227,75,75,.12);color:#c93d3d}
 .ytd-box-total{display:flex;align-items:baseline;justify-content:flex-end;gap:4px;white-space:nowrap}
 .ytd-box-total strong{color:#0b4ea2;font-size:15px;font-weight:950;letter-spacing:-.02em}
 .ytd-box-total span{color:#70839a;font-size:9px;font-weight:800}
@@ -778,6 +781,8 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
 [data-theme="dark"] .ytd-leader-medal.gold{background:#493d17;color:#ffe48c}
 [data-theme="dark"] .ytd-leader-medal.silver{background:#303a48;color:#d7e0ea}
 [data-theme="dark"] .ytd-leader-medal.bronze{background:#4a3023;color:#ffc49a}
+[data-theme="dark"] .ytd-rank-trend.up{background:rgba(71,210,137,.16);color:#8cf0b9}
+[data-theme="dark"] .ytd-rank-trend.down{background:rgba(255,116,116,.16);color:#ffaaaa}
 [data-theme="dark"] .ytd-box-total strong{color:#8ec9ff}
 [data-theme="dark"] .ytd-box-total span{color:#9fb3c7}
 
