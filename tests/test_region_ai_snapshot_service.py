@@ -1,14 +1,14 @@
 from app.services.region_ai_snapshot_service import RegionAISnapshotService
 
 
-def _workspace(*, brick, target=100, company=0, competitor=80, share=0):
+def _workspace(*, brick, product="Monurol", target=100, company=0, competitor=80, share=0):
     return {
         "snapshots": {
             "monthly": {
                 "market_analysis": {
                     "brick_product_rows": [{
                         "brick": brick,
-                        "product_name": "Monurol",
+                        "product_name": product,
                         "target_unit": target,
                         "company_unit": company,
                         "competitor_unit": competitor,
@@ -40,8 +40,8 @@ def test_region_ai_snapshot_builds_four_management_signals_without_source_querie
     dashboard = {
         "executive_metrics": {
             "products": [
-                {"product_name": "Monurol", "realization_percent": 45.0},
-                {"product_name": "Travazol", "realization_percent": 68.0},
+                {"product_name": "Monurol", "realization_percent": 45.0, "unit_actual": 500},
+                {"product_name": "Travazol", "realization_percent": 68.0, "unit_actual": 400},
             ]
         }
     }
@@ -95,6 +95,7 @@ def test_region_ai_snapshot_builds_four_management_signals_without_source_querie
     assert result["city_pressure"][0]["city"] == "DIYARBAKIR"
     assert result["city_pressure"][0]["delta_unit"] == 40.0
     assert result["brick_losses"][0]["brick"] == "DIYARBAKIR MERKEZ"
+    assert result["brick_losses"][0]["product_name"] == "Monurol"
     assert result["brick_losses"][0]["loss_unit"] == 60.0
     assert result["previous_period"]["label"] == "08/2026"
 
@@ -139,5 +140,83 @@ def test_region_ai_snapshot_brick_loss_requires_previous_comparable_brick():
 
     assert len(rows) == 1
     assert rows[0]["brick"] == "A"
+    assert rows[0]["product_name"] == "Monurol"
     assert rows[0]["loss_unit"] == 30.0
     assert rows[0]["company_unit"] == 40.0
+
+def test_zero_exit_excludes_product_with_no_national_sales_but_keeps_active_product():
+    workspaces = {
+        1: _workspace(
+            brick="SANLIURFA MERKEZ", product="Fentivag",
+            target=1000, company=0, competitor=900,
+        ),
+        2: _workspace(
+            brick="DIYARBAKIR YENISEHIR", product="Brimoder",
+            target=200, company=0, competitor=150,
+        ),
+    }
+    dashboard = {
+        "executive_metrics": {
+            "products": [
+                {"product_name": "Fentivag", "unit_actual": 0, "actual_tl": 0},
+                {"product_name": "Brimoder", "unit_actual": 1250, "actual_tl": 250000},
+            ]
+        }
+    }
+
+    rows = RegionAISnapshotService._zero_exit_bricks(
+        workspaces, dashboard_payload=dashboard
+    )
+
+    assert [row["product_name"] for row in rows] == ["Brimoder"]
+    assert rows[0]["brick"] == "DIYARBAKIR YENISEHIR"
+
+
+def test_city_pressure_marks_missing_previous_competitor_data_explicitly():
+    result = RegionAISnapshotService.build(
+        report={"periods": {"monthly": {"products": []}}},
+        market_analysis={
+            "rival_rows": [{
+                "name": "Rakip",
+                "cities": [{"city": "DIYARBAKIR", "unit": 100}],
+            }]
+        },
+        dashboard_payload={"executive_metrics": {"products": []}},
+        previous_market_analysis={},
+        current_workspaces={},
+        previous_workspaces={},
+        year=2026,
+        month=9,
+    )
+
+    assert result["city_pressure"] == []
+    assert result["city_pressure_state"] == "NO_PREVIOUS_DATA"
+    assert result["previous_competitor_available"] is False
+
+
+def test_city_pressure_distinguishes_existing_previous_data_from_no_growth():
+    result = RegionAISnapshotService.build(
+        report={"periods": {"monthly": {"products": []}}},
+        market_analysis={
+            "rival_rows": [{
+                "name": "Rakip",
+                "cities": [{"city": "DIYARBAKIR", "unit": 80}],
+            }]
+        },
+        dashboard_payload={"executive_metrics": {"products": []}},
+        previous_market_analysis={
+            "rival_rows": [{
+                "name": "Rakip",
+                "cities": [{"city": "DIYARBAKIR", "unit": 100}],
+            }]
+        },
+        current_workspaces={},
+        previous_workspaces={},
+        year=2026,
+        month=9,
+    )
+
+    assert result["city_pressure"] == []
+    assert result["city_pressure_state"] == "NO_GROWTH"
+    assert result["previous_competitor_available"] is True
+
