@@ -75,6 +75,297 @@ html[data-theme="dark"] .region-box-table th,html[data-theme="dark"] .region-box
   .box-balance small{display:block;font-size:6px!important;line-height:1}
 }
 
+
+/* === REGION BOX DARK CENTER POLISH 20260919n === */
+/* Final table-only polish: stronger dark contrast, centered labels/numbers,
+   stable fixed cells on desktop/tablet/mobile. */
+.region-box-targets .region-section-head,
+.region-box-targets .region-box-toolbar,
+.region-box-targets .region-box-table-wrap {
+  color: var(--text);
+}
+
+.region-box-target-title,
+.region-box-target-title h2,
+.region-box-target-title p,
+.region-box-period-row,
+.region-box-thresholds,
+.region-box-legend {
+  text-align: center;
+}
+
+.region-box-filter-stack,
+.region-box-period-row,
+.region-box-thresholds,
+.region-box-legend {
+  justify-content: center;
+}
+
+.region-box-period-row {
+  width: 100%;
+}
+
+.region-box-switch,
+.region-box-thresholds {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.region-box-period-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+}
+
+.region-box-table th,
+.region-box-table td,
+.region-box-table th:first-child,
+.region-box-table td:first-child {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.region-box-rep {
+  text-align: center !important;
+}
+
+.region-box-rep strong,
+.region-box-rep small {
+  text-align: center !important;
+}
+
+.region-box-rep strong {
+  font-weight: 900 !important;
+  letter-spacing: .01em;
+}
+
+.box-balance {
+  justify-content: center !important;
+  align-items: center !important;
+  font-weight: 950 !important;
+  letter-spacing: .01em;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 1px 2px rgba(16,56,95,.07);
+}
+
+.box-balance small {
+  font-weight: 900 !important;
+  opacity: .95 !important;
+}
+
+.box-balance.is-reached {
+  background: #dcf6e7 !important;
+  border-color: #a8dfc0 !important;
+  color: #056b3c !important;
+}
+
+.box-balance.is-missing {
+  background: #ffe1e1 !important;
+  border-color: #efb9b9 !important;
+  color: #a91f1f !important;
+}
+
+.box-balance.is-neutral {
+  background: #e9eef3 !important;
+  border-color: #cfd9e2 !important;
+  color: #5f7183 !important;
+}
+
+html[data-theme="dark"] .region-box-targets,
+body[data-theme="dark"] .region-box-targets {
+  background: #142238 !important;
+  border-color: #2d425b !important;
+}
+
+html[data-theme="dark"] .region-box-targets .region-section-head,
+body[data-theme="dark"] .region-box-targets .region-section-head {
+  background: linear-gradient(180deg,#1a2d47,#16263c) !important;
+  border-bottom-color: #2c4058 !important;
+}
+
+html[data-theme="dark"] .region-box-target-title h2,
+body[data-theme="dark"] .region-box-target-title h2 {
+  color: #f5f8fc !important;
+}
+
+html[data-theme="dark"] .region-box-target-title p,
+body[data-theme="dark"] .region-box-target-title p,
+html[data-theme="dark"] .region-box-legend,
+body[data-theme="dark"] .region-box-legend {
+  color: #c6d3df !important;
+}
+
+html[data-theme="dark"] .region-box-toolbar,
+body[data-theme="dark"] .region-box-toolbar {
+  background: #16263c !important;
+  border-bottom-color: #2c4058 !important;
+}
+
+html[data-theme="dark"] .region-box-switch,
+body[data-theme="dark"] .region-box-switch {
+  background: #0f1d2f !important;
+  border-color: #3a5069 !important;
+}
+
+html[data-theme="dark"] .region-box-switch button,
+body[data-theme="dark"] .region-box-switch button,
+html[data-theme="dark"] .region-box-thresholds button,
+body[data-theme="dark"] .region-box-thresholds button {
+  color: #d7e2ed !important;
+  border-color: #425a74 !important;
+  background: #17283e !important;
+}
+
+html[data-theme="dark"] .region-box-switch button.active,
+body[data-theme="dark"] .region-box-switch button.active {
+  background: #0b6abf !important;
+  border-color: #1984dd !important;
+  color: #ffffff !important;
+  box-shadow: 0 5px 14px rgba(0,116,214,.28) !important;
+}
+
+html[data-theme="dark"] .region-box-thresholds button.active,
+body[data-theme="dark"] .region-box-thresholds button.active {
+  background: #1c3f66 !important;
+  border-color: #4f9ddd !important;
+  color: #bfe2ff !important;
+}
+
+html[data-theme="dark"] .region-box-period-label,
+body[data-theme="dark"] .region-box-period-label {
+  background: #0f1d2f !important;
+  border-color: #3a5069 !important;
+  color: #cfe8ff !important;
+}
+
+html[data-theme="dark"] .region-box-table,
+body[data-theme="dark"] .region-box-table {
+  color: #edf3f9 !important;
+}
+
+html[data-theme="dark"] .region-box-table thead th,
+body[data-theme="dark"] .region-box-table thead th {
+  background: #102035 !important;
+  color: #c9d8e6 !important;
+  border-right-color: #2c4058 !important;
+  border-bottom-color: #40566f !important;
+}
+
+html[data-theme="dark"] .region-box-table tbody td,
+body[data-theme="dark"] .region-box-table tbody td {
+  color: #e7eef5 !important;
+  border-right-color: #2d425b !important;
+  border-bottom-color: #30455f !important;
+}
+
+html[data-theme="dark"] .region-box-table tbody tr:nth-child(odd) td,
+body[data-theme="dark"] .region-box-table tbody tr:nth-child(odd) td {
+  background: #142238 !important;
+}
+
+html[data-theme="dark"] .region-box-table tbody tr:nth-child(even) td,
+body[data-theme="dark"] .region-box-table tbody tr:nth-child(even) td {
+  background: #182942 !important;
+}
+
+html[data-theme="dark"] .region-box-table tbody tr:hover td,
+body[data-theme="dark"] .region-box-table tbody tr:hover td {
+  background: #1d3350 !important;
+}
+
+html[data-theme="dark"] .region-box-rep strong,
+body[data-theme="dark"] .region-box-rep strong {
+  color: #f5f8fc !important;
+}
+
+html[data-theme="dark"] .region-box-rep small,
+body[data-theme="dark"] .region-box-rep small {
+  color: #9fb2c5 !important;
+}
+
+html[data-theme="dark"] .box-balance.is-reached,
+body[data-theme="dark"] .box-balance.is-reached {
+  background: #143d2c !important;
+  border-color: #2d7654 !important;
+  color: #7df0b0 !important;
+  box-shadow: inset 0 0 0 1px rgba(125,240,176,.08) !important;
+}
+
+html[data-theme="dark"] .box-balance.is-missing,
+body[data-theme="dark"] .box-balance.is-missing {
+  background: #4a2428 !important;
+  border-color: #824149 !important;
+  color: #ffaaa9 !important;
+  box-shadow: inset 0 0 0 1px rgba(255,170,169,.07) !important;
+}
+
+html[data-theme="dark"] .box-balance.is-neutral,
+body[data-theme="dark"] .box-balance.is-neutral {
+  background: #26364a !important;
+  border-color: #475d74 !important;
+  color: #c4d0dc !important;
+}
+
+@media (max-width: 991.98px) {
+  .region-box-filter-stack,
+  .region-box-period-row,
+  .region-box-thresholds,
+  .region-box-legend {
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .region-box-legend {
+    width: 100%;
+  }
+
+  .region-box-table th,
+  .region-box-table td {
+    text-align: center !important;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .region-box-period-row {
+    flex-direction: column;
+  }
+
+  .region-box-switch {
+    width: 100% !important;
+  }
+
+  .region-box-period-label {
+    width: 100%;
+  }
+
+  .region-box-thresholds {
+    width: 100%;
+  }
+
+  .region-box-legend {
+    justify-content: center !important;
+    text-align: center !important;
+    flex-wrap: wrap;
+  }
+
+  .region-box-table {
+    table-layout: fixed !important;
+  }
+
+  .region-box-table th,
+  .region-box-table td,
+  .region-box-table th:first-child,
+  .region-box-table td:first-child {
+    text-align: center !important;
+    vertical-align: middle !important;
+  }
+
+  .box-balance {
+    width: 100% !important;
+    min-height: 31px;
+  }
+}
+
 </style>
 {% set month_names = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'] %}
 <div class="region-page">
