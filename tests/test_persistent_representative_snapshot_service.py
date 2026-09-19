@@ -91,3 +91,16 @@ def test_snapshot_migration_adds_only_derived_cache_tables():
     assert "targets" not in migration
     assert "ims_raw_data" not in migration
     assert "production_results" not in migration
+
+
+def test_monthly_comparison_contract_forces_one_time_snapshot_upgrade():
+    snapshot = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(
+        encoding="utf-8"
+    )
+    workspace = (ROOT / "app/services/representative_period_workspace.py").read_text(
+        encoding="utf-8"
+    )
+    assert "READ_MODEL_VERSION = 2" in snapshot
+    assert "def _set_read_model_version" in snapshot
+    assert "cls._set_read_model_version(exact.id) >= cls.READ_MODEL_VERSION" in snapshot
+    assert '"read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION' in workspace
