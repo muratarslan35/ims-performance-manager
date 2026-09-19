@@ -688,6 +688,10 @@ def test_mobile_navbar_contains_search_and_period_status(app):
     layout_css = Path("app/static/css/layout.css").read_text(encoding="utf-8")
     assert ".navbar-home-brand" in layout_css
     assert "font-size: 10.5px" in layout_css
+    assert "MOBILE NAVBAR SINGLE TOP ROW 20260919q" in layout_css
+    assert "grid-template-columns: minmax(0, 1fr) auto" in layout_css
+    assert "grid-column: 1 / -1" in layout_css
+    assert "grid-row: 2" in layout_css
     assert 'rel="icon" type="image/svg+xml"' in html
 
 
@@ -765,63 +769,46 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
 
     response = client.get("/dashboard/", follow_redirects=True)
     html = response.get_data(as_text=True)
+    dashboard_template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
 
     assert response.status_code == 200
     assert html.count("Aylık ₺ Hedefi") == 1
     assert html.count("Gerçekleşen Çıkış") == 1
     assert html.count("TL Realizasyonu") == 1
-    assert "executive-market-kpis" not in html
-    assert "Bölge Pazar Payları Sıralaması" not in html
-    assert "Bölgesel Ürün Bazlı Rekabet Analizi" not in html
-    assert 'id="regionalCompetitionTable"' not in html
-    assert 'data-competition-filter="risk"' not in html
-    assert "Pazar Büyüklüğü" not in html
-    assert "Bölgesel Aksiyon" not in html
     assert "Hedef Kutu" in html
     assert "Gerçekleşen Kutu" in html
     assert "Kutu Realizasyonu" in html
     assert "Türkiye Bölge Haritası" in html
-    assert "Excel Bölge Yerleşimi" not in html
     assert "Türkiye temsili satış bölgesi haritası" in html
-    assert "Ürün Performans Tablosu" in html
-    assert "Türkiye Performans Özeti" not in html
     assert 'id="mapSelectedInfo"' in html
+    assert 'id="executiveKpiLayout"' in html
+    assert 'id="turkeyMapSection"' in html
+
+    # Dashboard is intentionally trimmed after the map; these functions are
+    # available from the left navigation instead of being repeated here.
+    assert 'id="aiExecutiveSummary"' not in html
+    assert "AI Yönetici Özeti" not in html
+    assert 'id="imsTurkeyRankingSection"' not in html
+    assert "IMS Türkiye Sıralaması" not in html
+    assert 'id="productPerformanceSection"' not in html
+    assert "Ürün Performans Tablosu" not in html
+    assert 'id="warningActionSection"' not in html
+    assert "Uyarılar ve Aksiyonlar" not in html
+    assert "Hızlı İşlemler" not in html
+    assert "Bölge Pazar Payları Sıralaması" not in html
+    assert "Bölgesel Ürün Bazlı Rekabet Analizi" not in html
+    assert 'id="regionalCompetitionTable"' not in html
+    assert 'data-competition-filter="risk"' not in html
+
+    assert "Excel Bölge Yerleşimi" not in html
     assert "901 · DİYARBAKIR" in html
     assert "Batman" in html and "Şanlıurfa" in html and "Mardin" in html
-    assert "DOĞU VE GÜNEYDOĞU BÖLGESİ" not in html
     assert "Van" in html
-    assert "Bölge analizini aç" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert "province-layer" not in html
-    assert 'id="productValueLegend"' in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
-    assert "product-performance-layout" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
-    dashboard_template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
-    assert dashboard_template.index("Ürün Performans Tablosu") < dashboard_template.index('id="productDonutChart"')
-    assert "Toplam Ciro Dağılımı" in dashboard_template
-    assert "escapeDashboardHtml" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
-    assert 'id="executiveKpiLayout"' in html
-    assert 'id="productPerformanceSection"' in html
-    assert 'id="turkeyMapSection"' in html
-    assert 'id="imsTurkeyRankingSection"' in html
-    assert 'id="regionalMarketShareRankingSection"' not in html
-    assert "IMS Türkiye Sıralaması" in html
-    assert "Bölge Pazar Payları Sıralaması" not in html
-    dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
-    assert dashboard_js.index('"productPerformanceSection"') < dashboard_js.index('"turkeyMapSection"') < dashboard_js.index('"imsTurkeyRankingSection"')
-    assert '"regionalMarketShareRankingSection"' not in dashboard_js
-    assert 'id="aiExecutiveSummary"' in html
-    assert "Gerçekleşen Ciro" in html
-    assert "Hedef Açığı" in html
-    assert "Aksiyon Bölgesi" in html
-    assert "Aksiyon Ürünü" in html
-    assert "Gelecek Ay Ciro Tahmini" not in html
-    assert "Önümüzdeki Ay Tahmini" not in html
-    assert "Tahmin Farkı" not in html
-    assert "Risk Puanı" not in html
-    assert "Beklenen Prim" not in html
-    assert "Kaçırılan Prim" not in html
-    assert 'appendChild(executiveSummary)' in dashboard_js
-    assert "region-realization-value" in Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    assert "Bölge analizini aç" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+    assert "AI Yönetici Özeti" not in dashboard_template
+    assert "Uyarılar ve Aksiyonlar" not in dashboard_template
 
 
 def test_mobile_map_tooltip_stays_inside_map_bounds():
