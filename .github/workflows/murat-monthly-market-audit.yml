@@ -35,9 +35,136 @@ jobs:
         run: |
           set -Eeuo pipefail
           for attempt in $(seq 1 120); do
-            remote_sha="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git rev-parse HEAD" 2>/dev/null || true)"
-            echo "LIVE_SHA|$remote_sha"
-            if [ "$remote_sha" = "$GITHUB_SHA" ]; then
+            live_state="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && live_sha=\$(git rev-parse HEAD) && if git merge-base --is-ancestor '$GITHUB_SHA' \"\$live_sha\"; then echo \"\$live_sha|contains\"; else echo \"\$live_sha|waiting\"; fi" 2>/dev/null || true)"
+            echo "LIVE_STATE|$live_state"
+            if echo "$live_state" | grep -q '|contains
+            sleep 5
+          done
+          echo "Production did not reach $GITHUB_SHA in time" >&2
+          exit 1
+
+      - name: Queue representative snapshot refresh
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' GITHUB_SHA='$GITHUB_SHA' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import os
+          from app import create_app
+          from app.services.period_service import PeriodService
+          from app.services.representative_snapshot_refresh_queue import RepresentativeSnapshotRefreshQueue
+
+          app=create_app()
+          with app.app_context():
+              period=PeriodService.get_active_period()
+              year, month=int(period["year"]), int(period["month"])
+              item=RepresentativeSnapshotRefreshQueue.enqueue(
+                  year, month, reason=f"monthly_comparison_fix:{os.environ.get('GITHUB_SHA','')}"
+              )
+              print(f"REFRESH_QUEUED|year={year}|month={month}|reason={item['reason']}")
+          PY
+          REMOTE
+
+      - name: Wait for corrected active snapshot and verify arithmetic
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 180); do
+            set +e
+            output="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlalchemy as sa
+          from app import create_app
+          from app.models import Representative
+          from app.services.period_service import PeriodService
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+          from app.services.production_result_service import ProductionResultService
+
+          def n(v):
+              try: return float(v or 0)
+              except Exception: return 0.0
+
+          app=create_app()
+          with app.app_context():
+              period=PeriodService.get_active_period()
+              year, month=int(period["year"]), int(period["month"])
+              rep=Representative.query.filter(sa.func.upper(Representative.rep_name)=="MURAT ARSLAN").first()
+              assert rep is not None
+              ws=PersistentRepresentativeSnapshotService.get_active(rep.id, year, month) or {}
+              monthly=((ws.get("snapshots") or {}).get("monthly") or {})
+              market=monthly.get("market_analysis") or {}
+              rows=market.get("comparison_rows") or []
+              if not rows:
+                  print("VERIFY|WAITING|reason=no_comparison_rows")
+                  raise SystemExit(2)
+
+              prev_year, prev_month=(year, month-1) if month>1 else (year-1,12)
+              current_effective=ProductionResultService.effective_products(year,month,rep.id)
+              previous_effective=ProductionResultService.effective_products(prev_year,prev_month,rep.id)
+
+              failures=[]
+              for row in rows:
+                  pid=int(row.get("product_id") or ((row.get("product") or {}).get("id") if isinstance(row.get("product"),dict) else 0) or 0)
+                  actual=n(row.get("actual_unit"))
+                  previous=n(row.get("previous_actual_unit"))
+                  delta=n(row.get("actual_change_unit"))
+                  competitor=n(row.get("competitor_unit"))
+                  previous_comp=n(row.get("previous_competitor_unit"))
+                  competitor_delta=n(row.get("competitor_change_unit"))
+                  expected_delta=actual-previous
+                  expected_competitor_delta=competitor-previous_comp
+                  pct=row.get("actual_change_percent")
+                  expected_pct=(expected_delta*100.0/previous) if previous else None
+
+                  current=n((current_effective.get(pid) or {}).get("actual_unit"))
+                  prior=n((previous_effective.get(pid) or {}).get("actual_unit"))
+                  if abs(delta-expected_delta)>0.05:
+                      failures.append(f"pid={pid}:company_delta")
+                  if abs(competitor_delta-expected_competitor_delta)>0.05:
+                      failures.append(f"pid={pid}:competitor_delta")
+                  if abs(actual-current)>0.05:
+                      failures.append(f"pid={pid}:current_source")
+                  if abs(previous-prior)>0.05:
+                      failures.append(f"pid={pid}:previous_source")
+                  if expected_pct is None:
+                      if pct is not None:
+                          failures.append(f"pid={pid}:percent")
+                  elif pct is None or abs(n(pct)-expected_pct)>0.11:
+                      failures.append(f"pid={pid}:percent")
+                  product=row.get("product") or {}
+                  name=(product.get("product_name") if isinstance(product,dict) else "") or str(pid)
+                  print(
+                      f"ROW|{name}|previous={previous:.2f}|current={actual:.2f}|delta={delta:.2f}|"
+                      f"percent={pct}|previous_comp={previous_comp:.2f}|current_comp={competitor:.2f}|"
+                      f"competitor_delta={competitor_delta:.2f}|source={row.get('source')}|"
+                      f"previous_source={row.get('previous_source')}"
+                  )
+
+              if failures:
+                  print("VERIFY|FAIL|" + ",".join(failures))
+                  raise SystemExit(3)
+              print(f"VERIFY|PASS|year={year}|month={month}|rows={len(rows)}")
+          PY
+          REMOTE
+          )"
+            rc=$?
+            set -e
+            echo "$output"
+            if echo "$output" | grep -q 'VERIFY|PASS'; then
+              exit 0
+            fi
+            if [ "$rc" -ne 2 ] && [ "$rc" -ne 0 ]; then
+              # A stale pre-refresh snapshot can fail source checks briefly.
+              # Keep waiting while the durable worker queue replaces it.
+              :
+            fi
+            sleep 5
+          done
+          echo "Corrected representative snapshot was not published in time" >&2
+          exit 1
+; then
               exit 0
             fi
             sleep 5
