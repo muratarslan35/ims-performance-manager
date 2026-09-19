@@ -746,6 +746,9 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "min-height: 178px" in css
     assert "object-fit: cover" in css
     assert "margin-top: 0 !important" in css
+    assert "AUTH BILIM PANEL COLOR MATCH 20260919j" in css
+    assert "background: #142657 !important" in css
+    assert "background: none !important" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
