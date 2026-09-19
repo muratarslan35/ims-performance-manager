@@ -162,3 +162,59 @@ def test_region_product_table_has_unit_gap_and_tl_gap_headers():
     template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
     assert "<th>Kutu Farkı</th><th>₺ Farkı</th>" in template
     assert "item.unit_difference" in template
+
+
+def test_region_box_target_matrix_merges_finalized_monthly_rows_without_queries():
+    from app.services.period_result_sum_guard import _merge_representative_products
+
+    rows = _merge_representative_products([
+        {
+            "representative_products": [{
+                "representative_id": 10,
+                "representative_name": "Temsilci A",
+                "city": "Diyarbakır",
+                "active": True,
+                "is_vacant": False,
+                "product_id": 1,
+                "product_name": "Travazol",
+                "product_display_order": 1,
+                "target_unit": 100,
+                "actual_unit": 80,
+                "unit_complete": True,
+            }]
+        },
+        {
+            "representative_products": [{
+                "representative_id": 10,
+                "representative_name": "Temsilci A",
+                "city": "Diyarbakır",
+                "active": True,
+                "is_vacant": False,
+                "product_id": 1,
+                "product_name": "Travazol",
+                "product_display_order": 1,
+                "target_unit": 120,
+                "actual_unit": 100,
+                "unit_complete": True,
+            }]
+        },
+    ])
+
+    assert len(rows) == 1
+    assert rows[0]["target_unit"] == Decimal("220")
+    assert rows[0]["actual_unit"] == Decimal("180")
+    assert rows[0]["unit_complete"] is True
+
+
+def test_region_template_places_snapshot_box_matrix_before_market_panel():
+    template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
+
+    assert "Temsilci Kutu Hedef Takibi" in template
+    assert 'data-box-period="monthly"' in template
+    assert 'data-box-period="quarter"' in template
+    assert 'data-box-threshold="75"' in template
+    assert 'data-box-threshold="90"' in template
+    assert 'data-box-threshold="100"' in template
+    assert "representative_products" in template
+    assert "actual-(target*threshold/100)" in template
+    assert template.index("Temsilci Kutu Hedef Takibi") < template.index("BÖLGESEL REKABET VE PAZAR MERKEZİ")
