@@ -211,14 +211,14 @@ def test_region_box_rows_backfill_uses_one_published_snapshot_read(monkeypatch):
     }
     calls = []
 
-    def fake_many(representative_ids, year, month):
+    def fake_many(cls, representative_ids, year, month):
         calls.append((list(representative_ids), year, month))
         return workspaces
 
     monkeypatch.setattr(
         PersistentRepresentativeSnapshotService,
         "get_active_many",
-        fake_many,
+        classmethod(fake_many),
     )
 
     result = _ensure_representative_box_rows(report, 2026, 9)
