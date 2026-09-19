@@ -721,3 +721,82 @@ button.donut-legend-item:hover { transform: translateX(2px); background: #f6f9ff
 [data-theme="dark"] .rep-city,[data-theme="dark"] .rep-ciro,[data-theme="dark"] .upload-meta,[data-theme="dark"] .gauge-label,[data-theme="dark"] .gauge-stat-label{color:#a9bdd5}
 [data-theme="dark"] .progress-sm{background:#2a3d59}
 [data-theme="dark"] .map-selected-info{background:#172b46;border-color:#334966;color:#dbe7f5}
+
+/* === DASHBOARD YTD PRODUCT RANKING 20260919r === */
+.ytd-product-ranking-card{overflow:hidden}
+.ytd-ranking-header{align-items:flex-start}
+.ytd-ranking-limit{display:inline-flex;gap:4px;padding:4px;border:1px solid #d9e5f1;border-radius:11px;background:#f7faff}
+.ytd-ranking-limit button{min-width:70px;border:0;border-radius:8px;padding:8px 12px;background:transparent;color:#607892;font-size:11px;font-weight:900;transition:.18s ease}
+.ytd-ranking-limit button.active{background:#0b4ea2;color:#fff;box-shadow:0 4px 10px rgba(11,78,162,.22)}
+.ytd-ranking-body{padding-top:14px}
+.ytd-product-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px;margin-bottom:12px}
+.ytd-product-tab{min-width:0;border:1px solid #dbe6f1;border-radius:9px;padding:9px 6px;background:#f8fbff;color:#4f6b87;font-size:10px;font-weight:900;letter-spacing:.015em;text-transform:uppercase;transition:.18s ease;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ytd-product-tab:hover{border-color:#91bce0;background:#eef6fd;color:#0b4ea2}
+.ytd-product-tab.active{border-color:#0b4ea2;background:linear-gradient(135deg,#0b4ea2,#1676ca);color:#fff;box-shadow:0 5px 12px rgba(11,78,162,.2)}
+.ytd-ranking-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 2px 8px;color:#71859b;font-size:9px;font-weight:700}
+.ytd-ranking-meta span{display:inline-flex;align-items:center;gap:5px}
+.ytd-ranking-meta i{color:#0b4ea2}
+.ytd-ranking-list{border:1px solid #e2ebf4;border-radius:12px;overflow:hidden;background:#fff}
+.ytd-ranking-row{display:grid;grid-template-columns:48px minmax(0,1fr) minmax(95px,auto);align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #e8eef5}
+.ytd-ranking-row:last-child{border-bottom:0}
+.ytd-ranking-row:nth-child(even){background:#fbfdff}
+.ytd-ranking-row:hover{background:#f4f9fe}
+.ytd-rank-number{display:inline-flex;align-items:center;justify-content:center;width:38px;height:28px;border-radius:999px;background:#edf3fb;color:#4b6d8e;font-size:10px;font-weight:900}
+.ytd-rank-number.top-1{background:#fff3ca;color:#8b6500}
+.ytd-rank-number.top-2{background:#eef1f5;color:#59687a}
+.ytd-rank-number.top-3{background:#f6e5d7;color:#8a4a18}
+.ytd-rep-main{min-width:0}
+.ytd-rep-name{display:flex;align-items:center;gap:6px;color:#173d66;font-size:12px;font-weight:900;line-height:1.25}
+.ytd-rep-location{margin-top:3px;color:#7b8fa5;font-size:9px;font-weight:650;text-transform:uppercase}
+.ytd-leader-medal{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:12px}
+.ytd-leader-medal.gold{background:#fff1bd;color:#a87500}
+.ytd-leader-medal.silver{background:#edf0f4;color:#68788c}
+.ytd-leader-medal.bronze{background:#f6e0ce;color:#9b5420}
+.ytd-box-total{display:flex;align-items:baseline;justify-content:flex-end;gap:4px;white-space:nowrap}
+.ytd-box-total strong{color:#0b4ea2;font-size:15px;font-weight:950;letter-spacing:-.02em}
+.ytd-box-total span{color:#70839a;font-size:9px;font-weight:800}
+.ytd-ranking-empty{padding:26px}
+
+[data-theme="dark"] .ytd-ranking-limit{background:#102039;border-color:#334966}
+[data-theme="dark"] .ytd-ranking-limit button{color:#b9c9da}
+[data-theme="dark"] .ytd-ranking-limit button.active{background:#1676ca;color:#fff}
+[data-theme="dark"] .ytd-product-tab{background:#172a45;border-color:#334966;color:#b7c9dc}
+[data-theme="dark"] .ytd-product-tab:hover{background:#203755;border-color:#4d6c8f;color:#d7ebff}
+[data-theme="dark"] .ytd-product-tab.active{background:linear-gradient(135deg,#0b5fae,#1787dc);border-color:#2b91df;color:#fff}
+[data-theme="dark"] .ytd-ranking-meta{color:#a9bdd5}
+[data-theme="dark"] .ytd-ranking-meta i{color:#79bdff}
+[data-theme="dark"] .ytd-ranking-list{background:#16253d;border-color:#334966}
+[data-theme="dark"] .ytd-ranking-row{border-color:#2d405c}
+[data-theme="dark"] .ytd-ranking-row:nth-child(even){background:#182942}
+[data-theme="dark"] .ytd-ranking-row:hover{background:#1d314d}
+[data-theme="dark"] .ytd-rank-number{background:#203755;color:#c6d6e7}
+[data-theme="dark"] .ytd-rank-number.top-1{background:#493d17;color:#ffe48c}
+[data-theme="dark"] .ytd-rank-number.top-2{background:#303a48;color:#d7e0ea}
+[data-theme="dark"] .ytd-rank-number.top-3{background:#4a3023;color:#ffc49a}
+[data-theme="dark"] .ytd-rep-name{color:#f0f5fb}
+[data-theme="dark"] .ytd-rep-location{color:#9fb3c7}
+[data-theme="dark"] .ytd-leader-medal.gold{background:#493d17;color:#ffe48c}
+[data-theme="dark"] .ytd-leader-medal.silver{background:#303a48;color:#d7e0ea}
+[data-theme="dark"] .ytd-leader-medal.bronze{background:#4a3023;color:#ffc49a}
+[data-theme="dark"] .ytd-box-total strong{color:#8ec9ff}
+[data-theme="dark"] .ytd-box-total span{color:#9fb3c7}
+
+@media(max-width:900px){
+  .ytd-product-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media(max-width:640px){
+  .ytd-ranking-header{gap:12px}
+  .ytd-ranking-limit{width:100%;justify-content:flex-end}
+  .ytd-ranking-limit button{flex:1;max-width:none}
+  .ytd-product-tabs{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .ytd-product-tab:last-child{grid-column:1/-1}
+  .ytd-ranking-row{grid-template-columns:38px minmax(0,1fr) 82px;gap:8px;padding:10px 9px}
+  .ytd-rank-number{width:32px;height:25px;font-size:9px}
+  .ytd-rep-name{font-size:10.5px}
+  .ytd-rep-location{font-size:7.5px}
+  .ytd-box-total{flex-direction:column;align-items:flex-end;gap:0}
+  .ytd-box-total strong{font-size:12px}
+  .ytd-box-total span{font-size:7px}
+  .ytd-leader-medal{width:19px;height:19px;font-size:10px}
+}
+

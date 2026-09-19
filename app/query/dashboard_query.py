@@ -201,6 +201,52 @@ class DashboardQuery:
 
         return query.all()
 
+    def load_ytd_product_rankings(self, year: int, through_month: int):
+        """Return all product/representative YTD box totals in one aggregate query.
+
+        The result is intended for dashboard snapshot generation. Product-tab
+        changes in the browser never call this query again.
+        """
+        total_unit = func.sum(IMSSummary.unit).label("total_unit")
+        return (
+            self.session.query(
+                Product.id.label("product_id"),
+                Product.product_name.label("product_name"),
+                Product.display_order.label("product_display_order"),
+                Representative.id.label("representative_id"),
+                Representative.rep_name.label("representative_name"),
+                Representative.city.label("city"),
+                Representative.region.label("region"),
+                total_unit,
+            )
+            .select_from(IMSSummary)
+            .join(Product, Product.id == IMSSummary.product_id)
+            .join(Representative, Representative.id == IMSSummary.representative_id)
+            .filter(
+                IMSSummary.year == int(year),
+                IMSSummary.month <= int(through_month),
+                Product.is_active.is_(True),
+                Representative.active.is_(True),
+                IMSSummary.representative_id.isnot(None),
+            )
+            .group_by(
+                Product.id,
+                Product.product_name,
+                Product.display_order,
+                Representative.id,
+                Representative.rep_name,
+                Representative.city,
+                Representative.region,
+            )
+            .having(func.sum(IMSSummary.unit) > 0)
+            .order_by(
+                Product.display_order.asc(),
+                desc(total_unit),
+                Representative.rep_name.asc(),
+            )
+            .all()
+        )
+
     def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return SimpleNamespace(realization_tl=Decimal("0"), target_tl=Decimal("0"))

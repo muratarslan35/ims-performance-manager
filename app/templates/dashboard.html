@@ -227,6 +227,51 @@
 
 </div>
 
+{% set ytd_ranking = payload.ytd_product_rankings | default({}, true) %}
+{% set ytd_products = ytd_ranking.products | default([], true) %}
+<div class="row g-4 mb-4" id="ytdProductRankingSection">
+  <div class="col-12">
+    <div class="section-card ytd-product-ranking-card">
+      <div class="section-card-header ytd-ranking-header">
+        <div>
+          <h2 class="section-card-title"><i class="bi bi-award-fill"></i> Yıllık Ürün Bazlı Türkiye Sıralaması</h2>
+          <p class="ranking-subtitle">{{ ytd_ranking.year | default('-', true) }} yılı · mevcut IMS dönemine kadar temsilci toplam kutu satışı</p>
+        </div>
+        <div class="ytd-ranking-limit" role="group" aria-label="Sıralama uzunluğu">
+          <button type="button" data-ytd-limit="5">İlk 5</button>
+          <button type="button" class="active" data-ytd-limit="10">İlk 10</button>
+        </div>
+      </div>
+
+      <div class="section-card-body ytd-ranking-body">
+        <div class="ytd-product-tabs" role="tablist" aria-label="Ürün sıralaması">
+          {% for product in ytd_products %}
+          <button
+            type="button"
+            class="ytd-product-tab{% if loop.first %} active{% endif %}"
+            data-ytd-product="{{ product.product_key }}"
+            role="tab"
+            aria-selected="{{ 'true' if loop.first else 'false' }}">
+            {{ product.product_name }}
+          </button>
+          {% endfor %}
+        </div>
+
+        <div class="ytd-ranking-meta">
+          <span><i class="bi bi-calendar3"></i> {{ ytd_ranking.year | default('-', true) }} / {{ ytd_ranking.through_month | default('-', true) }}. aya kadar</span>
+          <span><i class="bi bi-database-check"></i> Snapshot verisi · tek okuma</span>
+        </div>
+
+        <div class="ytd-ranking-list" data-ytd-ranking-list></div>
+        <div class="empty-state ytd-ranking-empty" data-ytd-ranking-empty hidden>
+          <i class="bi bi-inboxes"></i>
+          <p>Bu ürün için yıl içi kutu satışı bulunmuyor.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-4 mb-4" id="imsTurkeyRankingSection">
   <div class="col-12">
     <div class="section-card">
@@ -341,6 +386,7 @@
 
 <script id="dashboardData" type="application/json">
 {
+  "ytdProductRankings": {{ payload.ytd_product_rankings | default({"year": 0, "through_month": 0, "products": []}, true) | tojson }},
   "productDonut": {
     "labels": {{ payload.products | default([], true) | map(attribute='product_name') | list | tojson }},
     "values": [

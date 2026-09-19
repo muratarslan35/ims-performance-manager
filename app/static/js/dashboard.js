@@ -480,6 +480,62 @@ function initCompetitionMarket(data) {
   CHARTS.competitionMarket = new Chart(canvas, { type: "bar", data: { labels: groups.map(g => g.display_product || g.product_group), datasets: [{ label: "Şirket IMS", data: groups.map(g => g.company_sales_tl || 0), backgroundColor: "#0B4EA2", borderRadius: 5 }, { label: "Rakip satış alanı", data: groups.map(g => g.competitor_sales_tl || 0), backgroundColor: "#F4A300", borderRadius: 5 }] }, options: { indexAxis: "y", responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "top", labels: { usePointStyle: true, boxWidth: 8, font: { weight: "600" } } }, tooltip: { ...defaultTooltip(), callbacks: { label(ctx) { return ` ${ctx.dataset.label}: ${numberTR(ctx.parsed.x, " ₺")}`; }, footer(items) { return ` Toplam pazar: ${numberTR(items.reduce((sum, item) => sum + Number(item.parsed.x || 0), 0), " ₺")}`; } } } }, scales: { x: { stacked: true, ticks: { callback(v) { const n=Number(v||0); return n>=1000000 ? `${(n/1000000).toLocaleString("tr-TR",{maximumFractionDigits:1})} Mn ₺` : `${Math.round(n/1000)} Bin ₺`; } }, grid: { color: "rgba(13, 43, 83, .06)" } }, y: { stacked: true, grid: { display: false }, ticks: { font: { weight: "700" }, color: "#183756" } } } } });
 }
 
+function initYtdProductRanking(data) {
+  const root = document.getElementById("ytdProductRankingSection");
+  if (!root) return;
+  const products = data && Array.isArray(data.products) ? data.products : [];
+  const productMap = new Map(products.map((product) => [String(product.product_key || ""), product]));
+  const tabs = Array.from(root.querySelectorAll("[data-ytd-product]"));
+  const limitButtons = Array.from(root.querySelectorAll("[data-ytd-limit]"));
+  const list = root.querySelector("[data-ytd-ranking-list]");
+  const empty = root.querySelector("[data-ytd-ranking-empty]");
+  if (!list) return;
+  let activeProduct = (tabs[0] && tabs[0].dataset.ytdProduct) || String((products[0] || {}).product_key || "");
+  let limit = 10;
+  const medalMarkup = (rank) => {
+    if (rank === 1) return '<span class="ytd-leader-medal gold" title="Lider"><i class="bi bi-trophy-fill"></i></span>';
+    if (rank === 2) return '<span class="ytd-leader-medal silver" title="İkinci"><i class="bi bi-award-fill"></i></span>';
+    if (rank === 3) return '<span class="ytd-leader-medal bronze" title="Üçüncü"><i class="bi bi-award-fill"></i></span>';
+    return "";
+  };
+  const render = () => {
+    const product = productMap.get(activeProduct);
+    const rankings = Array.isArray(product && product.rankings) ? product.rankings.slice(0, limit) : [];
+    tabs.forEach((button) => {
+      const active = button.dataset.ytdProduct === activeProduct;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+    });
+    limitButtons.forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.ytdLimit) === limit);
+    });
+    list.innerHTML = rankings.map((item) => {
+      const rank = Number(item.rank || 0);
+      const topClass = rank <= 3 ? " top-" + rank : "";
+      return '<div class="ytd-ranking-row">' +
+        '<div class="ytd-rank-number' + topClass + '">#' + rank + '</div>' +
+        '<div class="ytd-rep-main">' +
+          '<div class="ytd-rep-name">' + escapeDashboardHtml(item.representative_name || "-") + " " + medalMarkup(rank) + '</div>' +
+          '<div class="ytd-rep-location">' + escapeDashboardHtml(item.city || "-") + " · " + escapeDashboardHtml(item.region || "-") + '</div>' +
+        '</div>' +
+        '<div class="ytd-box-total"><strong>' + numberTR(item.total_unit, "") + '</strong><span>kutu</span></div>' +
+      '</div>';
+    }).join("");
+    const hasRows = rankings.length > 0;
+    list.hidden = !hasRows;
+    if (empty) empty.hidden = hasRows;
+  };
+  tabs.forEach((button) => button.addEventListener("click", () => {
+    activeProduct = button.dataset.ytdProduct || activeProduct;
+    render();
+  }));
+  limitButtons.forEach((button) => button.addEventListener("click", () => {
+    limit = Number(button.dataset.ytdLimit) === 5 ? 5 : 10;
+    render();
+  }));
+  render();
+}
+
 function animateCounters() {
   document.querySelectorAll(".kpi-value").forEach((el, idx) => {
     el.style.opacity = "0";
@@ -544,6 +600,7 @@ function applyDashboardSectionOrder() {
   const orderedIds = [
     "productPerformanceSection",
     "turkeyMapSection",
+    "ytdProductRankingSection",
     "imsTurkeyRankingSection"
   ];
   let anchor = document.getElementById("executiveKpiLayout");
@@ -605,6 +662,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initMapPulseStyle();
   lazyInitCharts(data);
   initTurkeyMap(data.regionRealization || []);
+  initYtdProductRanking(data.ytdProductRankings || {});
   animateCounters();
   initProgressBars();
   window.addEventListener("ims:theme-change", applyDashboardChartTheme);
