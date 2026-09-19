@@ -139,11 +139,12 @@ document.querySelectorAll('[data-region-box-targets]').forEach(panel=>{
   const repList=[...reps.values()].sort((a,b)=>a.name.localeCompare(b.name,'tr'));
   const productList=[...products.values()].sort((a,b)=>(a.order-b.order)||a.name.localeCompare(b.name,'tr'));
   let period='monthly',threshold=75;
+  const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const number=value=>new Intl.NumberFormat('tr-TR',{maximumFractionDigits:0}).format(Math.abs(Number(value)||0));
   const render=()=>{
     const rows=(payload[period]||[]).filter(row=>row.active!==false&&row.is_vacant!==true);
     const byCell=new Map(rows.map(row=>[String(row.representative_id)+'|'+String(row.product_id),row]));
-    head.innerHTML='<th>Temsilci</th>'+productList.map(product=>'<th>'+escapeHtml(product.name)+'</th>').join('');
+    head.innerHTML='<th>Temsilci</th>'+productList.map(product=>'<th>'+esc(product.name)+'</th>').join('');
     body.innerHTML=repList.map(rep=>{
       const cells=productList.map(product=>{
         const item=byCell.get(rep.id+'|'+product.id);
@@ -155,9 +156,9 @@ document.querySelectorAll('[data-region-box-targets]').forEach(panel=>{
         const reached=balance>=0;
         const sign=reached?'+':'-';
         const title='Hedef: '+number(target)+' kutu · Gerçekleşen: '+number(actual)+' kutu';
-        return '<td title="'+escapeHtml(title)+'"><span class="box-balance '+(reached?'is-reached':'is-missing')+'">'+sign+number(balance)+' <small>kutu</small></span></td>';
+        return '<td title="'+esc(title)+'"><span class="box-balance '+(reached?'is-reached':'is-missing')+'">'+sign+number(balance)+' <small>kutu</small></span></td>';
       }).join('');
-      return '<tr><td class="region-box-rep"><strong>'+escapeHtml(rep.name)+'</strong><small>'+escapeHtml(rep.city)+'</small></td>'+cells+'</tr>';
+      return '<tr><td class="region-box-rep"><strong>'+esc(rep.name)+'</strong><small>'+esc(rep.city)+'</small></td>'+cells+'</tr>';
     }).join('');
     const hasData=repList.length>0&&productList.length>0&&rows.length>0;
     empty.hidden=hasData;
