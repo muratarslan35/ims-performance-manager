@@ -134,3 +134,12 @@ def test_ytd_ranking_ui_rounds_boxes_and_hides_internal_snapshot_word():
     assert 'ytd-rank-trend up' in javascript
     assert 'ytd-rank-trend down' in javascript
 
+def test_dashboard_period_resolution_does_not_scan_ims_summary_hot_path():
+    service = Path("app/services/dashboard_service.py").read_text(encoding="utf-8")
+    init_start = service.index("    def __init__(")
+    init_end = service.index("    # =========================================================================", init_start)
+    init_block = service[init_start:init_end]
+
+    assert "PeriodService.get_active_period" in init_block
+    assert "load_last_completed_period" not in init_block
+

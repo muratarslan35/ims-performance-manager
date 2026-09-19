@@ -31,6 +31,7 @@ from app.builders.dashboard_payload_builder import DashboardPayloadBuilder
 from app.cache.dashboard_cache import DashboardCache
 from app.constants.dashboard_constants import DashboardConstants
 from app.telemetry.telemetry_provider import TelemetryProvider, LoggerTelemetryProvider
+from app.services.period_service import PeriodService
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -95,15 +96,18 @@ class DashboardService:
         self.trace_id = str(uuid.uuid4())
         
         # Period Resolution
+        # Dashboard requests must not scan ims_summary merely to discover the
+        # active period. The publication layer already owns the visible IMS
+        # identity, so resolve year/month from that lightweight source once.
         if not year or not month:
-            last_period = self._safe_execute(
-                self.repository.load_last_completed_period,
+            active_period = self._safe_execute(
+                PeriodService.get_active_period,
                 default_return=None,
-                component_name="PeriodResolution"
+                component_name="PeriodResolution",
             )
-            if last_period:
-                self.year = year or last_period.year
-                self.month = month or last_period.month
+            if active_period:
+                self.year = year or int(active_period["year"])
+                self.month = month or int(active_period["month"])
             else:
                 now = datetime.now()
                 self.year = year or now.year
