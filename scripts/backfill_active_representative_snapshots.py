@@ -12,6 +12,7 @@ from app.models import IMSUpload
 from app.services.persistent_representative_snapshot_service import (
     PersistentRepresentativeSnapshotService,
 )
+from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
 
 def main(argv=None):
@@ -64,6 +65,17 @@ def main(argv=None):
                 f"set_id={result.get('set_id', 0)}|force={int(args.force)}",
                 flush=True,
             )
+            if result.get("status") in {"ACTIVE", "REUSED"}:
+                enrichment = PersistentRegionSnapshotService.enrich_for_period(
+                    latest.year, latest.month
+                )
+                print(
+                    "REGION_READ_MODEL_FINALIZE|"
+                    f"status={enrichment.get('status')}|year={latest.year}|month={latest.month}|"
+                    f"regions={enrichment.get('regions', 0)}|"
+                    f"set_id={enrichment.get('set_id', 0)}",
+                    flush=True,
+                )
             return 0
 
 
