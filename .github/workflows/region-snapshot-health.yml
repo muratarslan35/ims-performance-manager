@@ -125,6 +125,168 @@ jobs:
               )
           PY
 
+          echo "HISTORICAL_RESULT_AUDIT_BEGIN"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+          from collections import Counter
+          from app import create_app
+          from app.extensions import db
+          from app.models import (
+              Product,
+              ProductionRegionProductResult,
+              ProductionRepresentativeTotal,
+              ProductionResultUpload,
+              Representative,
+          )
+          from app.services.persistent_region_snapshot_service import (
+              PersistentRegionSnapshotService,
+              region_snapshot_sets,
+          )
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshot_sets,
+          )
+          from app.services.production_result_service import ProductionResultService
+          from app.services.region_performance_service import RegionPerformanceService
+
+          def n(value):
+              try:
+                  return float(value or 0)
+              except (TypeError, ValueError):
+                  return 0.0
+
+          def pct(actual, target):
+              return actual * 100.0 / target if target else 0.0
+
+          app = create_app()
+          with app.app_context():
+              murat = Representative.query.filter(
+                  sa.func.upper(Representative.rep_name) == "MURAT ARSLAN"
+              ).first()
+              assert murat is not None
+              print(f"AUDIT_MURAT|id={murat.id}|region={murat.region}|city={murat.city}")
+
+              for month in range(1, 9):
+                  uploads = ProductionResultService.applied_uploads(2026, month)
+                  upload_text = ",".join(
+                      f"{row.id}:P{row.production_stage}:{row.file_name}" for row in uploads
+                  ) or "none"
+                  final = uploads[0] if uploads else None
+                  print(f"MONTH_SOURCE|2026-{month:02d}|production={upload_text}")
+
+                  ims_id, production_id = PersistentRegionSnapshotService.source_identity(2026, month)
+                  region_existing = PersistentRegionSnapshotService._existing_set(
+                      2026, month, ims_id, production_id
+                  ) if ims_id else None
+                  region_payload = PersistentRegionSnapshotService.get_active("901", 2026, month) or {}
+                  region_monthly = (((region_payload.get("report") or {}).get("periods") or {}).get("monthly") or {})
+                  region_reps = region_monthly.get("representatives") or []
+                  region_murat = next(
+                      (row for row in region_reps if int(row.get("representative_id") or 0) == int(murat.id)),
+                      {}
+                  )
+                  print(
+                      f"REGION_SNAPSHOT|2026-{month:02d}|ims={ims_id}|production={production_id}|"
+                      f"set={int(region_existing.id) if region_existing else 0}|"
+                      f"set_status={region_existing.status if region_existing else 'NONE'}|"
+                      f"version={int(region_payload.get('read_model_version') or 0)}|"
+                      f"target={n(region_monthly.get('target_tl')):.2f}|actual={n(region_monthly.get('actual_tl')):.2f}|"
+                      f"percent={n(region_monthly.get('percent')):.2f}|"
+                      f"murat_target={n(region_murat.get('target_tl')):.2f}|"
+                      f"murat_actual={n(region_murat.get('actual_tl')):.2f}|"
+                      f"murat_percent={n(region_murat.get('percent')):.2f}"
+                  )
+
+                  rep_workspace = PersistentRepresentativeSnapshotService.get_active(
+                      murat.id, 2026, month
+                  ) or {}
+                  rep_monthly = (((rep_workspace.get("snapshots") or {}).get("monthly")) or {})
+                  rep_totals = rep_monthly.get("totals") or {}
+                  print(
+                      f"REP_SNAPSHOT|2026-{month:02d}|target={n(rep_totals.get('target_tl')):.2f}|"
+                      f"actual={n(rep_totals.get('actual_tl')):.2f}|percent={n(rep_totals.get('percent')):.2f}|"
+                      f"label={rep_monthly.get('result_source_label') or ''}"
+                  )
+
+                  effective = ProductionResultService.effective_products(2026, month, murat.id)
+                  effective_target = sum(n(row.get("target_tl")) for row in effective.values())
+                  effective_actual = sum(n(row.get("actual_tl")) for row in effective.values())
+                  source_counts = Counter(str(row.get("source") or "") for row in effective.values())
+                  print(
+                      f"REP_EFFECTIVE|2026-{month:02d}|target={effective_target:.2f}|actual={effective_actual:.2f}|"
+                      f"percent={pct(effective_actual,effective_target):.2f}|sources={dict(source_counts)}"
+                  )
+
+                  if final is not None:
+                      rep_total = ProductionRepresentativeTotal.query.filter_by(
+                          upload_id=final.id, representative_id=murat.id
+                      ).first()
+                      if rep_total is not None:
+                          print(
+                              f"PROD_REP_TOTAL|2026-{month:02d}|upload={final.id}|stage={final.production_stage}|"
+                              f"target={n(rep_total.target_tl):.2f}|actual={n(rep_total.actual_tl):.2f}|"
+                              f"percent={n(rep_total.realization_percent):.2f}|"
+                              f"unit_percent={n(rep_total.unit_realization_percent):.2f}|"
+                              f"sheet={rep_total.source_sheet}|row={rep_total.source_row}"
+                          )
+                      region_rows = ProductionRegionProductResult.query.filter_by(
+                          upload_id=final.id, region_code="901"
+                      ).all()
+                      if region_rows:
+                          rt = sum(n(row.target_tl) for row in region_rows)
+                          ra = sum(n(row.actual_tl) for row in region_rows)
+                          print(
+                              f"PROD_REGION_901|2026-{month:02d}|upload={final.id}|stage={final.production_stage}|"
+                              f"rows={len(region_rows)}|target={rt:.2f}|actual={ra:.2f}|percent={pct(ra,rt):.2f}"
+                          )
+
+                  if month == 8:
+                      live_report = RegionPerformanceService("901", 2026, 8).report()
+                      live_monthly = ((live_report.get("periods") or {}).get("monthly") or {})
+                      live_murat = next(
+                          (
+                              row for row in live_monthly.get("representatives") or []
+                              if int(row.get("representative_id") or 0) == int(murat.id)
+                          ),
+                          {}
+                      )
+                      print(
+                          f"LIVE_RECALC_901|2026-08|target={n(live_monthly.get('target_tl')):.2f}|"
+                          f"actual={n(live_monthly.get('actual_tl')):.2f}|percent={n(live_monthly.get('percent')):.2f}|"
+                          f"murat_target={n(live_murat.get('target_tl')):.2f}|"
+                          f"murat_actual={n(live_murat.get('actual_tl')):.2f}|"
+                          f"murat_percent={n(live_murat.get('percent')):.2f}"
+                      )
+
+              print("HISTORICAL_SET_IDENTITY_BEGIN")
+              for month in range(1, 9):
+                  ims_id, production_id = PersistentRegionSnapshotService.source_identity(2026, month)
+                  sets = db.session.execute(
+                      sa.select(
+                          region_snapshot_sets.c.id,
+                          region_snapshot_sets.c.source_upload_id,
+                          region_snapshot_sets.c.production_upload_id,
+                          region_snapshot_sets.c.status,
+                          region_snapshot_sets.c.region_count,
+                          region_snapshot_sets.c.activated_at,
+                      ).where(
+                          region_snapshot_sets.c.year == 2026,
+                          region_snapshot_sets.c.month == month,
+                      ).order_by(region_snapshot_sets.c.id.asc())
+                  ).all()
+                  print(
+                      f"SET_IDENTITY|2026-{month:02d}|current_ims={ims_id}|current_production={production_id}|"
+                      + ";".join(
+                          f"id={r.id},ims={r.source_upload_id},prod={r.production_upload_id},"
+                          f"status={r.status},count={r.region_count},activated={r.activated_at}"
+                          for r in sets
+                      )
+                  )
+              print("HISTORICAL_SET_IDENTITY_END")
+          PY
+          echo "HISTORICAL_RESULT_AUDIT_END"
+
           echo "RECENT_REGION_SNAPSHOT_ERRORS_BEGIN"
           sudo journalctl -u ims-import-worker.service --since "2026-09-19 16:00:00" --no-pager \
             | grep -E 'region_snapshot|manager_region_snapshots|UNIQUE constraint|IntegrityError' \
