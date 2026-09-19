@@ -95,6 +95,12 @@ def install_production_result_retry_ui(app):
                 upload.warning_message = None
                 upload.uploaded_by = current_user.full_name
                 db.session.commit()
+                from app.services.representative_snapshot_refresh_queue import (
+                    RepresentativeSnapshotRefreshQueue,
+                )
+                RepresentativeSnapshotRefreshQueue.enqueue_for_production(
+                    upload.year, upload.month, upload.id
+                )
             except ProductionWorkbookValidationError as exc:
                 db.session.rollback()
                 failed = db.session.get(ProductionResultUpload, upload_id)
