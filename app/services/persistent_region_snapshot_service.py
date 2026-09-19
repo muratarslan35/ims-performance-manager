@@ -366,7 +366,7 @@ class PersistentRegionSnapshotService:
         payloads = cls._payloads_from_set(set_id)
         if not payloads:
             return {"status": "WAITING_REGION", "regions": 0}
-        if all(int((payload or {}).get("read_model_version") or 0) >= 2 for payload in payloads.values()):
+        if all(int((payload or {}).get("read_model_version") or 0) >= 3 for payload in payloads.values()):
             return {"status": "REUSED", "set_id": int(set_id), "regions": len(payloads)}
 
         from app.services.persistent_dashboard_snapshot_service import (
@@ -412,12 +412,29 @@ class PersistentRegionSnapshotService:
         for region_key, payload in payloads.items():
             report = (payload or {}).get("report") or {}
             market_analysis = (payload or {}).get("market_analysis") or {}
+
+            # Region AI must never see the all-Türkiye representative workspace
+            # bundle. Select only representatives belonging to this region before
+            # any brick-level zero-exit/loss analysis is built.
+            current_region_rep_ids = cls._representative_ids(report)
+            current_region_workspaces = {
+                representative_id: current_workspaces[representative_id]
+                for representative_id in current_region_rep_ids
+                if representative_id in current_workspaces
+            }
             report = cls._embed_representative_products(
-                report, year, month, current_workspaces
+                report, year, month, current_region_workspaces
             )
 
             previous_payload = previous_payloads.get(str(region_key)) or {}
             previous_market_analysis = previous_payload.get("market_analysis") or {}
+            previous_report = previous_payload.get("report") or {}
+            previous_region_rep_ids = cls._representative_ids(previous_report)
+            previous_region_workspaces = {
+                representative_id: previous_workspaces[representative_id]
+                for representative_id in previous_region_rep_ids
+                if representative_id in previous_workspaces
+            }
 
             ai_report = ScopedAIInsightService.build(
                 scope_type="region",
@@ -430,8 +447,8 @@ class PersistentRegionSnapshotService:
                 market_analysis=market_analysis,
                 dashboard_payload=dashboard_payload,
                 previous_market_analysis=previous_market_analysis,
-                current_workspaces=current_workspaces,
-                previous_workspaces=previous_workspaces,
+                current_workspaces=current_region_workspaces,
+                previous_workspaces=previous_region_workspaces,
                 year=year,
                 month=month,
             )
@@ -439,7 +456,7 @@ class PersistentRegionSnapshotService:
             enriched = dict(payload or {})
             enriched["report"] = report
             enriched["ai_report"] = ai_report
-            enriched["read_model_version"] = 2
+            enriched["read_model_version"] = 3
             enriched["read_model_ready_at"] = now.isoformat(timespec="seconds") + "Z"
             updates.append({
                 "region_key": str(region_key),
