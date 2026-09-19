@@ -491,7 +491,7 @@ function initYtdProductRanking(data) {
   const empty = root.querySelector("[data-ytd-ranking-empty]");
   if (!list) return;
   let activeProduct = (tabs[0] && tabs[0].dataset.ytdProduct) || String((products[0] || {}).product_key || "");
-  let limit = 10;
+  let limit = 5;
   const medalMarkup = (rank) => {
     if (rank === 1) return '<span class="ytd-leader-medal gold" title="Lider"><i class="bi bi-trophy-fill"></i></span>';
     if (rank === 2) return '<span class="ytd-leader-medal silver" title="İkinci"><i class="bi bi-award-fill"></i></span>';
@@ -507,9 +507,12 @@ function initYtdProductRanking(data) {
       button.setAttribute("aria-selected", String(active));
     });
     limitButtons.forEach((button) => {
-      button.classList.toggle("active", Number(button.dataset.ytdLimit) === limit);
+      const active = Number(button.dataset.ytdLimit) === limit;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
     });
-    list.innerHTML = rankings.map((item) => {
+
+    const nextMarkup = rankings.map((item) => {
       const rank = Number(item.rank || 0);
       const topClass = rank <= 3 ? " top-" + rank : "";
       return '<div class="ytd-ranking-row">' +
@@ -521,9 +524,36 @@ function initYtdProductRanking(data) {
         '<div class="ytd-box-total"><strong>' + numberTR(item.total_unit, "") + '</strong><span>kutu</span></div>' +
       '</div>';
     }).join("");
+
     const hasRows = rankings.length > 0;
-    list.hidden = !hasRows;
-    if (empty) empty.hidden = hasRows;
+    if (!hasRows) {
+      list.innerHTML = "";
+      list.hidden = true;
+      if (empty) empty.hidden = false;
+      return;
+    }
+
+    if (empty) empty.hidden = true;
+    list.hidden = false;
+
+    const startHeight = list.offsetHeight;
+    list.style.height = startHeight + "px";
+    list.style.overflow = "hidden";
+    list.innerHTML = nextMarkup;
+    const endHeight = list.scrollHeight;
+
+    requestAnimationFrame(() => {
+      list.style.transition = "height .28s ease";
+      list.style.height = endHeight + "px";
+    });
+
+    const finishResize = () => {
+      list.style.height = "auto";
+      list.style.overflow = "";
+      list.style.transition = "";
+    };
+    list.addEventListener("transitionend", finishResize, { once: true });
+    window.setTimeout(finishResize, 360);
   };
   tabs.forEach((button) => button.addEventListener("click", () => {
     activeProduct = button.dataset.ytdProduct || activeProduct;
@@ -611,6 +641,16 @@ function applyDashboardSectionOrder() {
     anchor.insertAdjacentElement("afterend", section);
     anchor = section;
   });
+
+  // The YTD ranking must always sit immediately above the existing IMS
+  // Turkey ranking. This also repairs the DOM if an older cached dashboard
+  // script had reordered the sections before the current asset finished loading.
+  const ytdRanking = document.getElementById("ytdProductRankingSection");
+  const imsRanking = document.getElementById("imsTurkeyRankingSection");
+  if (ytdRanking && imsRanking && ytdRanking.nextElementSibling !== imsRanking) {
+    imsRanking.parentElement.insertBefore(ytdRanking, imsRanking);
+  }
+
   const executiveSummary = document.getElementById("aiExecutiveSummary");
   if (executiveSummary && executiveSummary.parentElement) {
     executiveSummary.parentElement.appendChild(executiveSummary);
