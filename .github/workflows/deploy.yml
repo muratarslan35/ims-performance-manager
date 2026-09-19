@@ -350,7 +350,7 @@ jobs:
             echo '--- FAST UI RELEASE: DB/IMS GATES SKIPPED ---'
           fi
 
-          if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ]; then
+          if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
             venv/bin/python verify_region_manager_production.py
           fi
 

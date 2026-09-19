@@ -610,6 +610,13 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
         assert [row["percent"] for row in report["annual_realization"][:6]] == [10, 20, 30, 40, 50, 60]
         assert all(row["percent"] is None for row in report["annual_realization"][6:])
 
+    with app.app_context():
+        from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+        from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+        assert PersistentRegionSnapshotService.build_for_period(2032, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRepresentativeSnapshotService.build_for_period(2032, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRegionSnapshotService.enrich_for_period(2032, 6)["status"] in {"ENRICHED", "REUSED"}
+
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
     page = client.get("/regions/901?year=2032&month=6")
@@ -948,13 +955,18 @@ def test_simulation_lists_unassigned_representatives_last(app):
 
 def test_representative_detail_renders_dynamic_market_analysis(app):
     from app.extensions import db
-    from app.models import Representative
+    from app.models import IMSUpload, Representative
 
     with app.app_context():
         representative = Representative(rep_code="DETAIL-001", rep_name="Detay Temsilcisi", active=True)
-        db.session.add(representative)
+        db.session.add_all([
+            representative,
+            IMSUpload(file_name="detail-market.xlsx", year=2026, month=8, quarter="Q3", status="COMPLETED"),
+        ])
         db.session.commit()
         representative_id = representative.id
+        from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+        assert PersistentRepresentativeSnapshotService.build_for_period(2026, 8)["status"] in {"ACTIVE", "REUSED"}
 
     promote_test_user_to_manager(app)
     client = app.test_client()
@@ -1049,6 +1061,8 @@ def test_representative_remaining_tl_sums_open_product_targets(app):
         ))
         db.session.commit()
         representative_id = representative.id
+        from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+        assert PersistentRepresentativeSnapshotService.build_for_period(2026, 1)["status"] in {"ACTIVE", "REUSED"}
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
@@ -1089,6 +1103,8 @@ def test_representative_detail_uses_applied_production_result_for_kpis(app):
         ))
         db.session.commit()
         representative_id = representative.id
+        from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+        assert PersistentRepresentativeSnapshotService.build_for_period(2026, 1)["status"] in {"ACTIVE", "REUSED"}
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
@@ -1467,6 +1483,12 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
         user.role = "Representative"
         db.session.commit()
         own_id, outside_id = own.id, outside.id
+
+        from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+        from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+        assert PersistentRegionSnapshotService.build_for_period(2040, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRepresentativeSnapshotService.build_for_period(2040, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRegionSnapshotService.enrich_for_period(2040, 6)["status"] in {"ENRICHED", "REUSED"}
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "representative"})

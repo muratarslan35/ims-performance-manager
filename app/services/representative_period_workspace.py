@@ -377,9 +377,14 @@ def install_representative_period_workspace(app):
             representative.id, year, month
         )
         if workspace is None:
-            # Safe compatibility path only. Normal production flow builds durable
-            # snapshots automatically in the background before a user needs them.
-            workspace = build_representative_workspace_payload(representative, year, month)
+            # Interactive representative pages are snapshot-only. Never run the
+            # expensive market/AI/annual calculation chain inside a web request.
+            from flask import flash, redirect, url_for
+            flash(
+                "Temsilci görünümü hazırlanıyor. Hazır olduğunda sayfa otomatik olarak güncel veriyi kullanacaktır.",
+                "info",
+            )
+            return redirect(url_for("dashboard.index"))
         snapshots = workspace["snapshots"]
         annual_realization = workspace["annual_realization"]
 
@@ -413,20 +418,3 @@ def install_representative_period_workspace(app):
         )
 
     app.view_functions["representatives.view"] = period_view
-
-    @app.after_request
-    def representative_period_assets(response):
-        content_type = response.headers.get("Content-Type", "")
-        if "text/html" not in content_type or not response.direct_passthrough:
-            try:
-                body = response.get_data(as_text=True)
-            except Exception:
-                return response
-            if "</head>" in body and "representative-period-workspace.css" not in body:
-                body = body.replace(
-                    "</head>",
-                    '<link rel="stylesheet" href="/static/css/representative-period-workspace.css"></head>',
-                    1,
-                )
-                response.set_data(body)
-        return response

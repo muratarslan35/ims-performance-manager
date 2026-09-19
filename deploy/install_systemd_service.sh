@@ -80,9 +80,9 @@ sudo systemctl enable "$worker_service_name"
 # expensive backfills run with low CPU/I/O scheduling priority so live web
 # requests keep preference when the host is under contention.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
-  echo "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change|priority=low"
+  echo "REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-    run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py" --force
+    run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
 elif [ "$release_mode" = "import" ]; then
   echo "REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
@@ -141,23 +141,10 @@ else
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
 
-# Once an ACTIVE generation exists, later backend/heavy calculation changes can
-# build a fresh representative generation asynchronously. Readers keep using the
-# previous ACTIVE set until the new generation atomically becomes ACTIVE.
-if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
-  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild|priority=low"
-  if command -v ionice >/dev/null 2>&1; then
-    nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-      nice -n 15 ionice -c3 "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
-      >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
-  else
-    nohup env PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
-      nice -n 15 "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py" --force \
-      >> "$ims_path/logs/representative_snapshot_warmup.log" 2>&1 < /dev/null &
-  fi
-  echo "REPRESENTATIVE_SNAPSHOT_ACTIVATION|pid=$!"
-fi
-
+# Representative and region read models are source-versioned and reused when the
+# active IMS identity is unchanged. Do not launch duplicate force rebuilds on
+# ordinary backend deploys; snapshot work belongs to IMS publication or an
+# explicit maintenance command.
 if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   echo "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
