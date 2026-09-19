@@ -63,8 +63,8 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
     assert 'data-ytd-product=' in template
     assert 'first_ytd_rows[:5]' in template
     assert '"ytdProductRankings"' in template
-    assert "filename='css/dashboard.css', v='20260919t'" in template
-    assert "filename='js/dashboard.js', v='20260919t'" in template
+    assert "filename='css/dashboard.css', v='20260919u'" in template
+    assert "filename='js/dashboard.js', v='20260919u'" in template
     assert template.index('id="ytdProductRankingSection"') < template.index('id="imsTurkeyRankingSection"')
 
     assert "initYtdProductRanking" in javascript
@@ -87,3 +87,49 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
     assert 'payload["ytd_product_rankings"]' in service
     assert "if isinstance((payload or {}).get(\"ytd_product_rankings\"), dict)" in route
     assert "PersistentDashboardSnapshotService.publish" in route
+
+def test_ytd_rank_trend_marks_only_changed_positions():
+    current = {
+        "products": [{
+            "product_key": "TRAVAZOL",
+            "rankings": [
+                {"representative_id": 1, "rank": 1},
+                {"representative_id": 2, "rank": 2},
+                {"representative_id": 3, "rank": 3},
+            ],
+        }]
+    }
+    previous = {
+        "ytd_product_rankings": {
+            "products": [{
+                "product_key": "TRAVAZOL",
+                "rankings": [
+                    {"representative_id": 2, "rank": 1},
+                    {"representative_id": 1, "rank": 2},
+                    {"representative_id": 3, "rank": 3},
+                ],
+            }]
+        }
+    }
+
+    result = DashboardService._apply_ytd_rank_trends(current, previous)
+    rows = result["products"][0]["rankings"]
+
+    assert rows[0]["rank_direction"] == "up"
+    assert rows[0]["rank_change"] == 1
+    assert rows[1]["rank_direction"] == "down"
+    assert rows[1]["rank_change"] == -1
+    assert rows[2]["rank_direction"] is None
+    assert rows[2]["rank_change"] == 0
+
+
+def test_ytd_ranking_ui_rounds_boxes_and_hides_internal_snapshot_word():
+    template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+    javascript = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+    assert "Snapshot verisi" not in template
+    assert "snapshot" not in template.lower()
+    assert "Math.round(Number(item.total_unit || 0)).toLocaleString" in javascript
+    assert 'ytd-rank-trend up' in javascript
+    assert 'ytd-rank-trend down' in javascript
+
