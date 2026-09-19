@@ -259,7 +259,7 @@ def test_manager_portal_keeps_full_management_access(app):
     dashboard = client.get("/dashboard/").data
     assert b"IMS Merkezi" in dashboard
     assert b"Ayarlar" in dashboard
-    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" in dashboard
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" not in dashboard
 
 
 def test_authorized_manager_can_use_both_portals(app):
@@ -287,7 +287,10 @@ def test_authorized_manager_can_use_both_portals(app):
     })
     assert manager_login.status_code in (301, 302)
     assert manager_client.get("/ims/").status_code == 200
-    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" in manager_client.get("/dashboard/").data
+    manager_dashboard = manager_client.get("/dashboard/").data
+    assert b"IMS Merkezi" in manager_dashboard
+    assert b"Ayarlar" in manager_dashboard
+    assert b"AI Y\xc3\xb6netici \xc3\x96zeti" not in manager_dashboard
 
     representative_client = app.test_client()
     representative_login = representative_client.post("/login", data={
