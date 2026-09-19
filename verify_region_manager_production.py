@@ -1,4 +1,8 @@
-"""Read-only production acceptance for manager access boundaries."""
+"""Read-only production acceptance for manager access boundaries.
+
+The verifier also guards the dashboard, region and representative steady-state
+read paths so deploy completion never depends on historical source workbooks.
+"""
 
 import json
 import sqlite3
