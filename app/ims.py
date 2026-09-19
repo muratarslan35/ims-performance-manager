@@ -368,9 +368,18 @@ def production_upload():
         from app.services.representative_snapshot_refresh_queue import (
             RepresentativeSnapshotRefreshQueue,
         )
-        RepresentativeSnapshotRefreshQueue.enqueue_for_production(
-            year, month, upload.id
-        )
+        try:
+            RepresentativeSnapshotRefreshQueue.enqueue_for_production(
+                year, month, upload.id
+            )
+        except Exception:
+            # The production result is already committed and authoritative.
+            # A read-model queue failure must never roll it back or delete its
+            # protected source file; the worker/startup repair can retry later.
+            current_app.logger.exception(
+                "production_representative_refresh_enqueue_failed upload_id=%s",
+                upload.id,
+            )
     except ProductionWorkbookValidationError as exc:
         db.session.rollback()
         # Preserve rejected source evidence and its reason without applying any result.
