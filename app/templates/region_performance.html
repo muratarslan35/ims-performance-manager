@@ -45,7 +45,7 @@
   {% if report.month <= 3 %}{% set box_quarter_key = 'q1' %}{% set box_quarter_label = 'Q1' %}{% elif report.month <= 6 %}{% set box_quarter_key = 'q2' %}{% set box_quarter_label = 'Q2' %}{% elif report.month <= 9 %}{% set box_quarter_key = 'q3' %}{% set box_quarter_label = 'Q3' %}{% else %}{% set box_quarter_key = 'q4' %}{% set box_quarter_label = 'Q4' %}{% endif %}
   {% set monthly_box_rows = report.periods['monthly'].get('representative_products', []) %}
   {% set quarter_box_rows = report.periods.get(box_quarter_key, {}).get('representative_products', []) %}
-  <section class="region-section region-box-targets" data-region-box-targets>
+  <section class="region-section region-box-targets" data-region-box-targets data-month-label="{{ month_names[report.month - 1] }} {{ report.year }}" data-quarter-label="{{ box_quarter_label }} · {{ report.year }}">
     <div class="region-section-head">
       <div class="region-box-target-title">
         <h2><i class="bi bi-grid-3x3-gap-fill me-2 text-primary"></i>Temsilci Kutu Hedef Takibi</h2>
@@ -165,7 +165,7 @@ document.querySelectorAll('[data-region-box-targets]').forEach(panel=>{
     panel.querySelector('.region-box-table').hidden=!hasData;
     panel.querySelectorAll('[data-box-period]').forEach(btn=>btn.classList.toggle('active',btn.dataset.boxPeriod===period));
     panel.querySelectorAll('[data-box-threshold]').forEach(btn=>btn.classList.toggle('active',Number(btn.dataset.boxThreshold)===threshold));
-    if(periodLabel)periodLabel.textContent=period==='monthly'?'{{ month_names[report.month - 1] }} {{ report.year }}':'{{ box_quarter_label }} · {{ report.year }}';
+    if(periodLabel)periodLabel.textContent=period==='monthly'?panel.dataset.monthLabel:panel.dataset.quarterLabel;
   };
   panel.querySelectorAll('[data-box-period]').forEach(btn=>btn.addEventListener('click',()=>{period=btn.dataset.boxPeriod;render();}));
   panel.querySelectorAll('[data-box-threshold]').forEach(btn=>btn.addEventListener('click',()=>{threshold=Number(btn.dataset.boxThreshold)||75;render();}));
