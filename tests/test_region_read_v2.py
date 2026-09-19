@@ -283,3 +283,16 @@ def test_region_template_places_snapshot_box_matrix_before_market_panel():
     assert "data-region-box-target-data" in template
     assert "actual-(target*threshold/100)" in template
     assert template.index("Temsilci Kutu Hedef Takibi") < template.index("BÖLGESEL REKABET VE PAZAR MERKEZİ")
+
+def test_region_box_matrix_controls_and_fixed_layout_contract():
+    template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
+
+    assert "REGION BOX FIXED GRID 20260919m" in template
+    assert "table-layout:fixed!important" in template
+    assert "overflow:hidden!important" in template
+    assert "region-box-filter-stack" in template
+    assert template.index('data-box-period="monthly"') < template.index('data-box-threshold="75"')
+    assert "Number(a.vacant)-Number(b.vacant)" in template
+    assert "row.active!==false" in template
+    assert "row.active!==false&&row.is_vacant!==true" not in template
+
