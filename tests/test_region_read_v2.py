@@ -164,6 +164,70 @@ def test_region_product_table_has_unit_gap_and_tl_gap_headers():
     assert "item.unit_difference" in template
 
 
+def test_region_box_rows_backfill_uses_one_published_snapshot_read(monkeypatch):
+    from app.regions import _ensure_representative_box_rows
+    from app.services.persistent_representative_snapshot_service import (
+        PersistentRepresentativeSnapshotService,
+    )
+
+    report = {
+        "periods": {
+            "monthly": {
+                "representatives": [{
+                    "representative_id": 10,
+                    "representative_name": "Temsilci A",
+                    "city": "Diyarbakır",
+                    "active": True,
+                    "is_vacant": False,
+                }]
+            },
+            "q3": {
+                "representatives": [{
+                    "representative_id": 10,
+                    "representative_name": "Temsilci A",
+                    "city": "Diyarbakır",
+                    "active": True,
+                    "is_vacant": False,
+                }]
+            },
+        }
+    }
+    product = {"id": 1, "product_name": "Travazol", "display_order": 1}
+    workspaces = {
+        10: {
+            "snapshots": {
+                "monthly": {"products": [{
+                    "product": product,
+                    "target_unit": 100,
+                    "actual_unit": 80,
+                }]},
+                "q3": {"products": [{
+                    "product": product,
+                    "target_unit": 300,
+                    "actual_unit": 250,
+                }]},
+            }
+        }
+    }
+    calls = []
+
+    def fake_many(representative_ids, year, month):
+        calls.append((list(representative_ids), year, month))
+        return workspaces
+
+    monkeypatch.setattr(
+        PersistentRepresentativeSnapshotService,
+        "get_active_many",
+        fake_many,
+    )
+
+    result = _ensure_representative_box_rows(report, 2026, 9)
+
+    assert len(calls) == 1
+    assert result["periods"]["monthly"]["representative_products"][0]["target_unit"] == 100
+    assert result["periods"]["q3"]["representative_products"][0]["actual_unit"] == 250
+
+
 def test_region_box_target_matrix_merges_finalized_monthly_rows_without_queries():
     from app.services.period_result_sum_guard import _merge_representative_products
 
