@@ -1677,3 +1677,47 @@ body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
     height: 132px !important;
   }
 }
+
+/* === REGISTER MOBILE MICRO FIT 20260919l === */
+/* Register-only micro adjustment: login/tablet/desktop remain unchanged. */
+@media (max-width: 575.98px) {
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem {
+    width: min(clamp(136px, 36vw, 156px), calc(100vw - 108px)) !important;
+    max-height: 136px !important;
+  }
+
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem img {
+    max-height: 136px !important;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 148px !important;
+    height: 148px !important;
+  }
+
+  .auth-shell-register .auth-layout .auth-card {
+    padding-top: 9px !important;
+    padding-bottom: 7px !important;
+  }
+
+  .auth-shell-register .auth-footer {
+    margin-top: 3px !important;
+    padding-bottom: 0 !important;
+  }
+}
+
+@media (max-width: 575.98px) and (max-height: 780px) {
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem {
+    width: min(128px, 34vw) !important;
+    max-height: 116px !important;
+  }
+
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem img {
+    max-height: 116px !important;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 126px !important;
+    height: 126px !important;
+  }
+}
