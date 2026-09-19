@@ -21,6 +21,7 @@ from app.region_manager import (
     region_code,
 )
 from app.services.access_permission_service import enabled as access_enabled
+from sqlalchemy import event
 
 DENIED_REGION = "Bu bölgenin yöneticisi değilsiniz."
 DENIED_SYSTEM = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız."
@@ -39,11 +40,55 @@ def _check(condition, label, failures):
         failures.append(label)
 
 
+HEAVY_READ_TABLES = (
+    " IMS_SUMMARY ",
+    " IMS_RAW_DATA ",
+    " IMS_FACTS ",
+    " IMS_COMPETITION_DATA ",
+    " TARGETS ",
+    " PRODUCTION_RESULTS ",
+    " PRODUCTION_REGION_PRODUCT_RESULTS ",
+)
+
+
+def _measure_route(client, path, *, follow_redirects=False):
+    """Measure the steady-state HTTP read path and capture heavy source reads."""
+    selects = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        normalized = " " + " ".join(str(statement).upper().split()) + " "
+        if normalized.lstrip().startswith("SELECT"):
+            selects.append(normalized)
+
+    event.listen(db.engine, "before_cursor_execute", capture)
+    try:
+        started = time.perf_counter()
+        response = client.get(path, follow_redirects=follow_redirects)
+        seconds = round(time.perf_counter() - started, 4)
+    finally:
+        event.remove(db.engine, "before_cursor_execute", capture)
+
+    heavy = [
+        table.strip()
+        for statement in selects
+        for table in HEAVY_READ_TABLES
+        if table in statement
+    ]
+    return response, {
+        "seconds": seconds,
+        "selects": len(selects),
+        "heavy_reads": sorted(set(heavy)),
+    }
+
+
 def main():
     app = create_app()
     failures = []
     own_region_seconds = None
     other_region_seconds = None
+    dashboard_read = None
+    region_read = None
+    representative_read = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -125,14 +170,30 @@ def main():
 
             client = app.test_client()
             _login_as(client, manager.id)
+
+            # One warm read may perform a compatibility upgrade for an older
+            # persisted payload. The measured second read must stay on read
+            # models only and must never hit IMS/target/competition source data.
             _check(client.get("/dashboard/").status_code == 200, "dashboard_general", failures)
+            dashboard_response, dashboard_read = _measure_route(client, "/dashboard/")
+            _check(dashboard_response.status_code == 200, "dashboard_hot_route", failures)
+            _check(not dashboard_read["heavy_reads"], "dashboard_heavy_source_read", failures)
+            _check(dashboard_read["seconds"] <= 2.0, "dashboard_hot_route_slow", failures)
+
             manager_page = client.get("/manager-users/", follow_redirects=True)
             _check(("Kayıtlı Yöneticiler" in manager_page.get_data(as_text=True)) == permission_state["manager_module"],
                    "manager_module_read", failures)
-            own_region_started = time.perf_counter()
+            # Warm once to allow a one-time read-model enrichment after an
+            # older deployment, then measure the steady-state snapshot route.
             own_region_response = client.get(f"/regions/{own_code}")
-            own_region_seconds = round(time.perf_counter() - own_region_started, 4)
             _check(own_region_response.status_code == 200, "own_region_route", failures)
+            own_region_response, region_read = _measure_route(
+                client, f"/regions/{own_code}"
+            )
+            own_region_seconds = region_read["seconds"]
+            _check(own_region_response.status_code == 200, "own_region_hot_route", failures)
+            _check(not region_read["heavy_reads"], "region_heavy_source_read", failures)
+            _check(region_read["seconds"] <= 2.0, "region_hot_route_slow", failures)
             other_region_started = time.perf_counter()
             other_region_response = client.get(
                 f"/regions/{region_code(other_rep.region)}", follow_redirects=True
@@ -142,6 +203,20 @@ def main():
                    "other_region_route", failures)
             _check(client.get(f"/representatives/view/{own_rep.id}").status_code == 200,
                    "own_rep_route", failures)
+            own_rep_response, representative_read = _measure_route(
+                client, f"/representatives/view/{own_rep.id}"
+            )
+            _check(own_rep_response.status_code == 200, "own_rep_hot_route", failures)
+            _check(
+                not representative_read["heavy_reads"],
+                "representative_heavy_source_read",
+                failures,
+            )
+            _check(
+                representative_read["seconds"] <= 2.0,
+                "representative_hot_route_slow",
+                failures,
+            )
             other_rep_response = client.get(f"/representatives/view/{other_rep.id}", follow_redirects=True)
             _check((DENIED_REGION not in other_rep_response.get_data(as_text=True)) == cross_region,
                    "other_rep_route", failures)
@@ -186,6 +261,9 @@ def main():
             "regional_scope_count": len(scoped),
             "own_region_seconds": own_region_seconds,
             "other_region_seconds": other_region_seconds,
+            "dashboard_read": dashboard_read,
+            "region_read": region_read,
+            "representative_read": representative_read,
             "tested_manager_id": manager.id if manager else None,
             "tested_region": own_code,
             "admin_preserved": admin is not None,
