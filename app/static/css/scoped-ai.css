@@ -2,3 +2,34 @@
 
 
 .scope-ai-command{margin:18px 0;padding:16px;border:1px solid rgba(255,255,255,.18);border-radius:16px;background:rgba(1,24,54,.42)}.scope-ai-command-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:12px}.scope-ai-command-head span{color:#83d1ff;font-size:10px;font-weight:800;letter-spacing:.1em}.scope-ai-command-head h3{margin:3px 0 4px;color:#fff;font-size:18px}.scope-ai-command-head p{margin:0;color:#cce1f5;font-size:11px}.scope-ai-source-pill{padding:5px 9px!important;border:1px solid rgba(134,242,184,.35);border-radius:999px;color:#a7f4ca!important;white-space:nowrap}.scope-ai-command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.scope-ai-command-card{min-width:0;padding:13px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(255,255,255,.07)}.scope-ai-command-card h4,.scope-ai-directions h4{margin:0 0 8px;color:#fff;font-size:13px}.scope-ai-command-card h4 i,.scope-ai-directions h4 i{margin-right:6px;color:#83d1ff}.scope-ai-command-card .scope-ai-row{grid-template-columns:minmax(0,1fr) auto}.scope-ai-directions{margin-top:10px;padding:15px;border:1px solid rgba(134,242,184,.25);border-radius:12px;background:rgba(2,35,64,.62)}.scope-ai-directions ol{display:grid;grid-template-columns:1fr 1fr;gap:7px 24px;margin:0;padding-left:20px}.scope-ai-directions li{padding-left:2px;color:#eef7ff;font-size:11px;line-height:1.45}.scope-ai-directions li::marker{color:#86f2b8;font-weight:800}@media(max-width:760px){.scope-ai-command-head{display:block}.scope-ai-source-pill{display:inline-block;margin-top:8px}.scope-ai-command-grid,.scope-ai-directions ol{grid-template-columns:1fr}}
+
+/* === REGION SNAPSHOT AI RADAR 20260919p === */
+.scope-ai-region-radar{padding:18px;background:linear-gradient(180deg,rgba(3,34,70,.72),rgba(2,29,62,.66))}
+.scope-ai-region-grid{gap:14px}
+.scope-ai-region-card{display:flex;flex-direction:column;min-height:300px;padding:15px 16px;background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.055));border-color:rgba(177,215,245,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.scope-ai-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.12)}
+.scope-ai-card-head h4{margin:0!important;line-height:1.35}
+.scope-ai-card-head>span{flex:0 0 auto;padding:4px 7px;border:1px solid rgba(131,209,255,.22);border-radius:999px;background:rgba(131,209,255,.09);color:#bde5ff;font-size:9px;font-weight:900;white-space:nowrap}
+.scope-ai-card-list{margin-top:3px;max-height:330px;overflow:auto;padding-right:4px;scrollbar-width:thin;scrollbar-color:rgba(131,209,255,.4) transparent}
+.scope-ai-card-list::-webkit-scrollbar{width:5px}.scope-ai-card-list::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(131,209,255,.36)}
+.scope-ai-region-card .scope-ai-row{padding:10px 0;gap:4px 10px}
+.scope-ai-region-card .scope-ai-row>span{color:#f3f8fd;font-size:11px;font-weight:850;line-height:1.35}
+.scope-ai-region-card .scope-ai-row>b{font-size:11px;font-weight:900}
+.scope-ai-region-card .scope-ai-row>small{color:#c3d9ec;font-size:9.5px;line-height:1.45}
+.scope-ai-compare-values{display:flex;gap:5px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.scope-ai-compare-values em,.scope-ai-compare-values strong{display:inline-flex;align-items:center;justify-content:center;padding:4px 7px;border-radius:7px;font-style:normal;font-size:9px;font-weight:900;white-space:nowrap}
+.scope-ai-compare-values em{background:rgba(131,209,255,.12);color:#bfe7ff;border:1px solid rgba(131,209,255,.22)}
+.scope-ai-compare-values strong{background:rgba(255,116,116,.13);color:#ffb0b0;border:1px solid rgba(255,148,148,.2)}
+.scope-ai-alert-value{color:#ffbf8b!important}
+.scope-ai-positive-value{color:#8cf0b9!important}
+.scope-ai-row-compare small i{margin-right:4px;color:#ffb4b4}
+.scope-ai-region-card .scope-ai-empty{margin-top:8px;padding:14px 2px;line-height:1.5}
+@media(max-width:760px){
+  .scope-ai-region-radar{padding:13px}
+  .scope-ai-region-card{min-height:0;padding:13px}
+  .scope-ai-card-list{max-height:310px}
+  .scope-ai-card-head{align-items:center}
+  .scope-ai-region-card .scope-ai-row{grid-template-columns:minmax(0,1fr);gap:5px}
+  .scope-ai-region-card .scope-ai-row>b{justify-self:start}
+  .scope-ai-compare-values{justify-content:flex-start}
+}
