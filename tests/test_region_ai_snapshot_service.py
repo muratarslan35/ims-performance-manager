@@ -220,3 +220,34 @@ def test_city_pressure_distinguishes_existing_previous_data_from_no_growth():
     assert result["city_pressure_state"] == "NO_GROWTH"
     assert result["previous_competitor_available"] is True
 
+def test_city_pressure_falls_back_to_published_representative_brick_snapshots():
+    current_workspaces = {
+        1: _workspace(
+            brick="DIYARBAKIR YENISEHIR", product="Monurol",
+            company=30, competitor=110, share=21,
+        )
+    }
+    previous_workspaces = {
+        1: _workspace(
+            brick="DIYARBAKIR YENISEHIR", product="Monurol",
+            company=20, competitor=100, share=17,
+        )
+    }
+
+    result = RegionAISnapshotService.build(
+        report={"periods": {"monthly": {"products": []}}},
+        market_analysis={},
+        dashboard_payload={"executive_metrics": {"products": []}},
+        previous_market_analysis={},
+        current_workspaces=current_workspaces,
+        previous_workspaces=previous_workspaces,
+        year=2026,
+        month=9,
+    )
+
+    assert result["city_pressure_state"] == "HAS_ROWS"
+    assert result["previous_competitor_available"] is True
+    assert result["city_pressure"][0]["city"] == "DIYARBAKIR"
+    assert result["city_pressure"][0]["previous_unit"] == 100.0
+    assert result["city_pressure"][0]["current_unit"] == 110.0
+
