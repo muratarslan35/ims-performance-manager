@@ -260,6 +260,124 @@ def _aggregate_market(representative, months, market_cache=None):
     return result
 
 
+def _row_product_id(row):
+    product = (row or {}).get("product")
+    if isinstance(product, dict):
+        value = product.get("id") or (row or {}).get("product_id")
+    else:
+        value = getattr(product, "id", None) or (row or {}).get("product_id")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _monthly_comparison_rows(
+    representative,
+    year,
+    month,
+    current_products,
+    current_market,
+    *,
+    sales_cache,
+    assignment_cache,
+    market_cache,
+):
+    """Build the month-over-month table from one consistent source contract.
+
+    Own boxes always follow P2 > P1 > IMS through _aggregate_sales. Rival boxes
+    stay on the monthly IMS competition snapshot. Both months are resolved
+    independently before subtraction, so later market normalization cannot mix
+    a new current value with a stale delta calculated from another source.
+    """
+    previous_year, previous_month = _shift_month(year, month, -1)
+    previous_products, _totals, _assignments, _sources = _aggregate_sales(
+        representative.id,
+        [(previous_year, previous_month)],
+        sales_cache=sales_cache,
+        assignment_cache=assignment_cache,
+    )
+    previous_market = _aggregate_market(
+        representative,
+        [(previous_year, previous_month)],
+        market_cache=market_cache,
+    )
+
+    current_products_by_id = {
+        _row_product_id(row): row for row in (current_products or [])
+        if _row_product_id(row) is not None
+    }
+    previous_products_by_id = {
+        _row_product_id(row): row for row in (previous_products or [])
+        if _row_product_id(row) is not None
+    }
+    current_market_by_id = {
+        _row_product_id(row): row for row in ((current_market or {}).get("rows") or [])
+        if _row_product_id(row) is not None
+    }
+    previous_market_by_id = {
+        _row_product_id(row): row for row in ((previous_market or {}).get("rows") or [])
+        if _row_product_id(row) is not None
+    }
+
+    previous_competitor_available = bool(
+        (previous_market or {}).get("has_competition")
+        or any(
+            float((row or {}).get("market_unit") or 0.0) != 0.0
+            or float((row or {}).get("competitor_unit") or 0.0) != 0.0
+            for row in previous_market_by_id.values()
+        )
+    )
+
+    rows = []
+    for product_id, current_product in current_products_by_id.items():
+        previous_product = previous_products_by_id.get(product_id)
+        current_market_row = current_market_by_id.get(product_id) or {}
+        previous_market_row = previous_market_by_id.get(product_id) or {}
+
+        actual_unit = float(current_product.get("actual_unit") or 0.0)
+        previous_actual_unit = (
+            float(previous_product.get("actual_unit") or 0.0)
+            if previous_product is not None else 0.0
+        )
+        competitor_unit = float(current_market_row.get("competitor_unit") or 0.0)
+        previous_competitor_unit = float(
+            previous_market_row.get("competitor_unit") or 0.0
+        )
+        has_previous = previous_product is not None or bool(previous_market_row)
+
+        actual_change_unit = actual_unit - previous_actual_unit
+        competitor_change_unit = competitor_unit - previous_competitor_unit
+        actual_change_percent = (
+            actual_change_unit * 100.0 / previous_actual_unit
+            if previous_actual_unit else None
+        )
+
+        rows.append({
+            "product": current_product.get("product") or current_market_row.get("product"),
+            "product_id": product_id,
+            "source": current_product.get("source", "IMS"),
+            "previous_source": (
+                previous_product.get("source", "IMS")
+                if previous_product is not None else None
+            ),
+            "has_previous": has_previous,
+            "previous_actual_unit": round(previous_actual_unit, 2),
+            "actual_unit": round(actual_unit, 2),
+            "actual_change_unit": round(actual_change_unit, 2),
+            "actual_change_percent": (
+                round(actual_change_percent, 1)
+                if actual_change_percent is not None else None
+            ),
+            "previous_competitor_unit": round(previous_competitor_unit, 2),
+            "competitor_unit": round(competitor_unit, 2),
+            "competitor_change_unit": round(competitor_change_unit, 2),
+            "previous_competitor_available": previous_competitor_available,
+        })
+
+    return rows
+
+
 def _ai_period(key, label, rows, totals, month_count):
     return {
         "key": key,
@@ -324,6 +442,17 @@ def build_representative_workspace_payload(representative, year, month):
             _aggregate_market(representative, months, market_cache=market_cache)
             if months else _empty_market(year, month)
         )
+        if key == "monthly":
+            market_analysis["comparison_rows"] = _monthly_comparison_rows(
+                representative,
+                year,
+                month,
+                product_rows,
+                market_analysis,
+                sales_cache=sales_cache,
+                assignment_cache=assignment_cache,
+                market_cache=market_cache,
+            )
         ai_report = ScopedAIInsightService.build(
             scope_type="representative",
             scope_name=representative_display_name(representative.rep_name),
