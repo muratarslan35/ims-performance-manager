@@ -307,6 +307,64 @@ class DashboardService:
         }
 
     @staticmethod
+    def _apply_ytd_rank_trends(
+        current: Dict[str, Any],
+        previous: Optional[Dict[str, Any]],
+        previous_upload: Any = None,
+    ) -> Dict[str, Any]:
+        """Annotate current Top 10 rows with movement versus the previous IMS."""
+        result = current or {"products": []}
+        previous_ranking = (previous or {}).get("ytd_product_rankings") or {}
+        previous_products = {
+            str(item.get("product_key") or ""): item
+            for item in previous_ranking.get("products") or []
+        }
+
+        for product in result.get("products") or []:
+            previous_product = previous_products.get(str(product.get("product_key") or "")) or {}
+            previous_positions = {
+                int(item.get("representative_id") or 0): int(item.get("rank") or 0)
+                for item in previous_product.get("rankings") or []
+                if item.get("representative_id") and item.get("rank")
+            }
+            for row in product.get("rankings") or []:
+                representative_id = int(row.get("representative_id") or 0)
+                current_rank = int(row.get("rank") or 0)
+                previous_rank = previous_positions.get(representative_id)
+                row["previous_rank"] = previous_rank
+                if previous_rank is None or current_rank <= 0:
+                    row["rank_change"] = 0
+                    row["rank_direction"] = None
+                    continue
+                change = int(previous_rank) - int(current_rank)
+                row["rank_change"] = change
+                row["rank_direction"] = "up" if change > 0 else "down" if change < 0 else None
+
+        result["rank_trend_version"] = 1
+        result["previous_week"] = (
+            int(getattr(previous_upload, "week_number", 0) or 0)
+            if previous_upload is not None else None
+        )
+        return result
+
+    def _ytd_rankings_with_previous_trend(self, current: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            from app.services.persistent_dashboard_snapshot_service import (
+                PersistentDashboardSnapshotService,
+            )
+            previous_payload, previous_upload = (
+                PersistentDashboardSnapshotService.previous_generation_for_current(
+                    self.year, self.month
+                )
+            )
+        except Exception:
+            logger.exception("dashboard_ytd_previous_generation_read_failed")
+            previous_payload, previous_upload = None, None
+        return self._apply_ytd_rank_trends(
+            current, previous_payload, previous_upload
+        )
+
+    @staticmethod
     def _competition_overview(competition_rows: List[Any], product_rows: List[Any]) -> Dict[str, Any]:
         """Build a transparent IMS-versus-market comparison for executives."""
         products, groups, company_total, market_total = list(product_rows or []), [], 0.0, 0.0
@@ -535,10 +593,12 @@ class DashboardService:
                .set_cache_info(False, DashboardConstants.CACHE_TTL_DEFAULT)
                
         payload = self.builder.build(immutable=False)
-        payload["ytd_product_rankings"] = self._ytd_product_rankings(
-            query_data.get("ytd_product_rankings", []),
-            self.year,
-            self.month,
+        payload["ytd_product_rankings"] = self._ytd_rankings_with_previous_trend(
+            self._ytd_product_rankings(
+                query_data.get("ytd_product_rankings", []),
+                self.year,
+                self.month,
+            )
         )
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_BUILDER_MS, (time.time() - t_builder) * 1000)
 
