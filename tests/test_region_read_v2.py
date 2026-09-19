@@ -317,3 +317,79 @@ def test_region_box_title_left_and_period_controls_centered():
     assert "region-box-toolbar-meta" in template
     assert template.index('data-box-period="monthly"') < template.index('data-box-threshold="75"')
 
+def test_region_ai_uses_published_snapshot_inputs_and_four_management_cards():
+    route = Path("app/regions.py").read_text(encoding="utf-8")
+    partial = Path("app/templates/partials/scoped_ai_panel.html").read_text(encoding="utf-8")
+    service = Path("app/services/region_ai_snapshot_service.py").read_text(encoding="utf-8")
+
+    assert "PersistentDashboardSnapshotService.get_stable" in route
+    assert "PersistentRepresentativeSnapshotService.get_active_many" in route
+    assert "RegionAISnapshotService.build" in route
+    assert "NATIONAL altında kalan ürünler" in partial
+    assert "Hedefli ama çıkışı olmayan brickler" in partial
+    assert "Rakip yoğunluğunu koruyan / artıran iller" in partial
+    assert "Rakibin satış kaybettiği brickler" in partial
+    assert "Bu ay bölge müdürünün kontrol edeceği 7 sinyal" not in partial
+    assert "PUBLISHED_SNAPSHOTS_ONLY" in service
+    assert "from app.extensions import db" not in service
+    assert "RegionMarketService(" not in service
+    assert "DashboardService(" not in service
+
+
+def test_region_box_backfill_reuses_prefetched_representative_snapshots(monkeypatch):
+    from app.regions import _ensure_representative_box_rows
+    from app.services.persistent_representative_snapshot_service import (
+        PersistentRepresentativeSnapshotService,
+    )
+
+    report = {
+        "periods": {
+            "monthly": {
+                "representatives": [{
+                    "representative_id": 10,
+                    "representative_name": "Temsilci A",
+                    "city": "Diyarbakır",
+                    "active": True,
+                    "is_vacant": False,
+                }]
+            },
+            "q3": {
+                "representatives": [{
+                    "representative_id": 10,
+                    "representative_name": "Temsilci A",
+                    "city": "Diyarbakır",
+                    "active": True,
+                    "is_vacant": False,
+                }]
+            },
+        }
+    }
+    workspaces = {
+        10: {
+            "snapshots": {
+                "monthly": {"products": [{
+                    "product": {"id": 1, "product_name": "Travazol", "display_order": 1},
+                    "target_unit": 100,
+                    "actual_unit": 80,
+                }]},
+                "q3": {"products": [{
+                    "product": {"id": 1, "product_name": "Travazol", "display_order": 1},
+                    "target_unit": 300,
+                    "actual_unit": 250,
+                }]},
+            }
+        }
+    }
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("prefetched workspace should avoid a second snapshot query")
+
+    monkeypatch.setattr(PersistentRepresentativeSnapshotService, "get_active_many", forbidden)
+
+    result = _ensure_representative_box_rows(
+        report, 2026, 9, workspaces=workspaces
+    )
+
+    assert result["periods"]["monthly"]["representative_products"][0]["actual_unit"] == 80
+    assert result["periods"]["q3"]["representative_products"][0]["actual_unit"] == 250
+
