@@ -30,6 +30,7 @@ from app.services.representative_snapshot_refresh_queue import RepresentativeSna
 # Import-mode activation marker: representative comparison snapshots now carry
 # a versioned P2 > P1 > IMS monthly comparison contract. Import deploy restarts
 # this worker so future IMS/production refresh queue events use the new builder.
+# Activation revision: comparison-contract-v2.
 stopping = False
 
 
