@@ -12,6 +12,8 @@ def _workspace(*, brick, product="Monurol", target=100, company=0, competitor=80
                         "target_unit": target,
                         "company_unit": company,
                         "competitor_unit": competitor,
+                        "market_unit": company + competitor,
+                        "share_percent": share,
                     }],
                     "brick_rows": [{
                         "brick": brick,
@@ -91,12 +93,16 @@ def test_region_ai_snapshot_builds_four_management_signals_without_source_querie
     }]
     assert len(result["zero_exit_bricks"]) == 1
     assert result["zero_exit_bricks"][0]["brick"] == "DIYARBAKIR MERKEZ"
-    assert result["zero_exit_bricks"][0]["target_unit"] == 120.0
+    assert result["zero_exit_bricks"][0]["competitor_unit"] == 90.0
+    assert result["zero_exit_bricks"][0]["market_unit"] == 90.0
+    assert "target_unit" not in result["zero_exit_bricks"][0]
     assert result["city_pressure"][0]["city"] == "DIYARBAKIR"
     assert result["city_pressure"][0]["delta_unit"] == 40.0
     assert result["brick_losses"][0]["brick"] == "DIYARBAKIR MERKEZ"
     assert result["brick_losses"][0]["product_name"] == "Monurol"
     assert result["brick_losses"][0]["loss_unit"] == 60.0
+    assert result["brick_losses"][0]["previous_company_unit"] == 15.0
+    assert result["brick_losses"][0]["company_delta_unit"] == -15.0
     assert result["previous_period"]["label"] == "08/2026"
 
 
@@ -143,6 +149,39 @@ def test_region_ai_snapshot_brick_loss_requires_previous_comparable_brick():
     assert rows[0]["product_name"] == "Monurol"
     assert rows[0]["loss_unit"] == 30.0
     assert rows[0]["company_unit"] == 40.0
+
+def test_zero_exit_ignores_representative_target_repeated_on_brick_rows():
+    workspaces = {
+        1: _workspace(
+            brick="GIRESUN BULANCAK+PIRAZIZ",
+            product="Stiderm",
+            target=659,
+            company=0,
+            competitor=705,
+            share=0,
+        ),
+    }
+    dashboard = {
+        "executive_metrics": {
+            "products": [
+                {"product_name": "Stiderm", "unit_actual": 500, "actual_tl": 100000},
+            ]
+        }
+    }
+
+    rows = RegionAISnapshotService._zero_exit_bricks(
+        workspaces, dashboard_payload=dashboard
+    )
+
+    assert rows == [{
+        "brick": "GIRESUN BULANCAK+PIRAZIZ",
+        "product_name": "Stiderm",
+        "company_unit": 0.0,
+        "competitor_unit": 705.0,
+        "market_unit": 705.0,
+        "share_percent": 0.0,
+    }]
+
 
 def test_zero_exit_excludes_product_with_no_national_sales_but_keeps_active_product():
     workspaces = {
