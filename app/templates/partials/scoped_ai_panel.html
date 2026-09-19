@@ -99,7 +99,7 @@
   {% set current_period=region_intel.current_period|default({}, true) %}
   {% set city_pressure_state=region_intel.city_pressure_state|default('NO_PREVIOUS_DATA', true) %}
 
-  <section class="scope-ai-command scope-ai-region-radar" aria-label="Bölge müdürü snapshot karar destek ekranı">
+  <section class="scope-ai-command scope-ai-region-radar" aria-label="Bölge müdürü karar destek ekranı">
     <div class="scope-ai-command-head">
       <div>
         <span>NATIONAL → BÖLGE → İL → BRICK · 4 YÖNETİM SİNYALİ</span>
@@ -123,7 +123,7 @@
             <small><i class="bi bi-arrow-down-right"></i> National seviyesinin {{ '%.1f'|format(item.gap_points) }} puan altında.</small>
           </div>
         {% else %}
-          <div class="scope-ai-empty">Bölge, ürün bazlı realizasyonda NATIONAL seviyesinin altında değil veya karşılaştırılabilir snapshot bulunmuyor.</div>
+          <div class="scope-ai-empty">Bölge, ürün bazlı realizasyonda NATIONAL seviyesinin altında değil veya karşılaştırılabilir dönem verisi bulunmuyor.</div>
         {% endfor %}
         </div>
       </article>
