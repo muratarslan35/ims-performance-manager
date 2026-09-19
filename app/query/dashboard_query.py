@@ -219,6 +219,7 @@ class DashboardQuery:
                 Representative.region.label("region"),
                 total_unit,
             )
+            .select_from(IMSSummary)
             .join(Product, Product.id == IMSSummary.product_id)
             .join(Representative, Representative.id == IMSSummary.representative_id)
             .filter(
