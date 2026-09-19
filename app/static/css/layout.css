@@ -982,6 +982,166 @@ body.sidebar-collapsed .app-sidebar {
   .navbar-mobile-status > div:first-child { min-width: 68px; }
 }
 
+
+/* === MOBILE NAVBAR SINGLE TOP ROW 20260919q === */
+/* Mobile only: keep hamburger/brand and status controls on the same top row.
+   Search remains a full-width second row. Desktop/tablet rules are unchanged. */
+@media (max-width: 767.98px) {
+  .navbar-inner {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 7px;
+    flex-wrap: initial !important;
+    width: 100%;
+    padding: 7px 8px 8px !important;
+  }
+
+  .navbar-inner > .d-flex:first-child {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    width: 100%;
+    gap: 5px !important;
+    overflow: hidden;
+  }
+
+  .navbar-hamburger {
+    width: 32px !important;
+    height: 36px !important;
+  }
+
+  .navbar-page-info {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 90px !important;
+    overflow: hidden;
+  }
+
+  .navbar-home-brand {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .navbar-page-title-line {
+    gap: 4px !important;
+  }
+
+  .navbar-title-mark {
+    width: 27px !important;
+    height: 27px !important;
+    flex-basis: 27px !important;
+  }
+
+  .navbar-page-title {
+    min-width: 0;
+    font-size: 8.7px !important;
+    line-height: 1.02 !important;
+    letter-spacing: 0 !important;
+  }
+
+  .navbar-right {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: center;
+    min-width: 0;
+    margin-left: 0 !important;
+    gap: 3px !important;
+    flex-wrap: nowrap;
+  }
+
+  .navbar-icon-btn {
+    width: 32px !important;
+    height: 36px !important;
+  }
+
+  .navbar-mobile-status {
+    display: flex;
+    flex: 0 0 112px;
+    width: 112px;
+    min-width: 112px;
+    height: 36px !important;
+  }
+
+  .navbar-mobile-status > div {
+    min-width: 0 !important;
+    padding: 3px 4px !important;
+  }
+
+  .navbar-mobile-status > div:first-child {
+    flex: 0 0 70px;
+    width: 70px;
+  }
+
+  .navbar-mobile-status > div:last-child {
+    flex: 0 0 42px;
+    width: 42px;
+  }
+
+  .navbar-mobile-status span {
+    font-size: 7px !important;
+  }
+
+  .navbar-mobile-status strong,
+  .navbar-mobile-status > div:first-child strong {
+    max-width: 100% !important;
+    font-size: 7.4px !important;
+  }
+
+  .navbar-user-btn {
+    min-width: 34px;
+    height: 36px;
+    padding: 3px !important;
+    justify-content: center;
+  }
+
+  .navbar-user-avatar {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .navbar-center {
+    display: block;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    order: initial !important;
+    width: 100%;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .navbar-page-info {
+    max-width: 78px !important;
+  }
+
+  .navbar-page-title {
+    font-size: 7.8px !important;
+  }
+
+  .navbar-mobile-status {
+    flex-basis: 104px;
+    width: 104px;
+    min-width: 104px;
+  }
+
+  .navbar-mobile-status > div:first-child {
+    flex-basis: 64px;
+    width: 64px;
+  }
+
+  .navbar-mobile-status > div:last-child {
+    flex-basis: 40px;
+    width: 40px;
+  }
+}
+
 /* ─── §10  AUTH PAGE (anonymous layout) ──────────────────────── */
 body.anonymous .app-sidebar,
 body.anonymous .app-navbar,
