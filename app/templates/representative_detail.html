@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ representative.rep_name|representative_display_name }} | Temsilci Performansı{% endblock %}
 {% block page_title %}Temsilci Performansı{% endblock %}
-{% block styles %}<link href="{{ url_for('static', filename='css/representative_detail.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/scoped-ai.css') }}" rel="stylesheet">{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/representative_detail.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/scoped-ai.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/representative-period-workspace.css') }}" rel="stylesheet">{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
