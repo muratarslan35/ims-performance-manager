@@ -7,7 +7,7 @@
       {% if ai_report.scope_type == 'representative' %}
       <p>{{ ai_report.scope_name }} için haftalık rakip blok hareketi, hedefli sıfır çıkış ve ayın ilk 10 gün saha sinyalleri.</p>
       {% else %}
-      <p>{{ ai_report.scope_name }} için NATIONAL karşılaştırması, hedefli sıfır çıkış brickleri ve önceki aya göre rekabet hareketleri yalnız yayınlanmış snapshotlardan gösterilir.</p>
+      <p>{{ ai_report.scope_name }} için NATIONAL karşılaştırması, bölgeye ait şirket çıkışı olmayan rekabet brickleri ve önceki aya göre gerçek rekabet hareketleri gösterilir.</p>
       {% endif %}
     </div>
     <span class="scope-ai-badge">{% if ai_report.scope_type == 'region' %}Bölge analizi{% else %}Kişisel analiz{% endif %}</span>
@@ -104,9 +104,9 @@
       <div>
         <span>NATIONAL → BÖLGE → İL → BRICK · 4 YÖNETİM SİNYALİ</span>
         <h3>Bölge Müdürü Hedef ve Rekabet Radarı</h3>
-        <p>Güncel ve önceki yayınlanmış snapshotlar karşılaştırılır; IMS, üretim veya rekabet verisi sayfa açılışında yeniden hesaplanmaz.</p>
+        <p>Güncel ve önceki yayınlanmış dönem sonuçları karşılaştırılır; her sinyal yalnız bu bölgenin temsilci ve brick verilerinden üretilir.</p>
       </div>
-      <span class="scope-ai-source-pill">Snapshot-only · 4 alan</span>
+      <span class="scope-ai-source-pill">4 doğrulanmış analiz alanı</span>
     </div>
 
     <div class="scope-ai-command-grid scope-ai-region-grid">
@@ -130,18 +130,18 @@
 
       <article class="scope-ai-command-card scope-ai-region-card">
         <div class="scope-ai-card-head">
-          <h4><i class="bi bi-bullseye"></i> Hedefli ama çıkışı olmayan brickler</h4>
+          <h4><i class="bi bi-bullseye"></i> Rakip satışı var, şirket çıkışı yok</h4>
           <span>{{ zero_exit_bricks|length }} kayıt</span>
         </div>
         <div class="scope-ai-card-list">
         {% for item in zero_exit_bricks %}
           <div class="scope-ai-row">
             <span>{{ item.brick }} · {{ item.product_name }}</span>
-            <b class="scope-ai-alert-value">0 kutu</b>
-            <small>Hedef {{ '{:,.0f}'.format(item.target_unit or 0) }} kutu · Rakip {{ '{:,.0f}'.format(item.competitor_unit or 0) }} kutu. İlgili IMS kesitine kadar şirket çıkışı yok.</small>
+            <b class="scope-ai-alert-value">{{ '{:,.0f}'.format(item.competitor_unit or 0) }} rakip kutu</b>
+            <small>Şirket 0 kutu · toplam pazar {{ '{:,.0f}'.format(item.market_unit or item.competitor_unit or 0) }} kutu · şirket payı %{{ '%.1f'|format(item.share_percent or 0) }}. Bu brickte ölçülen talep rakip satışından oluşuyor.</small>
           </div>
         {% else %}
-          <div class="scope-ai-empty">Türkiye genelinde aktif satışı bulunan ürünlerde hedefli sıfır çıkış bricki bulunmuyor.</div>
+          <div class="scope-ai-empty">Bu bölgede, aktif ürünler içinde rakip satışı olup şirket çıkışı sıfır kalan karşılaştırılabilir brick bulunmuyor.</div>
         {% endfor %}
         </div>
       </article>
@@ -182,7 +182,7 @@
           <div class="scope-ai-row">
             <span>{{ item.brick }} · {{ item.product_name }}</span>
             <b class="scope-ai-positive-value">-{{ '{:,.0f}'.format(item.loss_unit or 0) }} rakip kutu</b>
-            <small>Rakip {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ '{:,.0f}'.format(item.current_unit or 0) }} · düşüş %{{ '%.1f'|format(item.change_percent or 0) }} · şirket {{ '{:,.0f}'.format(item.company_unit or 0) }} kutu / pay %{{ '%.1f'|format(item.share_percent or 0) }}</small>
+            <small>Rakip {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ '{:,.0f}'.format(item.current_unit or 0) }} · düşüş %{{ '%.1f'|format(item.change_percent or 0) }} · şirket {{ '{:,.0f}'.format(item.previous_company_unit or 0) }} → {{ '{:,.0f}'.format(item.company_unit or 0) }}{% if (item.company_delta_unit or 0) > 0 %} (+{{ '{:,.0f}'.format(item.company_delta_unit) }}){% elif (item.company_delta_unit or 0) < 0 %} ({{ '{:,.0f}'.format(item.company_delta_unit) }}){% endif %} kutu · pay %{{ '%.1f'|format(item.share_percent or 0) }}{% if (item.share_point_change or 0) != 0 %} ({{ '%+.1f'|format(item.share_point_change) }} puan){% endif %}</small>
           </div>
         {% else %}
           <div class="scope-ai-empty">Önceki aya göre rakip satışının gerilediği karşılaştırılabilir brick bulunmuyor.</div>
