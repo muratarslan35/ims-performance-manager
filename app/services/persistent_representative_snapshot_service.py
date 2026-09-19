@@ -69,6 +69,7 @@ class PersistentRepresentativeSnapshotService:
     # read cache removes the duplicate queries that previously pushed four
     # workers into swap/I/O contention. Config can still override this value.
     BUILD_WORKERS = 3
+    READ_MODEL_VERSION = 2
 
     @staticmethod
     def _json_default(value):
@@ -255,6 +256,21 @@ class PersistentRepresentativeSnapshotService:
         return result
 
     @classmethod
+    def _set_read_model_version(cls, set_id):
+        raw = db.session.execute(
+            sa.select(representative_snapshots.c.payload_json).where(
+                representative_snapshots.c.set_id == int(set_id)
+            ).order_by(representative_snapshots.c.representative_id.asc()).limit(1)
+        ).scalar()
+        if not raw:
+            return 0
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+        return int(payload.get("read_model_version") or 0)
+
+    @classmethod
     def build_for_period(
         cls,
         year,
@@ -273,7 +289,12 @@ class PersistentRepresentativeSnapshotService:
             return {"status": "SKIPPED", "reason": "NO_REPRESENTATIVES", "representatives": 0}
 
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
-        if exact and not force and int(exact.representative_count or 0) == len(ids):
+        if (
+            exact
+            and not force
+            and int(exact.representative_count or 0) == len(ids)
+            and cls._set_read_model_version(exact.id) >= cls.READ_MODEL_VERSION
+        ):
             return {"status": "REUSED", "set_id": int(exact.id), "representatives": len(ids)}
 
         already_building = cls._current_source_building(year, month, ims_id, production_id)
