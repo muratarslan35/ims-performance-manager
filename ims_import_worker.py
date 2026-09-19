@@ -221,7 +221,16 @@ def _backfill_latest_region_snapshots(app):
             result.get("regions", 0), result.get("set_id", 0),
         )
         _warm_dashboard_snapshot(app, latest.year, latest.month)
-        _warm_representative_snapshots(app, latest.year, latest.month)
+        representative_result = _warm_representative_snapshots(app, latest.year, latest.month)
+        if representative_result.get("status") in {"ACTIVE", "REUSED"}:
+            enrichment = PersistentRegionSnapshotService.enrich_for_period(
+                latest.year, latest.month
+            )
+            app.logger.info(
+                "region_snapshot_enrichment_startup status=%s year=%s month=%s regions=%s",
+                enrichment.get("status"), latest.year, latest.month,
+                enrichment.get("regions", 0),
+            )
     except Exception:
         db.session.rollback()
         app.logger.exception(
@@ -233,7 +242,7 @@ def _backfill_latest_region_snapshots(app):
 
 
 def _snapshot_label(result):
-    return "alındı" if result.get("status") in {"ACTIVE", "REUSED"} else "alınamadı"
+    return "alındı" if result.get("status") in {"ACTIVE", "REUSED", "ENRICHED"} else "alınamadı"
 
 
 def _prepare_and_publish(app, completed):
@@ -296,12 +305,26 @@ def _prepare_and_publish(app, completed):
         detail="Dashboard ve Bölge hazır · Temsilci snapshot paketleri hazırlanıyor",
         status=IMSImportJob.STATUS_PROCESSING)
     representative_result = _warm_representative_snapshots(app, year, month, job_id=job_id)
-    ready = all(result.get("status") in {"ACTIVE", "REUSED"} for result in (
-        dashboard_result, region_result, representative_result
-    ))
+    enrichment_result = (
+        PersistentRegionSnapshotService.enrich_for_period(year, month)
+        if representative_result.get("status") in {"ACTIVE", "REUSED"}
+        else {"status": "WAITING_REPRESENTATIVES"}
+    )
+    app.logger.info(
+        "region_snapshot_enrichment status=%s year=%s month=%s regions=%s",
+        enrichment_result.get("status"), year, month,
+        enrichment_result.get("regions", 0),
+    )
+    ready = (
+        dashboard_result.get("status") in {"ACTIVE", "REUSED"}
+        and region_result.get("status") in {"ACTIVE", "REUSED"}
+        and representative_result.get("status") in {"ACTIVE", "REUSED"}
+        and enrichment_result.get("status") in {"ENRICHED", "REUSED"}
+    )
     detail = (
         f"Snapshot durumu · Dashboard: {_snapshot_label(dashboard_result)} · "
-        f"Bölge: {_snapshot_label(region_result)} · Temsilci: {_snapshot_label(representative_result)}"
+        f"Bölge: {_snapshot_label(region_result)} · Temsilci: {_snapshot_label(representative_result)} · "
+        f"Bölge görünümü: {_snapshot_label(enrichment_result)}"
     )
     if not ready:
         completed.error_message = "IMS başarıyla işlendi; eksik snapshotlar otomatik olarak yeniden denenecek."
