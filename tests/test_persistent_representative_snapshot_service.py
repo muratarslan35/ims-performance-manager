@@ -4,13 +4,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_representative_route_prefers_durable_snapshot_before_live_builder():
+def test_representative_route_is_snapshot_only_without_live_builder_fallback():
     source = (ROOT / "app/services/representative_period_workspace.py").read_text(encoding="utf-8")
     lookup = source.index("PersistentRepresentativeSnapshotService.get_active(")
-    fallback = source.index("build_representative_workspace_payload(representative, year, month)", lookup)
-    assert lookup < fallback
-    assert 'workspace["snapshots"]' in source
-    assert 'workspace["annual_realization"]' in source
+    route_tail = source[lookup:]
+    assert 'workspace["snapshots"]' in route_tail
+    assert 'workspace["annual_realization"]' in route_tail
+    assert "build_representative_workspace_payload(representative, year, month)" not in route_tail
+    assert "Temsilci görünümü hazırlanıyor" in route_tail
+    assert "@app.after_request" not in source
 
 
 def test_snapshot_builder_reuses_existing_calculation_path_without_formula_changes():
@@ -74,12 +76,11 @@ def test_deploy_bootstraps_first_active_generation_before_web_activation():
     assert 'backfill_active_representative_snapshots.py"\n' in installer
 
 
-def test_backend_deploy_starts_nonblocking_representative_snapshot_refresh():
+def test_backend_deploy_reuses_representative_snapshot_without_duplicate_force_refresh():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
-    assert "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild" in installer
-    assert "backfill_active_representative_snapshots.py\" --force" in installer
-    assert "nohup env PYTHONPATH=" in installer
-    assert "representative_snapshot_warmup.log" in installer
+    assert "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web" in installer
+    assert "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild" not in installer
+    assert "backfill_active_representative_snapshots.py\" --force" not in installer
 
 
 def test_snapshot_migration_adds_only_derived_cache_tables():
