@@ -280,5 +280,6 @@ def test_region_template_places_snapshot_box_matrix_before_market_panel():
     assert 'data-box-threshold="90"' in template
     assert 'data-box-threshold="100"' in template
     assert "representative_products" in template
+    assert "data-region-box-target-data" in template
     assert "actual-(target*threshold/100)" in template
     assert template.index("Temsilci Kutu Hedef Takibi") < template.index("BÖLGESEL REKABET VE PAZAR MERKEZİ")
