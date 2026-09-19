@@ -787,14 +787,14 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert 'id="executiveKpiLayout"' in html
     assert 'id="turkeyMapSection"' in html
 
-    # Dashboard is intentionally trimmed after the map; these functions are
-    # available from the left navigation instead of being repeated here.
+    # Keep the dashboard's core tables; only the duplicate AI/quick-action
+    # management area is intentionally removed.
     assert 'id="aiExecutiveSummary"' not in html
     assert "AI Yönetici Özeti" not in html
-    assert 'id="imsTurkeyRankingSection"' not in html
-    assert "IMS Türkiye Sıralaması" not in html
-    assert 'id="productPerformanceSection"' not in html
-    assert "Ürün Performans Tablosu" not in html
+    assert 'id="imsTurkeyRankingSection"' in html
+    assert "IMS Türkiye Sıralaması" in html
+    assert 'id="productPerformanceSection"' in html
+    assert "Ürün Performans Tablosu" in html
     assert 'id="warningActionSection"' not in html
     assert "Uyarılar ve Aksiyonlar" not in html
     assert "Hızlı İşlemler" not in html
@@ -812,6 +812,8 @@ def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(ap
     assert "window.location.assign(detailUrl)" in Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
     assert "AI Yönetici Özeti" not in dashboard_template
     assert "Uyarılar ve Aksiyonlar" not in dashboard_template
+    assert 'id="imsTurkeyRankingSection"' in dashboard_template
+    assert 'id="productPerformanceSection"' in dashboard_template
 
 
 def test_mobile_map_tooltip_stays_inside_map_bounds():
