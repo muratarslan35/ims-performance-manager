@@ -95,44 +95,57 @@ class RegionAISnapshotService:
 
     @classmethod
     def _zero_exit_bricks(cls, workspaces, dashboard_payload=None):
+        """Return factual brick opportunities without inventing a brick target.
+
+        Representative product targets are repeated in brick rows for display
+        compatibility, but they are not brick-level targets. Region AI therefore
+        uses only observed company/competitor/market facts here.
+        """
         active_products, national_activity_available = cls._national_product_activity(
             dashboard_payload
         )
         rows = {}
         for market in cls._monthly_markets(workspaces):
             for item in market.get("brick_product_rows") or []:
-                target = cls._number(item.get("target_unit"))
                 company = cls._number(item.get("company_unit"))
-                if target <= 0 or company > 0:
+                competitor = cls._number(item.get("competitor_unit"))
+                if company > 0 or competitor <= 0:
                     continue
                 brick = str(item.get("brick") or "").strip()
                 product = str(item.get("product_name") or "").strip()
                 if not brick or not product:
                     continue
                 product_key = cls._key(product)
-                # A product with no NATIONAL output at all is not a useful
-                # brick-level zero-exit signal. A nationally selling product
-                # stays eligible even when this particular brick is zero.
+                # Keep zero-exit signals only for managed products that have
+                # national company activity, when that national activity snapshot
+                # is available. This avoids stock/non-launched products becoming
+                # false field opportunities.
                 if national_activity_available and product_key not in active_products:
                     continue
                 key = (cls._key(brick), product_key)
+                market_unit = cls._number(item.get("market_unit"))
+                if market_unit <= 0:
+                    market_unit = company + competitor
                 bucket = rows.setdefault(key, {
                     "brick": brick,
                     "product_name": product,
-                    "target_unit": 0.0,
                     "company_unit": 0.0,
                     "competitor_unit": 0.0,
+                    "market_unit": 0.0,
+                    "share_percent": 0.0,
                 })
                 # Shared bricks may appear in more than one representative
-                # snapshot. Use the source row once instead of summing it.
-                bucket["target_unit"] = max(bucket["target_unit"], target)
+                # snapshot. Use the strongest single published source row rather
+                # than summing duplicate ownership.
                 bucket["company_unit"] = max(bucket["company_unit"], company)
-                bucket["competitor_unit"] = max(
-                    bucket["competitor_unit"], cls._number(item.get("competitor_unit"))
+                bucket["competitor_unit"] = max(bucket["competitor_unit"], competitor)
+                bucket["market_unit"] = max(bucket["market_unit"], market_unit)
+                bucket["share_percent"] = max(
+                    bucket["share_percent"], cls._number(item.get("share_percent"))
                 )
         result = list(rows.values())
         result.sort(
-            key=lambda item: (-item["competitor_unit"], -item["target_unit"], item["brick"], item["product_name"])
+            key=lambda item: (-item["competitor_unit"], -item["market_unit"], item["brick"], item["product_name"])
         )
         return result
 
@@ -243,6 +256,10 @@ class RegionAISnapshotService:
             loss = previous_unit - current_unit
             if loss <= 0:
                 continue
+            previous_company_unit = previous_item["company_unit"]
+            current_company_unit = current_item["company_unit"]
+            previous_share_percent = previous_item["share_percent"]
+            current_share_percent = current_item["share_percent"]
             rows.append({
                 "brick": current_item["brick"],
                 "product_name": current_item["product_name"],
@@ -250,8 +267,12 @@ class RegionAISnapshotService:
                 "current_unit": round(current_unit, 2),
                 "loss_unit": round(loss, 2),
                 "change_percent": round(loss * 100.0 / previous_unit, 1),
-                "company_unit": round(current_item["company_unit"], 2),
-                "share_percent": round(current_item["share_percent"], 1),
+                "previous_company_unit": round(previous_company_unit, 2),
+                "company_unit": round(current_company_unit, 2),
+                "company_delta_unit": round(current_company_unit - previous_company_unit, 2),
+                "previous_share_percent": round(previous_share_percent, 1),
+                "share_percent": round(current_share_percent, 1),
+                "share_point_change": round(current_share_percent - previous_share_percent, 1),
             })
         rows.sort(key=lambda item: (
             -item["loss_unit"], -item["change_percent"], item["brick"], item["product_name"]
