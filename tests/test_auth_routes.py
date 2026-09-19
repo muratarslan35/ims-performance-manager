@@ -702,14 +702,12 @@ def test_login_and_register_show_corporate_system_name(app):
     assert 'class="auth-ims-emblem"' in register_html
     assert "img/ims-auth-logo.svg" in login_html
     assert "img/ims-auth-logo.svg" in register_html
-    assert "img/bilim-ilac-corporate.png" in login_html
-    assert "img/bilim-ilac-corporate.png" in register_html
+    assert "img/bilim-ilac.jpg" in login_html
+    assert "img/bilim-ilac.jpg" in register_html
     login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
     register_template = Path("app/templates/register.html").read_text(encoding="utf-8")
-    assert "img/bilim-ilac-corporate.png" in login_template
-    assert "img/bilim-ilac-corporate.png" in register_template
-    assert "img/bilim-ilac.jpg" not in login_template
-    assert "img/bilim-ilac.jpg" not in register_template
+    assert "img/bilim-ilac.jpg" in login_template
+    assert "img/bilim-ilac.jpg" in register_template
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
     assert ".auth-brand-stack" in css
     assert ".auth-ims-emblem" in css
@@ -742,6 +740,12 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "margin-top: -24px !important" in css
     assert "height: 112px" in css
     assert "height: 88px" in css
+    assert "AUTH ORIGINAL BILIM ART BALANCE 20260919i" in css
+    assert "width: calc(100vw - 12px)" in css
+    assert "min-height: 198px" in css
+    assert "min-height: 178px" in css
+    assert "object-fit: cover" in css
+    assert "margin-top: 0 !important" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
