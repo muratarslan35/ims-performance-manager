@@ -289,6 +289,9 @@ class RegionPerformanceService:
         rep_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         person_month_product = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         person_month_product_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        representative_product_units = defaultdict(
+            lambda: [Decimal("0"), Decimal("0"), True]
+        )
         for (year, month, rep_id, product_id), values in cells.items():
             target, actual, row_complete = values["target"], values["actual"], values["complete"]
             rep_bucket = rep_totals[rep_id]
@@ -303,6 +306,10 @@ class RegionPerformanceService:
             unit_bucket[0] += values["target_unit"]
             unit_bucket[1] += values["actual_unit"]
             unit_bucket[2] = unit_bucket[2] and values["unit_complete"]
+            rep_unit_bucket = representative_product_units[(rep_id, product_id)]
+            rep_unit_bucket[0] += values["target_unit"]
+            rep_unit_bucket[1] += values["actual_unit"]
+            rep_unit_bucket[2] = rep_unit_bucket[2] and values["unit_complete"]
 
         product_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         product_unit_totals = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
@@ -343,6 +350,7 @@ class RegionPerformanceService:
                 unit_bucket[1] += actual_unit
                 unit_bucket[2] = unit_bucket[2] and unit_complete
 
+        all_product_ids.update(product_id for _, product_id in representative_product_units)
         products = {
             item.id: item
             for item in Product.query.filter(Product.id.in_(all_product_ids)).all()
@@ -392,6 +400,43 @@ class RegionPerformanceService:
             for rid, vals in rep_totals.items()
         ]
         representative_rows.sort(key=lambda row: (-(row["realization_percent"] or Decimal("0")), -(row["actual_tl"] or Decimal("0"))))
+        representative_product_rows = []
+        for (representative_id, product_id), values in representative_product_units.items():
+            target_unit, actual_unit, unit_complete = values
+            representative = reps.get(representative_id)
+            product = products.get(product_id)
+            representative_product_rows.append({
+                "representative_id": representative_id,
+                "representative_name": (
+                    representative.rep_name if representative is not None
+                    else f"Temsilci {representative_id}"
+                ),
+                "city": (
+                    (representative.city or "-") if representative is not None else "-"
+                ),
+                "active": bool(representative.active) if representative is not None else False,
+                "is_vacant": (
+                    "boş" in (representative.rep_name or "").casefold()
+                    or (representative.rep_name or "").strip().upper() == "BOS"
+                ) if representative is not None else False,
+                "product_id": product_id,
+                "product_name": (
+                    product.product_name if product is not None else f"Ürün {product_id}"
+                ),
+                "product_display_order": (
+                    int(product.display_order or 999) if product is not None else 999
+                ),
+                "target_unit": target_unit,
+                "actual_unit": actual_unit if unit_complete else None,
+                "unit_complete": unit_complete,
+            })
+        representative_product_rows.sort(
+            key=lambda row: (
+                str(row["representative_name"] or "").casefold(),
+                int(row["product_display_order"]),
+                str(row["product_name"] or "").casefold(),
+            )
+        )
         monthly_rows = [
             {
                 "year": year, "month": month, "label": f"{month:02d}/{year}",
@@ -408,6 +453,7 @@ class RegionPerformanceService:
             "complete": complete,
             "products": product_rows,
             "representatives": representative_rows,
+            "representative_products": representative_product_rows,
             "months": monthly_rows,
             "source_by_month": source_by_month,
         }
