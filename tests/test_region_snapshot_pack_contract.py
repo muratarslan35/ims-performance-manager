@@ -37,25 +37,25 @@ def test_worker_backfills_existing_active_ims_without_delaying_queued_import():
     assert "PersistentRegionSnapshotService.build_for_period" in worker
 
 
-def test_worker_requires_region_snapshot_before_atomic_publication():
+def test_worker_requires_finalized_region_read_model_before_atomic_publication():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_region_snapshots" in worker
     assert 'region_snapshot_acceptance status=PASS' in worker
     assert 'region_result = _warm_region_snapshots(app, year, month)' in worker
-    assert 'Bölge snapshotları hazırlanıyor' in worker
-    assert 'dashboard_result, region_result, representative_result' in worker
+    assert 'PersistentRegionSnapshotService.enrich_for_period(year, month)' in worker
+    assert 'enrichment_result.get("status") in {"ENRICHED", "REUSED"}' in worker
     assert 'summary["publication_ready"] = True' in worker
     assert 'value = 46 + round(48 * done / max(total, 1))' in worker
 
 
-def test_runtime_deploy_refreshes_snapshot_before_web_activation():
+def test_runtime_deploy_reuses_current_snapshot_before_web_activation():
     installer = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     backfill_pos = installer.index("scripts/backfill_active_region_snapshots.py")
     web_activation_pos = installer.index("if sudo systemctl is-active --quiet \"$service_name\"")
     assert backfill_pos < web_activation_pos
     assert 'REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation' in installer
-    assert 'REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change' in installer
-    assert 'backfill_active_region_snapshots.py\" --force' in installer
+    assert 'REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current' in installer
+    assert 'backfill_active_region_snapshots.py\" --force' not in installer
     assert '[ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]' in installer
 
 
