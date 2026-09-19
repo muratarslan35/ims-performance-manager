@@ -1032,3 +1032,265 @@ body[data-theme="dark"].anonymous .auth-form .form-select {
   color-scheme: dark;
 }
 
+/* === AUTH RESPONSIVE BALANCE LOCK 20260919g === */
+/* This final block is intentionally authoritative. It keeps the auth card and
+   Bilim İlaç mark proportionate on phone, tablet and desktop without cropping. */
+.auth-shell-login,
+.auth-shell-register {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-shell-login .auth-layout,
+.auth-shell-register .auth-layout,
+.auth-shell-register .auth-layout-narrow {
+  box-sizing: border-box;
+  width: min(90vw, 960px);
+  max-width: 960px;
+  min-width: 0;
+  max-height: none;
+  grid-template-columns: minmax(300px, .92fr) minmax(390px, 1.08fr);
+  overflow: hidden;
+}
+
+.auth-shell-register .auth-layout,
+.auth-shell-register .auth-layout-narrow {
+  width: min(88vw, 900px);
+  max-width: 900px;
+}
+
+.auth-shell-login .auth-identity-panel,
+.auth-shell-register .auth-identity-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(44, 104, 190, .30), transparent 44%),
+    linear-gradient(145deg, #0b2f6b 0%, #09285d 55%, #071d47 100%);
+}
+
+.auth-shell-login .auth-identity-logo,
+.auth-shell-register .auth-identity-logo {
+  position: relative;
+  inset: auto;
+  left: auto;
+  top: auto;
+  z-index: 2;
+  display: block;
+  width: min(78%, 340px);
+  height: auto;
+  max-width: 78%;
+  max-height: 72%;
+  margin: auto;
+  padding: 0;
+  object-fit: contain;
+  object-position: center;
+  transform: none;
+  filter: brightness(0) invert(1) drop-shadow(0 12px 24px rgba(0,0,0,.24));
+}
+
+.auth-shell-login .auth-layout .auth-card,
+.auth-shell-register .auth-layout .auth-card {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (min-width: 1200px) {
+  .auth-shell-login .auth-layout {
+    width: min(82vw, 960px);
+  }
+
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(80vw, 900px);
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 470px;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 510px;
+  }
+
+  .auth-shell-login .auth-identity-logo,
+  .auth-shell-register .auth-identity-logo {
+    width: min(76%, 330px);
+    max-width: 76%;
+    max-height: 64%;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199.98px) {
+  .auth-shell-login,
+  .auth-shell-register {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(94vw, 840px);
+    max-width: 840px;
+    grid-template-columns: minmax(260px, .9fr) minmax(360px, 1.1fr);
+  }
+
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(92vw, 800px);
+    max-width: 800px;
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 420px;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 470px;
+  }
+
+  .auth-shell-login .auth-identity-logo,
+  .auth-shell-register .auth-identity-logo {
+    width: min(78%, 300px);
+    max-width: 78%;
+    max-height: 62%;
+  }
+}
+
+@media (max-width: 767.98px) {
+  body.auth-viewport-locked,
+  body.auth-viewport-locked > .page,
+  body.auth-viewport-locked .page-wrapper,
+  body.auth-viewport-locked .page-body,
+  body.auth-viewport-locked .page-body > .container-xl {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .auth-shell-login,
+  .auth-shell-register {
+    width: 100%;
+    min-height: 100dvh;
+    height: auto;
+    max-height: none;
+    justify-content: flex-start;
+    padding: 8px 12px max(14px, env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(calc(100vw - 24px), 520px);
+    max-width: 520px;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 170px;
+    height: 170px;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 138px;
+    height: 138px;
+  }
+
+  .auth-shell-login .auth-identity-logo {
+    width: min(72%, 286px);
+    max-width: 72%;
+    max-height: 86%;
+  }
+
+  .auth-shell-register .auth-identity-logo {
+    width: min(70%, 270px);
+    max-width: 70%;
+    max-height: 86%;
+  }
+
+  .auth-shell-login .auth-layout .auth-card {
+    padding: 18px 18px 15px;
+  }
+
+  .auth-shell-register .auth-layout .auth-card {
+    padding: 13px 16px 12px;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: min(calc(100vw - 20px), 500px);
+    max-width: 500px;
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 156px;
+    height: 156px;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 124px;
+    height: 124px;
+  }
+
+  .auth-shell-login .auth-identity-logo {
+    width: min(74%, 272px);
+    max-width: 74%;
+    max-height: 88%;
+  }
+
+  .auth-shell-register .auth-identity-logo {
+    width: min(72%, 252px);
+    max-width: 72%;
+    max-height: 88%;
+  }
+}
+
+@media (max-width: 575.98px) and (max-height: 780px) {
+  .auth-shell-register .auth-identity-panel {
+    min-height: 104px;
+    height: 104px;
+  }
+
+  .auth-shell-register .auth-identity-logo {
+    width: min(68%, 226px);
+    max-width: 68%;
+    max-height: 88%;
+  }
+}
+
+@media (max-width: 360px) {
+  .auth-shell-login,
+  .auth-shell-register {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: calc(100vw - 16px);
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 146px;
+    height: 146px;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 112px;
+    height: 112px;
+  }
+}
