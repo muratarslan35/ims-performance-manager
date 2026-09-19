@@ -476,6 +476,7 @@ def build_representative_workspace_payload(representative, year, month):
         }
 
     return {
+        "read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION,
         "year": year,
         "month": month,
         "annual_realization": annual_realization,
