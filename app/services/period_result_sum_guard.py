@@ -115,6 +115,52 @@ def _merge_representatives(monthly_payloads):
     return result
 
 
+def _merge_representative_products(monthly_payloads):
+    """Merge representative/product box rows from finalized monthly snapshots.
+
+    This keeps the region manager matrix query-free at request time: Q values are
+    composed from the same monthly snapshot rows already used by the region page.
+    """
+    rows = {}
+    for payload in monthly_payloads:
+        for item in payload.get("representative_products") or []:
+            representative_id = int(item["representative_id"])
+            product_id = int(item["product_id"])
+            key = (representative_id, product_id)
+            bucket = rows.setdefault(key, {
+                "representative_id": representative_id,
+                "representative_name": item.get("representative_name"),
+                "city": item.get("city") or "-",
+                "active": bool(item.get("active")),
+                "is_vacant": bool(item.get("is_vacant")),
+                "product_id": product_id,
+                "product_name": item.get("product_name") or f"Ürün {product_id}",
+                "product_display_order": int(item.get("product_display_order") or 999),
+                "target_unit": Decimal("0"),
+                "actual_unit": Decimal("0"),
+                "unit_complete": True,
+            })
+            bucket["target_unit"] += _d(item.get("target_unit"))
+            complete = bool(item.get("unit_complete")) and item.get("actual_unit") is not None
+            bucket["unit_complete"] = bucket["unit_complete"] and complete
+            if complete:
+                bucket["actual_unit"] += _d(item.get("actual_unit"))
+
+    result = []
+    for bucket in rows.values():
+        if not bucket["unit_complete"]:
+            bucket["actual_unit"] = None
+        result.append(bucket)
+    result.sort(
+        key=lambda row: (
+            str(row.get("representative_name") or "").casefold(),
+            int(row.get("product_display_order") or 999),
+            str(row.get("product_name") or "").casefold(),
+        )
+    )
+    return result
+
+
 def _has_business_data(payload):
     return bool(
         _d(payload.get("target_tl"))
@@ -145,6 +191,7 @@ def _merge_monthly_payloads(months, monthly_payloads):
         "complete": complete,
         "products": _merge_products(contributing),
         "representatives": _merge_representatives(contributing),
+        "representative_products": _merge_representative_products(contributing),
         "months": month_rows,
         "source_by_month": source_by_month,
     }
@@ -164,6 +211,7 @@ def _empty_period():
         "complete": False,
         "products": [],
         "representatives": [],
+        "representative_products": [],
         "months": [],
         "source_by_month": {},
     }
