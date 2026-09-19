@@ -20,7 +20,7 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - name: Recover active representative comparison snapshot
+      - name: Configure SSH
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
@@ -30,6 +30,9 @@ jobs:
           chmod 600 ~/.ssh/key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Install and launch snapshot-only recovery
+        run: |
+          set -Eeuo pipefail
           ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -47,18 +50,14 @@ jobs:
           echo "IMS_BUSY|$busy"
           test "$busy" = "0"
 
-          echo "STOP_WORKER|begin"
-          sudo systemctl stop ims-import-worker.service
-          trap 'sudo systemctl start ims-import-worker.service >/dev/null 2>&1 || true' EXIT
-          echo "STOP_WORKER|done"
+          sudo systemctl stop ims-import-worker.service || true
+          echo "WORKER_STOPPED|$(sudo systemctl is-active ims-import-worker.service || true)"
 
-          exec 9>"$IMS_PATH/instance/representative_snapshot_warmup.lock"
-          flock -w 120 9
-          echo "WARMUP_LOCK|acquired"
-
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          cat > "$IMS_PATH/instance/monthly_comparison_recover.py" <<'PY'
           import json
-          from datetime import datetime, timedelta
+          import fcntl
+          from datetime import datetime
+          from pathlib import Path
           import sqlalchemy as sa
 
           from app import create_app
@@ -80,7 +79,7 @@ jobs:
               except (TypeError, ValueError):
                   return 0.0
 
-          def product_id(row):
+          def pid(row):
               row=row or {}
               product=row.get("product")
               value=(product.get("id") if isinstance(product,dict) else None) or row.get("product_id")
@@ -89,33 +88,28 @@ jobs:
               except (TypeError, ValueError):
                   return None
 
-          def comparison_rows(current_payload, previous_payload):
-              current_monthly=((current_payload.get("snapshots") or {}).get("monthly") or {})
-              previous_monthly=((previous_payload.get("snapshots") or {}).get("monthly") or {})
-              current_products=current_monthly.get("products") or []
-              previous_products=previous_monthly.get("products") or []
-              current_market=current_monthly.get("market_analysis") or {}
-              previous_market=previous_monthly.get("market_analysis") or {}
-
-              cp={product_id(row):row for row in current_products if product_id(row) is not None}
-              pp={product_id(row):row for row in previous_products if product_id(row) is not None}
-              cm={product_id(row):row for row in (current_market.get("rows") or []) if product_id(row) is not None}
-              pm={product_id(row):row for row in (previous_market.get("rows") or []) if product_id(row) is not None}
-
+          def rows_from_fragments(current, previous):
+              current_products=current.get("products") or []
+              previous_products=previous.get("products") or []
+              current_market=current.get("market_rows") or []
+              previous_market=previous.get("market_rows") or []
+              cp={pid(r):r for r in current_products if pid(r) is not None}
+              pp={pid(r):r for r in previous_products if pid(r) is not None}
+              cm={pid(r):r for r in current_market if pid(r) is not None}
+              pm={pid(r):r for r in previous_market if pid(r) is not None}
               previous_competitor_available=bool(
-                  previous_market.get("has_competition")
+                  previous.get("has_competition")
                   or any(
-                      number(row.get("market_unit")) != 0.0
-                      or number(row.get("competitor_unit")) != 0.0
-                      for row in pm.values()
+                      number(r.get("market_unit")) != 0.0
+                      or number(r.get("competitor_unit")) != 0.0
+                      for r in pm.values()
                   )
               )
-
-              rows=[]
-              for pid,current_product in cp.items():
-                  previous_product=pp.get(pid)
-                  current_market_row=cm.get(pid) or {}
-                  previous_market_row=pm.get(pid) or {}
+              result=[]
+              for product_id,current_product in cp.items():
+                  previous_product=pp.get(product_id)
+                  current_market_row=cm.get(product_id) or {}
+                  previous_market_row=pm.get(product_id) or {}
                   actual=number(current_product.get("actual_unit"))
                   previous_actual=number((previous_product or {}).get("actual_unit"))
                   competitor=number(current_market_row.get("competitor_unit"))
@@ -123,12 +117,12 @@ jobs:
                   delta=actual-previous_actual
                   competitor_delta=competitor-previous_competitor
                   percent=(delta*100.0/previous_actual) if previous_actual else None
-                  rows.append({
+                  result.append({
                       "product": current_product.get("product") or current_market_row.get("product"),
-                      "product_id": pid,
-                      "source": current_product.get("source", "IMS"),
+                      "product_id": product_id,
+                      "source": current_product.get("source","IMS"),
                       "previous_source": (
-                          previous_product.get("source", "IMS")
+                          previous_product.get("source","IMS")
                           if previous_product is not None else None
                       ),
                       "has_previous": previous_product is not None or bool(previous_market_row),
@@ -141,193 +135,204 @@ jobs:
                       "competitor_change_unit": round(competitor_delta,2),
                       "previous_competitor_available": previous_competitor_available,
                   })
-              return rows
+              return result
 
           app=create_app()
-          with app.app_context():
-              period=PeriodService.get_active_period()
-              year,month=int(period["year"]),int(period["month"])
-              previous_year,previous_month=(
-                  (year,month-1) if month>1 else (year-1,12)
-              )
-              ims_id,production_id=PersistentRepresentativeSnapshotService.source_identity(year,month)
-              current_set_id=PersistentRepresentativeSnapshotService._visible_set_id(year,month)
-              previous_set_id=PersistentRepresentativeSnapshotService._visible_set_id(previous_year,previous_month)
-              assert current_set_id, "current active representative snapshot missing"
-              assert previous_set_id, "previous representative snapshot missing"
+          lock_path=Path(app.instance_path)/"representative_snapshot_warmup.lock"
+          lock_path.parent.mkdir(parents=True,exist_ok=True)
+          with lock_path.open("w") as lock_file:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+              with app.app_context():
+                  period=PeriodService.get_active_period()
+                  year,month=int(period["year"]),int(period["month"])
+                  previous_year,previous_month=((year,month-1) if month>1 else (year-1,12))
+                  current_set_id=PersistentRepresentativeSnapshotService._visible_set_id(year,month)
+                  previous_set_id=PersistentRepresentativeSnapshotService._visible_set_id(previous_year,previous_month)
+                  if not current_set_id or not previous_set_id:
+                      raise RuntimeError("required active representative snapshot missing")
 
-              current_set=db.session.execute(
-                  sa.select(representative_snapshot_sets).where(
-                      representative_snapshot_sets.c.id==int(current_set_id)
-                  )
-              ).mappings().one()
-              assert current_set["status"]==PersistentRepresentativeSnapshotService.STATUS_ACTIVE
-              assert int(current_set["source_upload_id"])==int(ims_id)
-              assert int(current_set["production_upload_id"])==int(production_id)
-
-              current_rows=db.session.execute(
-                  sa.select(
-                      representative_snapshots.c.representative_id,
-                      representative_snapshots.c.payload_json,
-                  ).where(representative_snapshots.c.set_id==int(current_set_id))
-              ).all()
-              previous_rows=db.session.execute(
-                  sa.select(
-                      representative_snapshots.c.representative_id,
-                      representative_snapshots.c.payload_json,
-                  ).where(representative_snapshots.c.set_id==int(previous_set_id))
-              ).all()
-              previous_payloads={
-                  int(rep_id):json.loads(raw) for rep_id,raw in previous_rows
-              }
-              assert current_rows, "current representative payloads missing"
-
-              stale_cutoff=datetime.utcnow()-timedelta(minutes=5)
-              building=db.session.execute(
-                  sa.select(
-                      representative_snapshot_sets.c.id,
-                      representative_snapshot_sets.c.created_at,
-                  ).where(
-                      representative_snapshot_sets.c.year==year,
-                      representative_snapshot_sets.c.month==month,
-                      representative_snapshot_sets.c.source_upload_id==int(ims_id),
-                      representative_snapshot_sets.c.production_upload_id==int(production_id),
-                      representative_snapshot_sets.c.status==PersistentRepresentativeSnapshotService.STATUS_BUILDING,
-                  )
-              ).all()
-              for set_id,created_at in building:
-                  member_count=int(db.session.execute(
-                      sa.select(sa.func.count()).select_from(representative_snapshots).where(
-                          representative_snapshots.c.set_id==int(set_id)
+                  current_set=db.session.execute(
+                      sa.select(representative_snapshot_sets).where(
+                          representative_snapshot_sets.c.id==int(current_set_id)
                       )
-                  ).scalar() or 0)
-                  if member_count != 0 or created_at is None or created_at > stale_cutoff:
-                      raise RuntimeError(
-                          f"refusing recovery: live BUILDING set id={set_id} rows={member_count} created={created_at}"
-                      )
-                  db.session.execute(
-                      representative_snapshot_sets.update().where(
-                          representative_snapshot_sets.c.id==int(set_id)
-                      ).values(status=PersistentRepresentativeSnapshotService.STATUS_FAILED)
-                  )
-                  print(f"STALE_BUILDING|id={set_id}|rows={member_count}|status=FAILED")
+                  ).mappings().one()
+                  if current_set["status"] != PersistentRepresentativeSnapshotService.STATUS_ACTIVE:
+                      raise RuntimeError("visible representative set is not ACTIVE")
 
-              inserted=db.session.execute(
-                  representative_snapshot_sets.insert().values(
-                      year=year,
-                      month=month,
-                      source_upload_id=int(ims_id),
-                      production_upload_id=int(production_id),
-                      status=PersistentRepresentativeSnapshotService.STATUS_BUILDING,
-                      representative_count=0,
-                      created_at=datetime.utcnow(),
-                  )
-              )
-              new_set_id=int(inserted.inserted_primary_key[0])
-              db.session.commit()
-
-              try:
-                  upgraded=0
-                  for rep_id,raw in current_rows:
-                      payload=json.loads(raw)
-                      previous_payload=previous_payloads.get(int(rep_id)) or {}
-                      monthly=((payload.get("snapshots") or {}).get("monthly") or {})
-                      market=monthly.get("market_analysis") or {}
-                      market["comparison_rows"]=comparison_rows(payload,previous_payload)
-                      monthly["market_analysis"]=market
-                      payload["read_model_version"]=VERSION
-                      db.session.execute(
-                          representative_snapshots.insert().values(
-                              set_id=new_set_id,
-                              representative_id=int(rep_id),
-                              payload_json=json.dumps(payload,ensure_ascii=False,separators=(",",":")),
-                              created_at=datetime.utcnow(),
-                          )
-                      )
-                      upgraded += 1
-
-                  if upgraded != len(current_rows):
-                      raise RuntimeError(f"incomplete upgrade {upgraded}/{len(current_rows)}")
-
-                  db.session.execute(
-                      representative_snapshot_sets.update().where(
+                  # With the worker stopped and the shared warmup lock held, any
+                  # remaining BUILDING generation is abandoned derived cache only.
+                  stale_ids=db.session.execute(
+                      sa.select(representative_snapshot_sets.c.id).where(
                           representative_snapshot_sets.c.year==year,
                           representative_snapshot_sets.c.month==month,
-                          representative_snapshot_sets.c.status==PersistentRepresentativeSnapshotService.STATUS_ACTIVE,
-                      ).values(status=PersistentRepresentativeSnapshotService.STATUS_SUPERSEDED)
-                  )
-                  db.session.execute(
-                      representative_snapshot_sets.update().where(
-                          representative_snapshot_sets.c.id==new_set_id
-                      ).values(
-                          status=PersistentRepresentativeSnapshotService.STATUS_ACTIVE,
-                          representative_count=upgraded,
-                          activated_at=datetime.utcnow(),
+                          representative_snapshot_sets.c.status==PersistentRepresentativeSnapshotService.STATUS_BUILDING,
                       )
-                  )
-                  db.session.commit()
-              except Exception:
-                  db.session.rollback()
-                  db.session.execute(
-                      representative_snapshot_sets.update().where(
-                          representative_snapshot_sets.c.id==new_set_id
-                      ).values(status=PersistentRepresentativeSnapshotService.STATUS_FAILED)
-                  )
-                  db.session.commit()
-                  raise
+                  ).scalars().all()
+                  for stale_id in stale_ids:
+                      db.session.execute(
+                          representative_snapshot_sets.update().where(
+                              representative_snapshot_sets.c.id==int(stale_id)
+                          ).values(status=PersistentRepresentativeSnapshotService.STATUS_FAILED)
+                      )
+                      print(f"STALE_BUILDING|id={stale_id}|status=FAILED",flush=True)
 
-              murat=Representative.query.filter(
-                  sa.func.upper(Representative.rep_name)=="MURAT ARSLAN"
-              ).first()
-              assert murat is not None
-              verified=PersistentRepresentativeSnapshotService.get_active(murat.id,year,month) or {}
-              assert int(verified.get("read_model_version") or 0) >= VERSION
-              rows=((((verified.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {}).get("comparison_rows") or [])
-              assert len(rows) >= 7
-              failures=[]
-              for row in rows:
-                  actual=number(row.get("actual_unit"))
-                  previous_actual=number(row.get("previous_actual_unit"))
-                  delta=number(row.get("actual_change_unit"))
-                  competitor=number(row.get("competitor_unit"))
-                  previous_competitor=number(row.get("previous_competitor_unit"))
-                  competitor_delta=number(row.get("competitor_change_unit"))
-                  if abs(delta-(actual-previous_actual))>0.05:
-                      failures.append(f"{row.get('product_id')}:company_delta")
-                  if abs(competitor_delta-(competitor-previous_competitor))>0.05:
-                      failures.append(f"{row.get('product_id')}:competitor_delta")
+                  fragment_sql=sa.text("""
+                      SELECT representative_id,
+                             json_extract(payload_json, '$.snapshots.monthly.products') AS products_json,
+                             json_extract(payload_json, '$.snapshots.monthly.market_analysis.rows') AS market_rows_json,
+                             json_extract(payload_json, '$.snapshots.monthly.market_analysis.has_competition') AS has_competition
+                      FROM representative_snapshots
+                      WHERE set_id=:set_id
+                      ORDER BY representative_id
+                  """)
+                  current_fragments={}
+                  for row in db.session.execute(fragment_sql,{"set_id":int(current_set_id)}).mappings():
+                      current_fragments[int(row["representative_id"])]={
+                          "products":json.loads(row["products_json"] or "[]"),
+                          "market_rows":json.loads(row["market_rows_json"] or "[]"),
+                          "has_competition":bool(row["has_competition"]),
+                      }
+                  previous_fragments={}
+                  for row in db.session.execute(fragment_sql,{"set_id":int(previous_set_id)}).mappings():
+                      previous_fragments[int(row["representative_id"])]={
+                          "products":json.loads(row["products_json"] or "[]"),
+                          "market_rows":json.loads(row["market_rows_json"] or "[]"),
+                          "has_competition":bool(row["has_competition"]),
+                      }
+
+                  update_sql=sa.text("""
+                      UPDATE representative_snapshots
+                         SET payload_json=json_set(
+                             payload_json,
+                             '$.read_model_version', :version,
+                             '$.snapshots.monthly.market_analysis.comparison_rows',
+                             json(:comparison_rows)
+                         )
+                       WHERE set_id=:set_id AND representative_id=:representative_id
+                  """)
+
+                  updated=0
+                  for representative_id,current in current_fragments.items():
+                      comparison=rows_from_fragments(
+                          current,
+                          previous_fragments.get(representative_id) or {},
+                      )
+                      db.session.execute(
+                          update_sql,
+                          {
+                              "version":VERSION,
+                              "comparison_rows":json.dumps(comparison,ensure_ascii=False,separators=(",",":")),
+                              "set_id":int(current_set_id),
+                              "representative_id":int(representative_id),
+                          },
+                      )
+                      updated += 1
+
+                  db.session.commit()
+
+                  murat=Representative.query.filter(
+                      sa.func.upper(Representative.rep_name)=="MURAT ARSLAN"
+                  ).first()
+                  if murat is None:
+                      raise RuntimeError("Murat Arslan representative missing")
+                  verified=PersistentRepresentativeSnapshotService.get_active(murat.id,year,month) or {}
+                  version=int(verified.get("read_model_version") or 0)
+                  rows=((((verified.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {}).get("comparison_rows") or [])
+                  if version < VERSION or len(rows) < 7:
+                      raise RuntimeError(f"verification failed version={version} rows={len(rows)}")
+                  for row in rows:
+                      actual=number(row.get("actual_unit"))
+                      previous_actual=number(row.get("previous_actual_unit"))
+                      delta=number(row.get("actual_change_unit"))
+                      competitor=number(row.get("competitor_unit"))
+                      previous_competitor=number(row.get("previous_competitor_unit"))
+                      competitor_delta=number(row.get("competitor_change_unit"))
+                      if abs(delta-(actual-previous_actual))>0.05:
+                          raise RuntimeError(f"company delta mismatch product={row.get('product_id')}")
+                      if abs(competitor_delta-(competitor-previous_competitor))>0.05:
+                          raise RuntimeError(f"competitor delta mismatch product={row.get('product_id')}")
+                      product=row.get("product") or {}
+                      name=product.get("product_name") if isinstance(product,dict) else row.get("product_id")
+                      print(
+                          f"ROW|{name}|prev={previous_actual:.0f}|cur={actual:.0f}|delta={delta:.0f}|"
+                          f"pct={row.get('actual_change_percent')}|prev_comp={previous_competitor:.0f}|"
+                          f"cur_comp={competitor:.0f}|comp_delta={competitor_delta:.0f}|"
+                          f"source={row.get('source')}|previous_source={row.get('previous_source')}",
+                          flush=True,
+                      )
+
+                  item=RepresentativeSnapshotRefreshQueue.next()
+                  if item is not None:
+                      if (
+                          int(item.get("year") or 0)==year
+                          and int(item.get("month") or 0)==month
+                          and str(item.get("reason") or "").startswith("monthly_comparison_fix")
+                      ):
+                          RepresentativeSnapshotRefreshQueue.complete(item)
+                          print(f"REFRESH_QUEUE|completed|reason={item.get('reason')}",flush=True)
+
                   print(
-                      f"ROW|pid={row.get('product_id')}|prev={previous_actual:.0f}|cur={actual:.0f}|"
-                      f"delta={delta:.0f}|pct={row.get('actual_change_percent')}|"
-                      f"prev_comp={previous_competitor:.0f}|cur_comp={competitor:.0f}|"
-                      f"comp_delta={competitor_delta:.0f}|source={row.get('source')}|"
-                      f"previous_source={row.get('previous_source')}"
+                      f"RECOVERY|PASS|year={year}|month={month}|set={current_set_id}|"
+                      f"updated={updated}|version={VERSION}",
+                      flush=True,
                   )
-              if failures:
-                  raise RuntimeError("comparison verification failed: "+",".join(failures))
-
-              item=RepresentativeSnapshotRefreshQueue.next()
-              if item is not None:
-                  same_period=(
-                      int(item.get("year") or 0)==year
-                      and int(item.get("month") or 0)==month
-                  )
-                  reason=str(item.get("reason") or "")
-                  if same_period and reason.startswith("monthly_comparison_fix"):
-                      RepresentativeSnapshotRefreshQueue.complete(item)
-                      print(f"REFRESH_QUEUE|completed|reason={reason}")
-
-              print(
-                  f"RECOVERY|PASS|year={year}|month={month}|old_set={current_set_id}|"
-                  f"new_set={new_set_id}|members={len(current_rows)}|version={VERSION}"
-              )
           PY
 
-          flock -u 9
+          rm -f "$IMS_PATH/instance/monthly_comparison_recover.log"
+          sudo systemctl reset-failed ims-monthly-comparison-recover.service >/dev/null 2>&1 || true
+          sudo systemd-run             --unit=ims-monthly-comparison-recover             --uid="$USER"             --gid="$(id -gn)"             --working-directory="$IMS_PATH"             --setenv="PYTHONPATH=$IMS_PATH"             --property=Nice=10             --property=StandardOutput=append:"$IMS_PATH/instance/monthly_comparison_recover.log"             --property=StandardError=append:"$IMS_PATH/instance/monthly_comparison_recover.log"             "$IMS_PATH/venv/bin/python" "$IMS_PATH/instance/monthly_comparison_recover.py"
+          echo "RECOVERY_UNIT|launched"
+          REMOTE
+
+      - name: Wait for detached recovery
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 180); do
+            state="$(ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "sudo systemctl show ims-monthly-comparison-recover.service -p ActiveState -p SubState -p ExecMainStatus --value 2>/dev/null | tr '\n' '|' || true")"
+            echo "RECOVERY_STATE|$state"
+            if echo "$state" | grep -q '^inactive|dead|0|'; then
+              exit 0
+            fi
+            if echo "$state" | grep -Eq '^(failed|inactive)\|'; then
+              exit 1
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Restore worker and verify
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "RECOVERY_LOG_BEGIN"
+          cat instance/monthly_comparison_recover.log 2>/dev/null || true
+          echo "RECOVERY_LOG_END"
           sudo systemctl start ims-import-worker.service
-          trap - EXIT
           test "$(sudo systemctl is-active ims-import-worker.service)" = "active"
           echo "WORKER|active"
           curl -fsS --max-time 20 http://127.0.0.1:8000/login >/dev/null
           echo "HTTP_HEALTH|PASS"
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlalchemy as sa
+          from app import create_app
+          from app.models import Representative
+          from app.services.period_service import PeriodService
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+
+          app=create_app()
+          with app.app_context():
+              period=PeriodService.get_active_period()
+              rep=Representative.query.filter(sa.func.upper(Representative.rep_name)=="MURAT ARSLAN").first()
+              payload=PersistentRepresentativeSnapshotService.get_active(
+                  rep.id,int(period["year"]),int(period["month"])
+              ) or {}
+              rows=((((payload.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {}).get("comparison_rows") or [])
+              version=int(payload.get("read_model_version") or 0)
+              print(f"LIVE_VERIFY|version={version}|rows={len(rows)}")
+              assert version >= 2 and len(rows) >= 7
+          PY
           REMOTE
