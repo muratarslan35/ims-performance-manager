@@ -734,9 +734,12 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "object-fit: contain" in css
     assert "AUTH RESPONSIVE BALANCE LOCK 20260919g" in css
     assert "width: min(calc(100vw - 20px), 500px)" in css
-    assert "min-height: 156px" in css
+    assert "AUTH MOBILE CRISP PNG + LIFT 20260919h" in css
     assert "min-height: 124px" in css
-    assert "brightness(0) invert(1)" in css
+    assert "min-height: 98px" in css
+    assert "max-width: 218px" in css
+    assert "filter: none" in css
+    assert "margin-top: -24px !important" in css
     assert "height: 112px" in css
     assert "height: 88px" in css
 
