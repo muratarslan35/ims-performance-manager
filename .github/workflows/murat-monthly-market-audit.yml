@@ -1,0 +1,96 @@
+name: Murat Monthly Market Comparison Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/murat-monthly-market-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Audit Murat August September market comparison
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlalchemy as sa
+          from app import create_app
+          from app.models import Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+
+          def n(v):
+              try: return float(v or 0)
+              except Exception: return 0.0
+
+          def pname(row):
+              p=row.get("product")
+              if isinstance(p,dict):
+                  return str(p.get("product_name") or p.get("name") or "")
+              return str(getattr(p,"product_name","") or row.get("product_name") or "")
+
+          app=create_app()
+          with app.app_context():
+              rep=Representative.query.filter(sa.func.upper(Representative.rep_name)=="MURAT ARSLAN").first()
+              assert rep is not None
+              prev=PersistentRepresentativeSnapshotService.get_active(rep.id,2026,8) or {}
+              curr=PersistentRepresentativeSnapshotService.get_active(rep.id,2026,9) or {}
+              pm=(((prev.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {})
+              cm=(((curr.get("snapshots") or {}).get("monthly") or {}).get("market_analysis") or {})
+              print(f"SOURCE|rep_id={rep.id}|prev_upload={pm.get('upload_id')}|curr_upload={cm.get('upload_id')}|prev_scope={pm.get('scope')}|curr_scope={cm.get('scope')}")
+              pr={pname(r).upper():r for r in pm.get("rows") or []}
+              cr={pname(r).upper():r for r in cm.get("rows") or []}
+              names=["TRAVAZOL","MONUROL","ACNEMIX","MIXOVUL","STIDERM","BRIMODER","FENTIVAG"]
+              mismatches=0
+              competitor_mismatches=0
+              for name in names:
+                  a=pr.get(name,{})
+                  b=cr.get(name,{})
+                  pa=n(a.get("actual_unit")); ca=n(b.get("actual_unit"))
+                  pc=n(a.get("competitor_unit")); cc=n(b.get("competitor_unit"))
+                  exp_delta=ca-pa
+                  exp_pct=(exp_delta*100.0/pa) if pa else None
+                  exp_comp=cc-pc
+                  stored_delta=n(b.get("actual_change_unit"))
+                  stored_pct=b.get("actual_change_percent")
+                  stored_pct_n=None if stored_pct is None else n(stored_pct)
+                  stored_comp=n(b.get("competitor_change_unit"))
+                  delta_bad=abs(stored_delta-exp_delta)>0.05 or (
+                      exp_pct is not None and stored_pct_n is not None and abs(stored_pct_n-exp_pct)>0.11
+                  )
+                  comp_bad=abs(stored_comp-exp_comp)>0.05
+                  mismatches += int(delta_bad)
+                  competitor_mismatches += int(comp_bad)
+                  print(
+                    f"ROW|{name}|prev_actual={pa:.2f}|curr_actual={ca:.2f}|"
+                    f"stored_delta={stored_delta:.2f}|expected_delta={exp_delta:.2f}|"
+                    f"stored_pct={stored_pct_n}|expected_pct={None if exp_pct is None else round(exp_pct,1)}|"
+                    f"prev_comp={pc:.2f}|curr_comp={cc:.2f}|stored_comp_delta={stored_comp:.2f}|"
+                    f"expected_comp_delta={exp_comp:.2f}|company_mismatch={int(delta_bad)}|competitor_mismatch={int(comp_bad)}"
+                  )
+              pt=pm.get("totals") or {}; ct=cm.get("totals") or {}
+              print(f"PREV_TOTALS|actual={n(pt.get('actual_unit')):.2f}|competitor={n(pt.get('competitor_unit')):.2f}|market={n(pt.get('market_unit')):.2f}")
+              print(f"CURR_TOTALS|actual={n(ct.get('actual_unit')):.2f}|competitor={n(ct.get('competitor_unit')):.2f}|market={n(ct.get('market_unit')):.2f}")
+              print(f"SUMMARY|company_mismatches={mismatches}|competitor_mismatches={competitor_mismatches}")
+          PY
+          REMOTE
