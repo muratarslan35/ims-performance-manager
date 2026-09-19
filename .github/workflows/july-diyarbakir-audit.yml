@@ -1,0 +1,74 @@
+name: July Diyarbakir Representative Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/july-diyarbakir-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Audit July Diyarbakir
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.models import ProductionRepresentativeTotal, ProductionResultUpload, Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+
+          def n(v):
+              try: return float(v or 0)
+              except Exception: return 0.0
+
+          app=create_app()
+          with app.app_context():
+              upload=(ProductionResultUpload.query
+                      .filter_by(year=2026,month=7,status=ProductionResultUpload.STATUS_APPLIED)
+                      .order_by(ProductionResultUpload.production_stage.desc(),
+                                ProductionResultUpload.applied_at.desc(),
+                                ProductionResultUpload.id.desc()).first())
+              assert upload is not None
+              reps=(Representative.query.filter_by(region="901", active=True)
+                    .order_by(Representative.rep_name.asc()).all())
+              print(f"SOURCE|upload={upload.id}|stage={upload.production_stage}|file={upload.file_name}")
+              mismatches=0
+              for rep in reps:
+                  prod=ProductionRepresentativeTotal.query.filter_by(
+                      upload_id=upload.id, representative_id=rep.id).first()
+                  ws=PersistentRepresentativeSnapshotService.get_active(rep.id,2026,7) or {}
+                  monthly=((ws.get("snapshots") or {}).get("monthly") or {})
+                  totals=monthly.get("totals") or {}
+                  st=n(totals.get("target_tl")); sa=n(totals.get("actual_tl")); sp=n(totals.get("percent"))
+                  if prod is None:
+                      print(f"REP|{rep.rep_name}|NO_PRODUCTION_TOTAL|snap_target={st:.2f}|snap_actual={sa:.2f}|snap_percent={sp:.2f}")
+                      continue
+                  pt=n(prod.target_tl); pa=n(prod.actual_tl); pp=n(prod.realization_percent)
+                  td=st-pt; ad=sa-pa; pd=sp-pp
+                  mismatch=abs(td)>0.05 or abs(ad)>0.05 or abs(pd)>0.05
+                  mismatches += int(mismatch)
+                  print(f"REP|{rep.rep_name}|prod_target={pt:.2f}|snap_target={st:.2f}|target_diff={td:.2f}|prod_actual={pa:.2f}|snap_actual={sa:.2f}|actual_diff={ad:.2f}|prod_percent={pp:.2f}|snap_percent={sp:.2f}|percent_diff={pd:.2f}|mismatch={int(mismatch)}")
+              print(f"SUMMARY|reps={len(reps)}|mismatches={mismatches}")
+          PY
+          REMOTE
