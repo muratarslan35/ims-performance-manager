@@ -85,7 +85,8 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
 
     assert '"ytd_product_rankings": self.query_layer.load_ytd_product_rankings' in service
     assert 'payload["ytd_product_rankings"]' in service
-    assert "if isinstance((payload or {}).get(\"ytd_product_rankings\"), dict)" in route
+    assert 'existing = (payload or {}).get("ytd_product_rankings")' in route
+    assert 'rank_trend_version' in route
     assert "PersistentDashboardSnapshotService.publish" in route
 
 def test_ytd_rank_trend_marks_only_changed_positions():
