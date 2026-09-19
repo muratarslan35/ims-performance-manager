@@ -24,13 +24,13 @@ def test_import_worker_yields_resources_to_web():
     assert "MemoryMax=900M" in unit
 
 
-def test_snapshot_backfills_run_at_low_os_priority_without_changing_policy():
+def test_snapshot_backfills_run_at_low_os_priority_without_duplicate_force_rebuilds():
     script = (ROOT / "deploy/install_systemd_service.sh").read_text(encoding="utf-8")
     assert "run_low_priority()" in script
     assert "nice -n 15" in script
     assert "ionice -c3" in script
-    assert "backfill_active_region_snapshots.py\" --force" in script
-    assert "backfill_active_representative_snapshots.py\" --force" in script
     assert "verify_dashboard_snapshot_production.py" in script
-    assert "REGION_SNAPSHOT_ACTIVATION|force_rebuild_after_backend_change" in script
+    assert "REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current" in script
     assert "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web" in script
+    assert "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild" not in script
+    assert "backfill_active_representative_snapshots.py\" --force" not in script
