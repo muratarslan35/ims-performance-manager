@@ -164,10 +164,9 @@ def test_region_product_table_has_unit_gap_and_tl_gap_headers():
     assert "item.unit_difference" in template
 
 
-def test_region_box_rows_backfill_uses_one_published_snapshot_read(monkeypatch):
-    from app.regions import _ensure_representative_box_rows
-    from app.services.persistent_representative_snapshot_service import (
-        PersistentRepresentativeSnapshotService,
+def test_region_box_rows_are_embedded_from_prefetched_representative_read_models():
+    from app.services.persistent_region_snapshot_service import (
+        PersistentRegionSnapshotService,
     )
 
     report = {
@@ -209,21 +208,10 @@ def test_region_box_rows_backfill_uses_one_published_snapshot_read(monkeypatch):
             }
         }
     }
-    calls = []
-
-    def fake_many(cls, representative_ids, year, month):
-        calls.append((list(representative_ids), year, month))
-        return workspaces
-
-    monkeypatch.setattr(
-        PersistentRepresentativeSnapshotService,
-        "get_active_many",
-        classmethod(fake_many),
+    result = PersistentRegionSnapshotService._embed_representative_products(
+        report, 2026, 9, workspaces
     )
 
-    result = _ensure_representative_box_rows(report, 2026, 9)
-
-    assert len(calls) == 1
     assert result["periods"]["monthly"]["representative_products"][0]["target_unit"] == 100
     assert result["periods"]["q3"]["representative_products"][0]["actual_unit"] == 250
 
@@ -317,14 +305,18 @@ def test_region_box_title_left_and_period_controls_centered():
     assert "region-box-toolbar-meta" in template
     assert template.index('data-box-period="monthly"') < template.index('data-box-threshold="75"')
 
-def test_region_ai_uses_published_snapshot_inputs_and_four_management_cards():
+def test_region_ai_is_finalized_once_into_region_read_model():
     route = Path("app/regions.py").read_text(encoding="utf-8")
+    snapshot_service = Path("app/services/persistent_region_snapshot_service.py").read_text(encoding="utf-8")
     partial = Path("app/templates/partials/scoped_ai_panel.html").read_text(encoding="utf-8")
     service = Path("app/services/region_ai_snapshot_service.py").read_text(encoding="utf-8")
 
-    assert "PersistentDashboardSnapshotService.get_stable" in route
-    assert "PersistentRepresentativeSnapshotService.get_active_many" in route
-    assert "RegionAISnapshotService.build" in route
+    assert "PersistentRepresentativeSnapshotService.get_active_many" not in route
+    assert "RegionAISnapshotService.build" not in route
+    assert "PersistentRegionSnapshotService.enrich_for_period" in route
+    assert "PersistentDashboardSnapshotService.get_stable" in snapshot_service
+    assert "PersistentRepresentativeSnapshotService.get_active_many" in snapshot_service
+    assert "RegionAISnapshotService.build" in snapshot_service
     assert "NATIONAL altında kalan ürünler" in partial
     assert "Hedefli ama çıkışı olmayan brickler" in partial
     assert "Rakip yoğunluğunu koruyan / artıran iller" in partial
@@ -336,10 +328,9 @@ def test_region_ai_uses_published_snapshot_inputs_and_four_management_cards():
     assert "DashboardService(" not in service
 
 
-def test_region_box_backfill_reuses_prefetched_representative_snapshots(monkeypatch):
-    from app.regions import _ensure_representative_box_rows
-    from app.services.persistent_representative_snapshot_service import (
-        PersistentRepresentativeSnapshotService,
+def test_region_box_embedding_reuses_prefetched_representative_read_models():
+    from app.services.persistent_region_snapshot_service import (
+        PersistentRegionSnapshotService,
     )
 
     report = {
@@ -381,13 +372,8 @@ def test_region_box_backfill_reuses_prefetched_representative_snapshots(monkeypa
         }
     }
 
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("prefetched workspace should avoid a second snapshot query")
-
-    monkeypatch.setattr(PersistentRepresentativeSnapshotService, "get_active_many", forbidden)
-
-    result = _ensure_representative_box_rows(
-        report, 2026, 9, workspaces=workspaces
+    result = PersistentRegionSnapshotService._embed_representative_products(
+        report, 2026, 9, workspaces
     )
 
     assert result["periods"]["monthly"]["representative_products"][0]["actual_unit"] == 80
