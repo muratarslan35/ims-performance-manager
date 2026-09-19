@@ -30,6 +30,8 @@ PERIOD_OPTIONS = (
     ("q4", "Q4", "compact"),
 )
 PERIOD_LABELS = {key: label for key, label, _ in PERIOD_OPTIONS}
+# Persisted monthly comparison contract: company=P2>P1>IMS, rival=monthly IMS market.
+MONTHLY_COMPARISON_CONTRACT_VERSION = 2
 
 
 def _shift_month(year, month, delta):
