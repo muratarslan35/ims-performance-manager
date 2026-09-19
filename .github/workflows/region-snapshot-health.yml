@@ -406,6 +406,56 @@ jobs:
                   )
           PY
           echo "AUGUST_SOURCE_FORENSICS_END"
+          echo "JULY_DIYARBAKIR_REP_AUDIT_BEGIN"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlalchemy as sa
+          from app import create_app
+          from app.extensions import db
+          from app.models import ProductionRepresentativeTotal, ProductionResultUpload, Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+
+          def n(v):
+              try: return float(v or 0)
+              except Exception: return 0.0
+
+          app=create_app()
+          with app.app_context():
+              upload=(ProductionResultUpload.query
+                      .filter_by(year=2026,month=7,status=ProductionResultUpload.STATUS_APPLIED)
+                      .order_by(ProductionResultUpload.production_stage.desc(),
+                                ProductionResultUpload.applied_at.desc(),
+                                ProductionResultUpload.id.desc())
+                      .first())
+              assert upload is not None
+              reps=(Representative.query
+                    .filter(Representative.region=="901", Representative.active.is_(True))
+                    .order_by(Representative.rep_name.asc()).all())
+              print(f"JULY_SOURCE|upload={upload.id}|stage={upload.production_stage}|file={upload.file_name}|rep_count={len(reps)}")
+              mismatches=0
+              for rep in reps:
+                  prod=(ProductionRepresentativeTotal.query
+                        .filter_by(upload_id=upload.id, representative_id=rep.id).first())
+                  ws=PersistentRepresentativeSnapshotService.get_active(rep.id,2026,7) or {}
+                  monthly=((ws.get("snapshots") or {}).get("monthly") or {})
+                  totals=monthly.get("totals") or {}
+                  st=n(totals.get("target_tl")); sa_=n(totals.get("actual_tl")); sp=n(totals.get("percent"))
+                  pt=n(prod.target_tl) if prod else 0; pa=n(prod.actual_tl) if prod else 0; pp=n(prod.realization_percent) if prod else 0
+                  target_diff=round(st-pt,2) if prod else None
+                  actual_diff=round(sa_-pa,2) if prod else None
+                  percent_diff=round(sp-pp,2) if prod else None
+                  mismatch = bool(prod) and (abs(target_diff)>0.05 or abs(actual_diff)>0.05 or abs(percent_diff)>0.05)
+                  if mismatch: mismatches += 1
+                  print(
+                    f"JULY_REP|id={rep.id}|name={rep.rep_name}|"
+                    f"prod_target={pt:.2f}|snap_target={st:.2f}|target_diff={target_diff}|"
+                    f"prod_actual={pa:.2f}|snap_actual={sa_:.2f}|actual_diff={actual_diff}|"
+                    f"prod_percent={pp:.2f}|snap_percent={sp:.2f}|percent_diff={percent_diff}|"
+                    f"mismatch={int(mismatch)}"
+                  )
+              print(f"JULY_DIYARBAKIR_SUMMARY|reps={len(reps)}|mismatches={mismatches}")
+          PY
+          echo "JULY_DIYARBAKIR_REP_AUDIT_END"
+
 
 
           echo "RECENT_REGION_SNAPSHOT_ERRORS_BEGIN"
