@@ -307,3 +307,13 @@ def test_region_box_dark_mode_and_centering_contract():
     assert "color: #ffaaa9 !important" in template
     assert "table-layout: fixed !important" in template
 
+def test_region_box_title_left_and_period_controls_centered():
+    template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
+
+    assert "REGION BOX TITLE LEFT PERIOD CENTER 20260919o" in template
+    assert "text-align: left !important" in template
+    assert "grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) !important" in template
+    assert "width: 288px !important" in template
+    assert "region-box-toolbar-meta" in template
+    assert template.index('data-box-period="monthly"') < template.index('data-box-threshold="75"')
+

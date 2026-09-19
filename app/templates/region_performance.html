@@ -366,6 +366,106 @@ body[data-theme="dark"] .box-balance.is-neutral {
   }
 }
 
+
+/* === REGION BOX TITLE LEFT PERIOD CENTER 20260919o === */
+.region-box-targets .region-section-head {
+  justify-content: flex-start !important;
+}
+
+.region-box-target-title,
+.region-box-target-title h2,
+.region-box-target-title p {
+  width: 100%;
+  text-align: left !important;
+}
+
+.region-box-toolbar {
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) !important;
+  align-items: center !important;
+  gap: 18px !important;
+}
+
+.region-box-filter-stack {
+  grid-column: 2;
+  width: 288px !important;
+  min-width: 288px !important;
+  align-items: center !important;
+  justify-self: center;
+}
+
+.region-box-filter-stack .region-box-switch,
+.region-box-filter-stack .region-box-thresholds {
+  width: 100% !important;
+  margin: 0 !important;
+  justify-content: center !important;
+}
+
+.region-box-filter-stack .region-box-switch button {
+  flex: 1 1 50%;
+  min-width: 0 !important;
+}
+
+.region-box-filter-stack .region-box-thresholds button {
+  flex: 1 1 0;
+  min-width: 0 !important;
+}
+
+.region-box-toolbar-meta {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 9px;
+  min-width: 0;
+}
+
+.region-box-toolbar-meta .region-box-legend {
+  width: auto !important;
+  margin: 0 !important;
+  padding-top: 0 !important;
+  justify-content: flex-end !important;
+  text-align: right !important;
+}
+
+@media (max-width: 991.98px) {
+  .region-box-toolbar {
+    grid-template-columns: 1fr !important;
+    justify-items: center;
+  }
+
+  .region-box-filter-stack,
+  .region-box-toolbar-meta {
+    grid-column: 1;
+    justify-self: center;
+  }
+
+  .region-box-toolbar-meta {
+    align-items: center;
+  }
+
+  .region-box-toolbar-meta .region-box-legend {
+    justify-content: center !important;
+    text-align: center !important;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .region-box-filter-stack {
+    width: min(100%, 286px) !important;
+    min-width: 0 !important;
+  }
+
+  .region-box-switch {
+    width: 100% !important;
+  }
+
+  .region-box-period-label {
+    width: auto !important;
+  }
+}
+
 </style>
 {% set month_names = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'] %}
 <div class="region-page">
@@ -409,12 +509,9 @@ body[data-theme="dark"] .box-balance.is-neutral {
     </div>
     <div class="region-box-toolbar">
       <div class="region-box-filter-stack">
-        <div class="region-box-period-row">
-          <div class="region-box-switch" role="group" aria-label="Kutu hedef dönemi">
-            <button type="button" class="active" data-box-period="monthly">Aylık</button>
-            <button type="button" data-box-period="quarter">{{ box_quarter_label }}</button>
-          </div>
-          <span class="region-box-period-label" data-box-period-label>{{ month_names[report.month - 1] }} {{ report.year }}</span>
+        <div class="region-box-switch" role="group" aria-label="Kutu hedef dönemi">
+          <button type="button" class="active" data-box-period="monthly">Aylık</button>
+          <button type="button" data-box-period="quarter">{{ box_quarter_label }}</button>
         </div>
         <div class="region-box-thresholds" role="group" aria-label="Kutu hedef eşiği">
           <button type="button" class="active" data-box-threshold="75">%75</button>
@@ -422,9 +519,12 @@ body[data-theme="dark"] .box-balance.is-neutral {
           <button type="button" data-box-threshold="100">%100</button>
         </div>
       </div>
-      <div class="region-box-legend" aria-label="Kutu hedef durumu">
-        <span><i class="ok"></i> Hedef geldi / fazlası</span>
-        <span><i class="missing"></i> Kalan kutu</span>
+      <div class="region-box-toolbar-meta">
+        <span class="region-box-period-label" data-box-period-label>{{ month_names[report.month - 1] }} {{ report.year }}</span>
+        <div class="region-box-legend" aria-label="Kutu hedef durumu">
+          <span><i class="ok"></i> Hedef geldi / fazlası</span>
+          <span><i class="missing"></i> Kalan kutu</span>
+        </div>
       </div>
     </div>
     <div class="region-box-table-wrap">
