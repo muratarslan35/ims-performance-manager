@@ -286,6 +286,127 @@ jobs:
               print("HISTORICAL_SET_IDENTITY_END")
           PY
           echo "HISTORICAL_RESULT_AUDIT_END"
+          echo "AUGUST_SOURCE_FORENSICS_BEGIN"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+          from pathlib import Path
+          from app import create_app
+          from app.extensions import db
+          from app.models import ProductionResultUpload, Representative
+          from app.services.persistent_region_snapshot_service import (
+              region_snapshot_sets, region_snapshots,
+          )
+          from app.services.persistent_representative_snapshot_service import (
+              representative_snapshot_sets, representative_snapshots,
+          )
+
+          def n(value):
+              try:
+                  return float(value or 0)
+              except (TypeError, ValueError):
+                  return 0.0
+
+          app = create_app()
+          with app.app_context():
+              murat = Representative.query.filter(
+                  sa.func.upper(Representative.rep_name) == "MURAT ARSLAN"
+              ).first()
+              assert murat is not None
+
+              uploads = ProductionResultUpload.query.order_by(
+                  ProductionResultUpload.year.asc(),
+                  ProductionResultUpload.month.asc(),
+                  ProductionResultUpload.production_stage.asc(),
+                  ProductionResultUpload.id.asc(),
+              ).all()
+              for row in uploads:
+                  print(
+                      f"PRODUCTION_UPLOAD_ROW|id={row.id}|period={row.year}-{row.month:02d}|"
+                      f"stage={row.production_stage}|status={row.status}|file={row.file_name}|"
+                      f"stored={row.stored_file_name}|uploaded={row.uploaded_at}|applied={row.applied_at}|"
+                      f"warning={row.warning_message or ''}|error={row.error_message or ''}"
+                  )
+
+              root = Path(app.config["UPLOAD_FOLDER"]) / "production_results"
+              print(f"PRODUCTION_FOLDER|path={root}|exists={int(root.exists())}")
+              if root.exists():
+                  for path in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+                      if path.is_file():
+                          print(
+                              f"PRODUCTION_FILE|name={path.name}|size={path.stat().st_size}|"
+                              f"mtime={path.stat().st_mtime}"
+                          )
+
+              aug_sets = db.session.execute(
+                  sa.select(
+                      region_snapshot_sets.c.id,
+                      region_snapshot_sets.c.source_upload_id,
+                      region_snapshot_sets.c.production_upload_id,
+                      region_snapshot_sets.c.status,
+                      region_snapshot_sets.c.created_at,
+                      region_snapshot_sets.c.activated_at,
+                  ).where(
+                      region_snapshot_sets.c.year == 2026,
+                      region_snapshot_sets.c.month == 8,
+                  ).order_by(region_snapshot_sets.c.id.asc())
+              ).all()
+              for row in aug_sets:
+                  raw = db.session.execute(
+                      sa.select(region_snapshots.c.payload_json).where(
+                          region_snapshots.c.set_id == int(row.id),
+                          region_snapshots.c.region_key == "901",
+                      )
+                  ).scalar()
+                  payload = json.loads(raw) if raw else {}
+                  monthly = (((payload.get("report") or {}).get("periods") or {}).get("monthly") or {})
+                  rep = next(
+                      (
+                          item for item in monthly.get("representatives") or []
+                          if int(item.get("representative_id") or 0) == int(murat.id)
+                      ),
+                      {},
+                  )
+                  print(
+                      f"AUG_REGION_GENERATION|set={row.id}|ims={row.source_upload_id}|prod={row.production_upload_id}|"
+                      f"status={row.status}|created={row.created_at}|activated={row.activated_at}|"
+                      f"version={int(payload.get('read_model_version') or 0)}|"
+                      f"target={n(monthly.get('target_tl')):.2f}|actual={n(monthly.get('actual_tl')):.2f}|"
+                      f"murat_target={n(rep.get('target_tl')):.2f}|murat_actual={n(rep.get('actual_tl')):.2f}"
+                  )
+
+              rep_sets = db.session.execute(
+                  sa.select(
+                      representative_snapshot_sets.c.id,
+                      representative_snapshot_sets.c.source_upload_id,
+                      representative_snapshot_sets.c.production_upload_id,
+                      representative_snapshot_sets.c.status,
+                      representative_snapshot_sets.c.created_at,
+                      representative_snapshot_sets.c.activated_at,
+                  ).where(
+                      representative_snapshot_sets.c.year == 2026,
+                      representative_snapshot_sets.c.month == 8,
+                  ).order_by(representative_snapshot_sets.c.id.asc())
+              ).all()
+              for row in rep_sets:
+                  raw = db.session.execute(
+                      sa.select(representative_snapshots.c.payload_json).where(
+                          representative_snapshots.c.set_id == int(row.id),
+                          representative_snapshots.c.representative_id == int(murat.id),
+                      )
+                  ).scalar()
+                  payload = json.loads(raw) if raw else {}
+                  monthly = ((payload.get("snapshots") or {}).get("monthly") or {})
+                  totals = monthly.get("totals") or {}
+                  print(
+                      f"AUG_REP_GENERATION|set={row.id}|ims={row.source_upload_id}|prod={row.production_upload_id}|"
+                      f"status={row.status}|created={row.created_at}|activated={row.activated_at}|"
+                      f"target={n(totals.get('target_tl')):.2f}|actual={n(totals.get('actual_tl')):.2f}|"
+                      f"percent={n(totals.get('percent')):.2f}|label={monthly.get('result_source_label') or ''}"
+                  )
+          PY
+          echo "AUGUST_SOURCE_FORENSICS_END"
+
 
           echo "RECENT_REGION_SNAPSHOT_ERRORS_BEGIN"
           sudo journalctl -u ims-import-worker.service --since "2026-09-19 16:00:00" --no-pager \
