@@ -275,6 +275,197 @@ class PersistentRegionSnapshotService:
         set_id = cls._visible_set_id(year, month)
         return cls._payloads_from_set(set_id) if set_id else {}
 
+    @staticmethod
+    def _representative_ids(report):
+        monthly = (((report or {}).get("periods") or {}).get("monthly") or {})
+        return sorted({
+            int(item["representative_id"])
+            for item in monthly.get("representatives") or []
+            if item.get("representative_id") is not None
+            and item.get("active") is not False
+        })
+
+    @classmethod
+    def _embed_representative_products(cls, report, year, month, workspaces):
+        """Embed box-target rows from already-built representative read models."""
+        periods = (report or {}).get("periods") or {}
+        quarter_key = f"q{((int(month) - 1) // 3) + 1}"
+        wanted = ("monthly", quarter_key)
+        if all((periods.get(key) or {}).get("representative_products") for key in wanted):
+            return report
+
+        rep_meta = {}
+        for key in wanted:
+            for item in (periods.get(key) or {}).get("representatives") or []:
+                representative_id = item.get("representative_id")
+                if representative_id is None:
+                    continue
+                rep_meta[int(representative_id)] = {
+                    "representative_name": item.get("representative_name"),
+                    "city": item.get("city") or "-",
+                    "active": bool(item.get("active")),
+                    "is_vacant": bool(item.get("is_vacant")),
+                }
+
+        for key in wanted:
+            period = periods.get(key) or {}
+            if period.get("representative_products"):
+                continue
+            rows = []
+            for representative_id, meta in rep_meta.items():
+                workspace = (workspaces or {}).get(representative_id) or {}
+                snapshot = ((workspace.get("snapshots") or {}).get(key) or {})
+                for item in snapshot.get("products") or []:
+                    product = item.get("product") or {}
+                    if isinstance(product, dict):
+                        product_id = product.get("id")
+                        product_name = product.get("product_name")
+                        display_order = product.get("display_order")
+                    else:
+                        product_id = getattr(product, "id", None)
+                        product_name = getattr(product, "product_name", None)
+                        display_order = getattr(product, "display_order", None)
+                    if product_id is None:
+                        product_id = item.get("product_id")
+                    if product_id is None:
+                        continue
+                    actual_unit = item.get("actual_unit")
+                    rows.append({
+                        "representative_id": representative_id,
+                        **meta,
+                        "product_id": int(product_id),
+                        "product_name": product_name or item.get("product_name") or f"Ürün {product_id}",
+                        "product_display_order": int(display_order or 999),
+                        "target_unit": item.get("target_unit") or 0,
+                        "actual_unit": actual_unit,
+                        "unit_complete": actual_unit is not None,
+                    })
+            rows.sort(key=lambda item: (
+                str(item.get("representative_name") or "").casefold(),
+                int(item.get("product_display_order") or 999),
+                str(item.get("product_name") or "").casefold(),
+            ))
+            period["representative_products"] = rows
+            periods[key] = period
+        report["periods"] = periods
+        return report
+
+    @classmethod
+    def enrich_for_period(cls, year, month):
+        """Finalize region payloads once from already-published read models.
+
+        The steady-state region request must never re-run representative, market
+        or AI calculations. This method is called after representative read
+        models are ready (and can also safely backfill an older active set once).
+        """
+        year, month = int(year), int(month)
+        set_id = cls._visible_set_id(year, month)
+        if not set_id:
+            return {"status": "WAITING_REGION", "regions": 0}
+
+        payloads = cls._payloads_from_set(set_id)
+        if not payloads:
+            return {"status": "WAITING_REGION", "regions": 0}
+        if all(int((payload or {}).get("read_model_version") or 0) >= 2 for payload in payloads.values()):
+            return {"status": "REUSED", "set_id": int(set_id), "regions": len(payloads)}
+
+        from app.services.persistent_dashboard_snapshot_service import (
+            PersistentDashboardSnapshotService,
+        )
+        from app.services.persistent_representative_snapshot_service import (
+            PersistentRepresentativeSnapshotService,
+        )
+        from app.services.region_ai_snapshot_service import RegionAISnapshotService
+        from app.services.scoped_ai_insight_service import ScopedAIInsightService
+
+        current_rep_ids = sorted({
+            representative_id
+            for payload in payloads.values()
+            for representative_id in cls._representative_ids((payload or {}).get("report") or {})
+        })
+        current_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+            current_rep_ids, year, month
+        ) if current_rep_ids else {}
+        if current_rep_ids and len(current_workspaces) < len(current_rep_ids):
+            return {
+                "status": "WAITING_REPRESENTATIVES",
+                "set_id": int(set_id),
+                "regions": len(payloads),
+                "representatives": len(current_workspaces),
+                "expected_representatives": len(current_rep_ids),
+            }
+
+        previous_year, previous_month = RegionAISnapshotService.previous_period(year, month)
+        previous_payloads = cls.get_active_all(previous_year, previous_month)
+        previous_rep_ids = sorted({
+            representative_id
+            for payload in previous_payloads.values()
+            for representative_id in cls._representative_ids((payload or {}).get("report") or {})
+        })
+        previous_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+            previous_rep_ids, previous_year, previous_month
+        ) if previous_rep_ids else {}
+        dashboard_payload = PersistentDashboardSnapshotService.get_stable(year, month) or {}
+
+        updates = []
+        now = datetime.utcnow()
+        for region_key, payload in payloads.items():
+            report = (payload or {}).get("report") or {}
+            market_analysis = (payload or {}).get("market_analysis") or {}
+            report = cls._embed_representative_products(
+                report, year, month, current_workspaces
+            )
+
+            previous_payload = previous_payloads.get(str(region_key)) or {}
+            previous_market_analysis = previous_payload.get("market_analysis") or {}
+
+            ai_report = ScopedAIInsightService.build(
+                scope_type="region",
+                scope_name=report.get("region_name") or str(region_key),
+                periods=report.get("periods") or {},
+                market_analysis=market_analysis,
+            )
+            ai_report["region_snapshot_intelligence"] = RegionAISnapshotService.build(
+                report=report,
+                market_analysis=market_analysis,
+                dashboard_payload=dashboard_payload,
+                previous_market_analysis=previous_market_analysis,
+                current_workspaces=current_workspaces,
+                previous_workspaces=previous_workspaces,
+                year=year,
+                month=month,
+            )
+
+            enriched = dict(payload or {})
+            enriched["report"] = report
+            enriched["ai_report"] = ai_report
+            enriched["read_model_version"] = 2
+            enriched["read_model_ready_at"] = now.isoformat(timespec="seconds") + "Z"
+            updates.append({
+                "region_key": str(region_key),
+                "payload_json": json.dumps(
+                    cls._json_ready(enriched),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=cls._json_default,
+                ),
+            })
+
+        try:
+            for item in updates:
+                db.session.execute(
+                    region_snapshots.update().where(
+                        region_snapshots.c.set_id == int(set_id),
+                        region_snapshots.c.region_key == item["region_key"],
+                    ).values(payload_json=item["payload_json"])
+                )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        return {"status": "ENRICHED", "set_id": int(set_id), "regions": len(updates)}
+
     @classmethod
     def build_for_period(
         cls,
