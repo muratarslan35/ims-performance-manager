@@ -1580,3 +1580,23 @@ body[data-theme="dark"].anonymous .auth-form .form-select {
     height: 164px;
   }
 }
+
+/* === AUTH BILIM PANEL COLOR MATCH 20260919j === */
+/* Match the filler areas to the dominant navy of the original Bilim artwork,
+   and remove the overlay that made the empty bands look like separate pieces. */
+.auth-shell-login .auth-identity-panel,
+.auth-shell-register .auth-identity-panel {
+  background: #142657 !important;
+}
+
+.auth-shell-login .auth-identity-panel::before,
+.auth-shell-register .auth-identity-panel::before {
+  background: none !important;
+}
+
+html[data-theme="dark"] body.anonymous .auth-shell-login .auth-identity-panel,
+html[data-theme="dark"] body.anonymous .auth-shell-register .auth-identity-panel,
+body[data-theme="dark"].anonymous .auth-shell-login .auth-identity-panel,
+body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
+  background: #142657 !important;
+}
