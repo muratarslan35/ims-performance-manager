@@ -24,6 +24,7 @@ from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+from app.services.representative_snapshot_refresh_queue import RepresentativeSnapshotRefreshQueue
 
 
 stopping = False
@@ -381,6 +382,49 @@ def _retryable_publication_job():
     return None
 
 
+def _process_representative_refresh_queue(app):
+    """Run one durable production-triggered refresh behind IMS publication work."""
+    item = RepresentativeSnapshotRefreshQueue.next()
+    if item is None:
+        return False
+
+    year = int(item.get("year"))
+    month = int(item.get("month"))
+    reason = str(item.get("reason") or "production")
+    latest = IMSUpload.query.filter_by(
+        year=year, month=month, status=IMSUpload.STATUS_COMPLETED
+    ).order_by(
+        desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)
+    ).first()
+    if latest is None:
+        # A successor month may have disappeared through an intentional rollback.
+        # There is nothing to refresh; its first future snapshot will use the
+        # then-current P2 > P1 > IMS sources.
+        RepresentativeSnapshotRefreshQueue.complete(item)
+        app.logger.info(
+            "representative_refresh_queue_skipped year=%s month=%s reason=no_completed_ims",
+            year, month,
+        )
+        return True
+
+    result = _warm_representative_snapshots(app, year, month, force=True)
+    if result.get("status") in {"ACTIVE", "REUSED"}:
+        RepresentativeSnapshotRefreshQueue.complete(item)
+        app.logger.info(
+            "representative_refresh_queue_completed year=%s month=%s reason=%s set_id=%s",
+            year, month, reason, result.get("set_id", 0),
+        )
+    else:
+        # Keep the marker durable. The worker will retry after any currently
+        # BUILDING generation finishes; no running IMS/snapshot work is stopped.
+        app.logger.warning(
+            "representative_refresh_queue_deferred year=%s month=%s reason=%s status=%s",
+            year, month, reason, result.get("status"),
+        )
+    db.session.remove()
+    return True
+
+
 def main():
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -397,6 +441,12 @@ def main():
                     if retry_job is not None:
                         _prepare_and_publish(app, retry_job)
                     next_publication_retry = time.monotonic() + 60
+                # Production-result refreshes are deliberately lower priority
+                # than IMS imports/publication. Once started they finish
+                # atomically; newly queued IMS work waits for the next loop.
+                if _process_representative_refresh_queue(app):
+                    db.session.remove()
+                    continue
                 db.session.remove()
                 time.sleep(2)
                 continue
