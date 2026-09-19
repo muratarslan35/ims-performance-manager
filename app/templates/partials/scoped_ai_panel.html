@@ -95,6 +95,8 @@
   {% set zero_exit_bricks=region_intel.zero_exit_bricks|default([]) %}
   {% set city_pressure=region_intel.city_pressure|default([]) %}
   {% set brick_losses=region_intel.brick_losses|default([]) %}
+  {% set previous_period=region_intel.previous_period|default({}, true) %}
+  {% set current_period=region_intel.current_period|default({}, true) %}
 
   <section class="scope-ai-command scope-ai-region-radar" aria-label="Bölge müdürü snapshot karar destek ekranı">
     <div class="scope-ai-command-head">
@@ -153,7 +155,7 @@
           <div class="scope-ai-row">
             <span>{{ item.city }}</span>
             <b class="scope-ai-alert-value">{{ item.signal }} · +{{ '{:,.0f}'.format(item.delta_unit or 0) }}</b>
-            <small>{{ region_intel.previous_period.label }}: {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ region_intel.current_period.label }}: {{ '{:,.0f}'.format(item.current_unit or 0) }} rakip kutu{% if item.change_percent is not none %} · +%{{ '%.1f'|format(item.change_percent) }}{% endif %}</small>
+            <small>{{ previous_period.label|default('Önceki ay', true) }}: {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ current_period.label|default('Güncel ay', true) }}: {{ '{:,.0f}'.format(item.current_unit or 0) }} rakip kutu{% if item.change_percent is not none %} · +%{{ '%.1f'|format(item.change_percent) }}{% endif %}</small>
           </div>
         {% else %}
           <div class="scope-ai-empty">Önceki aya göre rakip kutusunu koruyan veya artıran karşılaştırılabilir il bulunmuyor.</div>
