@@ -498,6 +498,17 @@ function initYtdProductRanking(data) {
     if (rank === 3) return '<span class="ytd-leader-medal bronze" title="Üçüncü"><i class="bi bi-award-fill"></i></span>';
     return "";
   };
+  const rankTrendMarkup = (item) => {
+    const direction = String((item && item.rank_direction) || "");
+    const change = Math.abs(Number((item && item.rank_change) || 0));
+    if (direction === "up") {
+      return '<span class="ytd-rank-trend up" title="Önceki IMS sıralamasına göre ' + change + ' sıra yükseldi"><i class="bi bi-arrow-up"></i></span>';
+    }
+    if (direction === "down") {
+      return '<span class="ytd-rank-trend down" title="Önceki IMS sıralamasına göre ' + change + ' sıra geriledi"><i class="bi bi-arrow-down"></i></span>';
+    }
+    return "";
+  };
   const render = () => {
     const product = productMap.get(activeProduct);
     const rankings = Array.isArray(product && product.rankings) ? product.rankings.slice(0, limit) : [];
@@ -518,10 +529,10 @@ function initYtdProductRanking(data) {
       return '<div class="ytd-ranking-row">' +
         '<div class="ytd-rank-number' + topClass + '">#' + rank + '</div>' +
         '<div class="ytd-rep-main">' +
-          '<div class="ytd-rep-name">' + escapeDashboardHtml(item.representative_name || "-") + " " + medalMarkup(rank) + '</div>' +
+          '<div class="ytd-rep-name">' + escapeDashboardHtml(item.representative_name || "-") + " " + medalMarkup(rank) + rankTrendMarkup(item) + '</div>' +
           '<div class="ytd-rep-location">' + escapeDashboardHtml(item.city || "-") + " · " + escapeDashboardHtml(item.region || "-") + '</div>' +
         '</div>' +
-        '<div class="ytd-box-total"><strong>' + numberTR(item.total_unit, "") + '</strong><span>kutu</span></div>' +
+        '<div class="ytd-box-total"><strong>' + Math.round(Number(item.total_unit || 0)).toLocaleString("tr-TR") + '</strong><span>kutu</span></div>' +
       '</div>';
     }).join("");
 
