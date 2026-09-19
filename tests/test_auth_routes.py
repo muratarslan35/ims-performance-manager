@@ -753,6 +753,9 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "width: min(clamp(140px, 37vw, 162px), calc(100vw - 104px)) !important" in css
     assert "min-height: 168px !important" in css
     assert "min-height: 154px !important" in css
+    assert "REGISTER MOBILE MICRO FIT 20260919l" in css
+    assert "width: min(clamp(136px, 36vw, 156px), calc(100vw - 108px)) !important" in css
+    assert "min-height: 148px !important" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):
