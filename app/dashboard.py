@@ -9,6 +9,27 @@ from app.services.ims_publication_service import IMSPublicationService
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 
+
+def _ensure_ytd_product_rankings(payload, service):
+    """One-time compatibility upgrade for pre-feature dashboard snapshots.
+
+    New snapshots already contain the ranking payload. An older ACTIVE snapshot
+    is upgraded with one aggregate query, re-published, and all later requests
+    read the persisted result without querying again.
+    """
+    if isinstance((payload or {}).get("ytd_product_rankings"), dict):
+        return payload
+    rows = service.query_layer.load_ytd_product_rankings(service.year, service.month)
+    upgraded = dict(payload or {})
+    upgraded["ytd_product_rankings"] = service._ytd_product_rankings(
+        rows, service.year, service.month
+    )
+    PersistentDashboardSnapshotService.publish(
+        service.year, service.month, upgraded
+    )
+    return upgraded
+
+
 @dashboard_bp.route("/")
 @login_required
 def index():
@@ -35,4 +56,5 @@ def index():
             service.month,
             rebuild,
         )
+    payload = _ensure_ytd_product_rankings(payload, service)
     return render_template("dashboard.html", payload=payload)
