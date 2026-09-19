@@ -227,6 +227,118 @@
 
 </div>
 
+<div class="row g-4 mb-4" id="imsTurkeyRankingSection">
+  <div class="col-12">
+    <div class="section-card">
+      <div class="section-card-header">
+        <div>
+          <h2 class="section-card-title"><i class="bi bi-trophy-fill"></i> IMS Türkiye Sıralaması</h2>
+          <p class="ranking-subtitle">Aylık ₺ bazında satış tutarına göre sıralanmıştır.</p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="section-chip section-chip-warning">Türkiye · İlk 10</span>
+          <button class="section-collapse-btn" type="button" data-ranking-toggle aria-expanded="true" aria-controls="topRepsCollapse">
+            <i class="bi bi-chevron-down"></i>
+            <span data-ranking-toggle-label>Daralt</span>
+          </button>
+        </div>
+      </div>
+      <div class="collapse show" id="topRepsCollapse">
+        <div class="section-card-body rep-list-body">
+          {% if payload.top_representatives %}
+            {% for rep in payload.top_representatives %}
+            <div class="rep-row" data-ranking-item>
+              <div class="rep-rank-badge {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% endif %}">#{{ rep.rank | default(loop.index, true) }}</div>
+              <div class="rep-avatar"><i class="bi bi-person-circle"></i></div>
+              <div class="rep-info">
+                <div class="rep-name">{{ rep.rep_name | default('Unknown') }}</div>
+                <div class="rep-city">{{ rep.city | default('-') }}</div>
+                {% set r_pct = rep.realization_percent | default(0, true) %}
+                <div class="progress-sm"><div class="progress-sm-bar" style="width:{{ [r_pct, 100]|min }}%;"></div></div>
+              </div>
+              {% set r_pct = rep.realization_percent | default(0, true) %}
+              <div class="rep-achievement {% if r_pct >= 90 %}high{% elif r_pct >= 70 %}medium{% else %}low{% endif %}">
+                <div class="rep-percent">%{{ r_pct }}</div>
+                <div class="rep-ciro">{% if rep.total_tl and rep.total_tl > 0 %}{{ "{:,.0f}".format(rep.total_tl) }} ₺{% else %}—{% endif %}</div>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="empty-state"><i class="bi bi-people"></i><p>Henüz temsilci verisi bulunmuyor</p></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="row g-4 mb-4" id="productPerformanceSection">
+  <div class="col-12">
+    <div class="section-card">
+      <div class="section-card-header">
+        <h2 class="section-card-title"><i class="bi bi-table"></i> Ürün Performans Tablosu</h2>
+        <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
+          <span class="section-chip">IMS Verisi</span>
+          <div class="table-search-wrap"><i class="bi bi-search table-search-icon"></i><input type="text" class="table-search-input" id="productTableSearch" placeholder="Ürün ara..."></div>
+          <button class="btn-export-placeholder" type="button" title="Dışa Aktar"><i class="bi bi-download"></i></button>
+        </div>
+      </div>
+      {% if payload.products %}
+      <div class="table-responsive premium-table-wrap">
+        <table class="table premium-table align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Ürün</th>
+              <th>Gerçekleşme</th>
+              <th>Hedef (TL)</th>
+              <th>Gerçekleşen (TL)</th>
+              <th>Durum</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in payload.products %}
+            {% set p_pct = p.realization_percent | default(0, true) %}
+            {% set p_tl = p.realization_tl | default(0, true) %}
+            {% set p_status = p.status | default('-', true) %}
+            <tr>
+              <td class="product-name-cell">{{ p.product_name | default('Unknown') }}</td>
+              <td>
+                <div class="table-progress-wrap">
+                  <div class="table-progress-track">
+                    <div class="table-progress-bar {% if p_pct >= 90 %}high{% elif p_pct >= 70 %}medium{% else %}low{% endif %}" style="width:{{ [p_pct, 100]|min }}%;"></div>
+                  </div>
+                  <span class="table-progress-value">%{{ p_pct }}</span>
+                </div>
+              </td>
+              <td class="text-muted">{% if p.target_tl and p.target_tl > 0 %}{{ "{:,.0f}".format(p.target_tl) }} ₺{% else %}—{% endif %}</td>
+              <td class="fw-semibold">{% if p_tl > 0 %}{{ "{:,.0f}".format(p_tl) }} ₺{% else %}—{% endif %}</td>
+              <td>
+                <span class="product-status-badge {% if p_status == 'Tamamlandı' %}status-completed{% elif p_status == 'Devam Ediyor' %}status-ongoing{% else %}status-risky{% endif %}">
+                  <i class="bi {% if p_status == 'Tamamlandı' %}bi-check-circle-fill{% elif p_status == 'Devam Ediyor' %}bi-clock-fill{% else %}bi-exclamation-triangle-fill{% endif %}"></i>
+                  {{ p_status }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="product-chart-under-table">
+        <div class="product-chart-heading"><div><i class="bi bi-pie-chart-fill"></i><strong>Ürün Performansı · Toplam Ciro Dağılımı</strong><small>Gerçekleşen IMS satışlarının ürün bazlı dağılımı</small></div><span class="section-chip section-chip-success">Canlı IMS Verisi</span></div>
+        <div class="product-performance-layout">
+          <div class="product-orbit-chart"><canvas id="productDonutChart" aria-label="Ürün performans dağılımı"></canvas></div>
+          <div id="productValueLegend" class="product-value-legend" aria-label="Ürün değerleri"></div>
+        </div>
+        <div class="orbit-note"><i class="bi bi-info-circle"></i> Merkezde toplam gerçekleşen ₺; sağdaki listede ürün tutarı ve toplam ciro payı gösterilir.</div>
+      </div>
+      {% else %}
+        <div class="section-card-body"><div class="empty-state"><i class="bi bi-table"></i><p>Henüz ürün performans verisi bulunmuyor</p></div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 <script id="dashboardData" type="application/json">
 {
   "productDonut": {
