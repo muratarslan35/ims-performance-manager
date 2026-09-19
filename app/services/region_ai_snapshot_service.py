@@ -161,7 +161,7 @@ class RegionAISnapshotService:
         return rows
 
     @classmethod
-    def _city_competitor_totals(cls, market_analysis):
+    def _city_competitor_totals(cls, market_analysis, workspaces=None):
         result = {}
         for rival in (market_analysis or {}).get("rival_rows") or []:
             for city in rival.get("cities") or []:
@@ -169,12 +169,39 @@ class RegionAISnapshotService:
                 if not name:
                     continue
                 result[name] = result.get(name, 0.0) + cls._number(city.get("unit"))
+        if result or not workspaces:
+            return result
+
+        # Older region snapshot generations may not carry rival_rows/city
+        # rollups even though representative snapshots still contain the same
+        # month's brick competition. Fall back to those already-published
+        # brick/product rows without touching IMS or competition source tables.
+        brick_totals = {}
+        for item in cls._brick_product_totals(workspaces).values():
+            brick_key = cls._key(item.get("brick"))
+            bucket = brick_totals.setdefault(brick_key, {
+                "brick": item.get("brick") or "",
+                "competitor_unit": 0.0,
+            })
+            bucket["competitor_unit"] += cls._number(item.get("competitor_unit"))
+        for item in brick_totals.values():
+            tokens = [token for token in str(item["brick"]).strip().split() if token]
+            city = next((token for token in tokens if not token.isdigit()), "")
+            if not city:
+                continue
+            result[city] = result.get(city, 0.0) + cls._number(item["competitor_unit"])
         return result
 
     @classmethod
-    def _city_pressure_trend(cls, current_market, previous_market):
-        current = cls._city_competitor_totals(current_market)
-        previous = cls._city_competitor_totals(previous_market)
+    def _city_pressure_trend(
+        cls,
+        current_market,
+        previous_market,
+        current_workspaces=None,
+        previous_workspaces=None,
+    ):
+        current = cls._city_competitor_totals(current_market, current_workspaces)
+        previous = cls._city_competitor_totals(previous_market, previous_workspaces)
         if not previous:
             return []
         rows = []
@@ -245,9 +272,18 @@ class RegionAISnapshotService:
         month,
     ):
         previous_year, previous_month = cls.previous_period(year, month)
-        current_city_competitor = cls._city_competitor_totals(market_analysis)
-        previous_city_competitor = cls._city_competitor_totals(previous_market_analysis)
-        city_pressure = cls._city_pressure_trend(market_analysis, previous_market_analysis)
+        current_city_competitor = cls._city_competitor_totals(
+            market_analysis, current_workspaces
+        )
+        previous_city_competitor = cls._city_competitor_totals(
+            previous_market_analysis, previous_workspaces
+        )
+        city_pressure = cls._city_pressure_trend(
+            market_analysis,
+            previous_market_analysis,
+            current_workspaces=current_workspaces,
+            previous_workspaces=previous_workspaces,
+        )
         if not previous_city_competitor:
             city_pressure_state = "NO_PREVIOUS_DATA"
         elif not current_city_competitor:
