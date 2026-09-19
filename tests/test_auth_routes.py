@@ -749,6 +749,10 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "AUTH BILIM PANEL COLOR MATCH 20260919j" in css
     assert "background: #142657 !important" in css
     assert "background: none !important" in css
+    assert "MOBILE AUTH FINAL FIT 20260919k" in css
+    assert "width: min(clamp(140px, 37vw, 162px), calc(100vw - 104px)) !important" in css
+    assert "min-height: 168px !important" in css
+    assert "min-height: 154px !important" in css
 
 
 def test_dashboard_keeps_national_kpis_single_and_regional_analysis_organized(app):

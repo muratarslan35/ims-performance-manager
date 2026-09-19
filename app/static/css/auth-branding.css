@@ -1600,3 +1600,80 @@ body[data-theme="dark"].anonymous .auth-shell-login .auth-identity-panel,
 body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
   background: #142657 !important;
 }
+
+/* === MOBILE AUTH FINAL FIT 20260919k === */
+/* Phone-only refinement. Desktop/tablet rules above remain untouched. */
+@media (max-width: 575.98px) {
+  body.anonymous .auth-shell.auth-shell-login,
+  body.anonymous .auth-shell.auth-shell-register {
+    padding-top: 6px !important;
+    padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Slightly reduce only the top IMS mark. */
+  body.anonymous .auth-shell .auth-brand-stack .auth-ims-emblem {
+    width: min(clamp(140px, 37vw, 162px), calc(100vw - 104px)) !important;
+    max-height: 140px !important;
+  }
+
+  body.anonymous .auth-shell .auth-brand-stack .auth-ims-emblem img {
+    max-height: 140px !important;
+  }
+
+  body.anonymous .auth-shell .auth-brand-stack {
+    margin-bottom: 3px !important;
+  }
+
+  /* Keep the card wide, but reclaim vertical space from the image band. */
+  .auth-shell-login .auth-layout,
+  .auth-shell-register .auth-layout,
+  .auth-shell-register .auth-layout-narrow {
+    width: calc(100vw - 12px) !important;
+    max-width: 530px !important;
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 168px !important;
+    height: 168px !important;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 154px !important;
+    height: 154px !important;
+  }
+
+  .auth-shell-login .auth-layout .auth-card {
+    padding: 13px 16px 10px !important;
+  }
+
+  .auth-shell-register .auth-layout .auth-card {
+    padding: 10px 14px 9px !important;
+  }
+
+  .auth-shell-login .auth-footer,
+  .auth-shell-register .auth-footer {
+    margin-top: 4px !important;
+    padding-bottom: 1px !important;
+  }
+}
+
+@media (max-width: 575.98px) and (max-height: 780px) {
+  body.anonymous .auth-shell .auth-brand-stack .auth-ims-emblem {
+    width: min(132px, 35vw) !important;
+    max-height: 120px !important;
+  }
+
+  body.anonymous .auth-shell .auth-brand-stack .auth-ims-emblem img {
+    max-height: 120px !important;
+  }
+
+  .auth-shell-login .auth-identity-panel {
+    min-height: 148px !important;
+    height: 148px !important;
+  }
+
+  .auth-shell-register .auth-identity-panel {
+    min-height: 132px !important;
+    height: 132px !important;
+  }
+}
