@@ -702,12 +702,12 @@ def test_login_and_register_show_corporate_system_name(app):
     assert 'class="auth-ims-emblem"' in register_html
     assert "img/ims-auth-logo.svg" in login_html
     assert "img/ims-auth-logo.svg" in register_html
-    assert "img/bilim-ilac-white.svg" in login_html
-    assert "img/bilim-ilac-white.svg" in register_html
+    assert "img/bilim-ilac-corporate.png" in login_html
+    assert "img/bilim-ilac-corporate.png" in register_html
     login_template = Path("app/templates/login.html").read_text(encoding="utf-8")
     register_template = Path("app/templates/register.html").read_text(encoding="utf-8")
-    assert "img/bilim-ilac-white.svg" in login_template
-    assert "img/bilim-ilac-white.svg" in register_template
+    assert "img/bilim-ilac-corporate.png" in login_template
+    assert "img/bilim-ilac-corporate.png" in register_template
     assert "img/bilim-ilac.jpg" not in login_template
     assert "img/bilim-ilac.jpg" not in register_template
     css = Path("app/static/css/auth-branding.css").read_text(encoding="utf-8")
@@ -732,8 +732,11 @@ def test_login_and_register_show_corporate_system_name(app):
     assert "min-height: 88px" in css
     assert "max-height: 116px" in css
     assert "object-fit: contain" in css
-    assert "width: 88%" in css
-    assert "height: 74%" in css
+    assert "AUTH RESPONSIVE BALANCE LOCK 20260919g" in css
+    assert "width: min(calc(100vw - 20px), 500px)" in css
+    assert "min-height: 156px" in css
+    assert "min-height: 124px" in css
+    assert "brightness(0) invert(1)" in css
     assert "height: 112px" in css
     assert "height: 88px" in css
 
