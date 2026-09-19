@@ -2,16 +2,27 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 
 from app.services.period_service import PeriodService
+from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 from app.services.region_performance_service import RegionPerformanceService
 from app.services.region_market_service import RegionMarketService
+from app.services.region_ai_snapshot_service import RegionAISnapshotService
 from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
 
 
-def _ensure_representative_box_rows(report, year, month):
+def _representative_ids(report):
+    monthly = (((report or {}).get("periods") or {}).get("monthly") or {})
+    return sorted({
+        int(item["representative_id"])
+        for item in monthly.get("representatives") or []
+        if item.get("representative_id") is not None and item.get("active") is not False
+    })
+
+
+def _ensure_representative_box_rows(report, year, month, *, workspaces=None):
     """Backfill box rows from durable representative snapshots only when needed.
 
     New region generations persist these rows directly. Existing ACTIVE region
@@ -40,9 +51,10 @@ def _ensure_representative_box_rows(report, year, month):
     if not rep_meta:
         return report
 
-    workspaces = PersistentRepresentativeSnapshotService.get_active_many(
-        rep_meta.keys(), year, month
-    )
+    if workspaces is None:
+        workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+            rep_meta.keys(), year, month
+        )
     if not workspaces:
         return report
 
@@ -138,10 +150,29 @@ def detail(region_key):
             region_key, year, month, source_upload_id=visible_upload_id
         )
         current_report = read_model["report"]
-        current_report = _ensure_representative_box_rows(
-            current_report, year, month
-        )
         market_analysis = read_model.get("market_analysis") or {}
+
+        current_rep_ids = _representative_ids(current_report)
+        current_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+            current_rep_ids, year, month
+        ) if current_rep_ids else {}
+        current_report = _ensure_representative_box_rows(
+            current_report, year, month, workspaces=current_workspaces
+        )
+
+        previous_year, previous_month = RegionAISnapshotService.previous_period(year, month)
+        previous_region = PersistentRegionSnapshotService.get_active(
+            current_report.get("region_key") or region_key,
+            previous_year,
+            previous_month,
+        ) or {}
+        previous_report = previous_region.get("report") or {}
+        previous_market_analysis = previous_region.get("market_analysis") or {}
+        previous_rep_ids = _representative_ids(previous_report)
+        previous_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+            previous_rep_ids, previous_year, previous_month
+        ) if previous_rep_ids else {}
+        dashboard_snapshot = PersistentDashboardSnapshotService.get_stable(year, month) or {}
     except ValueError as exc:
         flash(str(exc), "warning")
         return redirect(url_for("dashboard.index"))
@@ -153,6 +184,16 @@ def detail(region_key):
         scope_name=current_report["region_name"],
         periods=current_report["periods"],
         market_analysis=market_analysis,
+    )
+    ai_report["region_snapshot_intelligence"] = RegionAISnapshotService.build(
+        report=current_report,
+        market_analysis=market_analysis,
+        dashboard_payload=dashboard_snapshot,
+        previous_market_analysis=previous_market_analysis,
+        current_workspaces=current_workspaces,
+        previous_workspaces=previous_workspaces,
+        year=year,
+        month=month,
     )
 
     # The quarter template suppresses the legacy duplicate period tables in its

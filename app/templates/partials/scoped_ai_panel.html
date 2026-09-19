@@ -7,7 +7,7 @@
       {% if ai_report.scope_type == 'representative' %}
       <p>{{ ai_report.scope_name }} için haftalık rakip blok hareketi, hedefli sıfır çıkış ve ayın ilk 10 gün saha sinyalleri.</p>
       {% else %}
-      <p>{{ ai_report.scope_name }} için bölge genelindeki aylık hedef, saha ve rekabet öncelikleri tek yönetim ekranında özetlenir.</p>
+      <p>{{ ai_report.scope_name }} için NATIONAL karşılaştırması, hedefli sıfır çıkış brickleri ve önceki aya göre rekabet hareketleri yalnız yayınlanmış snapshotlardan gösterilir.</p>
       {% endif %}
     </div>
     <span class="scope-ai-badge">{% if ai_report.scope_type == 'region' %}Bölge analizi{% else %}Kişisel analiz{% endif %}</span>
@@ -90,95 +90,97 @@
   </section>
 
   {% else %}
-  {% set monthly_ai=ai_report.periods.get('monthly', {}) %}
-  {% set provinces=monthly_ai.province_rows|default([]) %}
-  {% set critical_reps=monthly_ai.critical_representatives|default([]) %}
-  {% set region_rows=market_analysis.rows|default([])|sort(attribute='realization_percent') %}
-  {% set rival_groups=market_analysis.rival_groups|default([])|sort(attribute='total_unit', reverse=true) %}
-  {% set top_bricks=market_analysis.top_bricks|default([]) %}
+  {% set region_intel=ai_report.region_snapshot_intelligence|default({}, true) %}
+  {% set national_gaps=region_intel.national_underperformance|default([]) %}
+  {% set zero_exit_bricks=region_intel.zero_exit_bricks|default([]) %}
+  {% set city_pressure=region_intel.city_pressure|default([]) %}
+  {% set brick_losses=region_intel.brick_losses|default([]) %}
+  {% set previous_period=region_intel.previous_period|default({}, true) %}
+  {% set current_period=region_intel.current_period|default({}, true) %}
 
-  <section class="scope-ai-command" aria-label="Bölge müdürü aylık odak ekranı">
+  <section class="scope-ai-command scope-ai-region-radar" aria-label="Bölge müdürü snapshot karar destek ekranı">
     <div class="scope-ai-command-head">
       <div>
-        <span>BÖLGE → İL → TEMSİLCİ · AYLIK YÖNETİM ODAĞI</span>
+        <span>NATIONAL → BÖLGE → İL → BRICK · 4 YÖNETİM SİNYALİ</span>
+        <h3>Bölge Müdürü Hedef ve Rekabet Radarı</h3>
+        <p>Güncel ve önceki yayınlanmış snapshotlar karşılaştırılır; IMS, üretim veya rekabet verisi sayfa açılışında yeniden hesaplanmaz.</p>
       </div>
-      <span class="scope-ai-source-pill">{% if region_data_source|default('snapshot') == 'snapshot' %}Aktif snapshot · tek okuma{% else %}Uyumluluk verisi{% endif %}</span>
+      <span class="scope-ai-source-pill">Snapshot-only · 4 alan</span>
     </div>
 
-    <div class="scope-ai-command-grid">
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-bullseye"></i> Ürün hedef açığı · bölge toplamı</h4>
-        {% for item in region_rows if ((item.target_unit or 0) - (item.company_unit or 0)) > 0 %}
-          {% if loop.index <= 5 %}
-          {% set remaining=(item.target_unit or 0)-(item.company_unit or 0) %}
-          <div class="scope-ai-row">
+    <div class="scope-ai-command-grid scope-ai-region-grid">
+      <article class="scope-ai-command-card scope-ai-region-card">
+        <div class="scope-ai-card-head">
+          <h4><i class="bi bi-bar-chart-line"></i> NATIONAL altında kalan ürünler</h4>
+          <span>{{ national_gaps|length }} ürün</span>
+        </div>
+        <div class="scope-ai-card-list">
+        {% for item in national_gaps %}
+          <div class="scope-ai-row scope-ai-row-compare">
             <span>{{ item.product_name }}</span>
-            <b>{{ '{:,.0f}'.format(remaining) }} kutu</b>
-            <small>Bölge çıkışı {{ '{:,.0f}'.format(item.company_unit or 0) }} · realizasyon %{{ item.realization_percent or 0 }}</small>
+            <b class="scope-ai-compare-values"><em>NATIONAL %{{ '%.1f'|format(item.national_percent) }}</em><strong>BÖLGE %{{ '%.1f'|format(item.region_percent) }}</strong></b>
+            <small><i class="bi bi-arrow-down-right"></i> National seviyesinin {{ '%.1f'|format(item.gap_points) }} puan altında.</small>
           </div>
-          {% endif %}
         {% else %}
-          <div class="scope-ai-empty">Açık kutu hedefi bulunan ürün yok.</div>
+          <div class="scope-ai-empty">Bölge, ürün bazlı realizasyonda NATIONAL seviyesinin altında değil veya karşılaştırılabilir snapshot bulunmuyor.</div>
         {% endfor %}
+        </div>
       </article>
 
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-people"></i> Temsilci destek önceliği</h4>
-        {% for item in critical_reps %}
+      <article class="scope-ai-command-card scope-ai-region-card">
+        <div class="scope-ai-card-head">
+          <h4><i class="bi bi-bullseye"></i> Hedefli ama çıkışı olmayan brickler</h4>
+          <span>{{ zero_exit_bricks|length }} kayıt</span>
+        </div>
+        <div class="scope-ai-card-list">
+        {% for item in zero_exit_bricks %}
           <div class="scope-ai-row">
-            <span>{{ item.representative_name|representative_display_name }}</span>
-            <b>%{{ item.realization_percent }}</b>
-            <small>{{ item.city }} · {{ '{:,.0f}'.format((item.gap_tl or 0)|abs) }} ₺ {% if (item.gap_tl or 0) > 0 %}açık{% else %}hedef üstü{% endif %}</small>
+            <span>{{ item.brick }} · {{ item.product_name }}</span>
+            <b class="scope-ai-alert-value">0 kutu</b>
+            <small>Hedef {{ '{:,.0f}'.format(item.target_unit or 0) }} kutu · Rakip {{ '{:,.0f}'.format(item.competitor_unit or 0) }} kutu. İlgili IMS kesitine kadar şirket çıkışı yok.</small>
           </div>
         {% else %}
-          <div class="scope-ai-empty">%75 altı temsilci bulunmuyor; mevcut saha planı korunabilir.</div>
+          <div class="scope-ai-empty">Hedefi olup şirket çıkışı sıfır kalan brick/ürün bulunmuyor.</div>
         {% endfor %}
+        </div>
       </article>
 
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-activity"></i> Rakip baskısı yüksek ürünler</h4>
-        {% for group in rival_groups if (group.total_unit or 0) > 0 %}
-          {% if loop.index <= 5 %}
+      <article class="scope-ai-command-card scope-ai-region-card">
+        <div class="scope-ai-card-head">
+          <h4><i class="bi bi-geo-alt"></i> Rakip yoğunluğunu koruyan / artıran iller</h4>
+          <span>{{ city_pressure|length }} il</span>
+        </div>
+        <div class="scope-ai-card-list">
+        {% for item in city_pressure %}
           <div class="scope-ai-row">
-            <span>{{ group.product_name }}</span>
-            <b>{{ '{:,.0f}'.format(group.total_unit or 0) }} kutu</b>
-            <small>{{ group.rivals|length }} rakip ürün · {% if group.rivals %}lider rakip {{ group.rivals[0].name }}{% else %}rakip kırılımı yok{% endif %}</small>
+            <span>{{ item.city }}</span>
+            <b class="scope-ai-alert-value">{{ item.signal }} · +{{ '{:,.0f}'.format(item.delta_unit or 0) }}</b>
+            <small>{{ previous_period.label|default('Önceki ay', true) }}: {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ current_period.label|default('Güncel ay', true) }}: {{ '{:,.0f}'.format(item.current_unit or 0) }} rakip kutu{% if item.change_percent is not none %} · +%{{ '%.1f'|format(item.change_percent) }}{% endif %}</small>
           </div>
-          {% endif %}
         {% else %}
-          <div class="scope-ai-empty">Bölge düzeyinde adlandırılmış rakip baskısı bulunmuyor.</div>
+          <div class="scope-ai-empty">Önceki aya göre rakip kutusunu koruyan veya artıran karşılaştırılabilir il bulunmuyor.</div>
         {% endfor %}
+        </div>
       </article>
 
-      <article class="scope-ai-command-card">
-        <h4><i class="bi bi-geo-alt"></i> Rakibin yoğun olduğu brickler</h4>
-        {% for item in top_bricks %}
-          {% if loop.index <= 5 %}
+      <article class="scope-ai-command-card scope-ai-region-card">
+        <div class="scope-ai-card-head">
+          <h4><i class="bi bi-graph-down-arrow"></i> Rakibin satış kaybettiği brickler</h4>
+          <span>{{ brick_losses|length }} brick</span>
+        </div>
+        <div class="scope-ai-card-list">
+        {% for item in brick_losses %}
           <div class="scope-ai-row">
             <span>{{ item.brick }}</span>
-            <b>{{ '{:,.0f}'.format(item.competitor_unit or 0) }} rakip kutu</b>
-            <small>Şirket {{ '{:,.0f}'.format(item.company_unit or 0) }} kutu · pazar payı %{{ item.share_percent or 0 }}</small>
+            <b class="scope-ai-positive-value">-{{ '{:,.0f}'.format(item.loss_unit or 0) }} rakip kutu</b>
+            <small>Rakip {{ '{:,.0f}'.format(item.previous_unit or 0) }} → {{ '{:,.0f}'.format(item.current_unit or 0) }} · düşüş %{{ '%.1f'|format(item.change_percent or 0) }} · şirket {{ '{:,.0f}'.format(item.company_unit or 0) }} kutu / pay %{{ '%.1f'|format(item.share_percent or 0) }}</small>
           </div>
-          {% endif %}
         {% else %}
-          <div class="scope-ai-empty">Brick bazında rekabet kutu verisi bulunmuyor.</div>
+          <div class="scope-ai-empty">Önceki aya göre rakip satışının gerilediği karşılaştırılabilir brick bulunmuyor.</div>
         {% endfor %}
+        </div>
       </article>
     </div>
-
-    <article class="scope-ai-directions">
-      <h4><i class="bi bi-signpost-split"></i> Bu ay bölge müdürünün kontrol edeceği 7 sinyal</h4>
-      <ol>
-        <li>Bölge aylık realizasyonu {% if monthly_ai.realization_percent is not none %}%{{ monthly_ai.realization_percent }}{% else %}henüz kesinleşmedi{% endif %}; {% if (monthly_ai.gap_tl or 0) > 0 %}{{ '{:,.0f}'.format(monthly_ai.gap_tl) }} ₺ toplam açık ürün ve saha bazında dağıtılmalı{% else %}toplam hedef korunuyor, ürün bazlı açıklar ayrı izlenmeli{% endif %}.</li>
-        <li>{% if provinces %}İlk il önceliği {{ provinces[0].city }}: {% if provinces[0].realization_percent is not none %}%{{ provinces[0].realization_percent }} realizasyon{% else %}sonuç bekleniyor{% endif %}; {{ provinces[0].representative_count }} temsilcinin ortak ürün açıkları birlikte kontrol edilmeli.{% else %}İl bazlı toplulaştırılabilir performans sinyali bulunmuyor; temsilci kırılımı esas alınmalı.{% endif %}</li>
-        <li>{% if critical_reps %}İlk birebir destek önceliği {{ critical_reps[0].representative_name|representative_display_name }} ({{ critical_reps[0].city }}), realizasyon %{{ critical_reps[0].realization_percent }}.{% else %}Kritik eşik altında temsilci yok; birebir destek yerine hedefe yakın ürünlerin tamamlanmasına odaklanılmalı.{% endif %}</li>
-        <li>{% if region_rows %}Ürün tarafında en düşük realizasyon {{ region_rows[0].product_name }}: %{{ region_rows[0].realization_percent or 0 }}; bölge çıkışı {{ '{:,.0f}'.format(region_rows[0].company_unit or 0) }} kutu.{% else %}Ürün hedef/çıkış kırılımı bulunmuyor; ek sorgu çalıştırılmadan mevcut snapshot korunuyor.{% endif %}</li>
-        <li>{% if rival_groups and (rival_groups[0].total_unit or 0) > 0 %}En yüksek toplam rakip baskısı {{ rival_groups[0].product_name }} grubunda {{ '{:,.0f}'.format(rival_groups[0].total_unit) }} kutu; bu grup için il ve brick dağılımı saha gündemine alınmalı.{% else %}Ürün grubu bazında anlamlı rakip baskısı sinyali yok.{% endif %}</li>
-        <li>{% if top_bricks %}Brick bazında ilk rekabet kontrolü {{ top_bricks[0].brick }}: rakip {{ '{:,.0f}'.format(top_bricks[0].competitor_unit or 0) }} kutu, şirket {{ '{:,.0f}'.format(top_bricks[0].company_unit or 0) }} kutu.{% else %}Brick bazında karşılaştırılabilir rekabet sinyali bulunmuyor.{% endif %}</li>
-        <li>Bölge kadrosunda {{ report.active_count }} aktif temsilci{% if report.vacant_count %} ve {{ report.vacant_count }} boş kadro{% endif %} bulunuyor; aylık saha dağılımı bu kapasiteye göre planlanmalı.</li>
-      </ol>
-    </article>
-
   </section>
   {% endif %}
 
