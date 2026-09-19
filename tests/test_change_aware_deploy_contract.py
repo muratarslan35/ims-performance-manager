@@ -40,6 +40,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'database_capacity_audit.py' in heavy_block
     assert '--optimize' not in heavy_block
     assert 'verify_live_ims_gate.py' in heavy_block
+    # One-time source-file repair utilities must never be implicit deploy gates.
+    # Historical uploads may legitimately no longer have their original XLSX on disk.
+    assert 'backfill_competition_data.py' not in heavy_block
 
     assert 'verify_runtime.py' in import_block
     assert 'sqlite_fast_check' in import_block

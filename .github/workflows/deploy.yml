@@ -322,7 +322,6 @@ jobs:
             fi
             venv/bin/python production_master_snapshot.py
             venv/bin/python -m flask --app run.py db upgrade
-            venv/bin/python backfill_competition_data.py
             venv/bin/python verify_runtime.py
             venv/bin/python production_target_audit.py
             venv/bin/python database_capacity_audit.py --database instance/ipm.db --additional-uploads 49
