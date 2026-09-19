@@ -179,6 +179,9 @@ class DashboardService:
             "national_metrics": self.query_layer.load_national_dashboard_metrics(filters=filters),
             "competition": self.query_layer.load_competition_overview(filters=filters),
             "competitor_products": self.query_layer.load_competitor_product_rows(filters=filters),
+            "ytd_product_rankings": self.query_layer.load_ytd_product_rankings(
+                self.year, self.month
+            ),
         }
 
     def _load_prime(self) -> Dict[str, Any]:
@@ -219,6 +222,87 @@ class DashboardService:
             "total_realization": round(realization_tl, 2),
             "total_target": round(target_tl, 2),
             "total_tl_percent": round(realization_tl * 100 / target_tl, 2) if target_tl else 0.0,
+            "products": products,
+        }
+
+    @staticmethod
+    def _ytd_product_rankings(rows: List[Any], year: int, month: int) -> Dict[str, Any]:
+        """Format the seven managed products into a snapshot-ready Top 10.
+
+        The query already returns the full YTD aggregate in one read. This
+        method only groups/sorts it and intentionally drops vacant-position
+        labels because this leaderboard is representative-focused.
+        """
+        product_order = (
+            "TRAVAZOL",
+            "MONUROL",
+            "MIXOVUL",
+            "ACNEMIX",
+            "STIDERM",
+            "BRIMODER",
+            "FENTIVAG",
+        )
+
+        def normalize(value: Any) -> str:
+            return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
+        def vacant(name: Any) -> bool:
+            text = str(name or "").upper().replace("Ş", "S").replace("Ö", "O")
+            tokens = {token for token in text.replace("-", " ").split() if token}
+            return bool({"BOS", "KADRO"} & tokens)
+
+        buckets = {
+            key: {
+                "product_key": key,
+                "product_name": key.title(),
+                "product_id": None,
+                "rankings": [],
+            }
+            for key in product_order
+        }
+
+        for row in rows or []:
+            product_name = str(getattr(row, "product_name", "") or "").strip()
+            key = normalize(product_name)
+            if key not in buckets:
+                continue
+            representative_name = str(
+                getattr(row, "representative_name", "") or ""
+            ).strip()
+            if not representative_name or vacant(representative_name):
+                continue
+            total_unit = float(getattr(row, "total_unit", 0) or 0)
+            if total_unit <= 0:
+                continue
+            bucket = buckets[key]
+            bucket["product_name"] = product_name or bucket["product_name"]
+            product_id = getattr(row, "product_id", None)
+            if product_id is not None:
+                bucket["product_id"] = int(product_id)
+            bucket["rankings"].append({
+                "representative_id": int(getattr(row, "representative_id", 0) or 0),
+                "representative_name": representative_name,
+                "city": str(getattr(row, "city", "") or "-"),
+                "region": str(getattr(row, "region", "") or "-"),
+                "total_unit": round(total_unit, 2),
+            })
+
+        products = []
+        for key in product_order:
+            bucket = buckets[key]
+            bucket["rankings"].sort(
+                key=lambda item: (-item["total_unit"], item["representative_name"])
+            )
+            top_ten = []
+            for position, item in enumerate(bucket["rankings"][:10], start=1):
+                top_ten.append({"rank": position, **item})
+            bucket["rankings"] = top_ten
+            products.append(bucket)
+
+        return {
+            "year": int(year),
+            "through_month": int(month),
+            "source": "DASHBOARD_SNAPSHOT_YTD_IMS_SUMMARY",
             "products": products,
         }
 
@@ -451,6 +535,11 @@ class DashboardService:
                .set_cache_info(False, DashboardConstants.CACHE_TTL_DEFAULT)
                
         payload = self.builder.build(immutable=False)
+        payload["ytd_product_rankings"] = self._ytd_product_rankings(
+            query_data.get("ytd_product_rankings", []),
+            self.year,
+            self.month,
+        )
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_BUILDER_MS, (time.time() - t_builder) * 1000)
 
         # 6. Set Cache Safely
