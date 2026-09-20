@@ -168,7 +168,7 @@ def test_multi_scope_regions_and_product_filter_build_only_selected_product(app,
         report = service.build()
 
         assert set(report["scope_values"]) == {"901", "701"}
-        assert report["scope_label"] == "Diyarbakır + Adana"
+        assert report["scope_label"] == "Adana + Diyarbakır"
         assert report["representative_count"] == 2
         assert [row["product_name"] for row in report["rows"]] == ["Monurol"]
         assert report["rows"][0]["actual_unit"] == 50
