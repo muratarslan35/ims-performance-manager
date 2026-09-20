@@ -29,7 +29,8 @@ class ReportCacheService:
 
     @classmethod
     def _root(cls) -> Path:
-        root = Path(current_app.instance_path) / "report_cache"
+        configured = current_app.config.get("REPORT_CACHE_FOLDER")
+        root = Path(configured) if configured else Path(current_app.instance_path) / "report_cache"
         (root / "read_models").mkdir(parents=True, exist_ok=True)
         (root / "options").mkdir(parents=True, exist_ok=True)
         (root / "exports").mkdir(parents=True, exist_ok=True)
