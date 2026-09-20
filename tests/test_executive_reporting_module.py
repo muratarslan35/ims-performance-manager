@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from openpyxl import load_workbook
 
 from app.extensions import db
-from app.models import Product, Representative, User
+from app.models import Product, Representative, RepresentativeBrickAssignment, User
 from werkzeug.security import generate_password_hash
 from app.services.executive_reporting_service import ExecutiveReportingService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
@@ -63,6 +63,43 @@ def test_period_contracts_keep_fixed_h1_and_trailing_three_months(app):
         ]
 
 
+def test_scope_options_use_region_names_and_real_assignment_cities(app):
+    with app.app_context():
+        first = Representative(
+            rep_code="RPT-901-A", rep_name="Mardin Temsilcisi",
+            region="901", city="DIYARBAKIR", active=True,
+        )
+        second = Representative(
+            rep_code="RPT-901-B", rep_name="Şırnak Temsilcisi",
+            region="901 DIYARBAKIR", city="DIYARBAKIR", active=True,
+        )
+        db.session.add_all([first, second])
+        db.session.flush()
+        db.session.add_all([
+            RepresentativeBrickAssignment(
+                representative_id=first.id, year=2026, month=9, quarter="Q3",
+                brick="MARDIN BRICK", city="MARDIN", source="AUTO", active=True,
+            ),
+            RepresentativeBrickAssignment(
+                representative_id=second.id, year=2026, month=9, quarter="Q3",
+                brick="SIRNAK BRICK", city="ŞIRNAK", source="AUTO", active=True,
+            ),
+        ])
+        db.session.commit()
+
+        service = ExecutiveReportingService(year=2026, month=9, scope="region", scope_value="901")
+        options = service.filter_options()
+        assert {"value": "901", "label": "Diyarbakır"} in options["regions"]
+        assert [item["value"] for item in options["cities"]] == ["MARDIN", "ŞIRNAK"]
+        assert {row.id for row in service._representatives()} == {first.id, second.id}
+
+        city_service = ExecutiveReportingService(
+            year=2026, month=9, scope="city", scope_value="MARDIN"
+        )
+        assert [row.id for row in city_service._representatives()] == [first.id]
+        assert city_service.scope_label() == "MARDIN"
+
+
 def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch):
     with app.app_context():
         rep = Representative(rep_code="RPT-1", rep_name="Rapor Temsilcisi", region="101 TEST", city="ANKARA", active=True)
@@ -80,7 +117,7 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
             product_ids=[selected.id],
         )
         report = service.build()
-        assert report["scope_label"] == "101 TEST"
+        assert report["scope_label"] == "İstanbul"
         assert report["source_week"] == 36
         assert [row["product_name"] for row in report["rows"]] == ["Travazol"]
         assert report["rows"][0]["realization_percent"] == 80
@@ -108,6 +145,12 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert "executive-reports.css" in template
     assert "{% block head %}" not in template
     assert 'data-page-loader="false"' in template
+    assert 'class="btn btn-success report-export" data-page-loader="false" download' in template
+    report_js = open("app/static/js/executive-reports.js", encoding="utf-8").read()
+    layout_js = open("app/static/js/layout.js", encoding="utf-8").read()
+    assert "fetch(url" in report_js
+    assert "window.location.href" not in report_js
+    assert "anchor.dataset.pageLoader === 'false'" in layout_js
     assert "row.rivals[:3]" not in template
     assert 'a[href="/reports"]' not in css
 
@@ -129,3 +172,34 @@ def test_admin_can_render_reports_and_download_both_formats(app):
     pdf = client.get("/reports/export/pdf?year=2026&month=8&period=monthly&scope=national")
     assert excel.status_code == 200 and excel.data.startswith(b"PK")
     assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF-1.4")
+    assert "national-analiz-raporu-2026-08.xlsx" in excel.headers["Content-Disposition"]
+    assert "national-analiz-raporu-2026-08.pdf" in pdf.headers["Content-Disposition"]
+
+
+def test_export_filenames_follow_selected_scope(app):
+    with app.app_context():
+        rep = Representative(
+            rep_code="RPT-NAME", rep_name="Murat Arslan",
+            region="901", city="DIYARBAKIR", active=True,
+        )
+        db.session.add(rep)
+        db.session.commit()
+        representative = ExecutiveReportingService(
+            year=2026, month=9, scope="representative", scope_value=str(rep.id)
+        )
+        region = ExecutiveReportingService(
+            year=2026, month=9, scope="region", scope_value="901"
+        )
+        city = ExecutiveReportingService(
+            year=2026, month=9, scope="city", scope_value="MARDIN"
+        )
+
+        assert representative.export_filename(
+            {"scope_label": "Murat Arslan", "year": 2026, "month": 9}, "pdf"
+        ) == "temsilci-analiz-raporu-murat-arslan-2026-09.pdf"
+        assert region.export_filename(
+            {"scope_label": "Diyarbakır", "year": 2026, "month": 9}, "xlsx"
+        ) == "bolge-analiz-raporu-diyarbakir-2026-09.xlsx"
+        assert city.export_filename(
+            {"scope_label": "MARDIN", "year": 2026, "month": 9}, "pdf"
+        ) == "il-analiz-raporu-mardin-2026-09.pdf"

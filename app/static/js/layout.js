@@ -113,6 +113,7 @@
 
         function isSameOriginNavigation(anchor, event) {
             if (!anchor || event.defaultPrevented || event.button !== 0) return false;
+            if (anchor.dataset.pageLoader === 'false') return false;
             if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
             if (anchor.target && anchor.target !== '_self') return false;
             if (anchor.hasAttribute('download')) return false;
