@@ -996,3 +996,62 @@ Concurrency doğrulaması:
   - report worker: **active**
   - HTTP health: **PASS**
 - İlgili bekleyen deploy/aktivasyon işi: **YOK**.
+
+
+### Raporlama çoklu kapsam ve detay analizleri — 20.09.2026
+
+Raporlar modülü yönetim seviyesinde esnek çoklu seçim ve detay kırılımlarıyla genişletildi.
+
+- PR: **#889**
+- main commit: `07e9a0feaeb3e92ce5520fe25c995592be47d2d5`
+- production deploy run: **35512595175 — SUCCESS**
+
+Yeni yetenekler:
+
+- Aynı raporda birden fazla **bölge** seçilebilir.
+- Aynı raporda birden fazla **il** seçilebilir.
+- Aynı raporda birden fazla **temsilci** seçilebilir.
+- Ürün filtresi çoklu kapsamla birlikte çalışır; örneğin Adana + Diyarbakır seçilip yalnız Monurol raporlanabilir.
+- Çoklu seçimler report cache identity'sine dahil edilir; aynı seçim kombinasyonu mevcut 200 kullanıcı singleflight/cache mimarisini kullanır.
+- Bölge raporu artık yalnız bölge toplamı değil, seçili kapsam içindeki **temsilci analizlerini** de içerir.
+- Birden fazla bölge seçilirse **Bölge Analizi** karşılaştırma tablosu oluşur.
+- **Temsilci Analizi** ayrı read-model olarak rapora eklenir.
+- **Brick Analizi** şirket/rakip/pazar/pay kırılımıyla snapshot market verisinden hazırlanır.
+- **Rakip Analizi** tüm rakip satırlarını ürün bazında taşır.
+- Web ekranında temsilci ve brick analizleri görünür; brick önizlemesi ilk 150 satırla sınırlandırılır, Excel tam listeyi içerir.
+
+Excel sayfaları:
+
+1. Yönetim Özeti
+2. Dönem Trendi
+3. Bölge Analizi
+4. Temsilci Analizi
+5. Brick Analizi
+6. Rakip Analizi
+
+PDF çıktısında da temsilci ve brick analiz bölümleri bulunur.
+
+Yetki / veri sözleşmesi:
+
+- Bölge müdürü server-side olarak yalnız kendi bölgesine sabitlenmeye devam eder; UI parametresiyle başka bölgeye geçemez.
+- Business IMS / production tabloları değiştirilmez.
+- Rapor hesapları yalnız yayınlanmış temsilci snapshot read-modelinden yapılır.
+- Hedef = IMS, gerçekleşen = P2 > P1 > IMS kuralı korunur.
+- Brick ve rakip değerleri yayınlanmış market snapshot içeriğinden okunur.
+- PDF/XLSX üretimi ayrı report worker üzerinde ve mevcut deduplicated export kuyruğuyla çalışır.
+
+Doğrulama:
+
+- Locked Canonical Contracts: **PASS**
+- PR backend suite: **747 passed, 2 skipped**, yalnız daha önce de bulunan aynı 3 baseline contract failure kaldı.
+- Main smoke: **PASS**
+- Production:
+  - `IMS_WORKER_IDLE|processing=0`
+  - `LIVE_COMMIT|07e9a0feaeb3e92ce5520fe25c995592be47d2d5`
+  - SQLite WAL / busy_timeout 30000
+  - Region Manager acceptance: **PASS**, failures `[]`
+  - web: **active**
+  - IMS worker: **active**
+  - report worker: **active**
+  - HTTP health: **PASS**
+- İlgili bekleyen deploy/aktivasyon işi: **YOK**.
