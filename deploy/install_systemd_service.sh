@@ -7,10 +7,13 @@ service_name=ims-performance-manager.service
 template_path="$ims_path/deploy/$service_name.in"
 worker_service_name=ims-import-worker.service
 worker_template_path="$ims_path/deploy/$worker_service_name.in"
+report_worker_service_name=ims-report-worker.service
+report_worker_template_path="$ims_path/deploy/$report_worker_service_name.in"
 
 test -d "$ims_path"
 test -f "$template_path"
 test -f "$worker_template_path"
+test -f "$report_worker_template_path"
 test -x "$ims_path/venv/bin/gunicorn"
 case "$release_mode" in
   ui|backend|import|heavy) ;;
@@ -30,8 +33,9 @@ ims_group=$(id -gn)
 escaped_path=${ims_path//|/\\|}
 unit_tmp=$(mktemp)
 worker_unit_tmp=$(mktemp)
+report_worker_unit_tmp=$(mktemp)
 runtime_env_tmp=$(mktemp)
-trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$runtime_env_tmp"' EXIT
+trap 'rm -f "$unit_tmp" "$worker_unit_tmp" "$report_worker_unit_tmp" "$runtime_env_tmp"' EXIT
 
 run_low_priority() {
   if command -v ionice >/dev/null 2>&1; then
@@ -69,12 +73,19 @@ sed \
   -e "s|@IMS_USER@|$ims_user|g" \
   -e "s|@IMS_GROUP@|$ims_group|g" \
   "$worker_template_path" > "$worker_unit_tmp"
+sed \
+  -e "s|@IMS_PATH@|$escaped_path|g" \
+  -e "s|@IMS_USER@|$ims_user|g" \
+  -e "s|@IMS_GROUP@|$ims_group|g" \
+  "$report_worker_template_path" > "$report_worker_unit_tmp"
 
 sudo install -o root -g root -m 0644 "$unit_tmp" "/etc/systemd/system/$service_name"
 sudo install -o root -g root -m 0644 "$worker_unit_tmp" "/etc/systemd/system/$worker_service_name"
+sudo install -o root -g root -m 0644 "$report_worker_unit_tmp" "/etc/systemd/system/$report_worker_service_name"
 sudo systemctl daemon-reload
 sudo systemctl enable "$service_name"
 sudo systemctl enable "$worker_service_name"
+sudo systemctl enable "$report_worker_service_name"
 
 # Snapshot policy is unchanged. The only operational change here is priority:
 # expensive backfills run with low CPU/I/O scheduling priority so live web
@@ -140,6 +151,25 @@ else
   echo "SERVICE_ACTIVATION|worker=preserved|mode=$release_mode"
 fi
 sudo systemctl --no-pager --full status "$worker_service_name"
+
+# Report export generation is intentionally isolated from Gunicorn and from the
+# IMS worker. Backend/import/heavy releases restart this low-priority worker so
+# queued jobs resume on the new code without consuming web request threads.
+if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+  if sudo systemctl is-active --quiet "$report_worker_service_name"; then
+    sudo systemctl restart "$report_worker_service_name"
+    echo "SERVICE_ACTIVATION|report_worker=restart|mode=$release_mode"
+  else
+    sudo systemctl start "$report_worker_service_name"
+    echo "SERVICE_ACTIVATION|report_worker=start|mode=$release_mode"
+  fi
+elif ! sudo systemctl is-active --quiet "$report_worker_service_name"; then
+  sudo systemctl start "$report_worker_service_name"
+  echo "SERVICE_ACTIVATION|report_worker=start|mode=$release_mode"
+else
+  echo "SERVICE_ACTIVATION|report_worker=preserved|mode=$release_mode"
+fi
+sudo systemctl --no-pager --full status "$report_worker_service_name"
 
 # Representative and region read models are source-versioned and reused when the
 # active IMS identity is unchanged. Do not launch duplicate force rebuilds on
