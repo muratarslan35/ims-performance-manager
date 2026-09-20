@@ -196,6 +196,18 @@ class ExecutiveReportingService:
             for row in representatives
         }
 
+    def _brick_city_map(self, representatives):
+        selected_ids = {int(row.id) for row in representatives}
+        mapping = {}
+        for assignment in self._assignment_rows():
+            rep_id = int(assignment.representative_id)
+            if rep_id not in selected_ids:
+                continue
+            brick_key = self._scope_key(assignment.brick)
+            if brick_key:
+                mapping[(rep_id, brick_key)] = str(assignment.city or "").strip() or "-"
+        return mapping
+
     @staticmethod
     def _rival_rows(market):
         for row in (market or {}).get("rows") or []:
@@ -206,11 +218,32 @@ class ExecutiveReportingService:
 
     def build(self):
         representatives = self._representatives()
-        rep_ids = [row.id for row in representatives]
-        product_meta = {row.id: row for row in Product.query.order_by(Product.display_order, Product.product_name).all()}
+        rep_ids = [int(row.id) for row in representatives]
+        rep_meta = {int(row.id): row for row in representatives}
+        rep_city_map = self._representative_city_map(representatives)
+        brick_city_map = self._brick_city_map(representatives)
+
+        products = Product.query.order_by(Product.display_order, Product.product_name).all()
+        product_meta = {int(row.id): row for row in products}
+        product_name_to_id = {
+            self._scope_key(row.product_name): int(row.id)
+            for row in products
+        }
+
         buckets = defaultdict(lambda: {
             "target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0, "actual_unit": 0.0,
             "market_unit": 0.0, "rivals": defaultdict(float), "months": set(),
+        })
+        rep_buckets = {
+            rep_id: {
+                "target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0,
+                "actual_unit": 0.0, "market_unit": 0.0,
+            }
+            for rep_id in rep_ids
+        }
+        brick_buckets = defaultdict(lambda: {
+            "company_unit": 0.0, "competitor_unit": 0.0, "market_unit": 0.0,
+            "rivals": defaultdict(float),
         })
         trend = []
         source_weeks = []
@@ -219,7 +252,10 @@ class ExecutiveReportingService:
             snapshots = PersistentRepresentativeSnapshotService.get_active_many(rep_ids, year, month)
             monthly_totals = defaultdict(float)
             for rep_id, payload in snapshots.items():
+                rep_id = int(rep_id)
                 monthly = ((payload or {}).get("snapshots") or {}).get("monthly") or {}
+                rep_bucket = rep_buckets.setdefault(rep_id, defaultdict(float))
+
                 for row in monthly.get("products") or []:
                     product = row.get("product") or {}
                     product_id = row.get("product_id") or product.get("id")
@@ -232,12 +268,15 @@ class ExecutiveReportingService:
                     for key in ("target_tl", "actual_tl", "target_unit", "actual_unit"):
                         value = float(row.get(key, 0) or 0)
                         bucket[key] += value
+                        rep_bucket[key] += value
                         monthly_totals[key] += value
                     bucket["months"].add((year, month))
+
                 market = monthly.get("market_analysis") or {}
                 source_week = market.get("source_week") or market.get("latest_week")
                 if source_week is not None:
                     source_weeks.append(int(source_week))
+
                 for row in market.get("rows") or []:
                     product = row.get("product") or {}
                     product_id = row.get("product_id") or product.get("id")
@@ -246,7 +285,10 @@ class ExecutiveReportingService:
                     product_id = int(product_id)
                     if self.product_ids and product_id not in self.product_ids:
                         continue
-                    buckets[product_id]["market_unit"] += float(row.get("market_unit", 0) or 0)
+                    market_unit = float(row.get("market_unit", 0) or 0)
+                    buckets[product_id]["market_unit"] += market_unit
+                    rep_bucket["market_unit"] += market_unit
+
                 for product_id, rival in self._rival_rows(market):
                     if product_id is None:
                         continue
@@ -257,6 +299,34 @@ class ExecutiveReportingService:
                     buckets[product_id]["rivals"][name] += float(
                         rival.get("unit", rival.get("value", rival.get("metric_value", 0))) or 0
                     )
+
+                for row in market.get("brick_product_rows") or []:
+                    product_name = str(row.get("product_name") or "").strip()
+                    product_id = product_name_to_id.get(self._scope_key(product_name))
+                    if self.product_ids and (product_id is None or product_id not in self.product_ids):
+                        continue
+                    brick = str(row.get("brick") or "Brick bilgisi yok").strip()
+                    key = (rep_id, self._scope_key(brick), product_id or self._scope_key(product_name))
+                    brick_bucket = brick_buckets[key]
+                    brick_bucket["representative_id"] = rep_id
+                    brick_bucket["brick"] = brick
+                    brick_bucket["product_id"] = product_id
+                    brick_bucket["product_name"] = (
+                        product_meta[product_id].product_name
+                        if product_id in product_meta else product_name or "Ürün"
+                    )
+                    company_unit = float(row.get("company_unit", 0) or 0)
+                    competitor_unit = float(row.get("competitor_unit", 0) or 0)
+                    market_unit = float(row.get("market_unit", 0) or 0)
+                    brick_bucket["company_unit"] += company_unit
+                    brick_bucket["competitor_unit"] += competitor_unit
+                    brick_bucket["market_unit"] += market_unit
+                    for market_product in row.get("market_products") or []:
+                        if market_product.get("is_company"):
+                            continue
+                        rival_name = str(market_product.get("name") or "Rakip").strip()
+                        brick_bucket["rivals"][rival_name] += float(market_product.get("unit", 0) or 0)
+
             trend.append({
                 "label": f"{month:02d}/{year}",
                 "actual_tl": round(monthly_totals["actual_tl"], 2),
@@ -270,47 +340,196 @@ class ExecutiveReportingService:
                 continue
             market_unit = values["market_unit"]
             company_unit = values["actual_unit"]
-            competitor_unit = max(market_unit - company_unit, 0.0) if market_unit else sum(values["rivals"].values())
+            competitor_unit = (
+                max(market_unit - company_unit, 0.0)
+                if market_unit else sum(values["rivals"].values())
+            )
             rows.append({
                 "product_id": product_id,
                 "product_name": product.product_name,
                 "target_tl": round(values["target_tl"], 2),
                 "actual_tl": round(values["actual_tl"], 2),
-                "realization_percent": realization_percent(values["actual_tl"], values["target_tl"]) if values["target_tl"] else 0,
+                "realization_percent": (
+                    realization_percent(values["actual_tl"], values["target_tl"])
+                    if values["target_tl"] else 0
+                ),
                 "target_unit": round(values["target_unit"], 2),
                 "actual_unit": round(company_unit, 2),
                 "market_unit": round(market_unit, 2),
                 "competitor_unit": round(competitor_unit, 2),
-                "market_share_percent": round(company_unit * 100 / market_unit, 1) if market_unit else None,
+                "market_share_percent": (
+                    round(company_unit * 100 / market_unit, 1) if market_unit else None
+                ),
                 "rivals": [
                     {
                         "name": name,
                         "unit": round(value, 2),
-                        "share_percent": round(value * 100 / market_unit, 1) if market_unit else None,
+                        "share_percent": (
+                            round(value * 100 / market_unit, 1) if market_unit else None
+                        ),
                     }
-                    for name, value in sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)
+                    for name, value in sorted(
+                        values["rivals"].items(), key=lambda item: item[1], reverse=True
+                    )
                 ],
             })
         rows.sort(key=lambda row: (product_meta[row["product_id"]].display_order, row["product_name"]))
+
         totals = {
             key: round(sum(row[key] for row in rows), 2)
-            for key in ("target_tl", "actual_tl", "target_unit", "actual_unit", "market_unit", "competitor_unit")
+            for key in (
+                "target_tl", "actual_tl", "target_unit", "actual_unit",
+                "market_unit", "competitor_unit",
+            )
         }
-        totals["realization_percent"] = realization_percent(totals["actual_tl"], totals["target_tl"]) if totals["target_tl"] else 0
-        totals["market_share_percent"] = round(totals["actual_unit"] * 100 / totals["market_unit"], 1) if totals["market_unit"] else None
+        totals["realization_percent"] = (
+            realization_percent(totals["actual_tl"], totals["target_tl"])
+            if totals["target_tl"] else 0
+        )
+        totals["market_share_percent"] = (
+            round(totals["actual_unit"] * 100 / totals["market_unit"], 1)
+            if totals["market_unit"] else None
+        )
+
+        representative_rows = []
+        for rep_id in rep_ids:
+            representative = rep_meta[rep_id]
+            values = rep_buckets.get(rep_id) or {}
+            target_tl = float(values.get("target_tl", 0) or 0)
+            actual_tl = float(values.get("actual_tl", 0) or 0)
+            actual_unit = float(values.get("actual_unit", 0) or 0)
+            market_unit = float(values.get("market_unit", 0) or 0)
+            representative_rows.append({
+                "representative_id": rep_id,
+                "representative_name": representative.rep_name,
+                "region_code": self._region_code(representative.region) or str(representative.region or ""),
+                "region_name": self._region_label(representative.region),
+                "city": rep_city_map.get(rep_id, str(representative.city or "") or "-"),
+                "target_tl": round(target_tl, 2),
+                "actual_tl": round(actual_tl, 2),
+                "realization_percent": (
+                    realization_percent(actual_tl, target_tl) if target_tl else 0
+                ),
+                "target_unit": round(float(values.get("target_unit", 0) or 0), 2),
+                "actual_unit": round(actual_unit, 2),
+                "market_unit": round(market_unit, 2),
+                "market_share_percent": (
+                    round(actual_unit * 100 / market_unit, 1) if market_unit else None
+                ),
+            })
+        representative_rows.sort(
+            key=lambda row: (
+                int(row["region_code"]) if str(row["region_code"]).isdigit() else 9999,
+                self._scope_key(row["representative_name"]),
+            )
+        )
+
+        region_buckets = defaultdict(lambda: {
+            "target_tl": 0.0, "actual_tl": 0.0, "actual_unit": 0.0,
+            "market_unit": 0.0, "representative_count": 0,
+        })
+        for row in representative_rows:
+            bucket = region_buckets[row["region_code"]]
+            bucket["region_name"] = row["region_name"]
+            bucket["target_tl"] += row["target_tl"]
+            bucket["actual_tl"] += row["actual_tl"]
+            bucket["actual_unit"] += row["actual_unit"]
+            bucket["market_unit"] += row["market_unit"]
+            bucket["representative_count"] += 1
+        region_rows = []
+        for region_code, values in region_buckets.items():
+            region_rows.append({
+                "region_code": region_code,
+                "region_name": values["region_name"],
+                "representative_count": values["representative_count"],
+                "target_tl": round(values["target_tl"], 2),
+                "actual_tl": round(values["actual_tl"], 2),
+                "realization_percent": (
+                    realization_percent(values["actual_tl"], values["target_tl"])
+                    if values["target_tl"] else 0
+                ),
+                "actual_unit": round(values["actual_unit"], 2),
+                "market_unit": round(values["market_unit"], 2),
+                "market_share_percent": (
+                    round(values["actual_unit"] * 100 / values["market_unit"], 1)
+                    if values["market_unit"] else None
+                ),
+            })
+        region_rows.sort(
+            key=lambda row: (
+                int(row["region_code"]) if str(row["region_code"]).isdigit() else 9999,
+                row["region_name"],
+            )
+        )
+
+        brick_rows = []
+        for values in brick_buckets.values():
+            rep_id = int(values["representative_id"])
+            representative = rep_meta.get(rep_id)
+            if representative is None:
+                continue
+            market_unit = float(values["market_unit"] or 0)
+            company_unit = float(values["company_unit"] or 0)
+            rivals = sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)
+            brick_key = self._scope_key(values["brick"])
+            brick_rows.append({
+                "region_name": self._region_label(representative.region),
+                "city": brick_city_map.get(
+                    (rep_id, brick_key),
+                    rep_city_map.get(rep_id, str(representative.city or "") or "-"),
+                ),
+                "representative_id": rep_id,
+                "representative_name": representative.rep_name,
+                "brick": values["brick"],
+                "product_id": values["product_id"],
+                "product_name": values["product_name"],
+                "company_unit": round(company_unit, 2),
+                "competitor_unit": round(float(values["competitor_unit"] or 0), 2),
+                "market_unit": round(market_unit, 2),
+                "share_percent": (
+                    round(company_unit * 100 / market_unit, 1) if market_unit else None
+                ),
+                "rivals": [
+                    {"name": name, "unit": round(unit, 2)}
+                    for name, unit in rivals
+                ],
+            })
+        brick_rows.sort(
+            key=lambda row: (
+                self._scope_key(row["region_name"]),
+                self._scope_key(row["city"]),
+                self._scope_key(row["representative_name"]),
+                self._scope_key(row["brick"]),
+                self._scope_key(row["product_name"]),
+            )
+        )
+
         rival_rows = [
             {
-                "product_name": row["product_name"], "market_unit": row["market_unit"],
-                "company_unit": row["actual_unit"], "company_share_percent": row["market_share_percent"],
+                "product_name": row["product_name"],
+                "market_unit": row["market_unit"],
+                "company_unit": row["actual_unit"],
+                "company_share_percent": row["market_share_percent"],
                 **rival,
             }
             for row in rows for rival in row["rivals"]
         ]
+
         return {
-            "year": self.year, "month": self.month, "period": self.period,
-            "period_label": self.PERIODS[self.period], "scope": self.scope,
-            "scope_label": self.scope_label(), "rows": rows, "totals": totals,
-            "trend": trend, "rival_rows": rival_rows,
+            "year": self.year,
+            "month": self.month,
+            "period": self.period,
+            "period_label": self.PERIODS[self.period],
+            "scope": self.scope,
+            "scope_values": list(self.scope_values),
+            "scope_label": self.scope_label(),
+            "rows": rows,
+            "totals": totals,
+            "trend": trend,
+            "region_rows": region_rows,
+            "representative_rows": representative_rows,
+            "rival_rows": rival_rows,
+            "brick_rows": brick_rows,
             "representative_count": len(representatives),
             "source_week": max(source_weeks) if source_weeks else None,
             "generated_at": datetime.now(),
