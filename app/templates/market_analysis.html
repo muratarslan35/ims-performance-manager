@@ -85,6 +85,8 @@
   <div class="market-table-note"><i class="bi bi-shield-check"></i><span>Kaynak haftası değiştiğinde bilgi bandı otomatik güncellenir. Rekabet TL yok fakat gerçek KUTU pazarı varsa ekran KUTU moduna geçer; farklı metrikler birbirine çevrilerek yapay pazar değeri üretilmez.</span></div>
 </div>
 
+{% include "partials/executive_market_cockpit.html" %}
+
 <section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi" data-region-pack-url="{{ url_for('main.market_analysis_regions_pack', year=selected_year, month=selected_month) }}">
   {% for region_key, region_html in embedded_region_html|default({}, true)|dictsort %}
     <template data-manager-region-preloaded="{{ region_key }}">{{ region_html|safe }}</template>
@@ -135,7 +137,6 @@
   </div>
 </section>
 
-{% include "partials/executive_market_cockpit.html" %}
 {% endblock %}
 
 {% block scripts %}

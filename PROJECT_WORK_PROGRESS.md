@@ -1089,3 +1089,10 @@ Doğrulama:
 - Excel rakip analizi yönetim özeti + ürün başına ayrı detay sayfası/grafiğe ayrıldı.
 - PDF rakip analizi ürün başına ayrı sayfa, KPI, grafik ve tablo yapısına geçirildi.
 - PowerPoint rakip analizi ürün başına ayrı görsel slaytlara ayrıldı; ürün ve trend grafikleri profesyonelleştirildi.
+### Türkiye Pazar Analizi tek bakış yönetim özeti — 20.09.2026
+- Tekrarlanan Türkiye KPI, ürün matrisi, fırsat/risk, rakip ve bölgesel AI kartları kaldırıldı.
+- Yönetim özeti detay merkezinin üstüne taşındı; karar bilgisi sayfanın başında görünür hale getirildi.
+- 11 bölge; realizasyon, kutu payı, şirket/rakip kutu ve Türkiye pay farkıyla tek karşılaştırma tablosunda birleştirildi.
+- Bölge satırları klavye ve fareyle mevcut ürün/il/brick detay merkezine bağlandı.
+- Türkiye ilk 5 rakip görünümü ürün, toplam kutu, bölge yayılımı ve en güçlü bölge bilgisiyle tekilleştirildi.
+- Kullanılmayan trend grafiği ve AI panel JavaScript akışı kaldırılarak istemci tarafı sadeleştirildi.

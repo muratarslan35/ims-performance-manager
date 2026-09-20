@@ -1,166 +1,48 @@
 {% set cockpit=executive_cockpit|default({}, true) %}
-<section class="exec-cockpit" data-exec-cockpit>
+<section class="exec-cockpit exec-command-center" data-exec-cockpit>
   <div class="exec-hero">
-    <div>
-      <span class="exec-kicker">GENEL MÜDÜR · TÜRKİYE REKABET YÖNETİM KOKPİTİ</span>
-      <h2>Türkiye Ticari Konum ve Rekabet Merkezi</h2>
-      <p>Hedef, gerçekleşen, pazar payı, bölgesel rekabet ve rakip baskısını aynı doğrulanmış IMS/snapshot kaynaklarından tek yönetim görünümünde birleştirir.</p>
-    </div>
-    <div class="exec-live-badge"><i class="bi bi-broadcast-pin"></i><span>Güncel rekabet</span><strong>{% if cockpit.source_week %}{{ cockpit.source_week }}. Hafta{% else %}—{% endif %}</strong></div>
+    <div><span class="exec-kicker">TÜRKİYE · TEK BAKIŞTA YÖNETİM</span><h2>Türkiye Güncel Durum ve Rekabet Özeti</h2><p>11 bölgenin gerçekleşme, pazar payı ve rakip baskısını tekrarsız tek yönetim görünümünde karşılaştırın.</p></div>
+    <div class="exec-live-badge"><i class="bi bi-broadcast-pin"></i><span>Güncel IMS</span><strong>{% if cockpit.source_week %}{{ cockpit.source_week }}. Hafta{% else %}—{% endif %}</strong></div>
   </div>
-
   {% if cockpit.ready %}
-  {% set market_unit_mode = cockpit.market.metric_mode|default('') == 'UNIT' %}
-  {% set market_total = cockpit.market.market_total_value|default(cockpit.market.market_total_tl|default(0, true), true) %}
-  {% set competitor_total = cockpit.market.competitor_total_value|default(cockpit.market.competitor_total_tl|default(0, true), true) %}
-  {% set market_suffix = 'kutu' if market_unit_mode else '₺' %}
   <div class="exec-period-switch" role="tablist" aria-label="Türkiye yönetim dönemi">
-    {% for option in cockpit.period_options %}
-      <button type="button" class="exec-period-btn {% if option.key == 'monthly' %}active{% endif %}" data-exec-period-button="{{ option.key }}"{% if option.key == 'half_year' %} title="Ocak–Haziran sabit dönem"{% endif %}>{{ option.label }}</button>
-    {% endfor %}
+    {% for option in cockpit.period_options %}<button type="button" class="exec-period-btn {% if option.key == 'monthly' %}active{% endif %}" data-exec-period-button="{{ option.key }}"{% if option.key == 'half_year' %} title="Ocak–Haziran sabit dönem"{% endif %}>{{ option.label }}</button>{% endfor %}
   </div>
-
-  <div class="exec-metric-guide" aria-label="Kullanılan metriklerin açıklaması">
-    <article><i class="bi bi-bullseye"></i><div><strong>Realizasyon</strong><span>Seçtiğiniz 1 / 3 / 6 / 12 aylık dönemin kabul edilen TL gerçekleşmesinin TL hedefine oranıdır.</span></div></article>
-    <article><i class="bi bi-pie-chart-fill"></i><div><strong>Kutu pazar payı</strong><span>Güncel doğrulanmış IMS rekabet haftasında şirket kutusunun toplam kutu pazarına oranıdır.</span></div></article>
-    <article><i class="bi bi-box-seam-fill"></i><div><strong>Şirket kutu çıkışı</strong><span>Bölgenin güncel IMS snapshot kaynağındaki şirket ürünleri toplam kutu çıkışıdır.</span></div></article>
-    <article><i class="bi bi-arrows-angle-contract"></i><div><strong>TR kutu payı farkı</strong><span>Bölge kutu pazar payının aynı 11 bölgeden hesaplanan ağırlıklı Türkiye kutu payına puan farkıdır.</span></div></article>
-  </div>
-
   {% for period_key, period in cockpit.periods.items() %}
   <div class="exec-period-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-period-panel="{{ period_key }}">
-    <div class="exec-kpis">
-      <article><span>Türkiye gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>{{ period_key|replace('monthly','1 aylık')|replace('quarterly','3 aylık')|replace('half_year','6 aylık')|replace('yearly','12 aylık') }} kabul edilen gerçekleşme</small></article>
-      <article><span>Türkiye toplam {{ 'kutu pazarı' if market_unit_mode else 'pazar' }}</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(market_total) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>Güncel doğrulanmış rekabet haftası</small></article>
-      <article><span>Türkiye pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>Şirket {{ 'kutusu / toplam kutu pazarı' if market_unit_mode else 'TL / toplam TL pazar' }} · güncel hafta</small></article>
-      <article><span>Türkiye realizasyonu</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>Seçili dönem gerçekleşen TL / hedef TL{% if period.gap_tl is not none %} · {{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {{ 'hedef açığı' if period.gap_tl > 0 else 'hedef üstü' }}{% endif %}</small></article>
-      <article><span>Rakip {{ 'kutu alanı' if market_unit_mode else 'alanı' }}</span><strong>{% if cockpit.market.has_competition %}{{ "{:,.0f}".format(competitor_total) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>Güncel toplam {{ 'kutu pazarı − şirket kutusu' if market_unit_mode else 'TL pazar − şirket TL' }}</small></article>
+    <div class="exec-kpis exec-kpis-compact">
+      <article><span>Dönem hedefi</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>Seçili Türkiye dönemi</small></article>
+      <article><span>Gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>Kabul edilen üretim sonucu</small></article>
+      <article><span>Realizasyon</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>Gerçekleşen / hedef</small></article>
+      <article><span>Hedefe kalan</span><strong>{% if period.gap_tl is not none %}{{ "{:,.0f}".format([period.gap_tl, 0]|max) }} ₺{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none and period.gap_tl <= 0 %}Hedef tamamlandı{% else %}Türkiye toplam açığı{% endif %}</small></article>
     </div>
-
-    <div class="exec-section-head">
-      <div><span>COĞRAFİ YÖNETİM</span><h3>11 Bölge Rekabet Haritası</h3><p>Her kartta iki farklı zaman mantığı açıkça ayrılır: <b>realizasyon seçilen dönemi</b>, <b>kutu pazar payı güncel doğrulanmış rekabet haftasını</b> temsil eder. TR farkı, bölge kutu payının 11 bölgenin ağırlıklı Türkiye kutu payına farkıdır.</p></div>
-      <button type="button" class="exec-action-btn" data-exec-jump-regions><i class="bi bi-arrow-up-right-square"></i> Bölge detayına git</button>
-    </div>
-    <div class="exec-region-grid">
-      {% for region in period.regions %}
-      {% set tone='good' if (region.realization_percent or 0) >= 90 else 'watch' if (region.realization_percent or 0) >= 70 else 'risk' %}
-      <button type="button" class="exec-region-card {{ tone }}" data-exec-region-key="{{ region.region_key }}">
-        <div><span>{{ region.region_key }}</span><strong>{{ region.region_name }}</strong></div>
-        <div class="exec-region-metrics">
-          <div class="exec-region-stat"><small>Güncel kutu pazar payı</small><b>%{{ region.share_percent }}</b></div>
-          <div class="exec-region-stat"><small>Seçili dönem realizasyonu</small><b>{% if region.realization_percent is not none %}%{{ region.realization_percent }}{% else %}—{% endif %}</b></div>
+    <div class="exec-overview-grid">
+      <article class="exec-card exec-region-overview">
+        <div class="exec-card-head"><div><span>11 BÖLGE · KARŞILAŞTIRMALI DURUM</span><h3>Bölge Performans Tablosu</h3><p>Realizasyon seçili dönemi; kutu payı ve rakip baskısı güncel doğrulanmış IMS haftasını gösterir.</p></div><i class="bi bi-grid-3x3-gap-fill"></i></div>
+        <div class="exec-region-table-wrap"><table class="exec-region-table">
+          <thead><tr><th>Bölge</th><th>Durum</th><th>Realizasyon</th><th>Kutu payı</th><th>Şirket kutu</th><th>Rakip kutu</th><th>TR kutu payı farkı</th></tr></thead>
+          <tbody>
+          {% for region in period.regions %}
+            {% set tone='good' if (region.realization_percent or 0) >= 90 else 'watch' if (region.realization_percent or 0) >= 70 else 'risk' %}
+            <tr class="exec-region-table-row {{ tone }}" data-exec-region-key="{{ region.region_key }}" tabindex="0" role="button">
+              <td><b>{{ region.region_key }}</b><strong>{{ region.region_name }}</strong></td><td><span class="exec-status-pill {{ tone }}">{% if tone == 'good' %}Güçlü{% elif tone == 'watch' %}Takip{% else %}Öncelikli{% endif %}</span></td>
+              <td>{% if region.realization_percent is not none %}<b>%{{ region.realization_percent }}</b>{% else %}—{% endif %}</td><td><b>%{{ region.share_percent }}</b></td><td>{{ "{:,.0f}".format(region.company_unit) }}</td><td>{{ "{:,.0f}".format(region.competitor_unit) }}</td>
+              <td><span class="{{ 'positive' if region.unit_share_gap_to_national >= 0 else 'negative' }}">{{ '+' if region.unit_share_gap_to_national >= 0 else '' }}{{ region.unit_share_gap_to_national }} puan</span></td>
+            </tr>
+          {% else %}<tr><td colspan="7" class="exec-table-empty">Bölge snapshot verisi bulunmuyor.</td></tr>{% endfor %}
+          </tbody>
+        </table></div>
+        <button type="button" class="exec-detail-link" data-exec-jump-regions><i class="bi bi-arrow-down-right-square"></i> Seçili bölgenin ürün, il ve brick detayına in</button>
+      </article>
+      <aside class="exec-card exec-rival-overview">
+        <div class="exec-card-head"><div><span>GÜNCEL RAKİP BASKISI</span><h3>Türkiye İlk 5 Rakip</h3><p>Rakip kutu toplamı ve en güçlü olduğu bölge.</p></div><i class="bi bi-radar"></i></div>
+        <div class="exec-rival-list">
+          {% for rival in cockpit.rival_pressure %}<article><div class="exec-rank">{{ loop.index }}</div><div><strong>{{ rival.name }}</strong><span>{{ rival.product_name }} · {{ rival.region_count }} bölge</span></div><div><b>{{ "{:,.0f}".format(rival.unit) }}</b><small>kutu · {{ rival.strongest_region }}</small></div></article>{% else %}<div class="exec-empty exec-empty-light">Güncel rakip kutu verisi bulunmuyor.</div>{% endfor %}
         </div>
-        <div class="exec-region-foot"><span><small>Şirket kutu çıkışı</small><strong>{{ "{:,.0f}".format(region.company_unit) }} kutu</strong></span><em class="{{ 'positive' if region.unit_share_gap_to_national >= 0 else 'negative' }}"><small>TR kutu payı farkı</small><strong>{{ '+' if region.unit_share_gap_to_national >= 0 else '' }}{{ region.unit_share_gap_to_national }} puan</strong></em></div>
-      </button>
-      {% endfor %}
-    </div>
-
-    <div class="exec-two-col exec-product-risk-grid">
-      <div class="exec-card">
-        <div class="exec-card-head"><div><span>PORTFÖY STRATEJİSİ</span><h3>Türkiye Ürün Portföy Matrisi</h3></div><i class="bi bi-grid-3x3-gap-fill"></i></div>
-        <div class="exec-product-list">
-          {% for product in period.products %}
-          <article class="exec-product-row {{ product.tone }}">
-            <div class="exec-product-name"><strong>{{ product.product_name }}</strong><span>{{ product.quadrant }}</span></div>
-            <div><small>Seçili dönem realizasyonu</small><b>{% if product.realization_percent is not none %}%{{ product.realization_percent }}{% else %}—{% endif %}</b></div>
-            <div><small>Güncel {{ 'kutu' if market_unit_mode else 'TL' }} pazar payı</small><b>{% if product.share_percent is not none %}%{{ product.share_percent }}{% else %}—{% endif %}</b></div>
-            <div class="exec-meter"><span style="width:{{ [product.realization_percent or 0, 160]|min / 1.6 }}%"></span></div>
-          </article>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="exec-card">
-        <div class="exec-card-head"><div><span>AKSİYON ÖNCELİĞİ</span><h3>Fırsat ve Risk Bölgeleri</h3><p>Sıralama seçili dönem realizasyonu ile güncel kutu pazar payını birlikte görünür kılar.</p></div><i class="bi bi-radar"></i></div>
-        <div class="exec-split-list">
-          <div><h4><i class="bi bi-arrow-up-circle-fill"></i> Öne çıkan bölgeler</h4>{% for row in period.opportunities %}<button type="button" data-exec-region-key="{{ row.region_key }}"><strong>{{ row.region_key }} {{ row.region_name }}</strong><span>Seçili dönem realizasyonu %{{ row.realization_percent }} · güncel kutu payı %{{ row.share_percent }}</span></button>{% endfor %}</div>
-          <div><h4><i class="bi bi-exclamation-diamond-fill"></i> Kritik takip</h4>{% for row in period.risks %}<button type="button" data-exec-region-key="{{ row.region_key }}"><strong>{{ row.region_key }} {{ row.region_name }}</strong><span>Seçili dönem realizasyonu %{{ row.realization_percent }} · güncel kutu payı %{{ row.share_percent }}</span></button>{% endfor %}</div>
-        </div>
-      </div>
+        <div class="exec-rival-note"><i class="bi bi-info-circle"></i><span>Ürün bazındaki tüm rakip dağılımı üstte; il ve brick detayı bölge merkezinde yer alır.</span></div>
+      </aside>
     </div>
   </div>
   {% endfor %}
-
-  <div class="exec-two-col">
-    <div class="exec-card">
-      <div class="exec-card-head"><div><span>RAKİP BASKISI · TÜRKİYE</span><h3>En Yüksek 5 Rakip Baskısı</h3><p>Güncel doğrulanmış rekabet haftasındaki rakip kutu toplamıdır.</p></div><i class="bi bi-activity"></i></div>
-      <div class="exec-rival-list">
-        {% for rival in cockpit.rival_pressure %}
-        <article><div class="exec-rank">{{ loop.index }}</div><div><strong>{{ rival.name }}</strong><span>{{ rival.product_name }} · {{ rival.region_count }} bölgede aktif</span></div><div><b>{{ "{:,.0f}".format(rival.unit) }} kutu</b><small>En güçlü: {{ rival.strongest_region }}</small></div></article>
-        {% else %}<div class="exec-empty">Güncel rakip kutu verisi bulunmuyor.</div>{% endfor %}
-      </div>
-    </div>
-
-    <div class="exec-card">
-      <div class="exec-card-head"><div><span>YILLIK YÖN</span><h3>Türkiye Realizasyon Trendi</h3><p>Her ayın değeri o ayın gerçekleşen TL / hedef TL realizasyonudur. Pazar payı yalnız güncel rekabet haftasında gösterilir; geçmiş dönem için veri uydurulmaz.</p></div><i class="bi bi-graph-up-arrow"></i></div>
-      <div class="exec-chart-wrap"><canvas data-exec-trend data-rows='{{ cockpit.annual_trend|tojson }}'></canvas></div>
-      <div class="exec-current-share"><span>Güncel Türkiye {{ 'kutu' if market_unit_mode else 'TL' }} pazar payı</span><strong>{% if cockpit.market.has_competition %}%{{ cockpit.market.company_share_percent }}{% else %}—{% endif %}</strong><small>{% if cockpit.source_week %}{{ cockpit.source_week }}. hafta doğrulanmış rekabet kaynağı · şirket {{ 'kutusu / toplam kutu pazarı' if market_unit_mode else 'TL / toplam TL pazar' }}{% endif %}</small></div>
-    </div>
-  </div>
-
-  <div class="exec-summary-card">
-    <div class="exec-summary-icon"><i class="bi bi-briefcase-fill"></i></div>
-    <div><span>GENEL MÜDÜR YÖNETİM ÖZETİ</span><h3>Türkiye ticari fotoğrafı</h3><div class="exec-summary-items">{% for item in cockpit.summary %}<p><i class="bi bi-check2-circle"></i>{{ item }}</p>{% endfor %}</div></div>
-  </div>
-
-  {% set national= cockpit.periods.monthly|default({}, true) %}
-  <section class="exec-national-command" aria-label="Türkiye AI ticari aksiyon merkezi">
-    <div class="exec-ai-head"><div><span>İL → BÖLGE → TÜRKİYE · YÖNETİM PLANI</span><h3>Türkiye AI Ticari Aksiyon Merkezi</h3><p>11 aktif bölge snapshotındaki doğrulanmış ürün, satış ve rekabet sonuçlarını ülke önceliğine dönüştürür; yeni IMS okuması veya tahmin kullanılmaz.</p></div><i class="bi bi-globe2"></i></div>
-    <div class="exec-national-grid">
-      <article class="exec-card">
-        <div class="exec-card-head"><div><span>BÖLGE ÖNCELİĞİ</span><h3>İlk Müdahale Alanları</h3></div><i class="bi bi-exclamation-diamond"></i></div>
-        {% for row in national.risks|default([]) %}<button type="button" class="exec-national-row" data-exec-region-key="{{ row.region_key }}"><span><b>{{ row.region_key }} {{ row.region_name }}</b><small>Realizasyon %{{ row.realization_percent }} · Kutu payı %{{ row.share_percent }}</small></span><strong>{{ '{:,.0f}'.format(row.competitor_unit) }} rakip kutu</strong></button>{% endfor %}
-      </article>
-      <article class="exec-card">
-        <div class="exec-card-head"><div><span>ÜRÜN HEDEF AÇIĞI</span><h3>Türkiye Portföy Öncelikleri</h3></div><i class="bi bi-box-seam"></i></div>
-        {% for product in national.products|sort(attribute='realization_percent') %}{% if loop.index <= 7 %}<div class="exec-national-row"><span><b>{{ product.product_name }}</b><small>Realizasyon {% if product.realization_percent is not none %}%{{ product.realization_percent }}{% else %}—{% endif %} · Güncel pazar payı {% if product.share_percent is not none %}%{{ product.share_percent }}{% else %}—{% endif %}</small></span><strong>{% if product.actual_tl is not none %}{{ '{:,.0f}'.format([product.target_tl-product.actual_tl,0]|max) }} ₺ açık{% else %}Veri bekleniyor{% endif %}</strong></div>{% endif %}{% endfor %}
-      </article>
-      <article class="exec-card">
-        <div class="exec-card-head"><div><span>RAKİP YOĞUNLUĞU</span><h3>Türkiye Rakip Müdahale Listesi</h3></div><i class="bi bi-radar"></i></div>
-        {% for rival in cockpit.rival_pressure %}<div class="exec-national-row"><span><b>{{ rival.name }}</b><small>{{ rival.product_name }} · {{ rival.region_count }} bölge · En güçlü {{ rival.strongest_region }}</small></span><strong>{{ '{:,.0f}'.format(rival.unit) }} kutu</strong></div>{% else %}<div class="exec-empty">Adlandırılmış rakip verisi bulunmuyor.</div>{% endfor %}
-      </article>
-    </div>
-    <article class="exec-national-directions">
-      <h3><i class="bi bi-signpost-split-fill"></i> Türkiye yönetim yönlendirmeleri</h3>
-      <ol>
-        <li>Türkiye hedef açığını ürün bazında bölgelere; bölge açığını il ve temsilci seviyesine dağıt.</li>
-        <li>Düşük realizasyon ve Türkiye ortalaması altı kutu payının birlikte görüldüğü bölgeleri ilk müdahale sırasına al.</li>
-        <li>Yüksek rakip kutusu bulunan ürünlerde rakibin en güçlü olduğu bölgeden başlayarak il kırılımına in.</li>
-        <li>Güçlü bölgelerin saha modelini benzer ürün ve pazar yapısındaki risk bölgelerine aktar.</li>
-        <li>Hedefi güçlü fakat kutu payı zayıf bölgelerde satış kalitesini ve rekabet kazanımını ayrı izle.</li>
-        <li>Kutu payı güçlü fakat hedefi geride bölgelerde mevcut pazar avantajını kapanış satışına dönüştür.</li>
-        <li>Türkiye kararlarını yalnız aynı aktif snapshot setindeki bölge sonuçlarıyla kapat; eksik geçmiş kırılımı tahmin etme.</li>
-      </ol>
-    </article>
-  </section>
-
-  <section class="exec-ai-section" aria-label="Dinamik bölgesel yapay zeka yönetim içgörüleri">
-    <div class="exec-ai-head"><div><span>GERÇEK VERİ + DİNAMİK YAPAY ZEKA · BÖLGESEL YÖNETİM</span><h3>Bölgesel AI Yönetim İçgörüleri</h3><p>Her kart önce aktif bölge snapshotındaki gerçek hedef, gerçekleşen, kutu pazar ve rekabet değerlerini gösterir; AI yorumu yalnız bu değerlerin yönetim anlamını açıklar. Eksik veri tahmin edilmez.</p></div><i class="bi bi-stars"></i></div>
-    {% for period_key, period in cockpit.periods.items() %}
-    <div class="exec-ai-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-ai-panel="{{ period_key }}">
-      <div class="exec-ai-grid">
-        {% for insight in period.ai_insights %}
-        <button type="button" class="exec-ai-card {{ insight.tone }}" data-exec-region-key="{{ insight.region_key }}">
-          <div class="exec-ai-card-head"><strong>{{ insight.region_key }} {{ insight.region_name }}</strong><span>{{ insight.signal }}</span></div>
-          <div class="exec-ai-source"><span>{{ insight.period_label }} gerçek performans verisi</span><span>{% if cockpit.source_week %}{{ cockpit.source_week }}. hafta gerçek rekabet/kutu verisi{% else %}Rekabet haftası bekleniyor{% endif %}</span></div>
-          <div class="exec-ai-facts">
-            <div><small>Dönem hedefi</small><b>{{ "{:,.0f}".format(insight.target_tl) }} ₺</b></div>
-            <div><small>Dönem gerçekleşen</small><b>{% if insight.actual_tl is not none %}{{ "{:,.0f}".format(insight.actual_tl) }} ₺{% else %}—{% endif %}</b></div>
-            <div><small>Realizasyon</small><b>{% if insight.realization_percent is not none %}%{{ insight.realization_percent }}{% else %}—{% endif %}</b></div>
-            <div><small>Şirket kutu</small><b>{{ "{:,.0f}".format(insight.company_unit) }}</b></div>
-            <div><small>Rakip kutu</small><b>{{ "{:,.0f}".format(insight.competitor_unit) }}</b></div>
-            <div><small>Toplam kutu pazar</small><b>{{ "{:,.0f}".format(insight.market_unit) }}</b></div>
-            <div><small>Kutu pazar payı</small><b>%{{ insight.share_percent }}</b></div>
-            <div><small>TR kutu payı farkı</small><b>{{ '+' if insight.unit_share_gap_to_national >= 0 else '' }}{{ insight.unit_share_gap_to_national }} puan</b></div>
-          </div>
-          <small class="exec-ai-action"><i class="bi bi-lightbulb-fill"></i><b>AI yönetim yorumu:</b> {{ insight.action }}</small>
-        </button>
-        {% endfor %}
-      </div>
-    </div>
-    {% endfor %}
-  </section>
-  {% else %}
-  <div class="exec-empty-state"><i class="bi bi-hourglass-split"></i><strong>Türkiye yönetim kokpiti hazırlanıyor</strong><span>Aktif bölge snapshot seti tamamlandığında gerçek DB verileriyle otomatik açılacaktır.</span></div>
-  {% endif %}
+  {% else %}<div class="exec-empty-state"><i class="bi bi-hourglass-split"></i><strong>Türkiye yönetim özeti hazırlanıyor</strong><span>Aktif bölge snapshot seti tamamlandığında otomatik açılacaktır.</span></div>{% endif %}
 </section>
