@@ -1,7 +1,7 @@
 {% set cockpit=executive_cockpit|default({}, true) %}
 <section class="exec-cockpit exec-command-center" data-exec-cockpit>
   <div class="exec-hero">
-    <div><span class="exec-kicker">TÜRKİYE · TEK BAKIŞTA YÖNETİM</span><h2>Türkiye Güncel Durum ve Rekabet Özeti</h2><p>11 bölgenin gerçekleşme, pazar payı ve rakip baskısını tekrarsız tek yönetim görünümünde karşılaştırın.</p></div>
+    <div><h2>Türkiye Güncel Durum ve Rekabet Özeti</h2></div>
     <div class="exec-live-badge"><i class="bi bi-broadcast-pin"></i><span>Güncel IMS</span><strong>{% if cockpit.source_week %}{{ cockpit.source_week }}. Hafta{% else %}—{% endif %}</strong></div>
   </div>
   {% if cockpit.ready %}
@@ -11,14 +11,14 @@
   {% for period_key, period in cockpit.periods.items() %}
   <div class="exec-period-panel {% if period_key == 'monthly' %}active{% endif %}" data-exec-period-panel="{{ period_key }}">
     <div class="exec-kpis exec-kpis-compact">
-      <article><span>Dönem hedefi</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>Seçili Türkiye dönemi</small></article>
-      <article><span>Gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>Kabul edilen üretim sonucu</small></article>
-      <article><span>Realizasyon</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>Gerçekleşen / hedef</small></article>
-      <article><span>Hedefe kalan</span><strong>{% if period.gap_tl is not none %}{{ "{:,.0f}".format([period.gap_tl, 0]|max) }} ₺{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none and period.gap_tl <= 0 %}Hedef tamamlandı{% else %}Türkiye toplam açığı{% endif %}</small></article>
+      <article><span>Dönem hedefi</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong></article>
+      <article><span>Gerçekleşen</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong></article>
+      <article><span>Realizasyon</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong></article>
+      <article><span>Hedefe kalan</span><strong>{% if period.gap_tl is not none %}{{ "{:,.0f}".format([period.gap_tl, 0]|max) }} ₺{% else %}—{% endif %}</strong></article>
     </div>
     <div class="exec-overview-grid">
       <article class="exec-card exec-region-overview">
-        <div class="exec-card-head"><div><span>11 BÖLGE · KARŞILAŞTIRMALI DURUM</span><h3>Bölge Performans Tablosu</h3><p>Realizasyon seçili dönemi; kutu payı ve rakip baskısı güncel doğrulanmış IMS haftasını gösterir.</p></div><i class="bi bi-grid-3x3-gap-fill"></i></div>
+        <div class="exec-card-head"><div><h3>Bölge Performans Tablosu</h3></div><i class="bi bi-grid-3x3-gap-fill"></i></div>
         <div class="exec-region-table-wrap"><table class="exec-region-table">
           <thead><tr><th>Bölge</th><th>Durum</th><th>Realizasyon</th><th>Kutu payı</th><th>Şirket kutu</th><th>Rakip kutu</th><th>TR kutu payı farkı</th></tr></thead>
           <tbody>
@@ -35,11 +35,10 @@
         <button type="button" class="exec-detail-link" data-exec-jump-regions><i class="bi bi-arrow-down-right-square"></i> Seçili bölgenin ürün, il ve brick detayına in</button>
       </article>
       <aside class="exec-card exec-rival-overview">
-        <div class="exec-card-head"><div><span>GÜNCEL RAKİP BASKISI</span><h3>Türkiye İlk 5 Rakip</h3><p>Rakip kutu toplamı ve en güçlü olduğu bölge.</p></div><i class="bi bi-radar"></i></div>
+        <div class="exec-card-head"><div><h3>Türkiye İlk 5 Rakip</h3></div><i class="bi bi-radar"></i></div>
         <div class="exec-rival-list">
           {% for rival in cockpit.rival_pressure %}<article><div class="exec-rank">{{ loop.index }}</div><div><strong>{{ rival.name }}</strong><span>{{ rival.product_name }} · {{ rival.region_count }} bölge</span></div><div><b>{{ "{:,.0f}".format(rival.unit) }}</b><small>kutu · {{ rival.strongest_region }}</small></div></article>{% else %}<div class="exec-empty exec-empty-light">Güncel rakip kutu verisi bulunmuyor.</div>{% endfor %}
         </div>
-        <div class="exec-rival-note"><i class="bi bi-info-circle"></i><span>Ürün bazındaki tüm rakip dağılımı üstte; il ve brick detayı bölge merkezinde yer alır.</span></div>
       </aside>
     </div>
   </div>

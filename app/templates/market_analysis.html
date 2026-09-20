@@ -16,9 +16,7 @@
 
 <div class="market-analysis-hero mb-4">
   <div>
-    <span>TÜRKİYE GENELİ · YÖNETİCİ ANALİZİ</span>
     <h1>Türkiye Pazar ve Rakip Analizi</h1>
-    <p>Şirket IMS performansı ile aynı haftaya ait kullanılabilir rekabet/pazar verisini kaynak metriğinde tek ürün satırında karşılaştırır.</p>
   </div>
   <a class="btn btn-light" href="{{ url_for('dashboard.index') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
 </div>
@@ -40,19 +38,26 @@
   <div>
     <span>{{ 'Şirket kutu' if unit_mode else 'Şirket IMS' }}</span>
     <strong>{{ "{:,.0f}".format(market.company_total_value|default(market.company_total_tl|default(0,true),true)) }} {{ market_suffix }}</strong>
-    <small>{% if unit_mode %}Aynı kaynak haftası · şirket IMS {{ "{:,.0f}".format(market.company_total_tl|default(0,true)) }} ₺{% else %}Tablo kaynak haftası{% endif %}</small>
+    {% if unit_mode %}<small>Şirket IMS {{ "{:,.0f}".format(market.company_total_tl|default(0,true)) }} ₺</small>{% endif %}
   </div>
-  <div><span>Toplam pazar</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.market_total_value|default(market.market_total_tl|default(0,true),true)) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>{{ 'PAZAR kutu otoritesi' if unit_mode else 'Rekabet verisi bulunan ürünler' }}</small></div>
-  <div><span>Rakip alanı</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.competitor_total_value|default(market.competitor_total_tl|default(0,true),true)) }} {{ market_suffix }}{% else %}—{% endif %}</strong><small>Toplam pazar − şirket</small></div>
-  <div><span>Şirket / pazar</span><strong>{% if market.has_competition %}%{{ market.company_share_percent|default(0,true) }}{% else %}—{% endif %}</strong><small>Aynı kaynak haftasında</small></div>
+  <div><span>Toplam pazar</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.market_total_value|default(market.market_total_tl|default(0,true),true)) }} {{ market_suffix }}{% else %}—{% endif %}</strong></div>
+  <div><span>Rakip alanı</span><strong>{% if market.has_competition %}{{ "{:,.0f}".format(market.competitor_total_value|default(market.competitor_total_tl|default(0,true),true)) }} {{ market_suffix }}{% else %}—{% endif %}</strong></div>
+  <div><span>Şirket / pazar</span><strong>{% if market.has_competition %}%{{ market.company_share_percent|default(0,true) }}{% else %}—{% endif %}</strong></div>
 </div>
+
+<section class="card shadow-sm market-national-trend mb-4" aria-labelledby="nationalTrendTitle">
+  <div class="card-header market-national-trend-head">
+    <h3 id="nationalTrendTitle"><i class="bi bi-graph-up-arrow"></i> National 12 Aylık Realizasyon</h3>
+  </div>
+  <div class="market-national-trend-chart">
+    <canvas data-exec-national-trend data-rows='{{ executive_cockpit.annual_trend|default([], true)|tojson|forceescape }}'></canvas>
+  </div>
+</section>
 
 <div class="card shadow-sm market-main-card mb-4">
   <div class="card-header market-main-head">
     <div>
-      <span class="market-section-kicker">ÜRÜN BAZINDA · TEKİL GÖRÜNÜM</span>
       <h3 class="card-title">Şirket ve Rakip Pazar Karşılaştırması</h3>
-      <p>{% if unit_mode %}Yeni IMS dosyasındaki gerçek PAZAR ve rakip KUTU verileri kullanılır; TL rekabet üretilmez veya tahmin edilmez.{% else %}Her şirket ürünü yalnız bir kez gösterilir. Aynı ürüne ait eski/tekrarlı pazar grup adları toplanmaz; kullanılabilir gerçek pazar satırı seçilir.{% endif %}</p>
     </div>
   </div>
   <div class="table-responsive">
@@ -82,17 +87,14 @@
       </tbody>
     </table>
   </div>
-  <div class="market-table-note"><i class="bi bi-shield-check"></i><span>Kaynak haftası değiştiğinde bilgi bandı otomatik güncellenir. Rekabet TL yok fakat gerçek KUTU pazarı varsa ekran KUTU moduna geçer; farklı metrikler birbirine çevrilerek yapay pazar değeri üretilmez.</span></div>
 </div>
-
-{% include "partials/executive_market_cockpit.html" %}
 
 <section class="manager-region-cockpit" aria-label="Bölgesel güncel durum merkezi" data-region-pack-url="{{ url_for('main.market_analysis_regions_pack', year=selected_year, month=selected_month) }}">
   {% for region_key, region_html in embedded_region_html|default({}, true)|dictsort %}
     <template data-manager-region-preloaded="{{ region_key }}">{{ region_html|safe }}</template>
   {% endfor %}
   <div class="manager-section-head mb-3">
-    <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3><p>Tüm bölge sayfalarındaki mevcut performans ve rekabet verilerini tek ekranda açar. Yeni IMS geldiğinde hazır bölge snapshot paketi otomatik yenilenir.</p></div>
+    <div><h3><i class="bi bi-grid-1x2-fill"></i> Bölgesel Güncel Durum Merkezi</h3></div>
     <span>{{ region_rows|length }} bölge</span>
   </div>
   <div class="manager-period-toolbar manager-period-toolbar-stacked" role="tablist" aria-label="Dönem seçimi">
@@ -136,6 +138,8 @@
     </main>
   </div>
 </section>
+
+{% include "partials/executive_market_cockpit.html" %}
 
 {% endblock %}
 

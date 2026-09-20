@@ -4,19 +4,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_executive_cockpit_is_a_single_glance_summary_before_region_drilldown():
+def test_market_analysis_keeps_requested_panel_order_and_single_glance_summary():
     template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
     partial = (ROOT / "app/templates/partials/executive_market_cockpit.html").read_text(encoding="utf-8")
     javascript = (ROOT / "app/static/js/executive-market-cockpit.js").read_text(encoding="utf-8")
 
-    assert template.index('{% include "partials/executive_market_cockpit.html" %}') < template.index('<section class="manager-region-cockpit"')
+    kpis = template.index('class="market-analysis-kpis')
+    trend = template.index('data-exec-national-trend')
+    comparison = template.index('class="card shadow-sm market-main-card')
+    regions = template.index('<section class="manager-region-cockpit"')
+    summary = template.index('{% include "partials/executive_market_cockpit.html" %}')
+    assert kpis < trend < comparison < regions < summary
     assert "data-exec-period-button" in partial
     assert "Türkiye Güncel Durum ve Rekabet Özeti" in partial
     assert "Bölge Performans Tablosu" in partial
     assert "Türkiye İlk 5 Rakip" in partial
     assert "Türkiye Ürün Portföy Matrisi" not in partial
     assert "Fırsat ve Risk Bölgeleri" not in partial
-    assert "Türkiye Realizasyon Trendi" not in partial
+    assert "National 12 Aylık Realizasyon" in template
     assert "Türkiye AI Ticari Aksiyon Merkezi" not in partial
     assert "Bölgesel AI Yönetim İçgörüleri" not in partial
     assert "TR kutu payı farkı" in partial
@@ -28,18 +33,36 @@ def test_executive_cockpit_is_a_single_glance_summary_before_region_drilldown():
     assert "region.share_gap_to_national" not in partial
     assert "region.unit_share_gap_to_national" in partial
     assert "openRegion" in javascript
-    assert "Chart.getChart" not in javascript
+    assert "Chart.getChart" in javascript
+    assert "initNationalTrend" in javascript
     assert "data-exec-region-key" in partial
     assert 'event.key' in javascript
 
 
-def test_executive_client_only_switches_period_and_opens_region_detail():
+def test_executive_client_switches_period_opens_region_and_renders_national_trend():
     javascript = (ROOT / "app/static/js/executive-market-cockpit.js").read_text(encoding="utf-8")
     assert "setPeriod" in javascript
     assert "openRegion" in javascript
     assert "scrollIntoView" in javascript
-    assert "new Chart" not in javascript
-    assert "MutationObserver" not in javascript
+    assert "new Chart" in javascript
+    assert "MutationObserver" in javascript
+
+
+def test_panel_explanatory_copy_is_removed_and_dark_mode_is_explicit():
+    template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
+    partial = (ROOT / "app/templates/partials/executive_market_cockpit.html").read_text(encoding="utf-8")
+    workspace = (ROOT / "app/templates/partials/market_region_workspace.html").read_text(encoding="utf-8")
+    readability = (ROOT / "app/static/css/market-analysis-readability.css").read_text(encoding="utf-8")
+    reports = (ROOT / "app/static/css/executive-reports.css").read_text(encoding="utf-8")
+
+    assert "TÜRKİYE · TEK BAKIŞTA YÖNETİM" not in partial
+    assert "BÖLGESEL GÜNCEL DURUM · AYNI KAYNAK SERVİSLERİ" not in workspace
+    assert "Mevcut RegionMarketService" not in workspace
+    assert "Her şirket ürünü yalnız bir kez gösterilir" not in template
+    assert '[data-theme="dark"] .market-national-trend' in readability
+    assert '[data-theme="dark"] .manager-market-product-pane' in readability
+    assert "[data-theme=dark] .report-filter-card" in reports
+    assert "[data-theme=dark] .report-table td" in reports
 
 
 def test_executive_region_table_keeps_theme_contrast():
