@@ -78,3 +78,28 @@ def test_regional_ai_insights_carry_real_snapshot_values_without_prediction():
     assert kadikoy["market_unit"] == 300.0
     assert kadikoy["share_percent"] == 20.0
     assert kadikoy["unit_share_gap_to_national"] == -7.5
+
+
+def test_national_annual_trend_aggregates_region_snapshot_rows():
+    snapshots = {
+        "101": _snapshot("İstanbul", 100.0, 50.0, 50.0, 100.0),
+        "201": _snapshot("Kadıköy", 300.0, 60.0, 20.0, 90.0),
+    }
+    snapshots["101"]["report"]["annual_realization"] = [{
+        "month": 9, "label": "Eylül", "target_tl": 100.0,
+        "actual_tl": 80.0, "percent": 80.0, "has_data": True,
+    }]
+    snapshots["201"]["report"]["annual_realization"] = [{
+        "month": 9, "label": "Eylül", "target_tl": 300.0,
+        "actual_tl": 300.0, "percent": 100.0, "has_data": True,
+    }]
+
+    result = ExecutiveMarketCockpitService.build({"groups": []}, snapshots)
+    september = result["annual_trend"][8]
+
+    assert september == {
+        "month": 9,
+        "label": "Eylül",
+        "has_data": True,
+        "realization_percent": 95.0,
+    }

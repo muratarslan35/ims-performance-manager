@@ -96,11 +96,16 @@
     event.preventDefault();
     openRegion(row.dataset.execRegionKey);
   });
-  document.addEventListener("DOMContentLoaded", () => {
+  function bootExecutiveMarket() {
     document.querySelectorAll("[data-exec-cockpit]").forEach(root => setPeriod(root, "monthly"));
     initNationalTrend();
     new MutationObserver(mutations => {
       if (mutations.some(item => item.attributeName === "data-theme")) initNationalTrend();
     }).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
-  });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootExecutiveMarket, {once: true});
+  } else {
+    bootExecutiveMarket();
+  }
 })();
