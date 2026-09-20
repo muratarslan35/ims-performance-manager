@@ -628,3 +628,240 @@ Always Free Ampere A1 Frankfurt AD1/AD2/AD3 denendi ve kapasite bulunamadı. Mev
 4. Yeni IMS'de manager report warning çıkarsa tahminle kabul etme; blocker'ı kaynak semantiğinden çöz.
 5. Önemli her kod/veri/deploy değişikliğinde bu `PROJECT_WORK_PROGRESS.md` dosyasını güncelle.
 6. Tüm IMS tarihçesi tamamlanınca bütün dönemleri kullanan Türkiye Pazar Analizi'ni topluca tasarla ve kur.
+
+
+---
+
+# 20 EYLÜL 2026 — BÖLGE AI, SNAPSHOT DENETİMİ VE AYLIK ÜRÜN DEĞİŞİMİ CHECKPOINT
+
+Bu bölüm 19–20 Eylül 2026 çalışmalarının güncel production checkpointidir. Önceki tarihsel notlarla çelişen noktalarda aşağıdaki güncel iş kuralları esas alınmalıdır.
+
+## 1. GitHub Actions / production erişim teyidi
+
+- Repo: `muratarslan35/ims-performance-manager`.
+- GitHub bağlantısında repo için admin/maintain/push/pull/triage erişimi doğrulandı.
+- Production deploy SSH bağlantısı doğrulandı:
+  - host: `130.162.48.162`
+  - user: `ubuntu`
+  - proje: `/home/ubuntu/ims_system`
+  - secret: `IMS_DEPLOY_SSH_KEY`
+- Actions job/log ve production deploy kanıtları okunabiliyor.
+- Son ilgili deploy: workflow run **35472566226**, commit `a9bc1d390fb734ea7de6faafdcf63fa43d15d0bf`, **SUCCESS**.
+- İlgili son probe: workflow run **35471998566**, **SUCCESS**.
+- Bu checkpoint yazılırken ilgili deploy/audit/probe işlerinde bekleyen işlem yoktur.
+- Önceki recovery denemelerindeki failure/cancel kayıtları tarihsel denemedir; güncel production read-model doğrulaması PASS olduğu için aktif blocker değildir.
+
+## 2. Bölgesel AI ekranı — Türkiye verisinin bölgeye sızması düzeltildi
+
+Kök problem:
+
+- Bölge AI ekranındaki sağ paneller `current_workspaces` / `previous_workspaces` üzerinden tüm Türkiye temsilci/brick havuzunu görebiliyordu.
+- Bu nedenle bir bölgenin AI kartında başka bölgelerin brickleri ve Türkiye geneli sayıları görünebiliyordu.
+- Ayrıca brick satırına taşınmış temsilci ürün hedefi yanlışlıkla gerçek bir “brick hedefi” gibi gösterilebiliyordu.
+
+Uygulanan düzeltme:
+
+- `PersistentRegionSnapshotService` içinde AI üretiminden önce yalnız o bölgenin temsilci ID'leri seçiliyor.
+- Güncel ve önceki dönem workspace'leri ayrı ayrı **yalnız bölge kapsamına** indirgeniyor.
+- Region read-model sürümü **v3** yapıldı.
+- Bölge AI kartındaki “Hedefli ama çıkışı olmayan brickler” semantiği kaldırıldı.
+- Yerine gerçek veriye dayalı **“Rakip satışı var, şirket çıkışı yok”** analizi getirildi.
+- Brick seviyesinde sahte/tekrarlanmış `target_unit` artık AI sinyali olarak kullanılmıyor.
+- Kartta gerçek şirket/rakip/pazar/pay değerleri gösteriliyor.
+- Rakibin satış kaybettiği bricklerde artık şirketin önceki→güncel kutu değişimi ve pay puanı değişimi de gösteriliyor.
+- Kullanıcı arayüzündeki `Snapshot-only` gibi iç mimari ifadeleri kaldırıldı.
+- Kullanıcı snapshot mimarisini görmemeli; ekran yalnız iş sonucunu göstermeli.
+
+İlgili ana commitler:
+
+- `627de70ee44ba1cbcc6b7d8a9e3747679a80f43e`
+- `5b71db06ed3867833fca02de37e471a458abadc9`
+
+## 3. Region snapshot UNIQUE constraint olayı — teşhis
+
+Görülen hata:
+
+`UNIQUE constraint failed: manager_region_snapshots.set_id, manager_region_snapshots.region_key`
+
+Kök neden:
+
+- Eski bir deploy akışı region snapshot backfill'i `--force` ile çalıştırırken IMS worker aynı source identity için aynı `set_id / region_key` satırlarını yayınlamaya çalışmış.
+- İki snapshot üreticisi aynı anda yazdığı için constraint koruması devreye girmiş.
+- Veri kaynağı bozukluğu değildi.
+
+Production sağlık kontrolünde:
+
+- aktif dönem region seti: **11/11 region**
+- BUILDING: 0
+- FAILED: 0
+- görünür region sayısı: 11/11
+- web ve worker servisleri active
+
+Güncel deploy mimarisinde eski otomatik force-backfill davranışının kaldırıldığı doğrulandı. Normal deploy artık IMS publication worker ile yarışan ikinci force snapshot üreticisi başlatmıyor.
+
+Salt-okunur production tanılama için `.github/workflows/region-snapshot-health.yml` eklendi.
+
+## 4. Ağustos / Temmuz veri kaynağı denetimi ve kesin business kuralı
+
+### Kesin iş kuralı
+
+Temsilci ürün realizasyonunda:
+
+- **Hedef = IMS hedefi**
+- **Gerçek çıkış = P2 > P1 > IMS**
+- **Realizasyon = seçilen gerçek çıkış / IMS hedefi**
+
+Üretim dosyasında ayrıca hedef değeri bulunsa bile temsilci realizasyon hedefi olarak IMS hedefi kullanılmaya devam eder.
+
+Bu nedenle Temmuz Diyarbakır incelemesinde görülen hedef farkları bug değildir.
+
+### Temmuz / 901 Diyarbakır doğrulaması
+
+9/9 temsilcide aynı kaynak sözleşmesi doğrulandı:
+
+- hedefler IMS'den;
+- gerçekleşenler 1. üretim sonucundan;
+- realizasyon bu iki değerin oranından.
+
+Murat Arslan Temmuz örneği:
+
+- IMS hedef: yaklaşık **1.775.005,82 TL**
+- üretim gerçekleşen: **1.166.470 TL**
+- realizasyon yaklaşık **%65,72**, UI yuvarlamasıyla **%66**
+
+Bölge toplamı ile temsilci hedef kaynakları birbirine karıştırılmamalıdır.
+
+### Ağustos doğrulaması
+
+- Production DB'de Ağustos için uygulanmış P1/P2 production upload kaydı bulunmadığı doğrulandı.
+- Bu nedenle Ağustos temsilci aylık sonucu IMS kaynağından gelir.
+- Murat Arslan Ağustos toplam realizasyonu **%99** olarak doğrulandı.
+- Ekranın üstündeki yaklaşık **%106** değeri Murat Arslan değil, **901 Diyarbakır bölge toplamı**dır.
+- Ağustos için aktif IMS kaynağı denetimde upload **48** olarak görüldü.
+
+İlk aylarda snapshot bulunmaması tek başına hata değildir; snapshot mimarisi yılın ilk aylarında henüz kurulmamıştı.
+
+## 5. “Aylık ürün değişimi ve rakip baskısı” düzeltmesi
+
+Kök problem:
+
+- Güncel `actual_unit / market_unit / competitor_unit` bazı normalization aşamalarında doğru kaynaktan güncelleniyordu.
+- Ancak `previous_actual_unit`, `actual_change_unit`, `actual_change_percent` ve `competitor_change_unit` alanları eski/raw kaynaktan kalabiliyordu.
+- Sonuçta aynı satırda yeni “bu ay” değeri ile eski kaynaktan hesaplanmış fark yan yana görülebiliyordu.
+
+Yeni kalıcı sözleşme:
+
+### Şirket kutuları
+
+Her ay bağımsız olarak:
+
+**P2 > P1 > IMS**
+
+ile çözülür.
+
+- Açık ayda yeni IMS geldikçe “bu ay” değeri güncellenir.
+- Aynı ay için P1 geldiğinde IMS'in yerini P1 alır.
+- P2 geldiğinde P1'in yerini P2 alır.
+- Yeni aya geçildiğinde kapanan ay aynı kaynak önceliğiyle “önceki ay” konumuna geçer.
+- Sonradan P1/P2 gelirse ilgili ayın snapshot/read-model karşılaştırması yeniden yayınlanır.
+
+### Rakip kutuları
+
+- Rakip aylık kutu verisi **aylık IMS rekabet snapshotından** gelir.
+- Önceki ay ve bu ay aynı rekabet sözleşmesiyle alınır.
+- `competitor_change_unit = current_competitor - previous_competitor`.
+
+### Fark hesapları
+
+- `actual_change_unit = current_actual - previous_actual`
+- `actual_change_percent = actual_change_unit / previous_actual * 100`
+- previous değer 0 ise yüzde “Yeni veri” semantiğinde bırakılır; sahte yüzde üretilmez.
+
+Uygulama:
+
+- `representative_period_workspace.py` içinde tek kaynak sözleşmeli `_monthly_comparison_rows(...)` eklendi.
+- Karşılaştırma read-model contract sürümü **v2** oldu.
+- Template `market_analysis.comparison_rows` alanını tercih ediyor.
+- Production result upload sonrasında temsilci snapshot yenileme işi mevcut tek worker kuyruğuna seri olarak bırakılıyor; IMS işi devam ederken kesilmiyor.
+- Yeni `representative_snapshot_refresh_queue` akışı business data değil, yalnız türetilmiş snapshot yenileme talebi saklıyor.
+
+## 6. Canlı aylık karşılaştırma doğrulaması
+
+Güncel aktif temsilci snapshot:
+
+- period: **2026/09**
+- set: **2517**
+- status: **ACTIVE**
+- members: **113/113**
+- source IMS: **50**
+- production source: **0**
+- read model: **v2**
+- eski set 2515: SUPERSEDED
+- takılı boş set 2516: FAILED
+- worker: active
+- refresh queue: boş
+
+Murat Arslan canlı aylık karşılaştırması artık kendi içinde matematiksel olarak tutarlı:
+
+| Ürün | Önceki ay | Bu ay | Net fark | Değişim | Rakip fark |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Travazol | 8.818 | 2.945 | -5.873 | -%66,6 | -2.052 |
+| Monurol | 1.930 | 912 | -1.018 | -%52,7 | -4.359 |
+| Acnemix | 1.091 | 773 | -318 | -%29,1 | -833 |
+| Mixovul | 649 | 296 | -353 | -%54,4 | -602 |
+| Stiderm | 1.055 | 587 | -468 | -%44,4 | -2.461 |
+| Brimoder | 14 | 4 | -10 | -%71,4 | -97 |
+| Fentivag | 0 | 0 | 0 | — | -1.341 |
+
+Bu doğrulamada Ağustos ve Eylül şirket kutu kaynakları `IMS` olarak raporlandı; ilgili aylarda production sonucu geldiğinde P1/P2 önceliği otomatik uygulanacaktır.
+
+## 7. Snapshot recovery sırasında öğrenilen operasyon kuralı
+
+- Devam eden IMS işi kesilmemeli.
+- Snapshot/read-model refresh işleri IMS worker kuyruğunun arkasına seri şekilde alınmalı.
+- Aynı source identity için paralel force rebuild başlatılmamalı.
+- BUILDING set aktif üretim gösteriyorsa ikinci writer başlatılmamalı.
+- Takılı/boş derived snapshot nesli ancak worker durumu ve üye sayısı kanıtlandıktan sonra FAILED yapılabilir.
+- Business IMS/production satırları recovery sırasında değiştirilmez.
+- Audit/forensic kontroller mümkün olduğunca salt-okunur yapılır.
+
+## 8. Bu çalışma sırasında eklenen operasyon denetimleri
+
+Aşağıdaki Actions tanılama akışları eklendi:
+
+- `region-snapshot-health.yml`
+- `july-diyarbakir-audit.yml`
+- `murat-monthly-market-audit.yml`
+- `murat-monthly-market-probe.yml`
+- `murat-monthly-market-recover.yml`
+
+Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontrollü snapshot refresh/recovery ve canlı acceptance amaçlıdır.
+
+## 9. Bundan sonra korunacak kurallar
+
+1. Temsilci hedefi **IMS** kaynağında kalır.
+2. Temsilci gerçek çıkışı **P2 > P1 > IMS** önceliğindedir.
+3. Aylık ürün değişimi iki ayı da ayrı ayrı aynı source resolver ile çözmeden fark hesaplamaz.
+4. Rakip farkları aylık IMS rekabet verisinin iki dönemi arasında hesaplanır.
+5. Bölge AI yalnız kendi bölgesinin temsilci ve brick verisini görür.
+6. Brick için kaynakta gerçek brick hedefi yoksa hedef uydurulmaz.
+7. Kullanıcı arayüzünde snapshot/read-model gibi iç mimari terimler gösterilmez.
+8. Hazır ACTIVE snapshot varsa ekran onu okur; sayfa açılışında ağır hesap tekrar edilmez.
+9. Yeni IMS veya production sonucu geldiğinde gerekli derived snapshot worker üzerinden seri yenilenir.
+10. Devam eden iş kesilmez; görevler sıraya alınır.
+11. Audit sırasında production business satırları gereksiz yere mutate edilmez.
+12. Production PASS / health doğrulanmadan “tamamlandı” denmez.
+
+## 10. Güncel durum
+
+- Bölgesel AI kapsam hatası: **DÜZELTİLDİ**
+- Sahte brick hedefi gösterimi: **DÜZELTİLDİ**
+- Region snapshot paralel writer kök nedeni: **TEŞHİS EDİLDİ / güncel deployda yarış yolu kaldırılmış durumda**
+- Temmuz Diyarbakır hedef/actual kaynak sözleşmesi: **DOĞRULANDI**
+- Ağustos Murat %99 / bölge %106 ayrımı: **DOĞRULANDI**
+- Aylık ürün değişimi şirket farkları: **DÜZELTİLDİ**
+- Aylık rakip farkları: **DÜZELTİLDİ**
+- Aktif temsilci read-model: **v2 / set 2517 / 113 temsilci**
+- Son production deploy: **SUCCESS**
+- İlgili bekleyen işlem: **YOK**
+
