@@ -998,6 +998,17 @@ Concurrency doğrulaması:
 - İlgili bekleyen deploy/aktivasyon işi: **YOK**.
 
 
+### Rapor ekranı tam brick erişimi ve profesyonel sayfalama — 20.09.2026
+
+- Rapor ekranındaki ilk 150 brick satırı sınırı kaldırıldı.
+- Snapshot read-modelindeki tüm brick satırlarına ekran üzerinden sayfalı olarak erişilebilir.
+- İl, temsilci, brick ve ürün alanlarında sunucu taraflı arama eklendi.
+- Sayfa başına 25 / 50 / 100 kayıt seçimi eklendi.
+- Sayfalama filtre parametrelerini ve çoklu kapsam seçimlerini korur.
+- Excel ve PDF çıktıları tam veri setini kullanmaya devam eder.
+- Büyük ulusal raporlarda binlerce DOM satırı üretmek yerine yalnız seçili sayfa render edilerek 200 kullanıcı mimarisi korunur.
+
+
 ### Raporlama çoklu kapsam ve detay analizleri — 20.09.2026
 
 Raporlar modülü yönetim seviyesinde esnek çoklu seçim ve detay kırılımlarıyla genişletildi.
@@ -1018,7 +1029,7 @@ Yeni yetenekler:
 - **Temsilci Analizi** ayrı read-model olarak rapora eklenir.
 - **Brick Analizi** şirket/rakip/pazar/pay kırılımıyla snapshot market verisinden hazırlanır.
 - **Rakip Analizi** tüm rakip satırlarını ürün bazında taşır.
-- Web ekranında temsilci ve brick analizleri görünür; brick önizlemesi ilk 150 satırla sınırlandırılır, Excel tam listeyi içerir.
+- Web ekranında temsilci ve brick analizleri görünür; tüm brick satırlarına arama ve sayfalama ile erişilir, Excel de tam listeyi içerir.
 
 Excel sayfaları:
 

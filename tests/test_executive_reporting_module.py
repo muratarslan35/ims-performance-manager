@@ -297,6 +297,10 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert 'data-scope-panel="representative"' in template
     assert "TEMSİLCİ ANALİZİ" in template
     assert "BRICK ANALİZİ" in template
+    assert "report.brick_rows[:150]" not in template
+    assert 'id="reportBrickSearch"' in template
+    assert 'id="reportBrickPageSize"' in template
+    assert "brick_page_size" in report_js
     assert 'a[href="/reports"]' not in css
 
 
@@ -313,6 +317,7 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
     page = client.get("/reports?year=2026&month=8&period=monthly&scope=national")
     assert page.status_code == 200
     assert "Satış ve pazar performansı" in page.get_data(as_text=True)
+    assert 'id="reportBrickSearch"' in page.get_data(as_text=True)
 
     for file_type, prefix in (("xlsx", b"PK"), ("pdf", b"%PDF-")):
         queued = client.get(
