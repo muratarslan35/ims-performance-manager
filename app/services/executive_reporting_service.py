@@ -57,11 +57,27 @@ class ExecutiveReportingService:
         self.period = period if period in self.PERIODS else "monthly"
         self.scope = scope if scope in self.SCOPES else "national"
         raw_scope_values = scope_values if scope_values is not None else [scope_value]
-        self.scope_values = [
+        scope_values = [
             str(value).strip()
             for value in raw_scope_values
             if str(value or "").strip()
         ]
+        if self.scope == "region":
+            scope_values = sorted(
+                {self._region_code(value) or value for value in scope_values},
+                key=lambda value: int(value) if str(value).isdigit() else 9999,
+            )
+        elif self.scope == "city":
+            scope_values = sorted(set(scope_values), key=self._scope_key)
+        elif self.scope == "representative":
+            scope_values = [
+                str(value) for value in sorted(
+                    {int(value) for value in scope_values if str(value).isdigit()}
+                )
+            ]
+        else:
+            scope_values = []
+        self.scope_values = scope_values
         # Backward-compatible scalar accessor for old links/warm jobs.
         self.scope_value = self.scope_values[0] if self.scope_values else ""
         self.product_ids = {int(value) for value in (product_ids or []) if str(value).isdigit()}
@@ -553,7 +569,11 @@ class ExecutiveReportingService:
             labels = [str(names.get(value, f"Temsilci {value}")) for value in ids]
 
         if not labels:
-            return self.SCOPES[self.scope]
+            return {
+                "region": "Tüm Bölgeler",
+                "city": "Tüm İller",
+                "representative": "Tüm Temsilciler",
+            }.get(self.scope, self.SCOPES[self.scope])
         if len(labels) <= 3:
             return " + ".join(labels)
         return " + ".join(labels[:3]) + f" +{len(labels) - 3}"
