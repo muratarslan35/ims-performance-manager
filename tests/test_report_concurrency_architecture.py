@@ -76,8 +76,8 @@ def test_report_cache_singleflight_builds_once_for_concurrent_users(cache_app, m
             report, key, built = ReportCacheService.get_or_build(DummyService(counter, lock))
             return report["scope_label"], key, built
 
-    with ThreadPoolExecutor(max_workers=20) as pool:
-        rows = list(pool.map(read_once, range(40)))
+    with ThreadPoolExecutor(max_workers=24) as pool:
+        rows = list(pool.map(read_once, range(200)))
 
     assert counter["builds"] == 1
     assert len({row[1] for row in rows}) == 1
