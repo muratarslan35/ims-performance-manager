@@ -71,17 +71,19 @@ class ExecutiveReportingService:
 
     @staticmethod
     def _region_code(value):
-        match = re.search(r"(?<!\\d)(\\d{3})(?!\\d)", str(value or ""))
+        match = re.search(r"(?<!\d)(\d{3})(?!\d)", str(value or ""))
         return match.group(1) if match else ""
 
     @classmethod
     def _region_label(cls, value):
         raw = str(value or "").strip()
         code = cls._region_code(raw)
-        descriptive = re.sub(r"^\\s*\\d{3}\\s*", "", raw).strip()
+        if code in cls.REGION_LABELS:
+            return cls.REGION_LABELS[code]
+        descriptive = re.sub(r"^\s*\d{3}\s*", "", raw).strip()
         if descriptive and descriptive != code:
             return descriptive.title()
-        return cls.REGION_LABELS.get(code, raw or "Bölge")
+        return raw or "Bölge"
 
     @staticmethod
     def _scope_key(value):
