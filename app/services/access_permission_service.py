@@ -37,7 +37,7 @@ _FIELD_DEFAULTS = {
     "region_assignments": False, "cross_region_assignments": False,
     "products": False, "targets": False, "manual_matching": False,
     "prime_center": True, "prime_simulation": True, "q_analysis": True,
-    "recovery": True, "reports": True, "manager_module": False,
+    "recovery": True, "reports": False, "manager_module": False,
     "manage_managers": False,
 }
 _REGION_DEFAULTS = {
@@ -61,7 +61,7 @@ DEFAULTS = {
 APPLICABLE = {subject: set(PERMISSIONS) for subject in SUBJECTS}
 APPLICABLE["representative"] = {
     "cross_region_details", "market_analysis", "prime_center",
-    "prime_simulation", "q_analysis", "recovery", "reports",
+    "prime_simulation", "q_analysis", "recovery",
 }
 
 

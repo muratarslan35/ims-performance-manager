@@ -5,6 +5,7 @@ from flask import redirect
 from flask import render_template
 from flask import url_for
 from flask import request
+from flask import send_file
 
 from flask_login import current_user
 from flask_login import login_required
@@ -22,6 +23,7 @@ from app.services.production_result_service import ProductionResultService
 from app.services.quarter_entitlement_service import QuarterEntitlementService
 from app.services.region_market_service import RegionMarketService
 from app.services.region_performance_service import RegionPerformanceService
+from app.services.executive_reporting_service import ExecutiveReportingService
 
 
 main_bp = Blueprint(
@@ -287,9 +289,54 @@ def prime():
 @main_bp.route("/reports")
 @login_required
 def reports():
+    scope = request.args.get("scope", "national")
+    scope_value = request.args.get("scope_value", "")
+    from app.region_manager import assigned_region, is_regional_manager
+    if is_regional_manager(current_user):
+        scope, scope_value = "region", (assigned_region(current_user) or "")
+    product_ids = request.args.getlist("product_id")
+    service = ExecutiveReportingService(
+        year=request.args.get("year", type=int),
+        month=request.args.get("month", type=int),
+        period=request.args.get("period", "monthly"),
+        scope=scope,
+        scope_value=scope_value,
+        product_ids=product_ids,
+    )
     return render_template(
         "reports.html",
-        user=current_user
+        user=current_user,
+        report=service.build(),
+        options=service.filter_options(),
+        filters=service,
+    )
+
+
+@main_bp.route("/reports/export/<file_type>")
+@login_required
+def reports_export(file_type):
+    if file_type not in {"xlsx", "pdf"}:
+        return {"success": False, "message": "Desteklenmeyen rapor biçimi."}, 404
+    scope = request.args.get("scope", "national")
+    scope_value = request.args.get("scope_value", "")
+    from app.region_manager import assigned_region, is_regional_manager
+    if is_regional_manager(current_user):
+        scope, scope_value = "region", (assigned_region(current_user) or "")
+    service = ExecutiveReportingService(
+        year=request.args.get("year", type=int), month=request.args.get("month", type=int),
+        period=request.args.get("period", "monthly"), scope=scope,
+        scope_value=scope_value, product_ids=request.args.getlist("product_id"),
+    )
+    report = service.build()
+    output = service.to_excel(report) if file_type == "xlsx" else service.to_pdf(report)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'genel-mudur-raporu-{report["year"]}-{report["month"]:02d}.{file_type}',
+        mimetype=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if file_type == "xlsx" else "application/pdf"
+        ),
     )
 
 

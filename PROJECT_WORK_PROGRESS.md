@@ -865,3 +865,16 @@ Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontroll�
 - Son production deploy: **SUCCESS**
 - İlgili bekleyen işlem: **YOK**
 
+## 11. Genel Müdür Raporlama Modülü (20.09.2026)
+
+- Yönetici sol menüsüne ayrı **Raporlar → Genel Müdür Raporları** alanı eklendi.
+- Boş `/reports` ekranı; aylık, son 3 aylık, sabit Ocak–Haziran 6 aylık ve yıllık YTD rapor üreten yönetici ekranına dönüştürüldü.
+- National, bölge, il ve temsilci kırılımları ile çoklu ürün filtresi eklendi.
+- Ürün bazında hedef TL, gerçekleşen TL, realizasyon, hedef/gerçekleşen kutu, toplam pazar, pazar payı ve başlıca rakipler aynı raporda birleştirildi.
+- Dönemsel TL/kutu gelişim grafiği eklendi. Travazol dahil tek ürün seçilerek Türkiye geneli dönem gelişimi ve rakip analizi alınabilir.
+- Ekranda seçilen filtrelerin tamamını koruyan **Excel (.xlsx)** ve **PDF (.pdf)** dışa aktarma uçları eklendi.
+- Okuma hattı yalnız yayınlanmış ACTIVE temsilci snapshot setlerini toplu okur; sayfa açılışında IMS/üretim hesapları yeniden çalıştırılmaz.
+- Temsilci hesaplarında rapor yetkisi kapatıldı. Bölge yöneticisinin raporu sunucu tarafında kendi bölgesine sabitlendi; URL değiştirilerek national veya başka bölge verisi açılamaz.
+- Karanlık tema ve mobil görünüm için rapora özel stiller eklendi.
+- Yeni sözleşme testleri: dönem kuralları, snapshot-only okuma, kapsam/ürün filtresi, rakip değerleri, menü görünürlüğü ve gerçek HTTP üzerinden Excel/PDF indirme.
+- Doğrulama: **87 ilgili test PASS**, `git diff --check` ve Python derleme kontrolü PASS.
