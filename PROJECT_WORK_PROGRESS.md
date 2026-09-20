@@ -946,3 +946,53 @@ Doğrulama:
 - worker: **active**
 - HTTP health: **PASS**
 - İlgili bekleyen deploy işlemi: **YOK**
+
+
+### Raporlama 200 kullanıcı mimarisi — 20.09.2026
+
+Raporlar modülü yüksek eşzamanlı kullanım için yeniden yapılandırıldı.
+
+- PR: **#887**
+- main commit: `4f42bdc273b1b2c57291da231fadfb88d1e954e6`
+- production deploy run: **35508291211 — SUCCESS**
+
+Yeni mimari:
+
+- Rapor aggregation sonucu aktif temsilci snapshot set kimlikleri + filtre parametreleriyle versionlanmış **filesystem report read-model cache** içinde tutulur.
+- Aynı snapshot generation ve aynı filtre kombinasyonu için Gunicorn süreçleri arası **file-lock singleflight** uygulanır. 200 kullanıcı aynı raporu isterse aggregation yalnız bir kez yapılır.
+- Snapshot generation değiştiğinde cache key otomatik değişir; eski rapor cache'i business veriyi etkilemez.
+- Rapor filtre seçenekleri de snapshot generation kimliğiyle cache edilir.
+- PDF/XLSX üretimi web request thread'inden çıkarıldı.
+- Ayrı `ims-report-worker.service` eklendi.
+- Export kuyruğu durable ve deduplicated'dır; aynı artifact için birden fazla kullanıcı tek export işini paylaşır.
+- Hazır PDF/XLSX artifact sonraki isteklere doğrudan verilir.
+- Report worker IMS import/publication işi varken bekler; IMS işi her zaman önceliklidir.
+- Export UI 202 queue yanıtını poll eder; global page loader veya Gunicorn request thread'i uzun dosya üretimi boyunca bloke olmaz.
+- IMS/production snapshot publication sonrasında monthly national/region/city/representative report cache warm-up işi report worker'a bırakılır.
+- Report worker kaynak sınırları:
+  - `Nice=12`
+  - `CPUWeight=500`
+  - `IOWeight=100`
+  - `MemoryHigh=350M`
+  - `MemoryMax=450M`
+- Cache/export artifaktları 45 gün / 2000 dosya sınırıyla prune edilir.
+- Business IMS/production tablolarına raporlama cache'i için yazı yapılmaz.
+- Hedef=IMS, gerçekleşen=P2>P1>IMS ve mevcut snapshot publication kuralları değişmedi.
+
+Concurrency doğrulaması:
+
+- Aynı cache key için **200 concurrent reader** testi eklendi; build yalnız **1 kez** gerçekleşiyor.
+- Snapshot generation değişince cache key değişimi test edildi.
+- Aynı export için queue dedup test edildi.
+- Locked Canonical Contracts: **PASS**.
+- Main smoke: **PASS**.
+- Production:
+  - `IMS_WORKER_IDLE|processing=0`
+  - SQLite `journal_mode=wal`, `busy_timeout=30000`, quick_check `ok`
+  - IMS live gate: **PASS**
+  - Region Manager acceptance: **PASS**, failures `[]`
+  - web: **active**
+  - IMS worker: **active**
+  - report worker: **active**
+  - HTTP health: **PASS**
+- İlgili bekleyen deploy/aktivasyon işi: **YOK**.
