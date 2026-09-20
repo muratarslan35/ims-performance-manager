@@ -93,11 +93,15 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         assert service.to_pdf(report).getvalue().startswith(b"%PDF-1.4")
 
 
-def test_reports_navigation_is_a_visible_dedicated_section():
+def test_reports_navigation_is_visible_with_direct_reports_name():
     sidebar = open("app/templates/partials/sidebar.html", encoding="utf-8").read()
+    template = open("app/templates/reports.html", encoding="utf-8").read()
     css = open("app/static/css/style.css", encoding="utf-8").read()
-    assert '<li class="sidebar-section-label">Raporlar</li>' in sidebar
-    assert "Genel Müdür Raporları" in sidebar
+    assert '<span class="sidebar-nav-label">Raporlar</span>' in sidebar
+    assert "Genel Müdür Raporları" not in sidebar
+    assert "{% block styles %}" in template
+    assert "executive-reports.css" in template
+    assert "{% block head %}" not in template
     assert 'a[href="/reports"]' not in css
 
 
@@ -113,7 +117,7 @@ def test_admin_can_render_reports_and_download_both_formats(app):
     assert response.status_code in {302, 303}
     page = client.get("/reports?year=2026&month=8&period=monthly&scope=national")
     assert page.status_code == 200
-    assert "Genel Müdür Raporları" in page.get_data(as_text=True)
+    assert "Satış ve pazar performansı" in page.get_data(as_text=True)
     excel = client.get("/reports/export/xlsx?year=2026&month=8&period=monthly&scope=national")
     pdf = client.get("/reports/export/pdf?year=2026&month=8&period=monthly&scope=national")
     assert excel.status_code == 200 and excel.data.startswith(b"PK")
