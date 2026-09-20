@@ -12,7 +12,7 @@ from collections import defaultdict
 
 class ExecutiveMarketCockpitService:
     PERIODS = (
-        ("monthly", "1 Aylık"),
+        ("monthly", "Aylık"),
         ("quarterly", "3 Aylık"),
         ("half_year", "6 Aylık · Ocak–Haziran"),
         ("yearly", "12 Aylık"),

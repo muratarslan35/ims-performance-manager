@@ -4,62 +4,55 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_executive_cockpit_is_below_region_workspace_and_dynamic():
+def test_executive_cockpit_is_a_single_glance_summary_before_region_drilldown():
     template = (ROOT / "app/templates/market_analysis.html").read_text(encoding="utf-8")
     partial = (ROOT / "app/templates/partials/executive_market_cockpit.html").read_text(encoding="utf-8")
     javascript = (ROOT / "app/static/js/executive-market-cockpit.js").read_text(encoding="utf-8")
 
-    assert template.index('manager-region-cockpit') < template.index('executive_market_cockpit.html')
+    assert template.index('{% include "partials/executive_market_cockpit.html" %}') < template.index('<section class="manager-region-cockpit"')
     assert "data-exec-period-button" in partial
-    assert "11 Bölge Rekabet Haritası" in partial
-    assert "Türkiye Ürün Portföy Matrisi" in partial
-    assert "En Yüksek 5 Rakip Baskısı" in partial
-    assert "Fırsat ve Risk Bölgeleri" in partial
-    assert "Türkiye Realizasyon Trendi" in partial
-    assert "GENEL MÜDÜR YÖNETİM ÖZETİ" in partial
-    assert "Türkiye gerçekleşen" in partial
+    assert "Türkiye Güncel Durum ve Rekabet Özeti" in partial
+    assert "Bölge Performans Tablosu" in partial
+    assert "Türkiye İlk 5 Rakip" in partial
+    assert "Türkiye Ürün Portföy Matrisi" not in partial
+    assert "Fırsat ve Risk Bölgeleri" not in partial
+    assert "Türkiye Realizasyon Trendi" not in partial
+    assert "Türkiye AI Ticari Aksiyon Merkezi" not in partial
+    assert "Bölgesel AI Yönetim İçgörüleri" not in partial
     assert "TR kutu payı farkı" in partial
-    assert "Güncel kutu pazar payı" in partial
-    assert "Seçili dönem realizasyonu" in partial
-    assert "Şirket kutu çıkışı" in partial
-    assert "Bölgesel AI Yönetim İçgörüleri" in partial
-    assert "GERÇEK VERİ + DİNAMİK YAPAY ZEKA" in partial
-    assert "Dönem hedefi" in partial
-    assert "Dönem gerçekleşen" in partial
+    assert "Kutu payı" in partial
+    assert "Realizasyon" in partial
+    assert "Şirket kutu" in partial
     assert "Rakip kutu" in partial
-    assert "Toplam kutu pazar" in partial
-    assert "AI yönetim yorumu" in partial
-    assert "data-exec-ai-panel" in partial
+    assert "data-exec-ai-panel" not in partial
     assert "region.share_gap_to_national" not in partial
     assert "region.unit_share_gap_to_national" in partial
     assert "openRegion" in javascript
-    assert "Chart.getChart" in javascript
-    assert "panel.dataset.execAiPanel === key" in javascript
+    assert "Chart.getChart" not in javascript
+    assert "data-exec-region-key" in partial
+    assert 'event.key' in javascript
 
 
-def test_executive_trend_renders_monthly_realization_labels():
+def test_executive_client_only_switches_period_and_opens_region_detail():
     javascript = (ROOT / "app/static/js/executive-market-cockpit.js").read_text(encoding="utf-8")
-    assert 'id: "execTrendValueLabels"' in javascript
-    assert 'ctx.fillText(`%${Number(value).toLocaleString("tr-TR"' in javascript
-    assert "plugins: [trendValueLabels]" in javascript
-    assert "layout: {padding: {top: 18}}" in javascript
-    assert 'dataset.theme === "dark"' in javascript
-    assert 'ticks: {color: dark ? "#d8e7f2"' in javascript
-    assert "new MutationObserver" in javascript
+    assert "setPeriod" in javascript
+    assert "openRegion" in javascript
+    assert "scrollIntoView" in javascript
+    assert "new Chart" not in javascript
+    assert "MutationObserver" not in javascript
 
 
-def test_executive_summary_and_ai_cards_keep_theme_contrast():
+def test_executive_region_table_keeps_theme_contrast():
     clarity = (ROOT / "app/static/css/market-analysis-exec-clarity.css").read_text(
         encoding="utf-8"
     )
 
-    assert '[data-theme="dark"] .exec-summary-card h3{color:#f5f9fc!important}' in clarity
-    assert '[data-theme="dark"] .exec-summary-items p{color:#e1edf6!important}' in clarity
-    assert ".exec-ai-card-head strong{color:#fff!important}" in clarity
-    assert ".exec-ai-source span{color:#d8efff!important}" in clarity
-    assert ".exec-ai-action,.exec-ai-action b{color:#f2f8fc!important}" in clarity
-    assert '[data-theme="dark"] .exec-ai-facts small{color:#c1d6e6!important}' in clarity
-    assert '[data-theme="dark"] .exec-ai-facts b{color:#fff!important}' in clarity
+    assert ".exec-region-table" in clarity
+    assert ".exec-status-pill.good" in clarity
+    assert ".exec-status-pill.watch" in clarity
+    assert ".exec-status-pill.risk" in clarity
+    assert '[data-theme="dark"] .exec-region-table th' in clarity
+    assert '[data-theme="dark"] .exec-region-table td' in clarity
 
 
 def test_executive_read_model_reuses_durable_snapshot_payloads_without_db_queries():
@@ -99,9 +92,8 @@ def test_market_analysis_loads_clarity_layer_last_and_removes_status_column():
     assert "<th>Veri durumu</th>" not in template
     assert "item.data_status" not in template
     assert ".exec-cockpit .exec-hero h2" in clarity
-    assert ".exec-metric-guide" in clarity
-    assert ".exec-ai-section" in clarity
-    assert ".exec-ai-facts" in readability
+    assert ".exec-overview-grid" in clarity
+    assert ".exec-rival-overview" in clarity
 
 
 def test_snapshot_backfill_has_application_root_on_python_path():
