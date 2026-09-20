@@ -50,13 +50,20 @@ class ExecutiveReportingService:
     }
 
     def __init__(self, *, year=None, month=None, period="monthly", scope="national",
-                 scope_value="", product_ids=None):
+                 scope_value="", scope_values=None, product_ids=None):
         active = PeriodService.get_active_period()
         self.year = int(year or active.get("year") or datetime.now().year)
         self.month = max(1, min(12, int(month or active.get("month") or datetime.now().month)))
         self.period = period if period in self.PERIODS else "monthly"
         self.scope = scope if scope in self.SCOPES else "national"
-        self.scope_value = str(scope_value or "").strip()
+        raw_scope_values = scope_values if scope_values is not None else [scope_value]
+        self.scope_values = [
+            str(value).strip()
+            for value in raw_scope_values
+            if str(value or "").strip()
+        ]
+        # Backward-compatible scalar accessor for old links/warm jobs.
+        self.scope_value = self.scope_values[0] if self.scope_values else ""
         self.product_ids = {int(value) for value in (product_ids or []) if str(value).isdigit()}
 
     def months(self):
@@ -150,29 +157,44 @@ class ExecutiveReportingService:
 
     def _representatives(self):
         rows = Representative.query.order_by(Representative.rep_name.asc()).all()
-        if self.scope == "region" and self.scope_value:
-            selected_code = self._region_code(self.scope_value) or self.scope_value
+        if self.scope == "region" and self.scope_values:
+            selected_codes = {
+                self._region_code(value) or str(value).strip()
+                for value in self.scope_values
+            }
             rows = [
                 row for row in rows
-                if (self._region_code(row.region) or str(row.region or "").strip()) == selected_code
+                if (self._region_code(row.region) or str(row.region or "").strip()) in selected_codes
             ]
-        elif self.scope == "city" and self.scope_value:
-            selected_city = self._scope_key(self.scope_value)
+        elif self.scope == "city" and self.scope_values:
+            selected_cities = {self._scope_key(value) for value in self.scope_values}
             assignment_rep_ids = {
                 int(row.representative_id)
                 for row in self._assignment_rows()
-                if self._scope_key(row.city) == selected_city
+                if self._scope_key(row.city) in selected_cities
             }
             if assignment_rep_ids:
                 rows = [row for row in rows if int(row.id) in assignment_rep_ids]
             else:
-                rows = [row for row in rows if self._scope_key(row.city) == selected_city]
-        elif self.scope == "representative":
-            rows = [
-                row for row in rows
-                if self.scope_value.isdigit() and int(row.id) == int(self.scope_value)
-            ]
+                rows = [row for row in rows if self._scope_key(row.city) in selected_cities]
+        elif self.scope == "representative" and self.scope_values:
+            selected_ids = {
+                int(value) for value in self.scope_values if str(value).isdigit()
+            }
+            rows = [row for row in rows if int(row.id) in selected_ids]
         return rows
+
+    def _representative_city_map(self, representatives):
+        selected_ids = {int(row.id) for row in representatives}
+        cities = defaultdict(set)
+        for assignment in self._assignment_rows():
+            rep_id = int(assignment.representative_id)
+            if rep_id in selected_ids and str(assignment.city or "").strip():
+                cities[rep_id].add(str(assignment.city).strip())
+        return {
+            int(row.id): ", ".join(sorted(cities.get(int(row.id)) or {str(row.city or "").strip() or "-"}, key=self._scope_key))
+            for row in representatives
+        }
 
     @staticmethod
     def _rival_rows(market):
@@ -297,14 +319,25 @@ class ExecutiveReportingService:
     def scope_label(self):
         if self.scope == "national":
             return "Türkiye Geneli"
-        if self.scope == "region" and self.scope_value:
-            return self._region_label(self.scope_value)
-        if self.scope == "city" and self.scope_value:
-            return self.scope_value
-        if self.scope == "representative" and self.scope_value.isdigit():
-            row = Representative.query.filter_by(id=int(self.scope_value)).first()
-            return row.rep_name if row else "Temsilci"
-        return self.SCOPES[self.scope]
+
+        labels = []
+        if self.scope == "region":
+            labels = [self._region_label(value) for value in self.scope_values]
+        elif self.scope == "city":
+            labels = list(self.scope_values)
+        elif self.scope == "representative":
+            ids = [int(value) for value in self.scope_values if str(value).isdigit()]
+            names = {
+                int(row.id): row.rep_name
+                for row in Representative.query.filter(Representative.id.in_(ids)).all()
+            } if ids else {}
+            labels = [str(names.get(value, f"Temsilci {value}")) for value in ids]
+
+        if not labels:
+            return self.SCOPES[self.scope]
+        if len(labels) <= 3:
+            return " + ".join(labels)
+        return " + ".join(labels[:3]) + f" +{len(labels) - 3}"
 
     @staticmethod
     def _filename_slug(value):
