@@ -4,13 +4,16 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
+import re
+import unicodedata
 
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.models import Product, Representative
+from app.models import Product, Representative, RepresentativeBrickAssignment
+from app.services.alias_service import AliasService
 from app.services.period_service import PeriodService
 from app.services.persistent_representative_snapshot_service import (
     PersistentRepresentativeSnapshotService,
@@ -30,6 +33,19 @@ class ExecutiveReportingService:
         "region": "Bölge",
         "city": "İl",
         "representative": "Temsilci",
+    }
+    REGION_LABELS = {
+        "101": "İstanbul",
+        "201": "Kadıköy",
+        "301": "Bursa",
+        "401": "İzmir",
+        "501": "Ankara",
+        "601": "Samsun",
+        "602": "Trabzon",
+        "701": "Adana",
+        "801": "Konya",
+        "802": "Antalya",
+        "901": "Diyarbakır",
     }
 
     def __init__(self, *, year=None, month=None, period="monthly", scope="national",
@@ -53,28 +69,102 @@ class ExecutiveReportingService:
         return [(self.year, month) for month in range(1, self.month + 1)]
 
     @staticmethod
-    def filter_options():
+    def _region_code(value):
+        match = re.search(r"(?<!\\d)(\\d{3})(?!\\d)", str(value or ""))
+        return match.group(1) if match else ""
+
+    @classmethod
+    def _region_label(cls, value):
+        raw = str(value or "").strip()
+        code = cls._region_code(raw)
+        descriptive = re.sub(r"^\\s*\\d{3}\\s*", "", raw).strip()
+        if descriptive and descriptive != code:
+            return descriptive.title()
+        return cls.REGION_LABELS.get(code, raw or "Bölge")
+
+    @staticmethod
+    def _scope_key(value):
+        return AliasService.normalize(value).strip()
+
+    def _assignment_rows(self):
+        periods = set(self.months())
+        if not periods:
+            return []
+        return [
+            row for row in RepresentativeBrickAssignment.query.filter(
+                RepresentativeBrickAssignment.active.is_(True)
+            ).all()
+            if (int(row.year), int(row.month)) in periods
+        ]
+
+    def filter_options(self):
         reps = Representative.query.order_by(
             Representative.region.asc(), Representative.city.asc(), Representative.rep_name.asc()
         ).all()
+
+        region_labels = {}
+        for representative in reps:
+            raw = str(representative.region or "").strip()
+            if not raw:
+                continue
+            code = self._region_code(raw) or raw
+            region_labels.setdefault(code, self._region_label(raw))
+
+        assignments = self._assignment_rows()
+        assignment_cities = {
+            str(row.city).strip()
+            for row in assignments
+            if str(row.city or "").strip()
+        }
+        cities = assignment_cities or {
+            str(row.city).strip()
+            for row in reps
+            if str(row.city or "").strip()
+        }
+
         return {
             "products": Product.query.filter_by(is_active=True).order_by(
                 Product.display_order.asc(), Product.product_name.asc()
             ).all(),
-            "regions": sorted({str(row.region).strip() for row in reps if str(row.region or "").strip()}),
-            "cities": sorted({str(row.city).strip() for row in reps if str(row.city or "").strip()}),
+            "regions": [
+                {"value": value, "label": label}
+                for value, label in sorted(
+                    region_labels.items(),
+                    key=lambda item: (int(item[0]) if str(item[0]).isdigit() else 9999, item[1]),
+                )
+            ],
+            "cities": [
+                {"value": city, "label": city}
+                for city in sorted(cities, key=self._scope_key)
+            ],
             "representatives": reps,
         }
 
     def _representatives(self):
-        query = Representative.query
-        if self.scope == "region":
-            query = query.filter(Representative.region == self.scope_value) if self.scope_value else query.filter(Representative.id == -1)
-        elif self.scope == "city":
-            query = query.filter(Representative.city == self.scope_value) if self.scope_value else query.filter(Representative.id == -1)
+        rows = Representative.query.order_by(Representative.rep_name.asc()).all()
+        if self.scope == "region" and self.scope_value:
+            selected_code = self._region_code(self.scope_value) or self.scope_value
+            rows = [
+                row for row in rows
+                if (self._region_code(row.region) or str(row.region or "").strip()) == selected_code
+            ]
+        elif self.scope == "city" and self.scope_value:
+            selected_city = self._scope_key(self.scope_value)
+            assignment_rep_ids = {
+                int(row.representative_id)
+                for row in self._assignment_rows()
+                if self._scope_key(row.city) == selected_city
+            }
+            if assignment_rep_ids:
+                rows = [row for row in rows if int(row.id) in assignment_rep_ids]
+            else:
+                rows = [row for row in rows if self._scope_key(row.city) == selected_city]
         elif self.scope == "representative":
-            query = query.filter(Representative.id == int(self.scope_value)) if self.scope_value.isdigit() else query.filter(Representative.id == -1)
-        return query.order_by(Representative.rep_name.asc()).all()
+            rows = [
+                row for row in rows
+                if self.scope_value.isdigit() and int(row.id) == int(self.scope_value)
+            ]
+        return rows
 
     @staticmethod
     def _rival_rows(market):
@@ -199,10 +289,37 @@ class ExecutiveReportingService:
     def scope_label(self):
         if self.scope == "national":
             return "Türkiye Geneli"
+        if self.scope == "region" and self.scope_value:
+            return self._region_label(self.scope_value)
+        if self.scope == "city" and self.scope_value:
+            return self.scope_value
         if self.scope == "representative" and self.scope_value.isdigit():
             row = Representative.query.filter_by(id=int(self.scope_value)).first()
             return row.rep_name if row else "Temsilci"
-        return self.scope_value or self.SCOPES[self.scope]
+        return self.SCOPES[self.scope]
+
+    @staticmethod
+    def _filename_slug(value):
+        text = str(value or "").strip().replace("ı", "i").replace("İ", "I")
+        text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+
+    def export_filename(self, report, file_type):
+        prefixes = {
+            "national": "national-analiz-raporu",
+            "region": "bolge-analiz-raporu",
+            "city": "il-analiz-raporu",
+            "representative": "temsilci-analiz-raporu",
+        }
+        prefix = prefixes.get(self.scope, "analiz-raporu")
+        scope_slug = ""
+        if self.scope != "national":
+            scope_slug = self._filename_slug(report.get("scope_label"))
+        parts = [prefix]
+        if scope_slug:
+            parts.append(scope_slug)
+        parts.extend([str(report["year"]), f'{int(report["month"]):02d}'])
+        return "-".join(parts) + f".{file_type}"
 
     @staticmethod
     def _headers():
