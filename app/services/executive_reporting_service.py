@@ -669,9 +669,19 @@ class ExecutiveReportingService:
         subtitle = f'{report["scope_label"]} | {report["period_label"]} | {report["year"]}/{report["month"]:02d}'
         self._excel_title(sheet, "SATIŞ VE PAZAR PERFORMANS RAPORU", subtitle, 10)
         sheet.append([])
-        sheet.append(["Kapsam", report["scope_label"], "Dönem", report["period_label"], "Rapor Ayı", f'{report["year"]}/{report["month"]:02d}', "Temsilci", report["representative_count"], "IMS Hafta", report["source_week"] or "-"])
+        sheet.append([
+            "Kapsam", report["scope_label"], "Dönem", report["period_label"],
+            "Rapor Ayı", f'{report["year"]}/{report["month"]:02d}',
+            "Temsilci", report["representative_count"], "IMS Hafta", report["source_week"] or "-",
+        ])
         sheet.append([])
-        sheet.append(["Hedef TL", report["totals"]["target_tl"], "Gerçekleşen TL", report["totals"]["actual_tl"], "TL Realizasyon", report["totals"]["realization_percent"] / 100, "Pazar Payı", (report["totals"]["market_share_percent"] or 0) / 100, "Toplam Pazar Kutu", report["totals"]["market_unit"]])
+        sheet.append([
+            "Hedef TL", report["totals"]["target_tl"],
+            "Gerçekleşen TL", report["totals"]["actual_tl"],
+            "TL Realizasyon", report["totals"]["realization_percent"] / 100,
+            "Pazar Payı", (report["totals"]["market_share_percent"] or 0) / 100,
+            "Toplam Pazar Kutu", report["totals"]["market_unit"],
+        ])
         for column in range(1, 11, 2):
             sheet.cell(6, column).font = Font(name="Aptos", bold=True, color="64748B", size=9)
             sheet.cell(6, column).fill = PatternFill("solid", fgColor="EAF1F8")
@@ -700,9 +710,11 @@ class ExecutiveReportingService:
                 cell.border = Border(bottom=thin)
                 cell.font = Font(name="Aptos", size=10, color="203247")
                 cell.alignment = Alignment(vertical="center")
-            for cell in row[1:3]: cell.number_format = '₺#,##0'
+            for cell in row[1:3]:
+                cell.number_format = '₺#,##0'
             row[3].number_format = '0"%"'
-            for cell in row[4:8]: cell.number_format = '#,##0'
+            for cell in row[4:8]:
+                cell.number_format = '#,##0'
             row[8].number_format = '0.0"%"'
         widths = [23, 16, 18, 14, 15, 18, 18, 16, 14, 14]
         for index, width in enumerate(widths, 1):
@@ -714,24 +726,81 @@ class ExecutiveReportingService:
         sheet.page_setup.fitToWidth = 1
         sheet.page_setup.fitToHeight = 0
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
-        sheet.print_area = f"A1:J{last_row}"
+
+        if last_row >= 9:
+            performance_chart = BarChart()
+            performance_chart.type = "col"
+            performance_chart.style = 10
+            performance_chart.title = "Ürün Bazında Hedef / Gerçekleşen TL"
+            performance_chart.y_axis.title = "TL"
+            performance_chart.x_axis.title = "Ürün"
+            performance_chart.height = 7.8
+            performance_chart.width = 14.5
+            performance_chart.gapWidth = 65
+            performance_chart.add_data(
+                Reference(sheet, min_col=2, max_col=3, min_row=8, max_row=last_row),
+                titles_from_data=True,
+            )
+            performance_chart.set_categories(
+                Reference(sheet, min_col=1, min_row=9, max_row=last_row)
+            )
+            performance_chart.legend.position = "b"
+            if len(performance_chart.series) >= 2:
+                performance_chart.series[0].graphicalProperties.solidFill = "94A3B8"
+                performance_chart.series[1].graphicalProperties.solidFill = "0B5CAD"
+            performance_chart.dLbls = DataLabelList()
+            performance_chart.dLbls.showVal = False
+            sheet.add_chart(performance_chart, "K4")
+            sheet.print_area = f"A1:Q{max(last_row, 20)}"
+        else:
+            sheet.print_area = f"A1:J{last_row}"
 
         trend = workbook.create_sheet("Dönem Trendi")
         self._excel_title(trend, "DÖNEMSEL SATIŞ GELİŞİMİ", subtitle, 4)
-        trend.append([]); trend.append(["Dönem", "Gerçekleşen TL", "Gerçekleşen Kutu", "TL Payı"])
+        trend.append([])
+        trend.append(["Dönem", "Gerçekleşen TL", "Gerçekleşen Kutu", "TL Payı"])
         total_trend_tl = sum(float(row["actual_tl"] or 0) for row in report["trend"])
         for item in report["trend"]:
-            trend.append([item["label"], item["actual_tl"], item["actual_unit"], (item["actual_tl"] / total_trend_tl) if total_trend_tl else 0])
+            trend.append([
+                item["label"], item["actual_tl"], item["actual_unit"],
+                (item["actual_tl"] / total_trend_tl) if total_trend_tl else 0,
+            ])
         self._style_excel_header(trend[4])
         for row in trend.iter_rows(min_row=5, max_row=trend.max_row):
-            row[1].number_format = '₺#,##0'; row[2].number_format = '#,##0'; row[3].number_format = '0.0%'
-        chart = BarChart(); chart.type = "col"; chart.style = 10; chart.title = "Gerçekleşen TL"; chart.y_axis.title = "TL"; chart.height = 8; chart.width = 16
-        chart.add_data(Reference(trend, min_col=2, min_row=4, max_row=trend.max_row), titles_from_data=True)
-        chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row)); trend.add_chart(chart, "F4")
-        for index, width in enumerate([18, 20, 20, 14], 1): trend.column_dimensions[get_column_letter(index)].width = width
-        trend.freeze_panes = "A5"; trend.sheet_view.showGridLines = False
-        trend.page_setup.orientation = "landscape"; trend.page_setup.paperSize = trend.PAPERSIZE_A4
-        trend.page_setup.fitToWidth = 1; trend.page_setup.fitToHeight = 1; trend.sheet_properties.pageSetUpPr.fitToPage = True
+            row[1].number_format = '₺#,##0'
+            row[2].number_format = '#,##0'
+            row[3].number_format = '0.0%'
+        chart = LineChart()
+        chart.style = 13
+        chart.title = "Gerçekleşen TL Trendi"
+        chart.y_axis.title = "TL"
+        chart.x_axis.title = "Dönem"
+        chart.height = 8
+        chart.width = 16
+        chart.add_data(
+            Reference(trend, min_col=2, min_row=4, max_row=trend.max_row),
+            titles_from_data=True,
+        )
+        chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row))
+        chart.legend = None
+        if chart.series:
+            chart.series[0].graphicalProperties.line.solidFill = "0B5CAD"
+            chart.series[0].graphicalProperties.line.width = 28575
+            chart.series[0].marker.symbol = "circle"
+            chart.series[0].marker.size = 7
+        chart.dLbls = DataLabelList()
+        chart.dLbls.showVal = True
+        chart.dLbls.numFmt = '#,##0'
+        trend.add_chart(chart, "F4")
+        for index, width in enumerate([18, 20, 20, 14], 1):
+            trend.column_dimensions[get_column_letter(index)].width = width
+        trend.freeze_panes = "A5"
+        trend.sheet_view.showGridLines = False
+        trend.page_setup.orientation = "landscape"
+        trend.page_setup.paperSize = trend.PAPERSIZE_A4
+        trend.page_setup.fitToWidth = 1
+        trend.page_setup.fitToHeight = 1
+        trend.sheet_properties.pageSetUpPr.fitToPage = True
 
         regions = workbook.create_sheet("Bölge Analizi")
         self._excel_title(regions, "BÖLGE PERFORMANS ANALİZİ", subtitle, 9)
@@ -804,18 +873,16 @@ class ExecutiveReportingService:
         bricks.append([])
         bricks.append([
             "Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket Kutu",
-            "Rakip Kutu", "Toplam Pazar", "Pazar Payı %", "Başlıca Rakipler", "Rakip Kutu Detayı",
+            "Rakip Toplam Kutu", "Toplam Pazar", "Pazar Payı %",
+            "En Güçlü Rakip", "En Güçlü Rakip Kutu",
         ])
         for item in report.get("brick_rows") or []:
-            rivals_text = ", ".join(rival["name"] for rival in item.get("rivals") or [])
-            rival_units = ", ".join(
-                f'{rival["name"]}: {float(rival["unit"] or 0):,.0f}'
-                for rival in item.get("rivals") or []
-            )
+            top_rival = (item.get("rivals") or [{}])[0]
             bricks.append([
                 item["region_name"], item["city"], item["representative_name"], item["brick"],
                 item["product_name"], item["company_unit"], item["competitor_unit"],
-                item["market_unit"], item["share_percent"], rivals_text, rival_units,
+                item["market_unit"], item["share_percent"],
+                top_rival.get("name") or "-", top_rival.get("unit") or 0,
             ])
         self._style_excel_header(bricks[4])
         bricks.freeze_panes = "A5"
@@ -826,7 +893,8 @@ class ExecutiveReportingService:
             row[6].number_format = '#,##0'
             row[7].number_format = '#,##0'
             row[8].number_format = '0.0"%"'
-        for index, width in enumerate([18, 16, 24, 24, 20, 14, 14, 16, 14, 38, 42], 1):
+            row[10].number_format = '#,##0'
+        for index, width in enumerate([18, 16, 24, 24, 20, 14, 17, 16, 14, 28, 20], 1):
             bricks.column_dimensions[get_column_letter(index)].width = width
         bricks.page_setup.orientation = "landscape"
         bricks.page_setup.paperSize = bricks.PAPERSIZE_A4
@@ -834,18 +902,118 @@ class ExecutiveReportingService:
         bricks.page_setup.fitToHeight = 0
         bricks.sheet_properties.pageSetUpPr.fitToPage = True
 
+        rival_groups = self._rivals_by_product(report)
         rivals = workbook.create_sheet("Rakip Analizi")
-        self._excel_title(rivals, "TÜM RAKİPLER VE PAZAR PAYLARI", subtitle, 7)
-        rivals.append([]); rivals.append(["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu"])
-        for item in report["rival_rows"]:
-            rivals.append([item["product_name"], item["name"], item["unit"], (item["share_percent"] or 0) / 100, item["company_unit"], (item["company_share_percent"] or 0) / 100, item["market_unit"]])
-        self._style_excel_header(rivals[4]); rivals.freeze_panes = "A5"; rivals.auto_filter.ref = f"A4:G{max(4, rivals.max_row)}"; rivals.sheet_view.showGridLines = False
+        self._excel_title(rivals, "RAKİP ANALİZİ · YÖNETİM ÖZETİ", subtitle, 8)
+        rivals.append([])
+        rivals.append([
+            "Ürün", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar",
+            "Rakip Sayısı", "Lider Rakip", "Lider Rakip Kutu", "Lider Rakip Payı",
+        ])
+        for product_name, items in rival_groups:
+            leader = items[0] if items else {}
+            sample = items[0] if items else {}
+            rivals.append([
+                product_name,
+                sample.get("company_unit") or 0,
+                (sample.get("company_share_percent") or 0) / 100,
+                sample.get("market_unit") or 0,
+                len(items),
+                leader.get("name") or "-",
+                leader.get("unit") or 0,
+                (leader.get("share_percent") or 0) / 100,
+            ])
+        self._style_excel_header(rivals[4])
+        rivals.freeze_panes = "A5"
+        rivals.auto_filter.ref = f"A4:H{max(4, rivals.max_row)}"
+        rivals.sheet_view.showGridLines = False
         for row in rivals.iter_rows(min_row=5, max_row=rivals.max_row):
-            row[2].number_format = '#,##0'; row[3].number_format = '0.0%'; row[4].number_format = '#,##0'; row[5].number_format = '0.0%'; row[6].number_format = '#,##0'
-        for index, width in enumerate([22, 34, 16, 20, 16, 20, 20], 1): rivals.column_dimensions[get_column_letter(index)].width = width
-        rivals.page_setup.orientation = "landscape"; rivals.page_setup.paperSize = rivals.PAPERSIZE_A4
-        rivals.page_setup.fitToWidth = 1; rivals.page_setup.fitToHeight = 0; rivals.sheet_properties.pageSetUpPr.fitToPage = True
-        rivals.print_title_rows = "1:4"; rivals.print_area = f"A1:G{max(4, rivals.max_row)}"
+            row[1].number_format = '#,##0'
+            row[2].number_format = '0.0%'
+            row[3].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '0.0%'
+        for index, width in enumerate([24, 16, 20, 18, 14, 30, 19, 18], 1):
+            rivals.column_dimensions[get_column_letter(index)].width = width
+        rivals.page_setup.orientation = "landscape"
+        rivals.page_setup.paperSize = rivals.PAPERSIZE_A4
+        rivals.page_setup.fitToWidth = 1
+        rivals.page_setup.fitToHeight = 0
+        rivals.sheet_properties.pageSetUpPr.fitToPage = True
+        rivals.print_title_rows = "1:4"
+        rivals.print_area = f"A1:H{max(4, rivals.max_row)}"
+
+        used_titles = set(workbook.sheetnames)
+        for product_name, items in rival_groups:
+            raw_title = re.sub(r'[:\\/?*\[\]]+', "-", f"Rakip - {product_name}").strip()
+            base_title = raw_title[:31] or "Rakip Detayı"
+            title = base_title
+            counter = 2
+            while title in used_titles:
+                suffix = f" {counter}"
+                title = base_title[:31 - len(suffix)] + suffix
+                counter += 1
+            used_titles.add(title)
+
+            detail = workbook.create_sheet(title)
+            self._excel_title(detail, f"{product_name.upper()} · RAKİP DETAYI", subtitle, 6)
+            detail.append([])
+            detail.append([
+                "Rakip", "Rakip Kutu", "Rakip Pazar Payı",
+                "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu",
+            ])
+            for item in items:
+                detail.append([
+                    item["name"], item["unit"], (item["share_percent"] or 0) / 100,
+                    item["company_unit"], (item["company_share_percent"] or 0) / 100,
+                    item["market_unit"],
+                ])
+            self._style_excel_header(detail[4])
+            detail.freeze_panes = "A5"
+            detail.auto_filter.ref = f"A4:F{max(4, detail.max_row)}"
+            detail.sheet_view.showGridLines = False
+            for row in detail.iter_rows(min_row=5, max_row=detail.max_row):
+                row[1].number_format = '#,##0'
+                row[2].number_format = '0.0%'
+                row[3].number_format = '#,##0'
+                row[4].number_format = '0.0%'
+                row[5].number_format = '#,##0'
+            for index, width in enumerate([34, 18, 20, 18, 20, 20], 1):
+                detail.column_dimensions[get_column_letter(index)].width = width
+
+            if detail.max_row >= 5:
+                rival_chart = BarChart()
+                rival_chart.type = "bar"
+                rival_chart.style = 10
+                rival_chart.title = f"{product_name} · Rakip Kutu Dağılımı"
+                rival_chart.x_axis.title = "Kutu"
+                rival_chart.y_axis.title = "Rakip"
+                rival_chart.height = 8
+                rival_chart.width = 12.5
+                rival_chart.gapWidth = 45
+                rival_chart.add_data(
+                    Reference(detail, min_col=2, min_row=4, max_row=detail.max_row),
+                    titles_from_data=True,
+                )
+                rival_chart.set_categories(
+                    Reference(detail, min_col=1, min_row=5, max_row=detail.max_row)
+                )
+                rival_chart.legend = None
+                if rival_chart.series:
+                    rival_chart.series[0].graphicalProperties.solidFill = "E87422"
+                rival_chart.dLbls = DataLabelList()
+                rival_chart.dLbls.showVal = True
+                rival_chart.dLbls.numFmt = '#,##0'
+                detail.add_chart(rival_chart, "H4")
+                detail.print_area = f"A1:N{max(detail.max_row, 22)}"
+            else:
+                detail.print_area = f"A1:F{detail.max_row}"
+            detail.page_setup.orientation = "landscape"
+            detail.page_setup.paperSize = detail.PAPERSIZE_A4
+            detail.page_setup.fitToWidth = 1
+            detail.page_setup.fitToHeight = 0
+            detail.sheet_properties.pageSetUpPr.fitToPage = True
+
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
