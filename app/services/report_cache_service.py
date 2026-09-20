@@ -25,7 +25,7 @@ from app.services.persistent_representative_snapshot_service import (
 
 
 class ReportCacheService:
-    VERSION = 1
+    VERSION = 2
 
     @classmethod
     def _root(cls) -> Path:
@@ -47,18 +47,30 @@ class ReportCacheService:
 
     @classmethod
     def identity(cls, service) -> tuple[str, dict[str, Any]]:
-        scope_value = str(service.scope_value or "")
+        raw_scope_values = list(getattr(service, "scope_values", None) or [service.scope_value])
         if service.scope == "region":
-            scope_value = service._region_code(scope_value) or scope_value
+            scope_values = sorted({
+                service._region_code(value) or str(value).strip()
+                for value in raw_scope_values if str(value or "").strip()
+            })
         elif service.scope == "city":
-            scope_value = service._scope_key(scope_value)
+            scope_values = sorted({
+                service._scope_key(value)
+                for value in raw_scope_values if str(value or "").strip()
+            })
+        elif service.scope == "representative":
+            scope_values = sorted({
+                str(int(value)) for value in raw_scope_values if str(value).isdigit()
+            }, key=int)
+        else:
+            scope_values = []
         payload = {
             "version": cls.VERSION,
             "year": int(service.year),
             "month": int(service.month),
             "period": str(service.period),
             "scope": str(service.scope),
-            "scope_value": scope_value,
+            "scope_values": scope_values,
             "product_ids": sorted(int(value) for value in service.product_ids),
             "source_sets": cls.source_sets(service),
         }
@@ -167,6 +179,9 @@ class ReportCacheService:
                         "id": int(item.id),
                         "rep_name": str(item.rep_name),
                         "region": str(item.region or ""),
+                        "region_code": service._region_code(item.region) or str(item.region or ""),
+                        "region_label": service._region_label(item.region),
+                        "city": str(item.city or ""),
                     }
                     for item in options["representatives"]
                 ],
