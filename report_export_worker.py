@@ -11,6 +11,7 @@ import signal
 import time
 
 from app import create_app
+from app.extensions import db
 from app.models import IMSImportJob
 from app.services.executive_reporting_service import ExecutiveReportingService
 from app.services.report_cache_service import ReportCacheService
@@ -26,14 +27,19 @@ def _stop(*_args):
 
 
 def _ims_busy() -> bool:
-    return (
-        IMSImportJob.query.filter(
-            IMSImportJob.status.in_(
-                (IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING)
-            )
-        ).count()
-        > 0
-    )
+    try:
+        return (
+            IMSImportJob.query.filter(
+                IMSImportJob.status.in_(
+                    (IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING)
+                )
+            ).count()
+            > 0
+        )
+    finally:
+        # A long-lived report worker must never pin a SQLite read transaction
+        # and prevent WAL checkpoints while it is idle.
+        db.session.remove()
 
 
 def _process_export(app) -> bool:
@@ -159,6 +165,8 @@ def _process_warm(app) -> bool:
         item["status"] = "QUEUED"
         ReportWarmQueue.save(item)
         time.sleep(2)
+    finally:
+        db.session.remove()
     return True
 
 
