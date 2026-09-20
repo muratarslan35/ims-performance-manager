@@ -915,3 +915,34 @@ Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontroll�
   - web **active**, worker **active**
 - Böylece Raporlar modülü, profesyonel PDF/Excel exportları ve tam rakip kapsamı production servisinde aktif hale geldi.
 - İlgili bekleyen rapor deploy/aktivasyon işi: **YOK**.
+
+
+### Rapor filtreleri ve export UX düzeltmesi — 20.09.2026
+
+Kullanıcı geri bildirimiyle Raporlar ekranında dört ayrı sorun düzeltildi:
+
+- Excel/PDF indirmesi artık sayfa navigasyonu gibi davranmıyor. Export linkleri global page-loader'dan çıkarıldı ve indirme `fetch + blob` ile yapılıyor; dosya indikten sonra %99 yükleme katmanı ekranda kalmıyor.
+- Bölge filtresinde yalnız `101/201/.../901` kodları yerine gerçek bölge adları gösteriliyor. Canonical bölge adları: İstanbul, Kadıköy, Bursa, İzmir, Ankara, Samsun, Trabzon, Adana, Konya, Antalya, Diyarbakır.
+- İl seçenekleri artık temsilci master kaydındaki bölge merkezinden değil, seçili rapor döneminin aktif `RepresentativeBrickAssignment.city` alanlarından üretiliyor. İl seçildiğinde aynı dönem için o ile bağlı aktif temsilci kapsamı kullanılıyor.
+- Bölge kimliği normalize edildi; örneğin `901` ile `901 DIYARBAKIR` aynı bölge kabul ediliyor.
+- Export dosya adları seçilen analize göre değişiyor:
+  - `national-analiz-raporu-YYYY-MM.pdf/xlsx`
+  - `bolge-analiz-raporu-<bolge>-YYYY-MM.pdf/xlsx`
+  - `il-analiz-raporu-<il>-YYYY-MM.pdf/xlsx`
+  - `temsilci-analiz-raporu-<temsilci>-YYYY-MM.pdf/xlsx`
+- Rapor değerlerinin snapshot-only okuma sözleşmesi, IMS/production iş verileri ve P2>P1>IMS kuralları değiştirilmedi.
+
+Doğrulama:
+
+- PR: **#885**
+- merge commit: `7ed69bf8a2229842dece540d987e890f4ba7383e`
+- Locked Canonical Contracts: **PASS**
+- Yeni rapor testleri PASS; full backend suite'te kalan 3 failure bu değişiklikten önce de bulunan aynı baseline contract failure'larıdır.
+- Production workflow run: **35506018241 — SUCCESS**
+- `IMS_WORKER_IDLE|processing=0`
+- SQLite: WAL / busy_timeout 30000
+- Region Manager acceptance: **PASS**, failures `[]`
+- web: **active**
+- worker: **active**
+- HTTP health: **PASS**
+- İlgili bekleyen deploy işlemi: **YOK**
