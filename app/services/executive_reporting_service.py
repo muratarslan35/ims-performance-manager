@@ -899,7 +899,23 @@ class ExecutiveReportingService:
         rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
         story += [rival_table, PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
         brick_data = [["Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket", "Rakip", "Pazar", "Pay"]]
-        for item in report.get("brick_rows") or []:
+        all_pdf_bricks = report.get("brick_rows") or []
+        pdf_bricks = all_pdf_bricks
+        if len(all_pdf_bricks) > 500:
+            pdf_bricks = sorted(
+                all_pdf_bricks,
+                key=lambda item: (
+                    -float(item.get("competitor_unit") or 0),
+                    str(item.get("brick") or ""),
+                ),
+            )[:500]
+            story.append(Paragraph(
+                f"PDF yönetim görünümünde en yüksek rakip baskısına sahip 500 brick satırı gösterilir. "
+                f"Tam {len(all_pdf_bricks)} satır Excel Brick Analizi sayfasında bulunur.",
+                normal,
+            ))
+            story.append(Spacer(1, 2*mm))
+        for item in pdf_bricks:
             brick_data.append([
                 Paragraph(item["region_name"], small),
                 Paragraph(item["city"], small),
