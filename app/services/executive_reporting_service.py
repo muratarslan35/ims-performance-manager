@@ -1029,6 +1029,8 @@ class ExecutiveReportingService:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.barcharts import HorizontalBarChart
 
         output = BytesIO()
         font_name, bold_name = "Helvetica", "Helvetica-Bold"
@@ -1038,7 +1040,7 @@ class ExecutiveReportingService:
                 font_name, bold_name = "ReportSans", "ReportSans-Bold"
             except Exception:
                 pass
-        navy, blue, green, pale, line = colors.HexColor("#123E70"), colors.HexColor("#0B5CAD"), colors.HexColor("#16865B"), colors.HexColor("#F3F7FB"), colors.HexColor("#DCE5EF")
+        navy, blue, green, orange, pale, line = colors.HexColor("#123E70"), colors.HexColor("#0B5CAD"), colors.HexColor("#16865B"), colors.HexColor("#E87422"), colors.HexColor("#F3F7FB"), colors.HexColor("#DCE5EF")
         styles = getSampleStyleSheet()
         title = ParagraphStyle("ReportTitle", parent=styles["Title"], fontName=bold_name, fontSize=19, leading=23, textColor=colors.white, alignment=TA_LEFT)
         subtitle = ParagraphStyle("ReportSubtitle", parent=styles["Normal"], fontName=font_name, fontSize=8.5, leading=12, textColor=colors.HexColor("#DDEBFA"))
@@ -1120,14 +1122,146 @@ class ExecutiveReportingService:
             ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
             ("BOTTOMPADDING",(0,0),(-1,-1),4),
         ]))
-        story += [representative_table, PageBreak(), Paragraph("Tüm rakipler ve aylık pazar payları", heading), Paragraph("Pazar payı, seçilen kapsam ve dönemde ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.", normal), Spacer(1, 3*mm)]
-        rival_data = [["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar"]]
-        for item in report["rival_rows"]:
-            rival_data.append([Paragraph(item["product_name"], small), Paragraph(item["name"], small), f'{item["unit"]:,.0f}', f'%{item["share_percent"]:.1f}' if item["share_percent"] is not None else "-", f'{item["company_unit"]:,.0f}', f'%{item["company_share_percent"]:.1f}' if item["company_share_percent"] is not None else "-", f'{item["market_unit"]:,.0f}'])
-        if len(rival_data) == 1: rival_data.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
-        rival_table = Table(rival_data, repeatRows=1, colWidths=[35*mm,74*mm,29*mm,37*mm,29*mm,37*mm,28*mm])
-        rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
-        story += [rival_table, PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
+        story += [
+            representative_table,
+            PageBreak(),
+            Paragraph("Rakip analizi · ürün bazlı yönetim özeti", heading),
+            Paragraph(
+                "Rakipler ürün bazında ayrıştırılmıştır. Her ürünün detayında rakip kutu dağılımı "
+                "ve pazar payları ayrı sayfada gösterilir.",
+                normal,
+            ),
+            Spacer(1, 3*mm),
+        ]
+        rival_groups = self._rivals_by_product(report)
+        rival_overview = [[
+            "Ürün", "Şirket Kutu", "Şirket Payı", "Toplam Pazar",
+            "Rakip Sayısı", "Lider Rakip", "Lider Rakip Payı",
+        ]]
+        for product_name, items in rival_groups:
+            sample = items[0] if items else {}
+            leader = items[0] if items else {}
+            rival_overview.append([
+                Paragraph(product_name, small),
+                f'{float(sample.get("company_unit") or 0):,.0f}',
+                f'%{float(sample.get("company_share_percent") or 0):.1f}',
+                f'{float(sample.get("market_unit") or 0):,.0f}',
+                str(len(items)),
+                Paragraph(str(leader.get("name") or "-"), small),
+                f'%{float(leader.get("share_percent") or 0):.1f}',
+            ])
+        if len(rival_overview) == 1:
+            rival_overview.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
+        rival_overview_table = Table(
+            rival_overview,
+            repeatRows=1,
+            colWidths=[40*mm, 31*mm, 31*mm, 33*mm, 27*mm, 70*mm, 32*mm],
+        )
+        rival_overview_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(1,1),(4,-1),"RIGHT"),
+            ("ALIGN",(6,1),(6,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),5),
+            ("BOTTOMPADDING",(0,0),(-1,-1),5),
+        ]))
+        story.append(rival_overview_table)
+
+        for product_name, items in rival_groups:
+            story.append(PageBreak())
+            story.append(Paragraph(f"Rakip analizi · {product_name}", heading))
+            sample = items[0] if items else {}
+            company_unit = float(sample.get("company_unit") or 0)
+            company_share = float(sample.get("company_share_percent") or 0)
+            market_unit = float(sample.get("market_unit") or 0)
+            competitor_total = sum(float(item.get("unit") or 0) for item in items)
+            product_kpis = Table(
+                [
+                    ["ŞİRKET KUTU", "ŞİRKET PAYI", "RAKİP TOPLAM KUTU", "TOPLAM PAZAR"],
+                    [
+                        f"{company_unit:,.0f}",
+                        f"%{company_share:.1f}",
+                        f"{competitor_total:,.0f}",
+                        f"{market_unit:,.0f}",
+                    ],
+                ],
+                colWidths=[66*mm] * 4,
+                rowHeights=[7*mm, 12*mm],
+            )
+            product_kpis.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),pale),
+                ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#64748B")),
+                ("FONTNAME",(0,0),(-1,0),bold_name),
+                ("FONTSIZE",(0,0),(-1,0),6.4),
+                ("FONTNAME",(0,1),(-1,1),bold_name),
+                ("FONTSIZE",(0,1),(-1,1),12),
+                ("TEXTCOLOR",(0,1),(-1,1),navy),
+                ("ALIGN",(0,0),(-1,-1),"CENTER"),
+                ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                ("BOX",(0,0),(-1,-1),.4,line),
+                ("INNERGRID",(0,0),(-1,-1),.3,line),
+            ]))
+            story += [product_kpis, Spacer(1, 4*mm)]
+
+            top_items = items[:8]
+            if top_items:
+                drawing = Drawing(760, 182)
+                chart = HorizontalBarChart()
+                chart.x = 135
+                chart.y = 18
+                chart.height = 145
+                chart.width = 560
+                chart.data = [[float(item.get("unit") or 0) for item in top_items]]
+                chart.categoryAxis.categoryNames = [str(item.get("name") or "Rakip") for item in top_items]
+                chart.bars[0].fillColor = orange
+                chart.valueAxis.valueMin = 0
+                chart.valueAxis.valueMax = max(
+                    max(float(item.get("unit") or 0) for item in top_items) * 1.15,
+                    1,
+                )
+                chart.valueAxis.labels.fontName = font_name
+                chart.valueAxis.labels.fontSize = 7
+                chart.categoryAxis.labels.fontName = font_name
+                chart.categoryAxis.labels.fontSize = 7
+                chart.categoryAxis.strokeColor = line
+                chart.valueAxis.strokeColor = line
+                drawing.add(chart)
+                story += [drawing, Spacer(1, 2*mm)]
+
+            rival_data = [[
+                "Rakip", "Rakip Kutu", "Rakip Pazar Payı",
+                "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar",
+            ]]
+            for item in items:
+                rival_data.append([
+                    Paragraph(str(item.get("name") or "Rakip"), small),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                    f'{float(item.get("company_unit") or 0):,.0f}',
+                    f'%{float(item.get("company_share_percent") or 0):.1f}',
+                    f'{float(item.get("market_unit") or 0):,.0f}',
+                ])
+            if len(rival_data) == 1:
+                rival_data.append(["Veri yok", "-", "-", "-", "-", "-"])
+            rival_table = Table(
+                rival_data,
+                repeatRows=1,
+                colWidths=[76*mm, 36*mm, 42*mm, 36*mm, 43*mm, 36*mm],
+            )
+            rival_table.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+                ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+                ("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(1,1),(-1,-1),"RIGHT"),
+                ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+                ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
+                ("BOTTOMPADDING",(0,0),(-1,-1),4),
+            ]))
+            story.append(rival_table)
+
+        story += [PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
         brick_data = [["Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket", "Rakip", "Pazar", "Pay"]]
         all_pdf_bricks = report.get("brick_rows") or []
         pdf_bricks = all_pdf_bricks
