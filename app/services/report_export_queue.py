@@ -58,6 +58,10 @@ class ReportExportQueue:
         filename: str,
         scope: str,
         scope_value: str,
+        year: int,
+        month: int,
+        period: str,
+        product_ids: list[int] | set[int] | tuple[int, ...],
     ) -> dict:
         if file_type not in {"pdf", "xlsx"}:
             raise ValueError("unsupported report export type")
@@ -81,6 +85,10 @@ class ReportExportQueue:
                 "filename": filename,
                 "scope": scope,
                 "scope_value": scope_value or "",
+                "year": int(year),
+                "month": int(month),
+                "period": str(period),
+                "product_ids": sorted(int(value) for value in product_ids),
                 "status": cls.STATUS_QUEUED,
                 "error": None,
                 "created_at": now,
