@@ -1,16 +1,69 @@
 (function(){
-  const scope=document.getElementById('reportScope');const value=document.getElementById('reportScopeValue');
+  const scope=document.getElementById('reportScope');
   const form=document.getElementById('executiveReportFilters');
-  const all=document.getElementById('reportAllProducts');const products=[...document.querySelectorAll('input[name="product_id"]')];
+  const all=document.getElementById('reportAllProducts');
+  const products=[...document.querySelectorAll('input[name="product_id"]')];
+  const scopePanels=[...document.querySelectorAll('[data-scope-panel]')];
+  const scopeCount=document.getElementById('reportScopeCount');
+
+  function activeScopeInputs(){
+    const selected=scope?.value||'national';
+    return [...document.querySelectorAll('[data-scope-panel="'+selected+'"] input[name="scope_value"]')];
+  }
+
+  function updateScopeCount(){
+    if(!scopeCount)return;
+    if((scope?.value||'national')==='national'){
+      scopeCount.textContent='Tüm kapsam';
+      return;
+    }
+    const count=activeScopeInputs().filter(input=>input.checked).length;
+    scopeCount.textContent=count?count+' seçili':'Tümü';
+  }
 
   function syncScope(){
-    const selected=scope.value;
-    [...value.options].forEach(option=>{option.hidden=Boolean(option.dataset.scope&&option.dataset.scope!==selected);});
-    value.disabled=selected==='national';
-    if(selected==='national') value.value='';
-    else if(![...value.selectedOptions].some(option=>!option.hidden)) value.value='';
-    document.getElementById('scopeValueLabel').textContent={region:'Bölge',city:'İl',representative:'Temsilci'}[selected]||'Kapsam';
+    const selected=scope?.value||'national';
+    scopePanels.forEach(panel=>{
+      const active=panel.dataset.scopePanel===selected;
+      panel.hidden=!active;
+      panel.querySelectorAll('input[name="scope_value"]').forEach(input=>{
+        input.disabled=!active;
+      });
+    });
+    updateScopeCount();
   }
+
+  function normalizeSearch(value){
+    return String(value||'').toLocaleLowerCase('tr-TR').trim();
+  }
+
+  document.querySelectorAll('[data-scope-search]').forEach(input=>{
+    input.addEventListener('input',()=>{
+      const type=input.dataset.scopeSearch;
+      const query=normalizeSearch(input.value);
+      document.querySelectorAll('[data-scope-option="'+type+'"]').forEach(option=>{
+        option.hidden=Boolean(query&&!normalizeSearch(option.dataset.search).includes(query));
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-scope-all]').forEach(button=>{
+    button.addEventListener('click',()=>{
+      const type=button.dataset.scopeAll;
+      document.querySelectorAll('[data-scope-option="'+type+'"]:not([hidden]) input[name="scope_value"]').forEach(input=>input.checked=true);
+      updateScopeCount();
+    });
+  });
+
+  document.querySelectorAll('[data-scope-clear]').forEach(button=>{
+    button.addEventListener('click',()=>{
+      const type=button.dataset.scopeClear;
+      document.querySelectorAll('[data-scope-option="'+type+'"] input[name="scope_value"]').forEach(input=>input.checked=false);
+      updateScopeCount();
+    });
+  });
+
+  document.querySelectorAll('input[name="scope_value"]').forEach(input=>input.addEventListener('change',updateScopeCount));
 
   function filenameFromDisposition(response,fallback){
     const disposition=response.headers.get('Content-Disposition')||'';
