@@ -25,7 +25,7 @@ def test_region_workspace_reuses_existing_region_performance_and_market_shapes()
 
     assert "12 Aylık Bölge Realizasyonu" in partial
     assert "Ürün Bazlı {{ period.label }} Realizasyon" in partial
-    assert "BÖLGESEL REKABET VE PAZAR MERKEZİ" in partial
+    assert "{{ report.region_name }} Bölgesi Ürün ve Rakip Analizi" in partial
     assert "Rakip Ürünlerin İl Bazlı Çıkış Analizi" in partial
     assert "report.periods" in partial
     assert "'q1','q2','q3','q4'" in partial

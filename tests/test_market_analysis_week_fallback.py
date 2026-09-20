@@ -204,4 +204,4 @@ def test_dashboard_market_panel_is_hidden_and_dedicated_page_has_source_banner()
     market_template = Path("app/templates/market_analysis.html").read_text(encoding="utf-8")
     assert ".executive-market-panel { display: none !important; }" in shell_css
     assert "market-source-banner" in market_template
-    assert "Her şirket ürünü yalnız bir kez gösterilir" in market_template
+    assert "Şirket ve Rakip Pazar Karşılaştırması" in market_template

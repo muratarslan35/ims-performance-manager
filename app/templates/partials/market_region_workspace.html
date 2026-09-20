@@ -1,16 +1,14 @@
 <div class="manager-region-snapshot" data-region-snapshot="{{ report.region_key }}">
   <div class="manager-region-titlebar">
     <div>
-      <span>BÖLGESEL GÜNCEL DURUM · AYNI KAYNAK SERVİSLERİ</span>
       <h2>{{ report.region_name }} Bölge Görünümü</h2>
-      <p>{{ "%02d"|format(report.month) }}/{{ report.year }} aktif dönem · {{ report.active_count }} çalışan{% if report.vacant_count %} · {{ report.vacant_count }} boş kadro{% endif %}</p>
+      <p>{{ "%02d"|format(report.month) }}/{{ report.year }}</p>
     </div>
-    <div class="manager-region-badge"><i class="bi bi-database-check"></i><span>IMS snapshot</span></div>
   </div>
 
   <section class="manager-region-card manager-annual-card">
     <div class="manager-section-head">
-      <div><h3><i class="bi bi-graph-up"></i> 12 Aylık Bölge Realizasyonu</h3><p>Bölge değiştiğinde aynı resmi bölge kaynağından otomatik yenilenir.</p></div>
+      <div><h3><i class="bi bi-graph-up"></i> 12 Aylık Bölge Realizasyonu</h3></div>
       <span>Ay bazında %</span>
     </div>
     <div class="manager-annual-chart"><canvas data-manager-annual-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div>
@@ -20,13 +18,13 @@
   {% set period=report.periods[key] %}
   <section class="manager-period-panel {% if key == 'monthly' %}active{% endif %}" data-manager-period-panel="{{ key }}">
     <div class="manager-region-kpis">
-      <div class="manager-kpi target"><span>{{ period.label|upper }} HEDEF</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong><small>{{ period.month_count }} aylık hedef toplamı</small></div>
-      <div class="manager-kpi actual"><span>{{ period.label|upper }} GERÇEKLEŞEN</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong><small>IMS gerçekleşen satış toplamı</small></div>
-      <div class="manager-kpi realization"><span>{{ period.label|upper }} REALİZASYON</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong><small>{% if period.gap_tl is not none %}{{ "{:,.0f}".format(period.gap_tl|abs) }} ₺ {% if period.gap_tl > 0 %}hedef açığı{% else %}hedef üstü{% endif %}{% else %}Veri bekleniyor{% endif %}</small></div>
+      <div class="manager-kpi target"><span>{{ period.label|upper }} HEDEF</span><strong>{{ "{:,.0f}".format(period.target_tl) }} ₺</strong></div>
+      <div class="manager-kpi actual"><span>{{ period.label|upper }} GERÇEKLEŞEN</span><strong>{% if period.actual_tl is not none %}{{ "{:,.0f}".format(period.actual_tl) }} ₺{% else %}—{% endif %}</strong></div>
+      <div class="manager-kpi realization"><span>{{ period.label|upper }} REALİZASYON</span><strong>{% if period.realization_percent is not none %}%{{ period.realization_percent }}{% else %}—{% endif %}</strong></div>
     </div>
 
     <div class="manager-region-card manager-product-card">
-      <div class="manager-section-head"><div><h3><i class="bi bi-capsule-pill"></i> Ürün Bazlı {{ period.label }} Realizasyon</h3><p>Bölge sayfasındaki resmi hedef ve gerçekleşen kaynakları birebir kullanır.</p></div><span>{{ period.products|length }} ürün</span></div>
+      <div class="manager-section-head"><div><h3><i class="bi bi-capsule-pill"></i> Ürün Bazlı {{ period.label }} Realizasyon</h3></div><span>{{ period.products|length }} ürün</span></div>
       <div class="table-responsive">
         <table class="table manager-product-table mb-0">
           <thead><tr><th>Ürün</th><th>Hedef ₺</th><th>Gerçekleşen ₺</th><th>Kutu farkı</th><th>₺ farkı</th><th>Realizasyon</th></tr></thead>
@@ -52,7 +50,7 @@
 
   <section class="manager-region-market">
     <div class="manager-market-head">
-      <div><span>BÖLGESEL REKABET VE PAZAR MERKEZİ</span><h3>{{ report.region_name }} Bölgesi Ürün ve Rakip Analizi</h3><p>Mevcut RegionMarketService verisi değiştirilmeden gösterilir.</p></div>
+      <div><h3>{{ report.region_name }} Bölgesi Ürün ve Rakip Analizi</h3></div>
       <div class="manager-market-period">{{ "%02d"|format(report.month) }}/{{ report.year }}</div>
     </div>
     {% if market_analysis.has_data %}
@@ -90,7 +88,7 @@
     </div>
 
     <div class="manager-rival-city-card">
-      <div class="manager-section-head"><div><h3><i class="bi bi-geo-alt-fill"></i> Rakip Ürünlerin İl Bazlı Çıkış Analizi</h3><p>Ürün grubu ve rakip seçimine göre mevcut il kırılımı.</p></div></div>
+      <div class="manager-section-head"><div><h3><i class="bi bi-geo-alt-fill"></i> Rakip Ürünlerin İl Bazlı Çıkış Analizi</h3></div></div>
       <div class="manager-rival-grid">
         <nav class="manager-rival-group-nav">
           {% for group in market_analysis.rival_groups %}
