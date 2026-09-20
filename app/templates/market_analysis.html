@@ -3,10 +3,10 @@
 {% block page_title %}Türkiye Pazar Analizi{% endblock %}
 {% block styles %}
 <link href="{{ url_for('static', filename='css/market_analysis.css') }}" rel="stylesheet">
-<link href="{{ url_for('static', filename='css/manager-region-cockpit.css') }}" rel="stylesheet">
-<link href="{{ url_for('static', filename='css/executive-market-cockpit.css') }}" rel="stylesheet">
-<link href="{{ url_for('static', filename='css/market-analysis-readability.css') }}" rel="stylesheet">
-<link href="{{ url_for('static', filename='css/market-analysis-exec-clarity.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/manager-region-cockpit.css', v='20260920b') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/executive-market-cockpit.css', v='20260920b') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/market-analysis-readability.css', v='20260920b') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/market-analysis-exec-clarity.css', v='20260920b') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='css/quarter-period-menu.css') }}" rel="stylesheet">
 {% endblock %}
 {% block content %}
@@ -144,6 +144,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/manager-region-cockpit.js') }}"></script>
-<script src="{{ url_for('static', filename='js/executive-market-cockpit.js') }}"></script>
+<script src="{{ url_for('static', filename='js/manager-region-cockpit.js', v='20260920b') }}"></script>
+<script src="{{ url_for('static', filename='js/executive-market-cockpit.js', v='20260920b') }}"></script>
 {% endblock %}

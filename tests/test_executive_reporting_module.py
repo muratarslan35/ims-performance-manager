@@ -366,9 +366,24 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert "anchor.dataset.pageLoader === 'false'" in layout_js
     assert 'name="scope_value"' in template
     assert 'data-scope-panel="region"' in template
-    assert 'data-scope-panel="city"' in template
+    assert 'data-scope-panel="city"' not in template
+    assert "{% if value != 'city' %}" in template
+    assert "report-scope-options-regions" in template
     assert 'data-scope-panel="representative"' in template
     assert 'a[href="/reports"]' not in css
+
+
+def test_report_region_selector_fits_all_regions_responsively_without_inner_scroll():
+    css = open("app/static/css/executive-reports.css", encoding="utf-8").read()
+    assert ".report-scope-options-regions{grid-template-columns:repeat(4" in css
+    assert "max-height:none;overflow:visible" in css
+    assert "@media(max-width:1100px)" in css
+    assert ".report-scope-options-regions{grid-template-columns:repeat(3" in css
+    assert "@media(max-width:820px)" in css
+    assert ".report-scope-options-regions{grid-template-columns:repeat(2" in css
+    assert "@media(max-width:520px)" in css
+    assert ".report-scope-options-regions{grid-template-columns:1fr" in css
+    assert "[data-theme=dark] .report-scope-options-regions" in css
 
 
 def test_every_report_endpoint_has_explicit_report_permission_gate():

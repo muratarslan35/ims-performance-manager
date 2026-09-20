@@ -35,6 +35,9 @@ def test_market_analysis_keeps_requested_panel_order_and_single_glance_summary()
     assert "openRegion" in javascript
     assert "Chart.getChart" in javascript
     assert "initNationalTrend" in javascript
+    assert "document.readyState" in javascript
+    assert "bootExecutiveMarket" in javascript
+    assert "executive-market-cockpit.js', v='20260920b'" in template
     assert "data-exec-region-key" in partial
     assert 'event.key' in javascript
 
