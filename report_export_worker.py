@@ -213,8 +213,13 @@ def main():
 
             if time.monotonic() >= next_prune:
                 result = ReportCacheService.prune()
-                if result["removed"]:
-                    app.logger.info("report_cache_prune removed=%s", result["removed"])
+                queue_removed = ReportExportQueue.prune()
+                if result["removed"] or queue_removed:
+                    app.logger.info(
+                        "report_cache_prune files_removed=%s queue_removed=%s",
+                        result["removed"],
+                        queue_removed,
+                    )
                 next_prune = time.monotonic() + 3600
 
             time.sleep(1)
