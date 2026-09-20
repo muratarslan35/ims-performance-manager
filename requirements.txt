@@ -25,6 +25,7 @@ email-validator==2.2.0
 
 Pillow==11.3.0
 reportlab==4.4.4
+python-pptx==1.0.2
 
 python-dateutil==2.9.0.post0
 

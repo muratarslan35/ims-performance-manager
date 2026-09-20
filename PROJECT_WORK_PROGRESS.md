@@ -1009,6 +1009,19 @@ Concurrency doğrulaması:
 - Büyük ulusal raporlarda binlerce DOM satırı üretmek yerine yalnız seçili sayfa render edilerek 200 kullanıcı mimarisi korunur.
 
 
+### Bilim İlaç temalı PowerPoint rapor çıktısı — 20.09.2026
+
+- Excel ve PDF yanında kuyruk tabanlı **PowerPoint (.pptx)** çıktısı eklendi.
+- Sunum 16:9 yönetim standardında ve düzenlenebilir PowerPoint nesneleriyle hazırlanır.
+- Sabit sıra: kapak, yönetim özeti, dönem trendi, ürün performansı, bölge, temsilci, rakip, öncelikli brick ve metodoloji.
+- Bilim İlaç lacivert, mavi ve yeşil kurumsal paleti kullanılır.
+- Kapakta Bilim İlaç kimliği; tüm içerik sayfalarında sağ altta Bilim İlaç filigranı ve sayfa numarası bulunur.
+- Uzun tablolar otomatik olarak devam slaytlarına bölünür.
+- Trend ve ürün karşılaştırma grafikleri PowerPoint içinde düzenlenebilir.
+- PPTX üretimi web isteğinde yapılmaz; IMS işlerine öncelik veren mevcut düşük öncelikli rapor worker kuyruğunu kullanır.
+- Brick bölümünde yönetim sunumuna rakip baskısı en yüksek 30 satır alınır; tam brick dökümü Excel'de korunur.
+
+
 ### Raporlama çoklu kapsam ve detay analizleri — 20.09.2026
 
 Raporlar modülü yönetim seviyesinde esnek çoklu seçim ve detay kırılımlarıyla genişletildi.

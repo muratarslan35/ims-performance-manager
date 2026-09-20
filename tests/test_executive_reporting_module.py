@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from openpyxl import load_workbook
+from pptx import Presentation
 
 from app.extensions import db
 from app.models import Product, Representative, RepresentativeBrickAssignment, User
@@ -272,6 +273,17 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         pdf = service.to_pdf(report).getvalue()
         assert pdf.startswith(b"%PDF-")
         assert pdf.count(b"/Type /Page") >= 2
+        pptx = service.to_powerpoint(report).getvalue()
+        assert pptx.startswith(b"PK")
+        deck = Presentation(BytesIO(pptx))
+        assert len(deck.slides) >= 8
+        slide_text = "\n".join(
+            shape.text for slide in deck.slides for shape in slide.shapes
+            if hasattr(shape, "text_frame") and shape.has_text_frame
+        )
+        assert "SATIŞ VE PAZAR PERFORMANS RAPORU" in slide_text
+        assert "Rakip analizi" in slide_text
+        assert "Öncelikli brickler" in slide_text
 
 
 def test_reports_navigation_is_visible_with_direct_reports_name():
@@ -285,6 +297,8 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert "{% block head %}" not in template
     assert 'data-page-loader="false"' in template
     assert 'class="btn btn-success report-export" data-page-loader="false" download' in template
+    assert "file_type='pptx'" in template
+    assert "PowerPoint" in template
     report_js = open("app/static/js/executive-reports.js", encoding="utf-8").read()
     layout_js = open("app/static/js/layout.js", encoding="utf-8").read()
     assert "fetch(url" in report_js
@@ -319,7 +333,7 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
     assert "Satış ve pazar performansı" in page.get_data(as_text=True)
     assert 'id="reportBrickSearch"' in page.get_data(as_text=True)
 
-    for file_type, prefix in (("xlsx", b"PK"), ("pdf", b"%PDF-")):
+    for file_type, prefix in (("xlsx", b"PK"), ("pdf", b"%PDF-"), ("pptx", b"PK")):
         queued = client.get(
             f"/reports/export/{file_type}?year=2026&month=8&period=monthly&scope=national"
         )
@@ -334,7 +348,11 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
                 year=report["year"], month=report["month"],
                 period=report["period"], scope=report["scope"],
             )
-            output = service.to_excel(report) if file_type == "xlsx" else service.to_pdf(report)
+            output = {
+                "xlsx": service.to_excel,
+                "pdf": service.to_pdf,
+                "pptx": service.to_powerpoint,
+            }[file_type](report)
             ReportCacheService.write_export(job["cache_key"], file_type, output.getvalue())
             ReportExportQueue.complete(job)
 
@@ -383,3 +401,6 @@ def test_export_filenames_follow_selected_scope(app):
         assert city.export_filename(
             {"scope_label": "MARDIN", "year": 2026, "month": 9}, "pdf"
         ) == "il-analiz-raporu-mardin-2026-09.pdf"
+        assert region.export_filename(
+            {"scope_label": "Diyarbakır", "year": 2026, "month": 9}, "pptx"
+        ) == "bolge-analiz-raporu-diyarbakir-2026-09.pptx"

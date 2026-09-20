@@ -1,7 +1,7 @@
 """Filesystem-backed report export and prewarm queues.
 
 No business rows are written. Jobs are small durable JSON markers consumed by a
-separate low-priority report worker, so PDF/XLSX generation never occupies a
+separate low-priority report worker, so PDF/XLSX/PPTX generation never occupies a
 Gunicorn request worker.
 """
 
@@ -64,7 +64,7 @@ class ReportExportQueue:
         product_ids: list[int] | set[int] | tuple[int, ...],
         scope_values: list[str] | tuple[str, ...] | None = None,
     ) -> dict:
-        if file_type not in {"pdf", "xlsx"}:
+        if file_type not in {"pdf", "xlsx", "pptx"}:
             raise ValueError("unsupported report export type")
         raw = f"{cache_key}|{file_type}"
         job_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
