@@ -1,4 +1,5 @@
 from flask import Blueprint
+from flask import abort
 from flask import current_app
 from flask import jsonify
 from flask import redirect
@@ -9,6 +10,7 @@ from flask import send_file
 
 from flask_login import current_user
 from flask_login import login_required
+from functools import wraps
 from sqlalchemy import desc
 
 from app.cache.region_manager_snapshot_cache import RegionManagerSnapshotCache
@@ -32,6 +34,17 @@ main_bp = Blueprint(
     "main",
     __name__
 )
+
+
+def reports_access_required(view):
+    """Enforce report permission on the page and every queued-export endpoint."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        from app.services.access_permission_service import enabled as access_enabled
+        if not access_enabled(current_user, "reports"):
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
 
 
 def _region_snapshot_key(region_key, year, month):
@@ -290,6 +303,7 @@ def prime():
 
 @main_bp.route("/reports")
 @login_required
+@reports_access_required
 def reports():
     scope = request.args.get("scope", "national")
     scope_values = request.args.getlist("scope_value")
@@ -340,6 +354,7 @@ def _authorized_report_job(job):
 
 @main_bp.route("/reports/export/<file_type>")
 @login_required
+@reports_access_required
 def reports_export(file_type):
     if file_type not in {"xlsx", "pdf", "pptx"}:
         return {"success": False, "message": "Desteklenmeyen rapor biçimi."}, 404
@@ -405,6 +420,7 @@ def reports_export(file_type):
 
 @main_bp.route("/reports/export/status/<job_id>")
 @login_required
+@reports_access_required
 def reports_export_status(job_id):
     job = ReportExportQueue.read(job_id)
     if not _authorized_report_job(job):
@@ -429,6 +445,7 @@ def reports_export_status(job_id):
 
 @main_bp.route("/reports/export/download/<job_id>")
 @login_required
+@reports_access_required
 def reports_export_download(job_id):
     job = ReportExportQueue.read(job_id)
     if not _authorized_report_job(job):

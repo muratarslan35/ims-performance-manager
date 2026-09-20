@@ -371,6 +371,20 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert 'a[href="/reports"]' not in css
 
 
+def test_every_report_endpoint_has_explicit_report_permission_gate():
+    routes = open("app/routes/__init__.py", encoding="utf-8").read()
+    scope = open("app/region_manager.py", encoding="utf-8").read()
+    for endpoint in (
+        "reports", "reports_export", "reports_export_status", "reports_export_download",
+    ):
+        function = f"def {endpoint}("
+        prefix = routes[:routes.index(function)].rsplit("@main_bp.route", 1)[-1]
+        assert "@login_required" in prefix
+        assert "@reports_access_required" in prefix
+    assert '"main.reports_export_status": "reports"' in scope
+    assert '"main.reports_export_download": "reports"' in scope
+
+
 def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
     with app.app_context():
         db.session.add(User(

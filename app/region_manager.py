@@ -258,6 +258,7 @@ def _endpoint_permission(endpoint):
         "main.market_analysis": "market_analysis", "main.prime": "prime_center",
         "main.quarter": "q_analysis", "main.recovery": "recovery", "main.reports": "reports",
         "main.reports_export": "reports",
+        "main.reports_export_status": "reports", "main.reports_export_download": "reports",
     }
     if endpoint in exact:
         return exact[endpoint]
