@@ -122,6 +122,10 @@ def test_export_queue_deduplicates_identical_artifact_requests(cache_app):
             filename="bolge-analiz-raporu-diyarbakir-2026-09.pdf",
             scope="region",
             scope_value="901",
+            year=2026,
+            month=9,
+            period="monthly",
+            product_ids=[],
         )
         assert first["job_id"] == second["job_id"]
         assert ReportExportQueue.position(first["job_id"]) == 1
