@@ -1,6 +1,6 @@
 """Low-priority report export/cache worker.
 
-The web tier only reads cached report JSON and enqueues expensive PDF/XLSX
+The web tier only reads cached report JSON and enqueues expensive PDF/XLSX/PPTX
 generation. This worker serializes those CPU/memory-heavy operations and yields
 entirely while IMS import/publication work is active.
 """
@@ -76,11 +76,12 @@ def _process_export(app) -> bool:
                     scope_values=job.get("scope_values") or report.get("scope_values") or [],
                     product_ids=job.get("product_ids") or [],
                 )
-            output = (
-                service.to_excel(report)
-                if job["file_type"] == "xlsx"
-                else service.to_pdf(report)
-            )
+            exporters = {
+                "xlsx": service.to_excel,
+                "pdf": service.to_pdf,
+                "pptx": service.to_powerpoint,
+            }
+            output = exporters[job["file_type"]](report)
             ReportCacheService.write_export(
                 job["cache_key"], job["file_type"], output.getvalue()
             )

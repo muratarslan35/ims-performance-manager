@@ -386,7 +386,7 @@ def _authorized_report_job(job):
 @main_bp.route("/reports/export/<file_type>")
 @login_required
 def reports_export(file_type):
-    if file_type not in {"xlsx", "pdf"}:
+    if file_type not in {"xlsx", "pdf", "pptx"}:
         return {"success": False, "message": "Desteklenmeyen rapor biçimi."}, 404
     scope = request.args.get("scope", "national")
     scope_values = request.args.getlist("scope_value")
@@ -419,10 +419,11 @@ def reports_export(file_type):
             cached,
             as_attachment=True,
             download_name=filename,
-            mimetype=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                if file_type == "xlsx" else "application/pdf"
-            ),
+            mimetype={
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "pdf": "application/pdf",
+                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            }[file_type],
             conditional=True,
         )
 
@@ -487,10 +488,11 @@ def reports_export_download(job_id):
         cached,
         as_attachment=True,
         download_name=job["filename"],
-        mimetype=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            if job["file_type"] == "xlsx" else "application/pdf"
-        ),
+        mimetype={
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "pdf": "application/pdf",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        }[job["file_type"]],
         conditional=True,
     )
 

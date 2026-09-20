@@ -103,7 +103,7 @@ class ReportCacheService:
 
     @classmethod
     def export_path(cls, cache_key: str, file_type: str) -> Path:
-        if file_type not in {"pdf", "xlsx"}:
+        if file_type not in {"pdf", "xlsx", "pptx"}:
             raise ValueError("unsupported report export type")
         return cls._root() / "exports" / f"{cache_key}.{file_type}"
 

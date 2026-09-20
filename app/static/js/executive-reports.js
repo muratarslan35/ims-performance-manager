@@ -124,7 +124,9 @@
     const params=new URLSearchParams(new FormData(form));
     const url=link.pathname+'?'+params.toString();
     const originalHtml=link.innerHTML;
-    const fallback=link.pathname.endsWith('/pdf')?'analiz-raporu.pdf':'analiz-raporu.xlsx';
+    const fallback=link.pathname.endsWith('/pdf')
+      ?'analiz-raporu.pdf'
+      :(link.pathname.endsWith('/pptx')?'analiz-raporu.pptx':'analiz-raporu.xlsx');
     link.classList.add('disabled');
     link.setAttribute('aria-busy','true');
     link.innerHTML='<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Hazırlanıyor';

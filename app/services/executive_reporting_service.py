@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 import re
 import unicodedata
 
@@ -973,3 +974,258 @@ class ExecutiveReportingService:
         story.append(brick_table)
         doc.build(story, onFirstPage=footer, onLaterPages=footer)
         output.seek(0); return output
+
+    def to_powerpoint(self, report):
+        """Create a branded, editable 16:9 management presentation."""
+        from pptx import Presentation
+        from pptx.chart.data import ChartData
+        from pptx.dml.color import RGBColor
+        from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Inches, Pt
+
+        navy = RGBColor(13, 50, 86)
+        blue = RGBColor(12, 92, 173)
+        teal = RGBColor(24, 134, 91)
+        orange = RGBColor(232, 116, 34)
+        ink = RGBColor(31, 49, 69)
+        muted = RGBColor(101, 116, 139)
+        pale = RGBColor(241, 246, 251)
+        line = RGBColor(218, 228, 238)
+        white = RGBColor(255, 255, 255)
+        font = "Aptos"
+        logo = Path(__file__).resolve().parents[1] / "static" / "img" / "bilim-ilac-corporate.png"
+
+        deck = Presentation()
+        deck.slide_width = Inches(13.333)
+        deck.slide_height = Inches(7.5)
+        blank = deck.slide_layouts[6]
+
+        def fill(shape, color):
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = color
+            shape.line.fill.background()
+
+        def text_box(slide, text, left, top, width, height, *, size=18, color=ink,
+                     bold=False, align=PP_ALIGN.LEFT, valign=MSO_ANCHOR.TOP):
+            shape = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+            frame = shape.text_frame
+            frame.clear()
+            frame.word_wrap = True
+            frame.vertical_anchor = valign
+            paragraph = frame.paragraphs[0]
+            paragraph.alignment = align
+            run = paragraph.add_run()
+            run.text = str(text)
+            run.font.name = font
+            run.font.size = Pt(size)
+            run.font.bold = bold
+            run.font.color.rgb = color
+            return shape
+
+        def add_footer(slide, page):
+            rule = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(.48), Inches(7.12), Inches(12.36), Inches(.012))
+            fill(rule, line)
+            text_box(slide, f'IMS Performans Takip Sistemi  ·  {report["scope_label"]}', .52, 7.17, 6.8, .18, size=7, color=muted)
+            text_box(slide, str(page), 11.55, 7.16, .42, .2, size=7, color=muted, align=PP_ALIGN.RIGHT)
+            if logo.is_file():
+                slide.shapes.add_picture(str(logo), Inches(12.13), Inches(7.13), width=Inches(.50), height=Inches(.24))
+
+        def add_heading(slide, title, section, page):
+            bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, deck.slide_width, Inches(.12))
+            fill(bar, teal)
+            text_box(slide, section.upper(), .55, .36, 4.0, .24, size=8, color=blue, bold=True)
+            text_box(slide, title, .55, .68, 11.9, .52, size=25, color=navy, bold=True)
+            add_footer(slide, page)
+
+        def style_table(table, *, header_size=9, body_size=8):
+            table.first_row = True
+            for column, cell in enumerate(table.rows[0].cells):
+                cell.fill.solid(); cell.fill.fore_color.rgb = navy
+                cell.margin_left = cell.margin_right = Inches(.08)
+                for paragraph in cell.text_frame.paragraphs:
+                    paragraph.alignment = PP_ALIGN.LEFT if column == 0 else PP_ALIGN.RIGHT
+                    for run in paragraph.runs:
+                        run.font.name = font; run.font.size = Pt(header_size); run.font.bold = True; run.font.color.rgb = white
+            for row_index in range(1, len(table.rows)):
+                row = table.rows[row_index]
+                for column, cell in enumerate(row.cells):
+                    cell.fill.solid(); cell.fill.fore_color.rgb = white if row_index % 2 else pale
+                    cell.margin_left = cell.margin_right = Inches(.08)
+                    for paragraph in cell.text_frame.paragraphs:
+                        paragraph.alignment = PP_ALIGN.LEFT if column == 0 else PP_ALIGN.RIGHT
+                        for run in paragraph.runs:
+                            run.font.name = font; run.font.size = Pt(body_size); run.font.color.rgb = ink
+
+        def add_table_slide(title, section, headers, rows, page, widths=None):
+            slide = deck.slides.add_slide(blank)
+            add_heading(slide, title, section, page)
+            display_rows = rows or [["Veri bulunamadı"] + ["—"] * (len(headers) - 1)]
+            shape = slide.shapes.add_table(
+                len(display_rows) + 1, len(headers), Inches(.55), Inches(1.43), Inches(12.23), Inches(5.42)
+            )
+            table = shape.table
+            if widths:
+                for index, value in enumerate(widths):
+                    table.columns[index].width = Inches(value)
+            for index, value in enumerate(headers):
+                table.cell(0, index).text = str(value)
+            for row_index, values in enumerate(display_rows, 1):
+                for column_index, value in enumerate(values):
+                    table.cell(row_index, column_index).text = str(value)
+            style_table(table, header_size=8.5, body_size=7.5 if len(display_rows) > 10 else 8.5)
+            return slide
+
+        def pages(values, size):
+            rows = list(values or [])
+            return [rows[index:index + size] for index in range(0, len(rows), size)] or [[]]
+
+        page = 1
+        cover = deck.slides.add_slide(blank)
+        background = cover.background.fill
+        background.solid(); background.fore_color.rgb = navy
+        accent = cover.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(.18), deck.slide_height)
+        fill(accent, teal)
+        orb = cover.shapes.add_shape(MSO_SHAPE.OVAL, Inches(10.03), Inches(0), Inches(3.3), Inches(3.3))
+        fill(orb, blue)
+        text_box(cover, "SATIŞ VE PAZAR PERFORMANS RAPORU", .78, 1.60, 8.5, 1.15, size=30, color=white, bold=True)
+        text_box(cover, report["scope_label"], .82, 3.02, 7.6, .55, size=19, color=white, bold=True)
+        text_box(cover, f'{report["period_label"]}  ·  {report["year"]}/{report["month"]:02d}', .82, 3.66, 7.6, .42, size=14, color=RGBColor(202, 225, 245))
+        text_box(cover, f'{report["representative_count"]} temsilci  ·  IMS {report.get("source_week") or "—"}. hafta', .82, 4.22, 7.6, .35, size=10, color=RGBColor(202, 225, 245))
+        if logo.is_file():
+            logo_back = cover.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(.78), Inches(6.08), Inches(1.92), Inches(.78))
+            fill(logo_back, white)
+            cover.shapes.add_picture(str(logo), Inches(.98), Inches(6.24), width=Inches(1.52), height=Inches(.46))
+        text_box(cover, "Yönetim Raporları", 9.55, 6.68, 2.7, .22, size=8, color=RGBColor(202, 225, 245), align=PP_ALIGN.RIGHT)
+
+        page += 1
+        summary = deck.slides.add_slide(blank)
+        add_heading(summary, "Yönetim özeti", "Genel görünüm", page)
+        total = report["totals"]
+        kpis = [
+            ("Hedef TL", f'₺{total["target_tl"]:,.0f}', blue),
+            ("Gerçekleşen TL", f'₺{total["actual_tl"]:,.0f}', teal),
+            ("TL realizasyon", f'%{total["realization_percent"]}', orange),
+            ("Pazar payı", f'%{total["market_share_percent"]:.1f}' if total["market_share_percent"] is not None else "—", RGBColor(121, 88, 181)),
+        ]
+        for index, (label, value, color) in enumerate(kpis):
+            left = .58 + index * 3.08
+            card = summary.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(1.55), Inches(2.78), Inches(1.38))
+            fill(card, pale)
+            stripe = summary.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(1.55), Inches(.06), Inches(1.38))
+            fill(stripe, color)
+            text_box(summary, label.upper(), left + .2, 1.78, 2.35, .22, size=8, color=muted, bold=True)
+            value_size = 17 if len(value) > 12 else 22
+            text_box(summary, value, left + .2, 2.15, 2.35, .48, size=value_size, color=navy, bold=True)
+        text_box(summary, "Rapor kapsamı", .62, 3.35, 3.1, .3, size=12, color=navy, bold=True)
+        scope_lines = [
+            f'Kapsam: {report["scope_label"]}',
+            f'Dönem: {report["period_label"]}',
+            f'Ürün sayısı: {len(report.get("rows") or [])}',
+            f'Toplam pazar: {total["market_unit"]:,.0f} kutu',
+        ]
+        text_box(summary, "\n".join(scope_lines), .62, 3.83, 4.0, 1.7, size=13, color=ink)
+        product_rows = sorted(report.get("rows") or [], key=lambda row: float(row.get("actual_tl") or 0), reverse=True)
+        if product_rows:
+            chart_data = ChartData()
+            chart_data.categories = [row["product_name"] for row in product_rows]
+            chart_data.add_series("Gerçekleşen TL", [float(row.get("actual_tl") or 0) for row in product_rows])
+            chart = summary.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(4.65), Inches(3.32), Inches(7.65), Inches(3.25), chart_data).chart
+            chart.has_legend = False; chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(8)
+            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(9)
+            chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = blue
+
+        page += 1
+        trend_slide = deck.slides.add_slide(blank)
+        add_heading(trend_slide, "Dönemsel satış gelişimi", "Satış trendi", page)
+        trend = report.get("trend") or []
+        if trend:
+            trend_data = ChartData(); trend_data.categories = [item["label"] for item in trend]
+            trend_data.add_series("Gerçekleşen TL", [float(item.get("actual_tl") or 0) for item in trend])
+            chart = trend_slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Inches(.7), Inches(1.45), Inches(11.9), Inches(4.95), trend_data).chart
+            chart.has_legend = False; chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(9)
+            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(10)
+            series = chart.series[0]; series.format.line.color.rgb = blue; series.format.line.width = Pt(2.5)
+        else:
+            text_box(trend_slide, "Seçili dönemde trend verisi bulunamadı.", .7, 2.6, 11.8, .7, size=18, color=muted, align=PP_ALIGN.CENTER)
+
+        product_data = [[
+            row["product_name"], f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}',
+            f'%{row["realization_percent"]}', f'{row["actual_unit"]:,.0f}',
+            f'{row["market_unit"]:,.0f}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "—",
+        ] for row in report.get("rows") or []]
+        for index, chunk in enumerate(pages(product_data, 12), 1):
+            page += 1
+            add_table_slide(
+                "Ürün performansı" + (f"  ·  {index}" if len(product_data) > 12 else ""), "Portföy analizi",
+                ["Ürün", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Kutu", "Toplam pazar", "Pazar payı"],
+                chunk, page, [2.35, 1.75, 1.85, 1.35, 1.35, 1.65, 1.45],
+            )
+
+        sections = [
+            ("Bölge performansı", "Organizasyon", report.get("region_rows") or [], 11,
+             ["Bölge", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Pazar payı"],
+             lambda row: [row["region_name"], row["representative_count"], f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "—"],
+             [2.5, 1.3, 2.15, 2.15, 1.7, 1.7]),
+            ("Temsilci performansı", "Saha performansı", report.get("representative_rows") or [], 12,
+             ["Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Pazar payı"],
+             lambda row: [row["region_name"], row["city"], row["representative_name"], f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "—"],
+             [1.55, 1.45, 2.55, 1.75, 1.85, 1.45, 1.45]),
+            ("Rakip analizi", "Pazar görünümü", report.get("rival_rows") or [], 12,
+             ["Ürün", "Rakip", "Rakip kutu", "Rakip payı", "Şirket kutu", "Şirket payı", "Toplam pazar"],
+             lambda row: [row["product_name"], row["name"], f'{row["unit"]:,.0f}', f'%{row["share_percent"]:.1f}' if row["share_percent"] is not None else "—", f'{row["company_unit"]:,.0f}', f'%{row["company_share_percent"]:.1f}' if row["company_share_percent"] is not None else "—", f'{row["market_unit"]:,.0f}'],
+             [1.65, 2.5, 1.45, 1.45, 1.45, 1.45, 1.65]),
+        ]
+        for title, section, raw_rows, per_page, headers, formatter, widths in sections:
+            formatted = [formatter(row) for row in raw_rows]
+            chunks = pages(formatted, per_page)
+            for index, chunk in enumerate(chunks, 1):
+                page += 1
+                add_table_slide(title + (f"  ·  {index}" if len(chunks) > 1 else ""), section, headers, chunk, page, widths)
+
+        priority_bricks = sorted(
+            report.get("brick_rows") or [],
+            key=lambda row: (-float(row.get("competitor_unit") or 0), str(row.get("brick") or "")),
+        )[:30]
+        brick_data = [[
+            row["city"], row["representative_name"], row["brick"], row["product_name"],
+            f'{row["company_unit"]:,.0f}', f'{row["competitor_unit"]:,.0f}',
+            f'%{row["share_percent"]:.1f}' if row["share_percent"] is not None else "—",
+        ] for row in priority_bricks]
+        brick_chunks = pages(brick_data, 10)
+        for index, chunk in enumerate(brick_chunks, 1):
+            page += 1
+            slide = add_table_slide(
+                "Öncelikli brickler" + (f"  ·  {index}" if len(brick_chunks) > 1 else ""), "Rekabet baskısı",
+                ["İl", "Temsilci", "Brick", "Ürün", "Şirket", "Rakip", "Pazar payı"],
+                chunk, page, [1.45, 2.2, 2.65, 1.6, 1.3, 1.3, 1.45],
+            )
+            if index == 1 and len(report.get("brick_rows") or []) > len(priority_bricks):
+                text_box(slide, f'Rakip kutusu en yüksek 30 satır gösterilir. Tam {len(report.get("brick_rows") or [])} satır Excel çıktısında bulunur.', .62, 6.87, 10.8, .2, size=7, color=muted)
+
+        page += 1
+        closing = deck.slides.add_slide(blank)
+        add_heading(closing, "Rapor kapsamı ve veri kaynağı", "Metodoloji", page)
+        notes = [
+            "Rapor yalnız yayınlanmış temsilci snapshot verilerinden hazırlanır.",
+            "Pazar payı, ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.",
+            "Altı aylık rapor Ocak ile Haziran dönemini kapsar.",
+            "Sunumdaki tablolar ve grafikler PowerPoint içinde düzenlenebilir.",
+            "Tam satır düzeyindeki brick dökümü Excel çıktısında yer alır.",
+        ]
+        for index, note in enumerate(notes, 1):
+            number = closing.shapes.add_shape(MSO_SHAPE.OVAL, Inches(.75), Inches(1.45 + (index - 1) * .94), Inches(.42), Inches(.42))
+            fill(number, blue if index < 5 else teal)
+            text_box(closing, index, .75, 1.49 + (index - 1) * .94, .42, .25, size=10, color=white, bold=True, align=PP_ALIGN.CENTER)
+            text_box(closing, note, 1.38, 1.43 + (index - 1) * .94, 10.7, .5, size=15, color=ink)
+
+        deck.core_properties.title = "Satış ve Pazar Performans Raporu"
+        deck.core_properties.subject = f'{report["scope_label"]} · {report["period_label"]}'
+        deck.core_properties.author = "Bilim İlaç"
+        output = BytesIO()
+        deck.save(output)
+        output.seek(0)
+        return output
