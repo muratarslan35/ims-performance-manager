@@ -51,17 +51,29 @@ def _process_export(app) -> bool:
         cached = ReportCacheService.cached_export(job["cache_key"], job["file_type"])
         if cached is None:
             report = ReportCacheService.read_by_key(job["cache_key"])
-            if not report:
-                raise RuntimeError("Rapor read-model cache'i bulunamadı.")
-
-            service = ExecutiveReportingService(
-                year=int(report["year"]),
-                month=int(report["month"]),
-                period=str(report["period"]),
-                scope=str(report["scope"]),
-                scope_value="",
-                product_ids=[],
-            )
+            if report is None:
+                service = ExecutiveReportingService(
+                    year=int(job["year"]),
+                    month=int(job["month"]),
+                    period=str(job["period"]),
+                    scope=str(job["scope"]),
+                    scope_value=str(job.get("scope_value") or ""),
+                    product_ids=job.get("product_ids") or [],
+                )
+                report, current_key, _built = ReportCacheService.get_or_build(service)
+                if current_key != job["cache_key"]:
+                    raise RuntimeError(
+                        "Rapor kaynağı kuyrukta beklerken değişti; raporu yeniden oluşturun."
+                    )
+            else:
+                service = ExecutiveReportingService(
+                    year=int(report["year"]),
+                    month=int(report["month"]),
+                    period=str(report["period"]),
+                    scope=str(report["scope"]),
+                    scope_value=str(job.get("scope_value") or ""),
+                    product_ids=job.get("product_ids") or [],
+                )
             output = (
                 service.to_excel(report)
                 if job["file_type"] == "xlsx"
