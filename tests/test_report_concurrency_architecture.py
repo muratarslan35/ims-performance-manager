@@ -42,7 +42,9 @@ class DummyService:
 
     @staticmethod
     def _region_code(value):
-        return "901"
+        import re
+        match = re.search(r"(?<!\\d)(\\d{3})(?!\\d)", str(value or ""))
+        return match.group(1) if match else ""
 
     @staticmethod
     def _scope_key(value):
