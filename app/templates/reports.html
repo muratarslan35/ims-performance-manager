@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Raporlar{% endblock %}
 {% block page_title %}Raporlar{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/executive-reports.css', v='20260920b') }}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/executive-reports.css', v='20260920c') }}">{% endblock %}
 {% block content %}
 <section class="executive-report-page">
   <header class="report-hero"><div><span>YÖNETİM RAPORLARI</span><h2>Satış ve pazar performansı</h2><p>Dönem, organizasyon ve ürün kırılımında karşılaştırılabilir yönetim raporları.</p></div><div class="report-source"><i class="bi bi-shield-check"></i><strong>Doğrulanmış veri</strong><small>{% if report.source_week %}{{ report.source_week }}. hafta güncel{% else %}Seçili dönem{% endif %}</small></div></header>
@@ -54,5 +54,5 @@
     {% for item in report.brick_rows[:150] %}<tr><td>{{ item.city }}</td><td>{{ item.representative_name }}</td><td><strong>{{ item.brick }}</strong></td><td>{{ item.product_name }}</td><td>{{ '{:,.0f}'.format(item.company_unit).replace(',', '.') }}</td><td>{{ '{:,.0f}'.format(item.competitor_unit).replace(',', '.') }}</td><td>{{ '{:,.0f}'.format(item.market_unit).replace(',', '.') }}</td><td>{% if item.share_percent is not none %}%{{ item.share_percent }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="report-empty"><strong>Brick verisi bulunamadı.</strong></td></tr>{% endfor %}
   </tbody></table></div>{% if report.brick_rows|length > 150 %}<div class="report-preview-note"><i class="bi bi-info-circle"></i> Ekranda ilk 150 satır gösteriliyor. Excel çıktısındaki “Brick Analizi” sayfasında {{ report.brick_rows|length }} satırın tamamı bulunur.</div>{% endif %}</section>
 </section>
-<script src="{{ url_for('static', filename='js/executive-reports.js') }}"></script>
+<script src="{{ url_for('static', filename='js/executive-reports.js', v='20260920c') }}"></script>
 {% endblock %}
