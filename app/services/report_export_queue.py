@@ -58,6 +58,7 @@ class ReportExportQueue:
         filename: str,
         scope: str,
         scope_value: str,
+        scope_values: list[str] | tuple[str, ...] | None = None,
         year: int,
         month: int,
         period: str,
@@ -85,6 +86,10 @@ class ReportExportQueue:
                 "filename": filename,
                 "scope": scope,
                 "scope_value": scope_value or "",
+                "scope_values": [
+                    str(value) for value in (scope_values or ([scope_value] if scope_value else []))
+                    if str(value or "").strip()
+                ],
                 "year": int(year),
                 "month": int(month),
                 "period": str(period),
