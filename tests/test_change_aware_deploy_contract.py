@@ -13,6 +13,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'mode="ops"' in text
     assert 'mode="docs"' in text
     assert 'app/services/kpi_workbook_compat.py' in text
+    assert 'migrations/*|app/models.py)' in text
+    assert 'requirements.txt|deploy/*|sqlite_online_backup.py' in text
+    assert 'multi-gigabyte online backup for actual schema changes only' in text
 
     # Import changes retain full regression coverage while the 50-upload probe
     # runs in a separate job, so safety is preserved without serial wall time.

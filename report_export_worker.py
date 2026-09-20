@@ -1,8 +1,8 @@
 """Low-priority report export/cache worker.
 
 The web tier only reads cached report JSON and enqueues expensive PDF/XLSX/PPTX
-generation. This worker serializes those CPU/memory-heavy operations and yields
-entirely while IMS import/publication work is active.
+generation. This worker serializes those branded CPU/memory-heavy operations and yields
+entirely while IMS import or publication work is active.
 """
 
 from __future__ import annotations
