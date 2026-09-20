@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Genel Müdür Raporları{% endblock %}
-{% block page_title %}Genel Müdür Raporları{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/executive-reports.css') }}">{% endblock %}
+{% block title %}Raporlar{% endblock %}
+{% block page_title %}Raporlar{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ url_for('static', filename='css/executive-reports.css', v='20260920b') }}">{% endblock %}
 {% block content %}
 <section class="executive-report-page">
-  <header class="report-hero"><div><span>YÖNETİCİ RAPORLAMA MERKEZİ</span><h2>Tüm pazarı tek raporda inceleyin</h2><p>Temsilci, il, bölge veya Türkiye genelinde ürün gelişimi ve rakip analizi.</p></div><div class="report-source"><i class="bi bi-database-check"></i><strong>Yayınlanmış veri</strong><small>{% if report.source_week %}{{ report.source_week }}. hafta{% else %}Seçili dönem{% endif %}</small></div></header>
+  <header class="report-hero"><div><span>YÖNETİM RAPORLARI</span><h2>Satış ve pazar performansı</h2><p>Dönem, organizasyon ve ürün kırılımında karşılaştırılabilir yönetim raporları.</p></div><div class="report-source"><i class="bi bi-shield-check"></i><strong>Doğrulanmış veri</strong><small>{% if report.source_week %}{{ report.source_week }}. hafta güncel{% else %}Seçili dönem{% endif %}</small></div></header>
   <form class="report-filter-card" method="get" id="executiveReportFilters">
     <div class="report-filter-grid">
       <label><span>Dönem</span><select name="period" class="form-select">{% for value, label in filters.PERIODS.items() %}<option value="{{ value }}" {% if filters.period == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
