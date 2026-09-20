@@ -174,6 +174,33 @@ class ReportExportQueue:
                 recovered += 1
         return recovered
 
+    @classmethod
+    def prune(cls, *, max_age_days: int = 45, max_jobs: int = 5000) -> int:
+        cutoff = datetime.utcnow().timestamp() - max_age_days * 86400
+        removed = 0
+        paths = []
+        for path in (cls._root() / "jobs").glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if payload.get("status") not in {cls.STATUS_COMPLETED, cls.STATUS_FAILED}:
+                    continue
+                stat = path.stat()
+                if stat.st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                else:
+                    paths.append(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+        paths = sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in paths[max_jobs:]:
+            try:
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
 
 class ReportWarmQueue:
     @classmethod
