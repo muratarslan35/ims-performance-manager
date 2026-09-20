@@ -1,4 +1,4 @@
-"""Snapshot-only executive reporting read model and file exports."""
+"""Snapshot-only executive reporting read model and professional file exports."""
 from __future__ import annotations
 
 from collections import defaultdict
