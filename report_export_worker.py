@@ -101,13 +101,15 @@ def _warm_scopes(year: int, month: int) -> list[dict]:
         {"scope": "region", "scope_value": str(item["value"])}
         for item in options["regions"]
     )
-    scopes.extend(
-        {"scope": "city", "scope_value": str(item["value"])}
-        for item in options["cities"]
-    )
+    # Individual representative caches are cheap and likely to be requested by
+    # many users immediately after publication, so warm them before city slices.
     scopes.extend(
         {"scope": "representative", "scope_value": str(item.id)}
         for item in options["representatives"]
+    )
+    scopes.extend(
+        {"scope": "city", "scope_value": str(item["value"])}
+        for item in options["cities"]
     )
     return scopes
 
