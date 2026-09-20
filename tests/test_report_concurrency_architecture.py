@@ -170,7 +170,11 @@ def test_report_worker_isolated_and_resource_bounded_contract():
     deploy = (root / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
     js = (root / "app" / "static" / "js" / "executive-reports.js").read_text(encoding="utf-8")
 
-    assert "ReportCacheService.get_or_build(service)" in routes
+    # The reports screen is selection-only: it must not aggregate a report
+    # while the user is choosing filters. Cache build belongs to the isolated
+    # report worker and starts only after an export is requested.
+    assert "ReportCacheService.get_or_build(service)" not in routes
+    assert "ReportCacheService.get_or_build(service)" in worker
     assert "ReportExportQueue.enqueue(" in routes
     assert "status===202" in js
     assert "pollExport" in js
