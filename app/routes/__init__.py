@@ -292,10 +292,14 @@ def prime():
 @login_required
 def reports():
     scope = request.args.get("scope", "national")
-    scope_value = request.args.get("scope_value", "")
+    scope_values = request.args.getlist("scope_value")
+    scope_value = scope_values[0] if scope_values else request.args.get("scope_value", "")
+    if not scope_values and scope_value:
+        scope_values = [scope_value]
     from app.region_manager import assigned_region, is_regional_manager
     if is_regional_manager(current_user):
-        scope, scope_value = "region", (assigned_region(current_user) or "")
+        scope_value = assigned_region(current_user) or ""
+        scope, scope_values = "region", ([scope_value] if scope_value else [])
     product_ids = request.args.getlist("product_id")
     service = ExecutiveReportingService(
         year=request.args.get("year", type=int),
@@ -303,6 +307,7 @@ def reports():
         period=request.args.get("period", "monthly"),
         scope=scope,
         scope_value=scope_value,
+        scope_values=scope_values,
         product_ids=product_ids,
     )
     report, _cache_key, _built = ReportCacheService.get_or_build(service)
@@ -322,8 +327,16 @@ def _authorized_report_job(job):
     if not is_regional_manager(current_user):
         return True
     assigned = ExecutiveReportingService._region_code(assigned_region(current_user) or "")
-    requested = ExecutiveReportingService._region_code(job.get("scope_value") or "")
-    return job.get("scope") == "region" and bool(assigned) and assigned == requested
+    requested_values = job.get("scope_values") or [job.get("scope_value") or ""]
+    requested = {
+        ExecutiveReportingService._region_code(value) or str(value or "").strip()
+        for value in requested_values if str(value or "").strip()
+    }
+    return (
+        job.get("scope") == "region"
+        and bool(assigned)
+        and requested == {assigned}
+    )
 
 
 @main_bp.route("/reports/export/<file_type>")
@@ -332,14 +345,19 @@ def reports_export(file_type):
     if file_type not in {"xlsx", "pdf"}:
         return {"success": False, "message": "Desteklenmeyen rapor biçimi."}, 404
     scope = request.args.get("scope", "national")
-    scope_value = request.args.get("scope_value", "")
+    scope_values = request.args.getlist("scope_value")
+    scope_value = scope_values[0] if scope_values else request.args.get("scope_value", "")
+    if not scope_values and scope_value:
+        scope_values = [scope_value]
     from app.region_manager import assigned_region, is_regional_manager
     if is_regional_manager(current_user):
-        scope, scope_value = "region", (assigned_region(current_user) or "")
+        scope_value = assigned_region(current_user) or ""
+        scope, scope_values = "region", ([scope_value] if scope_value else [])
     service = ExecutiveReportingService(
         year=request.args.get("year", type=int), month=request.args.get("month", type=int),
         period=request.args.get("period", "monthly"), scope=scope,
-        scope_value=scope_value, product_ids=request.args.getlist("product_id"),
+        scope_value=scope_value, scope_values=scope_values,
+        product_ids=request.args.getlist("product_id"),
     )
     cache_key, _identity = ReportCacheService.identity(service)
     report = ReportCacheService.read_by_key(cache_key)
@@ -370,6 +388,7 @@ def reports_export(file_type):
         filename=filename,
         scope=scope,
         scope_value=scope_value,
+        scope_values=scope_values,
         year=service.year,
         month=service.month,
         period=service.period,
