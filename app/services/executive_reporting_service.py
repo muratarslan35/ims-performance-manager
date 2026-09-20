@@ -862,7 +862,35 @@ class ExecutiveReportingService:
             product_data.append([Paragraph(row["product_name"], normal), f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'{row["target_unit"]:,.0f}', f'{row["actual_unit"]:,.0f}', f'{row["market_unit"]:,.0f}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "-"])
         product_table = Table(product_data, repeatRows=1, colWidths=[39*mm,35*mm,38*mm,28*mm,31*mm,36*mm,31*mm,27*mm])
         product_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),7),("ALIGN",(1,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.35,line),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
-        story += [product_table, PageBreak(), Paragraph("Temsilci performansı", heading)]
+        story += [product_table, PageBreak(), Paragraph("Bölge karşılaştırması", heading)]
+        region_data = [["Bölge", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Gerçekleşen Kutu", "Toplam Pazar", "Pazar Payı"]]
+        for item in report.get("region_rows") or []:
+            region_data.append([
+                Paragraph(item["region_name"], small),
+                f'{item["representative_count"]}',
+                f'₺{item["target_tl"]:,.0f}',
+                f'₺{item["actual_tl"]:,.0f}',
+                f'%{item["realization_percent"]}',
+                f'{item["actual_unit"]:,.0f}',
+                f'{item["market_unit"]:,.0f}',
+                f'%{item["market_share_percent"]:.1f}' if item["market_share_percent"] is not None else "-",
+            ])
+        if len(region_data) == 1:
+            region_data.append(["Veri yok", "-", "-", "-", "-", "-", "-", "-"])
+        region_table = Table(
+            region_data, repeatRows=1,
+            colWidths=[45*mm, 25*mm, 36*mm, 39*mm, 29*mm, 36*mm, 31*mm, 27*mm],
+        )
+        region_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.6),("ALIGN",(1,1),(-1,-1),"RIGHT"),
+            ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
+            ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ]))
+        story += [region_table, PageBreak(), Paragraph("Temsilci performansı", heading)]
         representative_data = [["Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Gerçekleşen Kutu", "Pazar Payı"]]
         for item in report.get("representative_rows") or []:
             representative_data.append([
