@@ -58,6 +58,7 @@ def _process_export(app) -> bool:
                     period=str(job["period"]),
                     scope=str(job["scope"]),
                     scope_value=str(job.get("scope_value") or ""),
+                    scope_values=job.get("scope_values") or [],
                     product_ids=job.get("product_ids") or [],
                 )
                 report, current_key, _built = ReportCacheService.get_or_build(service)
@@ -72,6 +73,7 @@ def _process_export(app) -> bool:
                     period=str(report["period"]),
                     scope=str(report["scope"]),
                     scope_value=str(job.get("scope_value") or ""),
+                    scope_values=job.get("scope_values") or report.get("scope_values") or [],
                     product_ids=job.get("product_ids") or [],
                 )
             output = (
