@@ -117,7 +117,7 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
             product_ids=[selected.id],
         )
         report = service.build()
-        assert report["scope_label"] == "Test"
+        assert report["scope_label"] == "İstanbul"
         assert report["source_week"] == 36
         assert [row["product_name"] for row in report["rows"]] == ["Travazol"]
         assert report["rows"][0]["realization_percent"] == 80
