@@ -37,7 +37,7 @@ main_bp = Blueprint(
 
 
 def reports_access_required(view):
-    """Enforce report permission on pages and every queued-export endpoint."""
+    """Enforce report permission on the page and every queued-export endpoint."""
     @wraps(view)
     def wrapped(*args, **kwargs):
         from app.services.access_permission_service import enabled as access_enabled
