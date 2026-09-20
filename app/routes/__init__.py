@@ -24,6 +24,8 @@ from app.services.quarter_entitlement_service import QuarterEntitlementService
 from app.services.region_market_service import RegionMarketService
 from app.services.region_performance_service import RegionPerformanceService
 from app.services.executive_reporting_service import ExecutiveReportingService
+from app.services.report_cache_service import ReportCacheService
+from app.services.report_export_queue import ReportExportQueue
 
 
 main_bp = Blueprint(
@@ -303,13 +305,25 @@ def reports():
         scope_value=scope_value,
         product_ids=product_ids,
     )
+    report, _cache_key, _built = ReportCacheService.get_or_build(service)
     return render_template(
         "reports.html",
         user=current_user,
-        report=service.build(),
+        report=report,
         options=service.filter_options(),
         filters=service,
     )
+
+
+def _authorized_report_job(job):
+    if not job:
+        return False
+    from app.region_manager import assigned_region, is_regional_manager
+    if not is_regional_manager(current_user):
+        return True
+    assigned = ExecutiveReportingService._region_code(assigned_region(current_user) or "")
+    requested = ExecutiveReportingService._region_code(job.get("scope_value") or "")
+    return job.get("scope") == "region" and bool(assigned) and assigned == requested
 
 
 @main_bp.route("/reports/export/<file_type>")
@@ -327,16 +341,82 @@ def reports_export(file_type):
         period=request.args.get("period", "monthly"), scope=scope,
         scope_value=scope_value, product_ids=request.args.getlist("product_id"),
     )
-    report = service.build()
-    output = service.to_excel(report) if file_type == "xlsx" else service.to_pdf(report)
+    report, cache_key, _built = ReportCacheService.get_or_build(service)
+    filename = service.export_filename(report, file_type)
+    cached = ReportCacheService.cached_export(cache_key, file_type)
+    if cached is not None:
+        return send_file(
+            cached,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                if file_type == "xlsx" else "application/pdf"
+            ),
+            conditional=True,
+        )
+
+    job = ReportExportQueue.enqueue(
+        cache_key=cache_key,
+        file_type=file_type,
+        filename=filename,
+        scope=scope,
+        scope_value=scope_value,
+    )
+    return jsonify({
+        "success": True,
+        "status": job["status"],
+        "job_id": job["job_id"],
+        "position": ReportExportQueue.position(job["job_id"]),
+        "status_url": url_for("main.reports_export_status", job_id=job["job_id"]),
+    }), 202
+
+
+@main_bp.route("/reports/export/status/<job_id>")
+@login_required
+def reports_export_status(job_id):
+    job = ReportExportQueue.read(job_id)
+    if not _authorized_report_job(job):
+        return jsonify({"success": False, "message": "Rapor işi bulunamadı."}), 404
+
+    payload = {
+        "success": True,
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "position": ReportExportQueue.position(job["job_id"]),
+        "error": job.get("error"),
+    }
+    if job["status"] == ReportExportQueue.STATUS_COMPLETED:
+        cached = ReportCacheService.cached_export(job["cache_key"], job["file_type"])
+        if cached is not None:
+            payload["download_url"] = url_for("main.reports_export_download", job_id=job["job_id"])
+        else:
+            payload["status"] = ReportExportQueue.STATUS_FAILED
+            payload["error"] = "Hazırlanan rapor dosyası bulunamadı."
+    return jsonify(payload)
+
+
+@main_bp.route("/reports/export/download/<job_id>")
+@login_required
+def reports_export_download(job_id):
+    job = ReportExportQueue.read(job_id)
+    if not _authorized_report_job(job):
+        return jsonify({"success": False, "message": "Rapor işi bulunamadı."}), 404
+    if job.get("status") != ReportExportQueue.STATUS_COMPLETED:
+        return jsonify({"success": False, "message": "Rapor henüz hazır değil."}), 409
+
+    cached = ReportCacheService.cached_export(job["cache_key"], job["file_type"])
+    if cached is None:
+        return jsonify({"success": False, "message": "Rapor dosyası bulunamadı."}), 404
     return send_file(
-        output,
+        cached,
         as_attachment=True,
-        download_name=service.export_filename(report, file_type),
+        download_name=job["filename"],
         mimetype=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            if file_type == "xlsx" else "application/pdf"
+            if job["file_type"] == "xlsx" else "application/pdf"
         ),
+        conditional=True,
     )
 
 
