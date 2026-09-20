@@ -878,3 +878,11 @@ Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontroll�
 - Karanlık tema ve mobil görünüm için rapora özel stiller eklendi.
 - Yeni sözleşme testleri: dönem kuralları, snapshot-only okuma, kapsam/ürün filtresi, rakip değerleri, menü görünürlüğü ve gerçek HTTP üzerinden Excel/PDF indirme.
 - Doğrulama: **87 ilgili test PASS**, `git diff --check` ve Python derleme kontrolü PASS.
+
+### Raporlar görsel düzeltmesi
+
+- İlk canlı sürümde rapora özel CSS, `base.html` içindeki gerçek `styles` bloğu yerine bulunmayan `head` bloğuna yazıldığı için yüklenmiyordu; ham HTML görünümünün kök nedeni düzeltildi.
+- Sayfa ve sol menü adı doğrudan **Raporlar** olarak sadeleştirildi; “Genel Müdür Raporları” ifadesi kaldırıldı.
+- Filtre alanı, ürün seçimleri, KPI kartları, dönem grafiği ve rakip tablosu kurumsal görsel hiyerarşiyle yeniden düzenlendi.
+- Rakip sütunu ve geniş tablo için sabit kolon oranları, metin taşma kontrolü ve dar ekran yatay kaydırma eklendi.
+- Mobil/koyu tema uyumu ve statik dosya cache-buster güncellendi.
