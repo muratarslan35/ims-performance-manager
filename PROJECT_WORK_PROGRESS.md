@@ -896,3 +896,22 @@ Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontroll�
 - PDF çıktısı çok sayfalı A4 yatay yönetim raporu olarak yenilendi: kapsam/dönem başlığı, KPI özeti, ürün performansı, tüm rakipler ve pazar payları, tekrar eden tablo başlıkları, sayfa numarası ve alt bilgi.
 - Excel çıktısı üç profesyonel sekmeye ayrıldı: `Yönetim Özeti`, `Dönem Trendi`, `Rakip Detayı`. Filtreler, sabit başlıklar, sayı biçimleri, baskı alanları ve trend grafiği eklendi.
 - Örnek 7 ürün/84 rakip veri setiyle PDF 5 sayfa render edilerek; Excel de A4 PDF önizlemesine dönüştürülerek görsel taşma ve okunabilirlik kontrolü yapıldı.
+
+### Raporlar production aktivasyonu
+
+- PR **#883** ile raporlama backend'i için davranış değiştirmeyen release-activation commit'i main'e alındı: `70847e72e3166d96496fb05799ad90465c1320a0`.
+- Bunun nedeni PR #881 sonrası heavy deploy'un kodu production hosta çekip `requirements.txt` bağımlılıklarını kurmasına rağmen 35 dakikalık workflow sınırında servis reload adımına ulaşamadan cancel olmasıydı.
+- Heavy deploy sırasında production git HEAD'i zaten `0477a7af15e3a967217eed8ddf4e174fded5753c` olmuş ve ReportLab dahil bağımlılıklar kurulmuştu; business DB üzerinde başarısız/yetersiz publish yapılmadı.
+- Aktivasyon PR'ında Locked Canonical Contracts **PASS** oldu. Backend full suite'teki 3 failure, bir önceki rapor PR'ında da birebir bulunan mevcut baseline contract failure'larıydı; aktivasyon satırı yeni regression üretmedi.
+- Main push workflow run **35503472618** backend modunda **SUCCESS** oldu.
+- Production kanıtı:
+  - `IMS_WORKER_IDLE|processing=0`
+  - `LIVE_COMMIT|70847e72e3166d96496fb05799ad90465c1320a0`
+  - SQLite `journal_mode=wal`, `busy_timeout=30000`
+  - Region Manager acceptance **PASS**, failures `[]`
+  - `SERVICE_ACTIVATION|web=reload|mode=backend`
+  - `SERVICE_ACTIVATION|worker=preserved|mode=backend`
+  - `HTTP_HEALTH|PASS`
+  - web **active**, worker **active**
+- Böylece Raporlar modülü, profesyonel PDF/Excel exportları ve tam rakip kapsamı production servisinde aktif hale geldi.
+- İlgili bekleyen rapor deploy/aktivasyon işi: **YOK**.
