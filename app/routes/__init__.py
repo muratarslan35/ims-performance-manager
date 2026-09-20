@@ -341,8 +341,16 @@ def reports_export(file_type):
         period=request.args.get("period", "monthly"), scope=scope,
         scope_value=scope_value, product_ids=request.args.getlist("product_id"),
     )
-    report, cache_key, _built = ReportCacheService.get_or_build(service)
-    filename = service.export_filename(report, file_type)
+    cache_key, _identity = ReportCacheService.identity(service)
+    report = ReportCacheService.read_by_key(cache_key)
+    filename = service.export_filename(
+        report or {
+            "scope_label": service.scope_label(),
+            "year": service.year,
+            "month": service.month,
+        },
+        file_type,
+    )
     cached = ReportCacheService.cached_export(cache_key, file_type)
     if cached is not None:
         return send_file(
@@ -362,6 +370,10 @@ def reports_export(file_type):
         filename=filename,
         scope=scope,
         scope_value=scope_value,
+        year=service.year,
+        month=service.month,
+        period=service.period,
+        product_ids=service.product_ids,
     )
     return jsonify({
         "success": True,
