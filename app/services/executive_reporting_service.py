@@ -9,7 +9,8 @@ import re
 import unicodedata
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import and_, or_
@@ -130,7 +131,9 @@ class ExecutiveReportingService:
         ).all()
 
     def filter_options(self):
-        reps = Representative.query.order_by(
+        reps = Representative.query.filter(
+            Representative.active.is_(True)
+        ).order_by(
             Representative.region.asc(), Representative.city.asc(), Representative.rep_name.asc()
         ).all()
 
@@ -143,10 +146,11 @@ class ExecutiveReportingService:
             region_labels.setdefault(code, self._region_label(raw))
 
         assignments = self._assignment_rows()
+        active_rep_ids = {int(row.id) for row in reps}
         assignment_cities = {
             str(row.city).strip()
             for row in assignments
-            if str(row.city or "").strip()
+            if int(row.representative_id) in active_rep_ids and str(row.city or "").strip()
         }
         cities = assignment_cities or {
             str(row.city).strip()
@@ -173,7 +177,9 @@ class ExecutiveReportingService:
         }
 
     def _representatives(self):
-        rows = Representative.query.order_by(Representative.rep_name.asc()).all()
+        rows = Representative.query.filter(
+            Representative.active.is_(True)
+        ).order_by(Representative.rep_name.asc()).all()
         if self.scope == "region" and self.scope_values:
             selected_codes = {
                 self._region_code(value) or str(value).strip()
@@ -565,7 +571,10 @@ class ExecutiveReportingService:
             ids = [int(value) for value in self.scope_values if str(value).isdigit()]
             names = {
                 int(row.id): row.rep_name
-                for row in Representative.query.filter(Representative.id.in_(ids)).all()
+                for row in Representative.query.filter(
+                    Representative.id.in_(ids),
+                    Representative.active.is_(True),
+                ).all()
             } if ids else {}
             labels = [str(names.get(value, f"Temsilci {value}")) for value in ids]
 
@@ -608,6 +617,30 @@ class ExecutiveReportingService:
                 "Gerçekleşen Kutu", "Toplam Pazar Kutu", "Rakip Kutu", "Pazar Payı %", "Başlıca Rakipler"]
 
     @staticmethod
+    def _rivals_by_product(report):
+        grouped = defaultdict(list)
+        ordered_products = []
+        for row in report.get("rows") or []:
+            product_name = str(row.get("product_name") or "Ürün")
+            ordered_products.append(product_name)
+        for item in report.get("rival_rows") or []:
+            product_name = str(item.get("product_name") or "Ürün")
+            grouped[product_name].append(item)
+        result = []
+        seen = set()
+        for product_name in ordered_products + sorted(grouped):
+            if product_name in seen or product_name not in grouped:
+                continue
+            seen.add(product_name)
+            rows = sorted(
+                grouped[product_name],
+                key=lambda item: float(item.get("unit") or 0),
+                reverse=True,
+            )
+            result.append((product_name, rows))
+        return result
+
+    @staticmethod
     def _excel_title(sheet, title, subtitle, end_column):
         navy, blue, white = "123E70", "0B5CAD", "FFFFFF"
         sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=end_column)
@@ -636,9 +669,19 @@ class ExecutiveReportingService:
         subtitle = f'{report["scope_label"]} | {report["period_label"]} | {report["year"]}/{report["month"]:02d}'
         self._excel_title(sheet, "SATIŞ VE PAZAR PERFORMANS RAPORU", subtitle, 10)
         sheet.append([])
-        sheet.append(["Kapsam", report["scope_label"], "Dönem", report["period_label"], "Rapor Ayı", f'{report["year"]}/{report["month"]:02d}', "Temsilci", report["representative_count"], "IMS Hafta", report["source_week"] or "-"])
+        sheet.append([
+            "Kapsam", report["scope_label"], "Dönem", report["period_label"],
+            "Rapor Ayı", f'{report["year"]}/{report["month"]:02d}',
+            "Temsilci", report["representative_count"], "IMS Hafta", report["source_week"] or "-",
+        ])
         sheet.append([])
-        sheet.append(["Hedef TL", report["totals"]["target_tl"], "Gerçekleşen TL", report["totals"]["actual_tl"], "TL Realizasyon", report["totals"]["realization_percent"] / 100, "Pazar Payı", (report["totals"]["market_share_percent"] or 0) / 100, "Toplam Pazar Kutu", report["totals"]["market_unit"]])
+        sheet.append([
+            "Hedef TL", report["totals"]["target_tl"],
+            "Gerçekleşen TL", report["totals"]["actual_tl"],
+            "TL Realizasyon", report["totals"]["realization_percent"] / 100,
+            "Pazar Payı", (report["totals"]["market_share_percent"] or 0) / 100,
+            "Toplam Pazar Kutu", report["totals"]["market_unit"],
+        ])
         for column in range(1, 11, 2):
             sheet.cell(6, column).font = Font(name="Aptos", bold=True, color="64748B", size=9)
             sheet.cell(6, column).fill = PatternFill("solid", fgColor="EAF1F8")
@@ -667,9 +710,11 @@ class ExecutiveReportingService:
                 cell.border = Border(bottom=thin)
                 cell.font = Font(name="Aptos", size=10, color="203247")
                 cell.alignment = Alignment(vertical="center")
-            for cell in row[1:3]: cell.number_format = '₺#,##0'
+            for cell in row[1:3]:
+                cell.number_format = '₺#,##0'
             row[3].number_format = '0"%"'
-            for cell in row[4:8]: cell.number_format = '#,##0'
+            for cell in row[4:8]:
+                cell.number_format = '#,##0'
             row[8].number_format = '0.0"%"'
         widths = [23, 16, 18, 14, 15, 18, 18, 16, 14, 14]
         for index, width in enumerate(widths, 1):
@@ -681,24 +726,81 @@ class ExecutiveReportingService:
         sheet.page_setup.fitToWidth = 1
         sheet.page_setup.fitToHeight = 0
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
-        sheet.print_area = f"A1:J{last_row}"
+
+        if last_row >= 9:
+            performance_chart = BarChart()
+            performance_chart.type = "col"
+            performance_chart.style = 10
+            performance_chart.title = "Ürün Bazında Hedef / Gerçekleşen TL"
+            performance_chart.y_axis.title = "TL"
+            performance_chart.x_axis.title = "Ürün"
+            performance_chart.height = 7.8
+            performance_chart.width = 14.5
+            performance_chart.gapWidth = 65
+            performance_chart.add_data(
+                Reference(sheet, min_col=2, max_col=3, min_row=8, max_row=last_row),
+                titles_from_data=True,
+            )
+            performance_chart.set_categories(
+                Reference(sheet, min_col=1, min_row=9, max_row=last_row)
+            )
+            performance_chart.legend.position = "b"
+            if len(performance_chart.series) >= 2:
+                performance_chart.series[0].graphicalProperties.solidFill = "94A3B8"
+                performance_chart.series[1].graphicalProperties.solidFill = "0B5CAD"
+            performance_chart.dLbls = DataLabelList()
+            performance_chart.dLbls.showVal = False
+            sheet.add_chart(performance_chart, "K4")
+            sheet.print_area = f"A1:Q{max(last_row, 20)}"
+        else:
+            sheet.print_area = f"A1:J{last_row}"
 
         trend = workbook.create_sheet("Dönem Trendi")
         self._excel_title(trend, "DÖNEMSEL SATIŞ GELİŞİMİ", subtitle, 4)
-        trend.append([]); trend.append(["Dönem", "Gerçekleşen TL", "Gerçekleşen Kutu", "TL Payı"])
+        trend.append([])
+        trend.append(["Dönem", "Gerçekleşen TL", "Gerçekleşen Kutu", "TL Payı"])
         total_trend_tl = sum(float(row["actual_tl"] or 0) for row in report["trend"])
         for item in report["trend"]:
-            trend.append([item["label"], item["actual_tl"], item["actual_unit"], (item["actual_tl"] / total_trend_tl) if total_trend_tl else 0])
+            trend.append([
+                item["label"], item["actual_tl"], item["actual_unit"],
+                (item["actual_tl"] / total_trend_tl) if total_trend_tl else 0,
+            ])
         self._style_excel_header(trend[4])
         for row in trend.iter_rows(min_row=5, max_row=trend.max_row):
-            row[1].number_format = '₺#,##0'; row[2].number_format = '#,##0'; row[3].number_format = '0.0%'
-        chart = BarChart(); chart.type = "col"; chart.style = 10; chart.title = "Gerçekleşen TL"; chart.y_axis.title = "TL"; chart.height = 8; chart.width = 16
-        chart.add_data(Reference(trend, min_col=2, min_row=4, max_row=trend.max_row), titles_from_data=True)
-        chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row)); trend.add_chart(chart, "F4")
-        for index, width in enumerate([18, 20, 20, 14], 1): trend.column_dimensions[get_column_letter(index)].width = width
-        trend.freeze_panes = "A5"; trend.sheet_view.showGridLines = False
-        trend.page_setup.orientation = "landscape"; trend.page_setup.paperSize = trend.PAPERSIZE_A4
-        trend.page_setup.fitToWidth = 1; trend.page_setup.fitToHeight = 1; trend.sheet_properties.pageSetUpPr.fitToPage = True
+            row[1].number_format = '₺#,##0'
+            row[2].number_format = '#,##0'
+            row[3].number_format = '0.0%'
+        chart = LineChart()
+        chart.style = 13
+        chart.title = "Gerçekleşen TL Trendi"
+        chart.y_axis.title = "TL"
+        chart.x_axis.title = "Dönem"
+        chart.height = 8
+        chart.width = 16
+        chart.add_data(
+            Reference(trend, min_col=2, min_row=4, max_row=trend.max_row),
+            titles_from_data=True,
+        )
+        chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row))
+        chart.legend = None
+        if chart.series:
+            chart.series[0].graphicalProperties.line.solidFill = "0B5CAD"
+            chart.series[0].graphicalProperties.line.width = 28575
+            chart.series[0].marker.symbol = "circle"
+            chart.series[0].marker.size = 7
+        chart.dLbls = DataLabelList()
+        chart.dLbls.showVal = True
+        chart.dLbls.numFmt = '#,##0'
+        trend.add_chart(chart, "F4")
+        for index, width in enumerate([18, 20, 20, 14], 1):
+            trend.column_dimensions[get_column_letter(index)].width = width
+        trend.freeze_panes = "A5"
+        trend.sheet_view.showGridLines = False
+        trend.page_setup.orientation = "landscape"
+        trend.page_setup.paperSize = trend.PAPERSIZE_A4
+        trend.page_setup.fitToWidth = 1
+        trend.page_setup.fitToHeight = 1
+        trend.sheet_properties.pageSetUpPr.fitToPage = True
 
         regions = workbook.create_sheet("Bölge Analizi")
         self._excel_title(regions, "BÖLGE PERFORMANS ANALİZİ", subtitle, 9)
@@ -771,18 +873,16 @@ class ExecutiveReportingService:
         bricks.append([])
         bricks.append([
             "Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket Kutu",
-            "Rakip Kutu", "Toplam Pazar", "Pazar Payı %", "Başlıca Rakipler", "Rakip Kutu Detayı",
+            "Rakip Toplam Kutu", "Toplam Pazar", "Pazar Payı %",
+            "En Güçlü Rakip", "En Güçlü Rakip Kutu",
         ])
         for item in report.get("brick_rows") or []:
-            rivals_text = ", ".join(rival["name"] for rival in item.get("rivals") or [])
-            rival_units = ", ".join(
-                f'{rival["name"]}: {float(rival["unit"] or 0):,.0f}'
-                for rival in item.get("rivals") or []
-            )
+            top_rival = (item.get("rivals") or [{}])[0]
             bricks.append([
                 item["region_name"], item["city"], item["representative_name"], item["brick"],
                 item["product_name"], item["company_unit"], item["competitor_unit"],
-                item["market_unit"], item["share_percent"], rivals_text, rival_units,
+                item["market_unit"], item["share_percent"],
+                top_rival.get("name") or "-", top_rival.get("unit") or 0,
             ])
         self._style_excel_header(bricks[4])
         bricks.freeze_panes = "A5"
@@ -793,7 +893,8 @@ class ExecutiveReportingService:
             row[6].number_format = '#,##0'
             row[7].number_format = '#,##0'
             row[8].number_format = '0.0"%"'
-        for index, width in enumerate([18, 16, 24, 24, 20, 14, 14, 16, 14, 38, 42], 1):
+            row[10].number_format = '#,##0'
+        for index, width in enumerate([18, 16, 24, 24, 20, 14, 17, 16, 14, 28, 20], 1):
             bricks.column_dimensions[get_column_letter(index)].width = width
         bricks.page_setup.orientation = "landscape"
         bricks.page_setup.paperSize = bricks.PAPERSIZE_A4
@@ -801,18 +902,118 @@ class ExecutiveReportingService:
         bricks.page_setup.fitToHeight = 0
         bricks.sheet_properties.pageSetUpPr.fitToPage = True
 
+        rival_groups = self._rivals_by_product(report)
         rivals = workbook.create_sheet("Rakip Analizi")
-        self._excel_title(rivals, "TÜM RAKİPLER VE PAZAR PAYLARI", subtitle, 7)
-        rivals.append([]); rivals.append(["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu"])
-        for item in report["rival_rows"]:
-            rivals.append([item["product_name"], item["name"], item["unit"], (item["share_percent"] or 0) / 100, item["company_unit"], (item["company_share_percent"] or 0) / 100, item["market_unit"]])
-        self._style_excel_header(rivals[4]); rivals.freeze_panes = "A5"; rivals.auto_filter.ref = f"A4:G{max(4, rivals.max_row)}"; rivals.sheet_view.showGridLines = False
+        self._excel_title(rivals, "RAKİP ANALİZİ · YÖNETİM ÖZETİ", subtitle, 8)
+        rivals.append([])
+        rivals.append([
+            "Ürün", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar",
+            "Rakip Sayısı", "Lider Rakip", "Lider Rakip Kutu", "Lider Rakip Payı",
+        ])
+        for product_name, items in rival_groups:
+            leader = items[0] if items else {}
+            sample = items[0] if items else {}
+            rivals.append([
+                product_name,
+                sample.get("company_unit") or 0,
+                (sample.get("company_share_percent") or 0) / 100,
+                sample.get("market_unit") or 0,
+                len(items),
+                leader.get("name") or "-",
+                leader.get("unit") or 0,
+                (leader.get("share_percent") or 0) / 100,
+            ])
+        self._style_excel_header(rivals[4])
+        rivals.freeze_panes = "A5"
+        rivals.auto_filter.ref = f"A4:H{max(4, rivals.max_row)}"
+        rivals.sheet_view.showGridLines = False
         for row in rivals.iter_rows(min_row=5, max_row=rivals.max_row):
-            row[2].number_format = '#,##0'; row[3].number_format = '0.0%'; row[4].number_format = '#,##0'; row[5].number_format = '0.0%'; row[6].number_format = '#,##0'
-        for index, width in enumerate([22, 34, 16, 20, 16, 20, 20], 1): rivals.column_dimensions[get_column_letter(index)].width = width
-        rivals.page_setup.orientation = "landscape"; rivals.page_setup.paperSize = rivals.PAPERSIZE_A4
-        rivals.page_setup.fitToWidth = 1; rivals.page_setup.fitToHeight = 0; rivals.sheet_properties.pageSetUpPr.fitToPage = True
-        rivals.print_title_rows = "1:4"; rivals.print_area = f"A1:G{max(4, rivals.max_row)}"
+            row[1].number_format = '#,##0'
+            row[2].number_format = '0.0%'
+            row[3].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '0.0%'
+        for index, width in enumerate([24, 16, 20, 18, 14, 30, 19, 18], 1):
+            rivals.column_dimensions[get_column_letter(index)].width = width
+        rivals.page_setup.orientation = "landscape"
+        rivals.page_setup.paperSize = rivals.PAPERSIZE_A4
+        rivals.page_setup.fitToWidth = 1
+        rivals.page_setup.fitToHeight = 0
+        rivals.sheet_properties.pageSetUpPr.fitToPage = True
+        rivals.print_title_rows = "1:4"
+        rivals.print_area = f"A1:H{max(4, rivals.max_row)}"
+
+        used_titles = set(workbook.sheetnames)
+        for product_name, items in rival_groups:
+            raw_title = re.sub(r'[:\\/?*\[\]]+', "-", f"Rakip - {product_name}").strip()
+            base_title = raw_title[:31] or "Rakip Detayı"
+            title = base_title
+            counter = 2
+            while title in used_titles:
+                suffix = f" {counter}"
+                title = base_title[:31 - len(suffix)] + suffix
+                counter += 1
+            used_titles.add(title)
+
+            detail = workbook.create_sheet(title)
+            self._excel_title(detail, f"{product_name.upper()} · RAKİP DETAYI", subtitle, 6)
+            detail.append([])
+            detail.append([
+                "Rakip", "Rakip Kutu", "Rakip Pazar Payı",
+                "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu",
+            ])
+            for item in items:
+                detail.append([
+                    item["name"], item["unit"], (item["share_percent"] or 0) / 100,
+                    item["company_unit"], (item["company_share_percent"] or 0) / 100,
+                    item["market_unit"],
+                ])
+            self._style_excel_header(detail[4])
+            detail.freeze_panes = "A5"
+            detail.auto_filter.ref = f"A4:F{max(4, detail.max_row)}"
+            detail.sheet_view.showGridLines = False
+            for row in detail.iter_rows(min_row=5, max_row=detail.max_row):
+                row[1].number_format = '#,##0'
+                row[2].number_format = '0.0%'
+                row[3].number_format = '#,##0'
+                row[4].number_format = '0.0%'
+                row[5].number_format = '#,##0'
+            for index, width in enumerate([34, 18, 20, 18, 20, 20], 1):
+                detail.column_dimensions[get_column_letter(index)].width = width
+
+            if detail.max_row >= 5:
+                rival_chart = BarChart()
+                rival_chart.type = "bar"
+                rival_chart.style = 10
+                rival_chart.title = f"{product_name} · Rakip Kutu Dağılımı"
+                rival_chart.x_axis.title = "Kutu"
+                rival_chart.y_axis.title = "Rakip"
+                rival_chart.height = 8
+                rival_chart.width = 12.5
+                rival_chart.gapWidth = 45
+                rival_chart.add_data(
+                    Reference(detail, min_col=2, min_row=4, max_row=detail.max_row),
+                    titles_from_data=True,
+                )
+                rival_chart.set_categories(
+                    Reference(detail, min_col=1, min_row=5, max_row=detail.max_row)
+                )
+                rival_chart.legend = None
+                if rival_chart.series:
+                    rival_chart.series[0].graphicalProperties.solidFill = "E87422"
+                rival_chart.dLbls = DataLabelList()
+                rival_chart.dLbls.showVal = True
+                rival_chart.dLbls.numFmt = '#,##0'
+                detail.add_chart(rival_chart, "H4")
+                detail.print_area = f"A1:N{max(detail.max_row, 22)}"
+            else:
+                detail.print_area = f"A1:F{detail.max_row}"
+            detail.page_setup.orientation = "landscape"
+            detail.page_setup.paperSize = detail.PAPERSIZE_A4
+            detail.page_setup.fitToWidth = 1
+            detail.page_setup.fitToHeight = 0
+            detail.sheet_properties.pageSetUpPr.fitToPage = True
+
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
@@ -828,6 +1029,8 @@ class ExecutiveReportingService:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.barcharts import HorizontalBarChart
 
         output = BytesIO()
         font_name, bold_name = "Helvetica", "Helvetica-Bold"
@@ -837,7 +1040,7 @@ class ExecutiveReportingService:
                 font_name, bold_name = "ReportSans", "ReportSans-Bold"
             except Exception:
                 pass
-        navy, blue, green, pale, line = colors.HexColor("#123E70"), colors.HexColor("#0B5CAD"), colors.HexColor("#16865B"), colors.HexColor("#F3F7FB"), colors.HexColor("#DCE5EF")
+        navy, blue, green, orange, pale, line = colors.HexColor("#123E70"), colors.HexColor("#0B5CAD"), colors.HexColor("#16865B"), colors.HexColor("#E87422"), colors.HexColor("#F3F7FB"), colors.HexColor("#DCE5EF")
         styles = getSampleStyleSheet()
         title = ParagraphStyle("ReportTitle", parent=styles["Title"], fontName=bold_name, fontSize=19, leading=23, textColor=colors.white, alignment=TA_LEFT)
         subtitle = ParagraphStyle("ReportSubtitle", parent=styles["Normal"], fontName=font_name, fontSize=8.5, leading=12, textColor=colors.HexColor("#DDEBFA"))
@@ -919,14 +1122,146 @@ class ExecutiveReportingService:
             ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
             ("BOTTOMPADDING",(0,0),(-1,-1),4),
         ]))
-        story += [representative_table, PageBreak(), Paragraph("Tüm rakipler ve aylık pazar payları", heading), Paragraph("Pazar payı, seçilen kapsam ve dönemde ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.", normal), Spacer(1, 3*mm)]
-        rival_data = [["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar"]]
-        for item in report["rival_rows"]:
-            rival_data.append([Paragraph(item["product_name"], small), Paragraph(item["name"], small), f'{item["unit"]:,.0f}', f'%{item["share_percent"]:.1f}' if item["share_percent"] is not None else "-", f'{item["company_unit"]:,.0f}', f'%{item["company_share_percent"]:.1f}' if item["company_share_percent"] is not None else "-", f'{item["market_unit"]:,.0f}'])
-        if len(rival_data) == 1: rival_data.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
-        rival_table = Table(rival_data, repeatRows=1, colWidths=[35*mm,74*mm,29*mm,37*mm,29*mm,37*mm,28*mm])
-        rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
-        story += [rival_table, PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
+        story += [
+            representative_table,
+            PageBreak(),
+            Paragraph("Rakip analizi · ürün bazlı yönetim özeti", heading),
+            Paragraph(
+                "Rakipler ürün bazında ayrıştırılmıştır. Her ürünün detayında rakip kutu dağılımı "
+                "ve pazar payları ayrı sayfada gösterilir.",
+                normal,
+            ),
+            Spacer(1, 3*mm),
+        ]
+        rival_groups = self._rivals_by_product(report)
+        rival_overview = [[
+            "Ürün", "Şirket Kutu", "Şirket Payı", "Toplam Pazar",
+            "Rakip Sayısı", "Lider Rakip", "Lider Rakip Payı",
+        ]]
+        for product_name, items in rival_groups:
+            sample = items[0] if items else {}
+            leader = items[0] if items else {}
+            rival_overview.append([
+                Paragraph(product_name, small),
+                f'{float(sample.get("company_unit") or 0):,.0f}',
+                f'%{float(sample.get("company_share_percent") or 0):.1f}',
+                f'{float(sample.get("market_unit") or 0):,.0f}',
+                str(len(items)),
+                Paragraph(str(leader.get("name") or "-"), small),
+                f'%{float(leader.get("share_percent") or 0):.1f}',
+            ])
+        if len(rival_overview) == 1:
+            rival_overview.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
+        rival_overview_table = Table(
+            rival_overview,
+            repeatRows=1,
+            colWidths=[40*mm, 31*mm, 31*mm, 33*mm, 27*mm, 70*mm, 32*mm],
+        )
+        rival_overview_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(1,1),(4,-1),"RIGHT"),
+            ("ALIGN",(6,1),(6,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),5),
+            ("BOTTOMPADDING",(0,0),(-1,-1),5),
+        ]))
+        story.append(rival_overview_table)
+
+        for product_name, items in rival_groups:
+            story.append(PageBreak())
+            story.append(Paragraph(f"Rakip analizi · {product_name}", heading))
+            sample = items[0] if items else {}
+            company_unit = float(sample.get("company_unit") or 0)
+            company_share = float(sample.get("company_share_percent") or 0)
+            market_unit = float(sample.get("market_unit") or 0)
+            competitor_total = sum(float(item.get("unit") or 0) for item in items)
+            product_kpis = Table(
+                [
+                    ["ŞİRKET KUTU", "ŞİRKET PAYI", "RAKİP TOPLAM KUTU", "TOPLAM PAZAR"],
+                    [
+                        f"{company_unit:,.0f}",
+                        f"%{company_share:.1f}",
+                        f"{competitor_total:,.0f}",
+                        f"{market_unit:,.0f}",
+                    ],
+                ],
+                colWidths=[66*mm] * 4,
+                rowHeights=[7*mm, 12*mm],
+            )
+            product_kpis.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),pale),
+                ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#64748B")),
+                ("FONTNAME",(0,0),(-1,0),bold_name),
+                ("FONTSIZE",(0,0),(-1,0),6.4),
+                ("FONTNAME",(0,1),(-1,1),bold_name),
+                ("FONTSIZE",(0,1),(-1,1),12),
+                ("TEXTCOLOR",(0,1),(-1,1),navy),
+                ("ALIGN",(0,0),(-1,-1),"CENTER"),
+                ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                ("BOX",(0,0),(-1,-1),.4,line),
+                ("INNERGRID",(0,0),(-1,-1),.3,line),
+            ]))
+            story += [product_kpis, Spacer(1, 4*mm)]
+
+            top_items = items[:8]
+            if top_items:
+                drawing = Drawing(760, 182)
+                chart = HorizontalBarChart()
+                chart.x = 135
+                chart.y = 18
+                chart.height = 145
+                chart.width = 560
+                chart.data = [[float(item.get("unit") or 0) for item in top_items]]
+                chart.categoryAxis.categoryNames = [str(item.get("name") or "Rakip") for item in top_items]
+                chart.bars[0].fillColor = orange
+                chart.valueAxis.valueMin = 0
+                chart.valueAxis.valueMax = max(
+                    max(float(item.get("unit") or 0) for item in top_items) * 1.15,
+                    1,
+                )
+                chart.valueAxis.labels.fontName = font_name
+                chart.valueAxis.labels.fontSize = 7
+                chart.categoryAxis.labels.fontName = font_name
+                chart.categoryAxis.labels.fontSize = 7
+                chart.categoryAxis.strokeColor = line
+                chart.valueAxis.strokeColor = line
+                drawing.add(chart)
+                story += [drawing, Spacer(1, 2*mm)]
+
+            rival_data = [[
+                "Rakip", "Rakip Kutu", "Rakip Pazar Payı",
+                "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar",
+            ]]
+            for item in items:
+                rival_data.append([
+                    Paragraph(str(item.get("name") or "Rakip"), small),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                    f'{float(item.get("company_unit") or 0):,.0f}',
+                    f'%{float(item.get("company_share_percent") or 0):.1f}',
+                    f'{float(item.get("market_unit") or 0):,.0f}',
+                ])
+            if len(rival_data) == 1:
+                rival_data.append(["Veri yok", "-", "-", "-", "-", "-"])
+            rival_table = Table(
+                rival_data,
+                repeatRows=1,
+                colWidths=[76*mm, 36*mm, 42*mm, 36*mm, 43*mm, 36*mm],
+            )
+            rival_table.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+                ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+                ("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(1,1),(-1,-1),"RIGHT"),
+                ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+                ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
+                ("BOTTOMPADDING",(0,0),(-1,-1),4),
+            ]))
+            story.append(rival_table)
+
+        story += [PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
         brick_data = [["Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket", "Rakip", "Pazar", "Pay"]]
         all_pdf_bricks = report.get("brick_rows") or []
         pdf_bricks = all_pdf_bricks
@@ -1130,12 +1465,25 @@ class ExecutiveReportingService:
         if product_rows:
             chart_data = ChartData()
             chart_data.categories = [row["product_name"] for row in product_rows]
+            chart_data.add_series("Hedef TL", [float(row.get("target_tl") or 0) for row in product_rows])
             chart_data.add_series("Gerçekleşen TL", [float(row.get("actual_tl") or 0) for row in product_rows])
-            chart = summary.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(4.65), Inches(3.32), Inches(7.65), Inches(3.25), chart_data).chart
-            chart.has_legend = False; chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(8)
-            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(9)
-            chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = blue
+            chart = summary.shapes.add_chart(
+                XL_CHART_TYPE.COLUMN_CLUSTERED,
+                Inches(4.65), Inches(3.32), Inches(7.65), Inches(3.25), chart_data,
+            ).chart
+            chart.has_legend = True
+            chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+            chart.legend.font.name = font
+            chart.legend.font.size = Pt(8)
+            chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font
+            chart.value_axis.tick_labels.font.size = Pt(8)
+            chart.category_axis.tick_labels.font.name = font
+            chart.category_axis.tick_labels.font.size = Pt(8)
+            chart.series[0].format.fill.solid()
+            chart.series[0].format.fill.fore_color.rgb = RGBColor(148, 163, 184)
+            chart.series[1].format.fill.solid()
+            chart.series[1].format.fill.fore_color.rgb = blue
 
         page += 1
         trend_slide = deck.slides.add_slide(blank)
@@ -1145,10 +1493,19 @@ class ExecutiveReportingService:
             trend_data = ChartData(); trend_data.categories = [item["label"] for item in trend]
             trend_data.add_series("Gerçekleşen TL", [float(item.get("actual_tl") or 0) for item in trend])
             chart = trend_slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Inches(.7), Inches(1.45), Inches(11.9), Inches(4.95), trend_data).chart
-            chart.has_legend = False; chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(9)
-            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(10)
-            series = chart.series[0]; series.format.line.color.rgb = blue; series.format.line.width = Pt(2.5)
+            chart.has_legend = False
+            chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font
+            chart.value_axis.tick_labels.font.size = Pt(9)
+            chart.category_axis.tick_labels.font.name = font
+            chart.category_axis.tick_labels.font.size = Pt(10)
+            series = chart.series[0]
+            series.format.line.color.rgb = blue
+            series.format.line.width = Pt(2.75)
+            chart.plots[0].has_data_labels = True
+            chart.plots[0].data_labels.show_value = True
+            chart.plots[0].data_labels.font.name = font
+            chart.plots[0].data_labels.font.size = Pt(8)
         else:
             text_box(trend_slide, "Seçili dönemde trend verisi bulunamadı.", .7, 2.6, 11.8, .7, size=18, color=muted, align=PP_ALIGN.CENTER)
 
@@ -1174,10 +1531,6 @@ class ExecutiveReportingService:
              ["Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Pazar payı"],
              lambda row: [row["region_name"], row["city"], row["representative_name"], f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "—"],
              [1.55, 1.45, 2.55, 1.75, 1.85, 1.45, 1.45]),
-            ("Rakip analizi", "Pazar görünümü", report.get("rival_rows") or [], 12,
-             ["Ürün", "Rakip", "Rakip kutu", "Rakip payı", "Şirket kutu", "Şirket payı", "Toplam pazar"],
-             lambda row: [row["product_name"], row["name"], f'{row["unit"]:,.0f}', f'%{row["share_percent"]:.1f}' if row["share_percent"] is not None else "—", f'{row["company_unit"]:,.0f}', f'%{row["company_share_percent"]:.1f}' if row["company_share_percent"] is not None else "—", f'{row["market_unit"]:,.0f}'],
-             [1.65, 2.5, 1.45, 1.45, 1.45, 1.45, 1.65]),
         ]
         for title, section, raw_rows, per_page, headers, formatter, widths in sections:
             formatted = [formatter(row) for row in raw_rows]
@@ -1185,6 +1538,105 @@ class ExecutiveReportingService:
             for index, chunk in enumerate(chunks, 1):
                 page += 1
                 add_table_slide(title + (f"  ·  {index}" if len(chunks) > 1 else ""), section, headers, chunk, page, widths)
+
+        for product_name, items in self._rivals_by_product(report):
+            page += 1
+            rival_slide = deck.slides.add_slide(blank)
+            add_heading(rival_slide, f"Rakip analizi · {product_name}", "Pazar görünümü", page)
+            sample = items[0] if items else {}
+            company_unit = float(sample.get("company_unit") or 0)
+            company_share = float(sample.get("company_share_percent") or 0)
+            market_unit = float(sample.get("market_unit") or 0)
+            competitor_total = sum(float(item.get("unit") or 0) for item in items)
+            rival_kpis = [
+                ("Şirket kutu", f"{company_unit:,.0f}", teal),
+                ("Şirket payı", f"%{company_share:.1f}", blue),
+                ("Rakip toplam", f"{competitor_total:,.0f}", orange),
+                ("Toplam pazar", f"{market_unit:,.0f}", RGBColor(121, 88, 181)),
+            ]
+            for index, (label, value, color) in enumerate(rival_kpis):
+                left = .58 + index * 3.08
+                card = rival_slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(left), Inches(1.35), Inches(2.78), Inches(.95),
+                )
+                fill(card, pale)
+                stripe = rival_slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE,
+                    Inches(left), Inches(1.35), Inches(.05), Inches(.95),
+                )
+                fill(stripe, color)
+                text_box(rival_slide, label.upper(), left + .18, 1.53, 2.35, .18, size=7, color=muted, bold=True)
+                text_box(rival_slide, value, left + .18, 1.82, 2.35, .3, size=17, color=navy, bold=True)
+
+            top_items = items[:7]
+            if top_items:
+                chart_data = ChartData()
+                chart_data.categories = ["Bilim"] + [str(item.get("name") or "Rakip") for item in top_items]
+                chart_data.add_series(
+                    "Kutu",
+                    [company_unit] + [float(item.get("unit") or 0) for item in top_items],
+                )
+                chart = rival_slide.shapes.add_chart(
+                    XL_CHART_TYPE.BAR_CLUSTERED,
+                    Inches(.62), Inches(2.62), Inches(6.15), Inches(3.85), chart_data,
+                ).chart
+                chart.has_legend = False
+                chart.has_title = False
+                chart.value_axis.tick_labels.font.name = font
+                chart.value_axis.tick_labels.font.size = Pt(8)
+                chart.category_axis.tick_labels.font.name = font
+                chart.category_axis.tick_labels.font.size = Pt(8)
+                series = chart.series[0]
+                series.format.fill.solid()
+                series.format.fill.fore_color.rgb = orange
+                if series.points:
+                    series.points[0].format.fill.solid()
+                    series.points[0].format.fill.fore_color.rgb = teal
+
+            table_rows = [
+                [
+                    str(item.get("name") or "Rakip"),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                ]
+                for item in top_items
+            ] or [["Veri bulunamadı", "—", "—"]]
+            table_shape = rival_slide.shapes.add_table(
+                len(table_rows) + 1, 3,
+                Inches(7.02), Inches(2.62), Inches(5.75), Inches(3.85),
+            )
+            table = table_shape.table
+            for index, width in enumerate([3.15, 1.25, 1.35]):
+                table.columns[index].width = Inches(width)
+            for index, value in enumerate(["Rakip", "Kutu", "Pazar payı"]):
+                table.cell(0, index).text = value
+            for row_index, values in enumerate(table_rows, 1):
+                for column_index, value in enumerate(values):
+                    table.cell(row_index, column_index).text = value
+            style_table(table, header_size=8, body_size=8)
+
+            remaining = items[7:]
+            if remaining:
+                detail_rows = [[
+                    str(item.get("name") or "Rakip"),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                    f'{float(item.get("company_unit") or 0):,.0f}',
+                    f'%{float(item.get("company_share_percent") or 0):.1f}',
+                    f'{float(item.get("market_unit") or 0):,.0f}',
+                ] for item in remaining]
+                chunks = pages(detail_rows, 12)
+                for index, chunk in enumerate(chunks, 1):
+                    page += 1
+                    add_table_slide(
+                        f"Rakip analizi · {product_name} · devam {index}",
+                        "Pazar görünümü",
+                        ["Rakip", "Rakip kutu", "Rakip payı", "Şirket kutu", "Şirket payı", "Toplam pazar"],
+                        chunk,
+                        page,
+                        [3.2, 1.65, 1.65, 1.65, 1.65, 1.85],
+                    )
 
         priority_bricks = sorted(
             report.get("brick_rows") or [],

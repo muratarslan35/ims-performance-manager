@@ -5,19 +5,6 @@
   const products=[...document.querySelectorAll('input[name="product_id"]')];
   const scopePanels=[...document.querySelectorAll('[data-scope-panel]')];
   const scopeCount=document.getElementById('reportScopeCount');
-  const brickSearch=document.getElementById('reportBrickSearch');
-  const brickPageSize=document.getElementById('reportBrickPageSize');
-
-  function updateBrickView(changes){
-    const url=new URL(document.URL);
-    Object.entries(changes).forEach(([key,value])=>{
-      if(value===null||value==='')url.searchParams.delete(key);
-      else url.searchParams.set(key,value);
-    });
-    url.searchParams.set('brick_page','1');
-    url.hash='brick-analysis';
-    window.location.assign(url.toString());
-  }
 
   function activeScopeInputs(){
     const selected=scope?.value||'national';
@@ -76,7 +63,9 @@
     });
   });
 
-  document.querySelectorAll('input[name="scope_value"]').forEach(input=>input.addEventListener('change',updateScopeCount));
+  document.querySelectorAll('input[name="scope_value"]').forEach(input=>{
+    input.addEventListener('change',updateScopeCount);
+  });
 
   function filenameFromDisposition(response,fallback){
     const disposition=response.headers.get('Content-Disposition')||'';
@@ -93,8 +82,12 @@
     const filename=filenameFromDisposition(response,fallback);
     const objectUrl=URL.createObjectURL(blob);
     const download=document.createElement('a');
-    download.href=objectUrl;download.download=filename;download.style.display='none';
-    document.body.appendChild(download);download.click();download.remove();
+    download.href=objectUrl;
+    download.download=filename;
+    download.style.display='none';
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
     window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
   }
 
@@ -104,15 +97,15 @@
     const deadline=Date.now()+180000;
     while(Date.now()<deadline){
       const response=await fetch(statusUrl,{credentials:'same-origin',headers:{'X-Requested-With':'fetch'}});
-      if(!response.ok) throw new Error('Rapor durumu alınamadı.');
+      if(!response.ok)throw new Error('Rapor durumu alınamadı.');
       const payload=await response.json();
       if(payload.status==='COMPLETED'&&payload.download_url){
         const fileResponse=await fetch(payload.download_url,{credentials:'same-origin',headers:{'X-Requested-With':'fetch'}});
-        if(!fileResponse.ok) throw new Error('Hazırlanan rapor indirilemedi.');
+        if(!fileResponse.ok)throw new Error('Hazırlanan rapor indirilemedi.');
         await saveBlobResponse(fileResponse,fallback);
         return;
       }
-      if(payload.status==='FAILED') throw new Error(payload.error||'Rapor hazırlanamadı.');
+      if(payload.status==='FAILED')throw new Error(payload.error||'Rapor hazırlanamadı.');
       const position=payload.position?(' · sıra '+payload.position):'';
       link.dataset.exportStatus='Rapor hazırlanıyor'+position;
       await wait(750);
@@ -134,10 +127,10 @@
       const response=await fetch(url,{credentials:'same-origin',headers:{'X-Requested-With':'fetch'}});
       if(response.status===202){
         const payload=await response.json();
-        if(!payload.status_url) throw new Error('Rapor kuyruğa alınamadı.');
+        if(!payload.status_url)throw new Error('Rapor kuyruğa alınamadı.');
         await pollExport(payload.status_url,link,fallback);
       }else{
-        if(!response.ok) throw new Error('Rapor indirilemedi.');
+        if(!response.ok)throw new Error('Rapor indirilemedi.');
         await saveBlobResponse(response,fallback);
       }
     }catch(error){
@@ -147,23 +140,28 @@
       link.classList.remove('disabled');
       link.removeAttribute('aria-busy');
       delete link.dataset.exportStatus;
-      if(window.IMSPageLoader&&typeof window.IMSPageLoader.finish==='function') window.IMSPageLoader.finish();
+      if(window.IMSPageLoader&&typeof window.IMSPageLoader.finish==='function'){
+        window.IMSPageLoader.finish();
+      }
     }
   }
 
-  scope?.addEventListener('change',syncScope);syncScope();
-  brickSearch?.addEventListener('keydown',event=>{
-    if(event.key!=='Enter')return;
-    event.preventDefault();
-    updateBrickView({brick_q:brickSearch.value.trim()});
+  scope?.addEventListener('change',syncScope);
+  syncScope();
+
+  all?.addEventListener('change',()=>{
+    if(all.checked)products.forEach(item=>item.checked=false);
   });
-  brickSearch?.addEventListener('search',()=>updateBrickView({brick_q:brickSearch.value.trim()}));
-  brickPageSize?.addEventListener('change',()=>updateBrickView({brick_page_size:brickPageSize.value}));
-  all?.addEventListener('change',()=>{if(all.checked)products.forEach(item=>item.checked=false);});
-  products.forEach(item=>item.addEventListener('change',()=>{if(item.checked)all.checked=false;if(!products.some(product=>product.checked))all.checked=true;}));
-  document.querySelectorAll('.report-export').forEach(link=>link.addEventListener('click',event=>{
-    event.preventDefault();
-    event.stopPropagation();
-    downloadReport(link);
+  products.forEach(item=>item.addEventListener('change',()=>{
+    if(item.checked)all.checked=false;
+    if(!products.some(product=>product.checked))all.checked=true;
   }));
+
+  document.querySelectorAll('.report-export').forEach(link=>{
+    link.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      downloadReport(link);
+    });
+  });
 })();

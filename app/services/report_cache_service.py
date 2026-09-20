@@ -25,7 +25,7 @@ from app.services.persistent_representative_snapshot_service import (
 
 
 class ReportCacheService:
-    VERSION = 2
+    VERSION = 3
 
     @classmethod
     def _root(cls) -> Path:

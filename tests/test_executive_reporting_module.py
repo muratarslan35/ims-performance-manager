@@ -118,6 +118,58 @@ def test_scope_options_use_region_names_and_real_assignment_cities(app):
         assert [row.id for row in city_service._representatives()] == [first.id]
         assert city_service.scope_label() == "MARDIN"
 
+def test_reporting_excludes_inactive_representatives_but_keeps_active_vacancies(app, monkeypatch):
+    with app.app_context():
+        active_rep = Representative(
+            rep_code="RPT-ACTIVE", rep_name="Aktif Temsilci",
+            region="501", city="ANKARA", active=True,
+        )
+        active_vacancy = Representative(
+            rep_code="RPT-VACANT", rep_name="ANKARA BOŞ KADRO 1",
+            region="501", city="ANKARA", active=True,
+        )
+        inactive_rep = Representative(
+            rep_code="RPT-INACTIVE", rep_name="Pasif Temsilci",
+            region="501", city="ANKARA", active=False,
+        )
+        product = Product(
+            product_code="RPT-ACTIVE-P", product_name="Monurol",
+            display_order=1, is_active=True,
+        )
+        db.session.add_all([active_rep, active_vacancy, inactive_rep, product])
+        db.session.commit()
+
+        service = ExecutiveReportingService(year=2026, month=9, scope="national")
+        option_ids = {item.id for item in service.filter_options()["representatives"]}
+        assert active_rep.id in option_ids
+        assert active_vacancy.id in option_ids
+        assert inactive_rep.id not in option_ids
+        assert {item.id for item in service._representatives()} == {
+            active_rep.id, active_vacancy.id,
+        }
+
+        def active_many(cls, representative_ids, year, month):
+            assert set(representative_ids) == {active_rep.id, active_vacancy.id}
+            return {
+                active_rep.id: _snapshot(product.id, product_name="Monurol"),
+                active_vacancy.id: _snapshot(
+                    product.id, target=0, actual=0, unit=0, market=0,
+                    product_name="Monurol", brick="ANKARA BOŞ BRICK",
+                ),
+            }
+
+        monkeypatch.setattr(
+            PersistentRepresentativeSnapshotService,
+            "get_active_many",
+            classmethod(active_many),
+        )
+        report = service.build()
+        assert report["representative_count"] == 2
+        assert {row["representative_name"] for row in report["representative_rows"]} == {
+            "Aktif Temsilci", "ANKARA BOŞ KADRO 1",
+        }
+
+
 
 def test_multi_scope_regions_and_product_filter_build_only_selected_product(app, monkeypatch):
     with app.app_context():
@@ -263,11 +315,12 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         workbook = load_workbook(BytesIO(service.to_excel(report).getvalue()))
         assert workbook.active["A1"].value == "SATIŞ VE PAZAR PERFORMANS RAPORU"
         assert workbook.active["A9"].value == "Travazol"
-        assert workbook.sheetnames == [
+        assert workbook.sheetnames[:6] == [
             "Yönetim Özeti", "Dönem Trendi", "Bölge Analizi",
             "Temsilci Analizi", "Brick Analizi", "Rakip Analizi",
         ]
-        assert workbook["Rakip Analizi"]["D5"].value == 0.6
+        rival_sheet = next(name for name in workbook.sheetnames if name.startswith("Rakip - Travazol"))
+        assert workbook[rival_sheet]["C5"].value == 0.6
         assert workbook["Temsilci Analizi"]["C5"].value == "Rapor Temsilcisi"
         assert workbook["Brick Analizi"]["D5"].value == "BRICK A"
         pdf = service.to_pdf(report).getvalue()
@@ -299,22 +352,22 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert 'class="btn btn-success report-export" data-page-loader="false" download' in template
     assert "file_type='pptx'" in template
     assert "PowerPoint" in template
+    assert "Rapor sonuçları bu ekranda gösterilmez." in template
+    assert "Seçimleri Güncelle" in template
+    assert "report-kpis" not in template
+    assert "BRICK ANALİZİ" not in template
+    assert "TEMSİLCİ ANALİZİ" not in template
     report_js = open("app/static/js/executive-reports.js", encoding="utf-8").read()
     layout_js = open("app/static/js/layout.js", encoding="utf-8").read()
     assert "fetch(url" in report_js
     assert "window.location.href" not in report_js
+    assert "reportBrickSearch" not in report_js
+    assert "brick_page_size" not in report_js
     assert "anchor.dataset.pageLoader === 'false'" in layout_js
-    assert "row.rivals[:3]" not in template
     assert 'name="scope_value"' in template
     assert 'data-scope-panel="region"' in template
     assert 'data-scope-panel="city"' in template
     assert 'data-scope-panel="representative"' in template
-    assert "TEMSİLCİ ANALİZİ" in template
-    assert "BRICK ANALİZİ" in template
-    assert "report.brick_rows[:150]" not in template
-    assert 'id="reportBrickSearch"' in template
-    assert 'id="reportBrickPageSize"' in template
-    assert "brick_page_size" in report_js
     assert 'a[href="/reports"]' not in css
 
 
@@ -330,8 +383,11 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
     assert response.status_code in {302, 303}
     page = client.get("/reports?year=2026&month=8&period=monthly&scope=national")
     assert page.status_code == 200
-    assert "Satış ve pazar performansı" in page.get_data(as_text=True)
-    assert 'id="reportBrickSearch"' in page.get_data(as_text=True)
+    page_text = page.get_data(as_text=True)
+    assert "Rapor oluştur" in page_text
+    assert "Rapor sonuçları bu ekranda gösterilmez." in page_text
+    assert 'id="reportBrickSearch"' not in page_text
+    assert "report-kpis" not in page_text
 
     for file_type, prefix in (("xlsx", b"PK"), ("pdf", b"%PDF-"), ("pptx", b"PK")):
         queued = client.get(
@@ -344,10 +400,22 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
         with app.app_context():
             job = ReportExportQueue.read(payload["job_id"])
             report = ReportCacheService.read_by_key(job["cache_key"])
-            service = ExecutiveReportingService(
-                year=report["year"], month=report["month"],
-                period=report["period"], scope=report["scope"],
-            )
+            if report is None:
+                service = ExecutiveReportingService(
+                    year=int(job["year"]), month=int(job["month"]),
+                    period=str(job["period"]), scope=str(job["scope"]),
+                    scope_value=str(job.get("scope_value") or ""),
+                    scope_values=job.get("scope_values") or [],
+                    product_ids=job.get("product_ids") or [],
+                )
+                report, current_key, _built = ReportCacheService.get_or_build(service)
+                assert current_key == job["cache_key"]
+            else:
+                service = ExecutiveReportingService(
+                    year=report["year"], month=report["month"],
+                    period=report["period"], scope=report["scope"],
+                    scope_values=report.get("scope_values") or [],
+                )
             output = {
                 "xlsx": service.to_excel,
                 "pdf": service.to_pdf,
@@ -372,6 +440,29 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
         )
         assert cached.status_code == 200
         assert cached.data.startswith(prefix)
+
+
+def test_reports_page_does_not_build_preview_read_model(app, monkeypatch):
+    with app.app_context():
+        db.session.add(User(
+            full_name="Murat Arslan", email="selection@example.com", role="Admin", active=True,
+            password=generate_password_hash("password123"),
+        ))
+        db.session.commit()
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("selection-only reports page must not build the report read model")
+
+    monkeypatch.setattr(ReportCacheService, "get_or_build", fail_if_called)
+    client = app.test_client()
+    response = client.post(
+        "/login",
+        data={"email": "selection@example.com", "password": "password123"},
+    )
+    assert response.status_code in {302, 303}
+    page = client.get("/reports?year=2026&month=9&period=monthly&scope=national")
+    assert page.status_code == 200
+    assert "Rapor sonuçları bu ekranda gösterilmez." in page.get_data(as_text=True)
 
 
 def test_export_filenames_follow_selected_scope(app):
