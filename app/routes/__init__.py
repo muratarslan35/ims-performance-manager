@@ -310,7 +310,7 @@ def reports():
         "reports.html",
         user=current_user,
         report=report,
-        options=service.filter_options(),
+        options=ReportCacheService.get_filter_options(service),
         filters=service,
     )
 
