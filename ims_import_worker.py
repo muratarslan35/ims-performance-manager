@@ -25,6 +25,7 @@ from app.services.persistent_dashboard_snapshot_service import PersistentDashboa
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 from app.services.representative_snapshot_refresh_queue import RepresentativeSnapshotRefreshQueue
+from app.services.report_export_queue import ReportWarmQueue
 
 
 # Import-mode activation marker: representative comparison snapshots now carry
@@ -236,6 +237,17 @@ def _backfill_latest_region_snapshots(app):
                 enrichment.get("status"), latest.year, latest.month,
                 enrichment.get("regions", 0),
             )
+            try:
+                ReportWarmQueue.enqueue(latest.year, latest.month)
+                app.logger.info(
+                    "report_cache_warm_queued source=startup year=%s month=%s",
+                    latest.year, latest.month,
+                )
+            except Exception:
+                app.logger.exception(
+                    "report_cache_warm_queue_failed source=startup year=%s month=%s",
+                    latest.year, latest.month,
+                )
     except Exception:
         db.session.rollback()
         app.logger.exception(
@@ -346,6 +358,19 @@ def _prepare_and_publish(app, completed):
     IMSProgressStore.write(job_id, percent=100, stage="completed",
         message="IMS yüklemesi tamamlandı · snapshot alındı", detail=detail,
         status=IMSImportJob.STATUS_COMPLETED)
+    try:
+        ReportWarmQueue.enqueue(year, month)
+        app.logger.info(
+            "report_cache_warm_queued source=ims_publication year=%s month=%s",
+            year, month,
+        )
+    except Exception:
+        # Report prewarming is derived-cache work only. It must never downgrade
+        # an otherwise valid IMS publication.
+        app.logger.exception(
+            "report_cache_warm_queue_failed source=ims_publication year=%s month=%s",
+            year, month,
+        )
     return True
 
 
@@ -418,6 +443,17 @@ def _process_representative_refresh_queue(app):
             "representative_refresh_queue_completed year=%s month=%s reason=%s set_id=%s",
             year, month, reason, result.get("set_id", 0),
         )
+        try:
+            ReportWarmQueue.enqueue(year, month)
+            app.logger.info(
+                "report_cache_warm_queued source=production_refresh year=%s month=%s",
+                year, month,
+            )
+        except Exception:
+            app.logger.exception(
+                "report_cache_warm_queue_failed source=production_refresh year=%s month=%s",
+                year, month,
+            )
     else:
         # Keep the marker durable. The worker will retry after any currently
         # BUILDING generation finishes; no running IMS/snapshot work is stopped.
