@@ -332,7 +332,7 @@ def reports_export(file_type):
     return send_file(
         output,
         as_attachment=True,
-        download_name=f'genel-mudur-raporu-{report["year"]}-{report["month"]:02d}.{file_type}',
+        download_name=service.export_filename(report, file_type),
         mimetype=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             if file_type == "xlsx" else "application/pdf"
