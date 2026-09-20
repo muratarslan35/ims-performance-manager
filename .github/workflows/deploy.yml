@@ -74,7 +74,7 @@ jobs:
               app/templates/*|app/static/*)
                 if [ "$mode" = "docs" ] || [ "$mode" = "ops" ]; then mode="ui"; fi
                 ;;
-              deploy/ims-report-worker.service.in|deploy/install_systemd_service.sh)
+              deploy/ims-report-worker.service.in|deploy/install_systemd_service.s[h])
                 if [ "$mode" != "heavy" ] && [ "$mode" != "import" ]; then mode="backend"; fi
                 ;;
               deploy/*|migrations/*|app/models.py|sqlite_online_backup.py|cleanup_old_backups.py|database_capacity_audit.py|scripts/sqlite_scale_probe.py|config.py|requirements.txt)
