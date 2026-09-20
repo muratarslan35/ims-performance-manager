@@ -9,7 +9,8 @@ import re
 import unicodedata
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import and_, or_
@@ -130,7 +131,9 @@ class ExecutiveReportingService:
         ).all()
 
     def filter_options(self):
-        reps = Representative.query.order_by(
+        reps = Representative.query.filter(
+            Representative.active.is_(True)
+        ).order_by(
             Representative.region.asc(), Representative.city.asc(), Representative.rep_name.asc()
         ).all()
 
@@ -143,10 +146,11 @@ class ExecutiveReportingService:
             region_labels.setdefault(code, self._region_label(raw))
 
         assignments = self._assignment_rows()
+        active_rep_ids = {int(row.id) for row in reps}
         assignment_cities = {
             str(row.city).strip()
             for row in assignments
-            if str(row.city or "").strip()
+            if int(row.representative_id) in active_rep_ids and str(row.city or "").strip()
         }
         cities = assignment_cities or {
             str(row.city).strip()
@@ -173,7 +177,9 @@ class ExecutiveReportingService:
         }
 
     def _representatives(self):
-        rows = Representative.query.order_by(Representative.rep_name.asc()).all()
+        rows = Representative.query.filter(
+            Representative.active.is_(True)
+        ).order_by(Representative.rep_name.asc()).all()
         if self.scope == "region" and self.scope_values:
             selected_codes = {
                 self._region_code(value) or str(value).strip()
@@ -565,7 +571,10 @@ class ExecutiveReportingService:
             ids = [int(value) for value in self.scope_values if str(value).isdigit()]
             names = {
                 int(row.id): row.rep_name
-                for row in Representative.query.filter(Representative.id.in_(ids)).all()
+                for row in Representative.query.filter(
+                    Representative.id.in_(ids),
+                    Representative.active.is_(True),
+                ).all()
             } if ids else {}
             labels = [str(names.get(value, f"Temsilci {value}")) for value in ids]
 
@@ -606,6 +615,30 @@ class ExecutiveReportingService:
     def _headers():
         return ["Ürün", "Hedef TL", "Gerçekleşen TL", "Realizasyon %", "Hedef Kutu",
                 "Gerçekleşen Kutu", "Toplam Pazar Kutu", "Rakip Kutu", "Pazar Payı %", "Başlıca Rakipler"]
+
+    @staticmethod
+    def _rivals_by_product(report):
+        grouped = defaultdict(list)
+        ordered_products = []
+        for row in report.get("rows") or []:
+            product_name = str(row.get("product_name") or "Ürün")
+            ordered_products.append(product_name)
+        for item in report.get("rival_rows") or []:
+            product_name = str(item.get("product_name") or "Ürün")
+            grouped[product_name].append(item)
+        result = []
+        seen = set()
+        for product_name in ordered_products + sorted(grouped):
+            if product_name in seen or product_name not in grouped:
+                continue
+            seen.add(product_name)
+            rows = sorted(
+                grouped[product_name],
+                key=lambda item: float(item.get("unit") or 0),
+                reverse=True,
+            )
+            result.append((product_name, rows))
+        return result
 
     @staticmethod
     def _excel_title(sheet, title, subtitle, end_column):
