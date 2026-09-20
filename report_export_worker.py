@@ -86,6 +86,8 @@ def _process_export(app) -> bool:
             job.get("cache_key"),
             job.get("file_type"),
         )
+    finally:
+        db.session.remove()
     return True
 
 
