@@ -85,12 +85,17 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         assert [row["product_name"] for row in report["rows"]] == ["Travazol"]
         assert report["rows"][0]["realization_percent"] == 80
         assert report["rows"][0]["market_share_percent"] == 40.0
-        assert report["rows"][0]["rivals"] == [{"name": "Rakip A", "unit": 60.0}]
+        assert report["rows"][0]["rivals"] == [{"name": "Rakip A", "unit": 60.0, "share_percent": 60.0}]
+        assert report["rival_rows"][0]["share_percent"] == 60.0
 
         workbook = load_workbook(BytesIO(service.to_excel(report).getvalue()))
-        assert workbook.active["A1"].value == "GENEL MÜDÜR PAZAR RAPORU"
-        assert workbook.active["A5"].value == "Travazol"
-        assert service.to_pdf(report).getvalue().startswith(b"%PDF-1.4")
+        assert workbook.active["A1"].value == "SATIŞ VE PAZAR PERFORMANS RAPORU"
+        assert workbook.active["A9"].value == "Travazol"
+        assert workbook.sheetnames == ["Yönetim Özeti", "Dönem Trendi", "Rakip Detayı"]
+        assert workbook["Rakip Detayı"]["D5"].value == 0.6
+        pdf = service.to_pdf(report).getvalue()
+        assert pdf.startswith(b"%PDF-")
+        assert pdf.count(b"/Type /Page") >= 2
 
 
 def test_reports_navigation_is_visible_with_direct_reports_name():
@@ -102,6 +107,8 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert "{% block styles %}" in template
     assert "executive-reports.css" in template
     assert "{% block head %}" not in template
+    assert 'data-page-loader="false"' in template
+    assert "row.rivals[:3]" not in template
     assert 'a[href="/reports"]' not in css
 
 
