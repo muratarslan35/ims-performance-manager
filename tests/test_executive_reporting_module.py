@@ -295,8 +295,8 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert 'data-scope-panel="region"' in template
     assert 'data-scope-panel="city"' in template
     assert 'data-scope-panel="representative"' in template
-    assert "Temsilci Analizi" in template
-    assert "Brick Analizi" in template
+    assert "TEMSİLCİ ANALİZİ" in template
+    assert "BRICK ANALİZİ" in template
     assert 'a[href="/reports"]' not in css
 
 
