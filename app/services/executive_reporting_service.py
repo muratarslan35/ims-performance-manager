@@ -6,7 +6,9 @@ from datetime import datetime
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.chart import BarChart, Reference
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from app.models import Product, Representative
 from app.services.period_service import PeriodService
@@ -161,8 +163,12 @@ class ExecutiveReportingService:
                 "competitor_unit": round(competitor_unit, 2),
                 "market_share_percent": round(company_unit * 100 / market_unit, 1) if market_unit else None,
                 "rivals": [
-                    {"name": name, "unit": round(value, 2)}
-                    for name, value in sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)[:10]
+                    {
+                        "name": name,
+                        "unit": round(value, 2),
+                        "share_percent": round(value * 100 / market_unit, 1) if market_unit else None,
+                    }
+                    for name, value in sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)
                 ],
             })
         rows.sort(key=lambda row: (product_meta[row["product_id"]].display_order, row["product_name"]))
@@ -172,11 +178,20 @@ class ExecutiveReportingService:
         }
         totals["realization_percent"] = realization_percent(totals["actual_tl"], totals["target_tl"]) if totals["target_tl"] else 0
         totals["market_share_percent"] = round(totals["actual_unit"] * 100 / totals["market_unit"], 1) if totals["market_unit"] else None
+        rival_rows = [
+            {
+                "product_name": row["product_name"], "market_unit": row["market_unit"],
+                "company_unit": row["actual_unit"], "company_share_percent": row["market_share_percent"],
+                **rival,
+            }
+            for row in rows for rival in row["rivals"]
+        ]
         return {
             "year": self.year, "month": self.month, "period": self.period,
             "period_label": self.PERIODS[self.period], "scope": self.scope,
             "scope_label": self.scope_label(), "rows": rows, "totals": totals,
-            "trend": trend, "representative_count": len(representatives),
+            "trend": trend, "rival_rows": rival_rows,
+            "representative_count": len(representatives),
             "source_week": max(source_weeks) if source_weeks else None,
             "generated_at": datetime.now(),
         }
@@ -194,74 +209,166 @@ class ExecutiveReportingService:
         return ["Ürün", "Hedef TL", "Gerçekleşen TL", "Realizasyon %", "Hedef Kutu",
                 "Gerçekleşen Kutu", "Toplam Pazar Kutu", "Rakip Kutu", "Pazar Payı %", "Başlıca Rakipler"]
 
+    @staticmethod
+    def _excel_title(sheet, title, subtitle, end_column):
+        navy, blue, white = "123E70", "0B5CAD", "FFFFFF"
+        sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=end_column)
+        sheet.cell(1, 1, title)
+        sheet.cell(1, 1).font = Font(name="Aptos Display", size=20, bold=True, color=white)
+        sheet.cell(1, 1).fill = PatternFill("solid", fgColor=navy)
+        sheet.cell(1, 1).alignment = Alignment(vertical="center")
+        sheet.row_dimensions[1].height = 34
+        sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=end_column)
+        sheet.cell(2, 1, subtitle)
+        sheet.cell(2, 1).font = Font(name="Aptos", size=10, color=white)
+        sheet.cell(2, 1).fill = PatternFill("solid", fgColor=blue)
+        sheet.row_dimensions[2].height = 23
+
+    @staticmethod
+    def _style_excel_header(cells):
+        for cell in cells:
+            cell.font = Font(name="Aptos", bold=True, color="FFFFFF", size=10)
+            cell.fill = PatternFill("solid", fgColor="0B5CAD")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
     def to_excel(self, report):
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "Genel Müdür Raporu"
-        sheet.append(["GENEL MÜDÜR PAZAR RAPORU"])
-        sheet.append(["Kapsam", report["scope_label"], "Dönem", report["period_label"], "Yıl/Ay", f'{report["year"]}/{report["month"]:02d}'])
+        sheet.title = "Yönetim Özeti"
+        subtitle = f'{report["scope_label"]} | {report["period_label"]} | {report["year"]}/{report["month"]:02d}'
+        self._excel_title(sheet, "SATIŞ VE PAZAR PERFORMANS RAPORU", subtitle, 10)
         sheet.append([])
-        sheet.append(self._headers())
+        sheet.append(["Kapsam", report["scope_label"], "Dönem", report["period_label"], "Rapor Ayı", f'{report["year"]}/{report["month"]:02d}', "Temsilci", report["representative_count"], "IMS Hafta", report["source_week"] or "-"])
+        sheet.append([])
+        sheet.append(["Hedef TL", report["totals"]["target_tl"], "Gerçekleşen TL", report["totals"]["actual_tl"], "TL Realizasyon", report["totals"]["realization_percent"] / 100, "Pazar Payı", (report["totals"]["market_share_percent"] or 0) / 100, "Toplam Pazar Kutu", report["totals"]["market_unit"]])
+        for column in range(1, 11, 2):
+            sheet.cell(6, column).font = Font(name="Aptos", bold=True, color="64748B", size=9)
+            sheet.cell(6, column).fill = PatternFill("solid", fgColor="EAF1F8")
+            sheet.cell(6, column + 1).font = Font(name="Aptos Display", bold=True, color="123E70", size=13)
+            sheet.cell(6, column + 1).fill = PatternFill("solid", fgColor="F5F8FC")
+        sheet.cell(6, 2).number_format = '₺#,##0'
+        sheet.cell(6, 4).number_format = '₺#,##0'
+        sheet.cell(6, 6).number_format = '0%'
+        sheet.cell(6, 8).number_format = '0.0%'
+        sheet.cell(6, 10).number_format = '#,##0'
+        sheet.append([])
+        sheet.append(self._headers()[:-1])
         for row in report["rows"]:
             sheet.append([
                 row["product_name"], row["target_tl"], row["actual_tl"], row["realization_percent"],
                 row["target_unit"], row["actual_unit"], row["market_unit"], row["competitor_unit"],
-                row["market_share_percent"], ", ".join(item["name"] for item in row["rivals"][:5]),
+                row["market_share_percent"],
             ])
-        sheet.freeze_panes = "A5"
-        sheet.auto_filter.ref = f"A4:J{max(4, sheet.max_row)}"
-        for cell in sheet[1]:
-            cell.font = Font(bold=True, color="FFFFFF", size=14)
-            cell.fill = PatternFill("solid", fgColor="123E70")
-        for cell in sheet[4]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="0B5CAD")
-            cell.alignment = Alignment(horizontal="center")
-        widths = [24, 16, 18, 15, 15, 18, 18, 15, 15, 34]
+        last_row = sheet.max_row
+        self._style_excel_header(sheet[8])
+        sheet.freeze_panes = "A9"
+        sheet.auto_filter.ref = f"A8:I{last_row}"
+        thin = Side(style="thin", color="DCE5EF")
+        for row in sheet.iter_rows(min_row=9, max_row=last_row, min_col=1, max_col=9):
+            for cell in row:
+                cell.border = Border(bottom=thin)
+                cell.font = Font(name="Aptos", size=10, color="203247")
+                cell.alignment = Alignment(vertical="center")
+            for cell in row[1:3]: cell.number_format = '₺#,##0'
+            row[3].number_format = '0"%"'
+            for cell in row[4:8]: cell.number_format = '#,##0'
+            row[8].number_format = '0.0"%"'
+        widths = [23, 16, 18, 14, 15, 18, 18, 16, 14, 14]
         for index, width in enumerate(widths, 1):
-            sheet.column_dimensions[chr(64 + index)].width = width
+            sheet.column_dimensions[get_column_letter(index)].width = width
+        sheet.sheet_view.showGridLines = False
+        sheet.print_title_rows = "1:8"
+        sheet.page_setup.orientation = "landscape"
+        sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 0
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        sheet.print_area = f"A1:J{last_row}"
+
+        trend = workbook.create_sheet("Dönem Trendi")
+        self._excel_title(trend, "DÖNEMSEL SATIŞ GELİŞİMİ", subtitle, 4)
+        trend.append([]); trend.append(["Dönem", "Gerçekleşen TL", "Gerçekleşen Kutu", "TL Payı"])
+        total_trend_tl = sum(float(row["actual_tl"] or 0) for row in report["trend"])
+        for item in report["trend"]:
+            trend.append([item["label"], item["actual_tl"], item["actual_unit"], (item["actual_tl"] / total_trend_tl) if total_trend_tl else 0])
+        self._style_excel_header(trend[4])
+        for row in trend.iter_rows(min_row=5, max_row=trend.max_row):
+            row[1].number_format = '₺#,##0'; row[2].number_format = '#,##0'; row[3].number_format = '0.0%'
+        chart = BarChart(); chart.type = "col"; chart.style = 10; chart.title = "Gerçekleşen TL"; chart.y_axis.title = "TL"; chart.height = 8; chart.width = 16
+        chart.add_data(Reference(trend, min_col=2, min_row=4, max_row=trend.max_row), titles_from_data=True)
+        chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row)); trend.add_chart(chart, "F4")
+        for index, width in enumerate([18, 20, 20, 14], 1): trend.column_dimensions[get_column_letter(index)].width = width
+        trend.freeze_panes = "A5"; trend.sheet_view.showGridLines = False
+        trend.page_setup.orientation = "landscape"; trend.page_setup.paperSize = trend.PAPERSIZE_A4
+        trend.page_setup.fitToWidth = 1; trend.page_setup.fitToHeight = 1; trend.sheet_properties.pageSetUpPr.fitToPage = True
+
+        rivals = workbook.create_sheet("Rakip Detayı")
+        self._excel_title(rivals, "TÜM RAKİPLER VE PAZAR PAYLARI", subtitle, 7)
+        rivals.append([]); rivals.append(["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu"])
+        for item in report["rival_rows"]:
+            rivals.append([item["product_name"], item["name"], item["unit"], (item["share_percent"] or 0) / 100, item["company_unit"], (item["company_share_percent"] or 0) / 100, item["market_unit"]])
+        self._style_excel_header(rivals[4]); rivals.freeze_panes = "A5"; rivals.auto_filter.ref = f"A4:G{max(4, rivals.max_row)}"; rivals.sheet_view.showGridLines = False
+        for row in rivals.iter_rows(min_row=5, max_row=rivals.max_row):
+            row[2].number_format = '#,##0'; row[3].number_format = '0.0%'; row[4].number_format = '#,##0'; row[5].number_format = '0.0%'; row[6].number_format = '#,##0'
+        for index, width in enumerate([22, 34, 16, 20, 16, 20, 20], 1): rivals.column_dimensions[get_column_letter(index)].width = width
+        rivals.page_setup.orientation = "landscape"; rivals.page_setup.paperSize = rivals.PAPERSIZE_A4
+        rivals.page_setup.fitToWidth = 1; rivals.page_setup.fitToHeight = 0; rivals.sheet_properties.pageSetUpPr.fitToPage = True
+        rivals.print_title_rows = "1:4"; rivals.print_area = f"A1:G{max(4, rivals.max_row)}"
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
         return output
 
     def to_pdf(self, report):
-        """Create a dependency-free, valid PDF containing the filtered result."""
-        lines = [
-            "GENEL MUDUR PAZAR RAPORU",
-            f'Kapsam: {report["scope_label"]} | Donem: {report["period_label"]} | {report["year"]}/{report["month"]:02d}',
-            "",
-            "Urun | Hedef TL | Gerceklesen TL | % | Kutu | Pazar | Pay %",
-        ]
+        """Create a branded, multi-page management report with full rival detail."""
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+        output = BytesIO()
+        font_name, bold_name = "Helvetica", "Helvetica-Bold"
+        for regular, bold in (("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),):
+            try:
+                pdfmetrics.registerFont(TTFont("ReportSans", regular)); pdfmetrics.registerFont(TTFont("ReportSans-Bold", bold))
+                font_name, bold_name = "ReportSans", "ReportSans-Bold"
+            except Exception:
+                pass
+        navy, blue, green, pale, line = colors.HexColor("#123E70"), colors.HexColor("#0B5CAD"), colors.HexColor("#16865B"), colors.HexColor("#F3F7FB"), colors.HexColor("#DCE5EF")
+        styles = getSampleStyleSheet()
+        title = ParagraphStyle("ReportTitle", parent=styles["Title"], fontName=bold_name, fontSize=19, leading=23, textColor=colors.white, alignment=TA_LEFT)
+        subtitle = ParagraphStyle("ReportSubtitle", parent=styles["Normal"], fontName=font_name, fontSize=8.5, leading=12, textColor=colors.HexColor("#DDEBFA"))
+        heading = ParagraphStyle("Heading", parent=styles["Heading2"], fontName=bold_name, fontSize=12, leading=15, textColor=navy, spaceAfter=7)
+        normal = ParagraphStyle("NormalTR", parent=styles["Normal"], fontName=font_name, fontSize=7.5, leading=10, textColor=colors.HexColor("#25364A"))
+        small = ParagraphStyle("SmallTR", parent=normal, fontSize=6.5, leading=8)
+
+        def footer(canvas, doc):
+            canvas.saveState(); canvas.setStrokeColor(line); canvas.line(14*mm, 10*mm, 283*mm, 10*mm)
+            canvas.setFont(font_name, 6.5); canvas.setFillColor(colors.HexColor("#64748B"))
+            canvas.drawString(14*mm, 6*mm, f'IMS Performans Takip Sistemi | {report["scope_label"]}')
+            canvas.drawRightString(283*mm, 6*mm, f'Sayfa {doc.page}'); canvas.restoreState()
+
+        doc = SimpleDocTemplate(output, pagesize=landscape(A4), rightMargin=14*mm, leftMargin=14*mm, topMargin=12*mm, bottomMargin=14*mm, title="Satış ve Pazar Performans Raporu")
+        story = []
+        hero = Table([[Paragraph("SATIŞ VE PAZAR PERFORMANS RAPORU", title), Paragraph(f'{report["scope_label"]}<br/>{report["period_label"]} - {report["year"]}/{report["month"]:02d}', subtitle)]], colWidths=[190*mm, 74*mm])
+        hero.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),navy),("BACKGROUND",(1,0),(1,0),blue),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),10),("RIGHTPADDING",(0,0),(-1,-1),10),("TOPPADDING",(0,0),(-1,-1),10),("BOTTOMPADDING",(0,0),(-1,-1),10)])); story += [hero, Spacer(1, 7*mm)]
+        total = report["totals"]
+        kpis = [["HEDEF TL", "GERÇEKLEŞEN TL", "TL REALİZASYON", "PAZAR PAYI", "TOPLAM PAZAR"], [f'₺{total["target_tl"]:,.0f}', f'₺{total["actual_tl"]:,.0f}', f'%{total["realization_percent"]}', f'%{total["market_share_percent"]:.1f}' if total["market_share_percent"] is not None else "-", f'{total["market_unit"]:,.0f} kutu']]
+        kpi_table = Table(kpis, colWidths=[52.8*mm]*5, rowHeights=[7*mm, 13*mm]); kpi_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),pale),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#64748B")),("FONTNAME",(0,0),(-1,0),bold_name),("FONTSIZE",(0,0),(-1,0),6.5),("FONTNAME",(0,1),(-1,1),bold_name),("FONTSIZE",(0,1),(-1,1),13),("TEXTCOLOR",(0,1),(-1,1),navy),("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("BOX",(0,0),(-1,-1),.5,line),("INNERGRID",(0,0),(-1,-1),.5,line)])); story += [kpi_table, Spacer(1, 7*mm), Paragraph("Ürün performansı", heading)]
+        product_data = [["Ürün", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Hedef Kutu", "Gerçekleşen Kutu", "Toplam Pazar", "Pazar Payı"]]
         for row in report["rows"]:
-            lines.append(
-                f'{row["product_name"][:24]} | {row["target_tl"]:.0f} | {row["actual_tl"]:.0f} | '
-                f'{row["realization_percent"]} | {row["actual_unit"]:.0f} | {row["market_unit"]:.0f} | '
-                f'{row["market_share_percent"] if row["market_share_percent"] is not None else "-"}'
-            )
-        escaped = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") for line in lines]
-        commands = ["BT", "/F1 10 Tf", "48 790 Td", "14 TL"]
-        for index, line in enumerate(escaped):
-            if index:
-                commands.append("T*")
-            commands.append(f"({line}) Tj")
-        commands.append("ET")
-        stream = "\n".join(commands).encode("latin-1", "replace")
-        objects = [
-            b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
-            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        ]
-        pdf = bytearray(b"%PDF-1.4\n")
-        offsets = [0]
-        for index, obj in enumerate(objects, 1):
-            offsets.append(len(pdf))
-            pdf.extend(f"{index} 0 obj\n".encode() + obj + b"\nendobj\n")
-        xref = len(pdf)
-        pdf.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode())
-        for offset in offsets[1:]:
-            pdf.extend(f"{offset:010d} 00000 n \n".encode())
-        pdf.extend(f"trailer << /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
-        return BytesIO(bytes(pdf))
+            product_data.append([Paragraph(row["product_name"], normal), f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'{row["target_unit"]:,.0f}', f'{row["actual_unit"]:,.0f}', f'{row["market_unit"]:,.0f}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "-"])
+        product_table = Table(product_data, repeatRows=1, colWidths=[39*mm,35*mm,38*mm,28*mm,31*mm,36*mm,31*mm,27*mm])
+        product_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),7),("ALIGN",(1,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.35,line),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)])); story += [product_table, PageBreak(), Paragraph("Tüm rakipler ve aylık pazar payları", heading), Paragraph("Pazar payı, seçilen kapsam ve dönemde ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.", normal), Spacer(1, 3*mm)]
+        rival_data = [["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar"]]
+        for item in report["rival_rows"]:
+            rival_data.append([Paragraph(item["product_name"], small), Paragraph(item["name"], small), f'{item["unit"]:,.0f}', f'%{item["share_percent"]:.1f}' if item["share_percent"] is not None else "-", f'{item["company_unit"]:,.0f}', f'%{item["company_share_percent"]:.1f}' if item["company_share_percent"] is not None else "-", f'{item["market_unit"]:,.0f}'])
+        if len(rival_data) == 1: rival_data.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
+        rival_table = Table(rival_data, repeatRows=1, colWidths=[35*mm,74*mm,29*mm,37*mm,29*mm,37*mm,28*mm])
+        rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)])); story.append(rival_table)
+        doc.build(story, onFirstPage=footer, onLaterPages=footer)
+        output.seek(0); return output
