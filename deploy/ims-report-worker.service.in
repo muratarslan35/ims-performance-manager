@@ -1,0 +1,33 @@
+[Unit]
+Description=IMS Report Export Worker
+After=network-online.target ims-performance-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@IMS_USER@
+Group=@IMS_GROUP@
+WorkingDirectory=@IMS_PATH@
+Environment=APP_ENV=production
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-@IMS_PATH@/.env
+EnvironmentFile=-/etc/ims-performance-manager.env
+ExecStart=@IMS_PATH@/venv/bin/python @IMS_PATH@/report_export_worker.py
+Restart=always
+RestartSec=3
+Nice=12
+CPUAccounting=true
+CPUWeight=500
+IOAccounting=true
+IOWeight=100
+MemoryAccounting=true
+MemoryHigh=350M
+MemoryMax=450M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@IMS_PATH@/instance @IMS_PATH@/reports @IMS_PATH@/temp @IMS_PATH@/logs
+
+[Install]
+WantedBy=multi-user.target
