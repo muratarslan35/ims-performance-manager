@@ -70,7 +70,6 @@ class ReportExportQueue:
             if existing and existing.get("status") in {
                 cls.STATUS_QUEUED,
                 cls.STATUS_PROCESSING,
-                cls.STATUS_COMPLETED,
             }:
                 return existing
             now = datetime.utcnow().isoformat()
