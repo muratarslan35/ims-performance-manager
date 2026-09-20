@@ -679,7 +679,108 @@ class ExecutiveReportingService:
         trend.page_setup.orientation = "landscape"; trend.page_setup.paperSize = trend.PAPERSIZE_A4
         trend.page_setup.fitToWidth = 1; trend.page_setup.fitToHeight = 1; trend.sheet_properties.pageSetUpPr.fitToPage = True
 
-        rivals = workbook.create_sheet("Rakip Detayı")
+        regions = workbook.create_sheet("Bölge Analizi")
+        self._excel_title(regions, "BÖLGE PERFORMANS ANALİZİ", subtitle, 9)
+        regions.append([])
+        regions.append([
+            "Bölge", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon %",
+            "Gerçekleşen Kutu", "Toplam Pazar Kutu", "Pazar Payı %", "Bölge Kodu",
+        ])
+        for item in report.get("region_rows") or []:
+            regions.append([
+                item["region_name"], item["representative_count"], item["target_tl"],
+                item["actual_tl"], item["realization_percent"], item["actual_unit"],
+                item["market_unit"], item["market_share_percent"], item["region_code"],
+            ])
+        self._style_excel_header(regions[4])
+        regions.freeze_panes = "A5"
+        regions.auto_filter.ref = f"A4:I{max(4, regions.max_row)}"
+        regions.sheet_view.showGridLines = False
+        for row in regions.iter_rows(min_row=5, max_row=regions.max_row):
+            row[2].number_format = '₺#,##0'
+            row[3].number_format = '₺#,##0'
+            row[4].number_format = '0"%"'
+            row[5].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '0.0"%"'
+        for index, width in enumerate([22, 12, 17, 18, 15, 18, 18, 15, 12], 1):
+            regions.column_dimensions[get_column_letter(index)].width = width
+        regions.page_setup.orientation = "landscape"
+        regions.page_setup.paperSize = regions.PAPERSIZE_A4
+        regions.page_setup.fitToWidth = 1
+        regions.page_setup.fitToHeight = 0
+        regions.sheet_properties.pageSetUpPr.fitToPage = True
+
+        reps = workbook.create_sheet("Temsilci Analizi")
+        self._excel_title(reps, "TEMSİLCİ PERFORMANS ANALİZİ", subtitle, 10)
+        reps.append([])
+        reps.append([
+            "Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon %",
+            "Hedef Kutu", "Gerçekleşen Kutu", "Toplam Pazar", "Pazar Payı %",
+        ])
+        for item in report.get("representative_rows") or []:
+            reps.append([
+                item["region_name"], item["city"], item["representative_name"],
+                item["target_tl"], item["actual_tl"], item["realization_percent"],
+                item["target_unit"], item["actual_unit"], item["market_unit"],
+                item["market_share_percent"],
+            ])
+        self._style_excel_header(reps[4])
+        reps.freeze_panes = "A5"
+        reps.auto_filter.ref = f"A4:J{max(4, reps.max_row)}"
+        reps.sheet_view.showGridLines = False
+        for row in reps.iter_rows(min_row=5, max_row=reps.max_row):
+            row[3].number_format = '₺#,##0'
+            row[4].number_format = '₺#,##0'
+            row[5].number_format = '0"%"'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '#,##0'
+            row[8].number_format = '#,##0'
+            row[9].number_format = '0.0"%"'
+        for index, width in enumerate([20, 18, 28, 17, 18, 15, 15, 18, 18, 15], 1):
+            reps.column_dimensions[get_column_letter(index)].width = width
+        reps.page_setup.orientation = "landscape"
+        reps.page_setup.paperSize = reps.PAPERSIZE_A4
+        reps.page_setup.fitToWidth = 1
+        reps.page_setup.fitToHeight = 0
+        reps.sheet_properties.pageSetUpPr.fitToPage = True
+
+        bricks = workbook.create_sheet("Brick Analizi")
+        self._excel_title(bricks, "BRICK VE REKABET ANALİZİ", subtitle, 11)
+        bricks.append([])
+        bricks.append([
+            "Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket Kutu",
+            "Rakip Kutu", "Toplam Pazar", "Pazar Payı %", "Başlıca Rakipler", "Rakip Kutu Detayı",
+        ])
+        for item in report.get("brick_rows") or []:
+            rivals_text = ", ".join(rival["name"] for rival in item.get("rivals") or [])
+            rival_units = ", ".join(
+                f'{rival["name"]}: {float(rival["unit"] or 0):,.0f}'
+                for rival in item.get("rivals") or []
+            )
+            bricks.append([
+                item["region_name"], item["city"], item["representative_name"], item["brick"],
+                item["product_name"], item["company_unit"], item["competitor_unit"],
+                item["market_unit"], item["share_percent"], rivals_text, rival_units,
+            ])
+        self._style_excel_header(bricks[4])
+        bricks.freeze_panes = "A5"
+        bricks.auto_filter.ref = f"A4:K{max(4, bricks.max_row)}"
+        bricks.sheet_view.showGridLines = False
+        for row in bricks.iter_rows(min_row=5, max_row=bricks.max_row):
+            row[5].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '#,##0'
+            row[8].number_format = '0.0"%"'
+        for index, width in enumerate([18, 16, 24, 24, 20, 14, 14, 16, 14, 38, 42], 1):
+            bricks.column_dimensions[get_column_letter(index)].width = width
+        bricks.page_setup.orientation = "landscape"
+        bricks.page_setup.paperSize = bricks.PAPERSIZE_A4
+        bricks.page_setup.fitToWidth = 1
+        bricks.page_setup.fitToHeight = 0
+        bricks.sheet_properties.pageSetUpPr.fitToPage = True
+
+        rivals = workbook.create_sheet("Rakip Analizi")
         self._excel_title(rivals, "TÜM RAKİPLER VE PAZAR PAYLARI", subtitle, 7)
         rivals.append([]); rivals.append(["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu"])
         for item in report["rival_rows"]:
