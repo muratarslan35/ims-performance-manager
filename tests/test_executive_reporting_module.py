@@ -400,10 +400,22 @@ def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
         with app.app_context():
             job = ReportExportQueue.read(payload["job_id"])
             report = ReportCacheService.read_by_key(job["cache_key"])
-            service = ExecutiveReportingService(
-                year=report["year"], month=report["month"],
-                period=report["period"], scope=report["scope"],
-            )
+            if report is None:
+                service = ExecutiveReportingService(
+                    year=int(job["year"]), month=int(job["month"]),
+                    period=str(job["period"]), scope=str(job["scope"]),
+                    scope_value=str(job.get("scope_value") or ""),
+                    scope_values=job.get("scope_values") or [],
+                    product_ids=job.get("product_ids") or [],
+                )
+                report, current_key, _built = ReportCacheService.get_or_build(service)
+                assert current_key == job["cache_key"]
+            else:
+                service = ExecutiveReportingService(
+                    year=report["year"], month=report["month"],
+                    period=report["period"], scope=report["scope"],
+                    scope_values=report.get("scope_values") or [],
+                )
             output = {
                 "xlsx": service.to_excel,
                 "pdf": service.to_pdf,
