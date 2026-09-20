@@ -31,6 +31,7 @@ class ReportCacheService:
     def _root(cls) -> Path:
         root = Path(current_app.instance_path) / "report_cache"
         (root / "read_models").mkdir(parents=True, exist_ok=True)
+        (root / "options").mkdir(parents=True, exist_ok=True)
         (root / "exports").mkdir(parents=True, exist_ok=True)
         (root / "locks").mkdir(parents=True, exist_ok=True)
         return root
@@ -45,13 +46,18 @@ class ReportCacheService:
 
     @classmethod
     def identity(cls, service) -> tuple[str, dict[str, Any]]:
+        scope_value = str(service.scope_value or "")
+        if service.scope == "region":
+            scope_value = service._region_code(scope_value) or scope_value
+        elif service.scope == "city":
+            scope_value = service._scope_key(scope_value)
         payload = {
             "version": cls.VERSION,
             "year": int(service.year),
             "month": int(service.month),
             "period": str(service.period),
             "scope": str(service.scope),
-            "scope_value": str(service.scope_value or ""),
+            "scope_value": scope_value,
             "product_ids": sorted(int(value) for value in service.product_ids),
             "source_sets": cls.source_sets(service),
         }
@@ -61,6 +67,22 @@ class ReportCacheService:
     @classmethod
     def _read_model_path(cls, cache_key: str) -> Path:
         return cls._root() / "read_models" / f"{cache_key}.json"
+
+    @classmethod
+    def _options_identity(cls, service) -> str:
+        payload = {
+            "version": cls.VERSION,
+            "year": int(service.year),
+            "month": int(service.month),
+            "period": str(service.period),
+            "source_sets": cls.source_sets(service),
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(("options|" + raw).encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _options_path(cls, cache_key: str) -> Path:
+        return cls._root() / "options" / f"{cache_key}.json"
 
     @classmethod
     def _lock_path(cls, cache_key: str) -> Path:
@@ -113,6 +135,45 @@ class ReportCacheService:
             return None
 
     @classmethod
+    def get_filter_options(cls, service) -> dict:
+        cache_key = cls._options_identity(service)
+        path = cls._options_path(cache_key)
+        if path.is_file():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+
+        lock_path = cls._lock_path("options-" + cache_key)
+        with lock_path.open("a+") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            if path.is_file():
+                try:
+                    return json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    pass
+
+            options = service.filter_options()
+            payload = {
+                "products": [
+                    {"id": int(item.id), "product_name": str(item.product_name)}
+                    for item in options["products"]
+                ],
+                "regions": options["regions"],
+                "cities": options["cities"],
+                "representatives": [
+                    {
+                        "id": int(item.id),
+                        "rep_name": str(item.rep_name),
+                        "region": str(item.region or ""),
+                    }
+                    for item in options["representatives"]
+                ],
+            }
+            cls._atomic_json_write(path, payload)
+            return payload
+
+    @classmethod
     def get_or_build(cls, service) -> tuple[dict, str, bool]:
         cache_key, identity = cls.identity(service)
         cached = cls.read_by_key(cache_key)
@@ -151,7 +212,7 @@ class ReportCacheService:
         root = cls._root()
         cutoff = datetime.now().timestamp() - max_age_days * 86400
         removed = 0
-        for folder in (root / "read_models", root / "exports"):
+        for folder in (root / "read_models", root / "options", root / "exports"):
             files = [path for path in folder.iterdir() if path.is_file()]
             for path in files:
                 try:
