@@ -11,6 +11,7 @@ from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from sqlalchemy import and_, or_
 
 from app.models import Product, Representative, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
@@ -87,15 +88,20 @@ class ExecutiveReportingService:
         return AliasService.normalize(value).strip()
 
     def _assignment_rows(self):
-        periods = set(self.months())
+        periods = list(dict.fromkeys(self.months()))
         if not periods:
             return []
-        return [
-            row for row in RepresentativeBrickAssignment.query.filter(
-                RepresentativeBrickAssignment.active.is_(True)
-            ).all()
-            if (int(row.year), int(row.month)) in periods
+        conditions = [
+            and_(
+                RepresentativeBrickAssignment.year == year,
+                RepresentativeBrickAssignment.month == month,
+            )
+            for year, month in periods
         ]
+        return RepresentativeBrickAssignment.query.filter(
+            RepresentativeBrickAssignment.active.is_(True),
+            or_(*conditions),
+        ).all()
 
     def filter_options(self):
         reps = Representative.query.order_by(
