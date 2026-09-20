@@ -111,6 +111,10 @@ def test_export_queue_deduplicates_identical_artifact_requests(cache_app):
             filename="bolge-analiz-raporu-diyarbakir-2026-09.pdf",
             scope="region",
             scope_value="901",
+            year=2026,
+            month=9,
+            period="monthly",
+            product_ids=[],
         )
         second = ReportExportQueue.enqueue(
             cache_key="abc123",
