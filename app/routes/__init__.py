@@ -311,12 +311,56 @@ def reports():
         product_ids=product_ids,
     )
     report, _cache_key, _built = ReportCacheService.get_or_build(service)
+    brick_query = str(request.args.get("brick_q", "") or "").strip()
+    brick_page_size = request.args.get("brick_page_size", default=50, type=int)
+    if brick_page_size not in {25, 50, 100}:
+        brick_page_size = 50
+    brick_rows = report.get("brick_rows") or []
+    if brick_query:
+        needle = brick_query.casefold()
+        brick_rows = [
+            row for row in brick_rows
+            if needle in " ".join(
+                str(row.get(key) or "")
+                for key in ("city", "representative_name", "brick", "product_name")
+            ).casefold()
+        ]
+    brick_total = len(brick_rows)
+    brick_page_count = max(1, (brick_total + brick_page_size - 1) // brick_page_size)
+    brick_page = min(
+        max(request.args.get("brick_page", default=1, type=int) or 1, 1),
+        brick_page_count,
+    )
+    brick_start = (brick_page - 1) * brick_page_size
+
+    def brick_page_url(page):
+        values = request.args.to_dict(flat=False)
+        values["brick_page"] = [str(page)]
+        values["brick_page_size"] = [str(brick_page_size)]
+        if brick_query:
+            values["brick_q"] = [brick_query]
+        else:
+            values.pop("brick_q", None)
+        return url_for("main.reports", **values)
+
     return render_template(
         "reports.html",
         user=current_user,
         report=report,
         options=ReportCacheService.get_filter_options(service),
         filters=service,
+        brick_view={
+            "rows": brick_rows[brick_start:brick_start + brick_page_size],
+            "query": brick_query,
+            "page": brick_page,
+            "page_size": brick_page_size,
+            "page_count": brick_page_count,
+            "total": brick_total,
+            "start": brick_start + 1 if brick_total else 0,
+            "end": min(brick_start + brick_page_size, brick_total),
+            "previous_url": brick_page_url(brick_page - 1) if brick_page > 1 else None,
+            "next_url": brick_page_url(brick_page + 1) if brick_page < brick_page_count else None,
+        },
     )
 
 

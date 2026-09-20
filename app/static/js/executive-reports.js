@@ -5,6 +5,19 @@
   const products=[...document.querySelectorAll('input[name="product_id"]')];
   const scopePanels=[...document.querySelectorAll('[data-scope-panel]')];
   const scopeCount=document.getElementById('reportScopeCount');
+  const brickSearch=document.getElementById('reportBrickSearch');
+  const brickPageSize=document.getElementById('reportBrickPageSize');
+
+  function updateBrickView(changes){
+    const url=new URL(document.URL);
+    Object.entries(changes).forEach(([key,value])=>{
+      if(value===null||value==='')url.searchParams.delete(key);
+      else url.searchParams.set(key,value);
+    });
+    url.searchParams.set('brick_page','1');
+    url.hash='brick-analysis';
+    window.location.assign(url.toString());
+  }
 
   function activeScopeInputs(){
     const selected=scope?.value||'national';
@@ -137,6 +150,13 @@
   }
 
   scope?.addEventListener('change',syncScope);syncScope();
+  brickSearch?.addEventListener('keydown',event=>{
+    if(event.key!=='Enter')return;
+    event.preventDefault();
+    updateBrickView({brick_q:brickSearch.value.trim()});
+  });
+  brickSearch?.addEventListener('search',()=>updateBrickView({brick_q:brickSearch.value.trim()}));
+  brickPageSize?.addEventListener('change',()=>updateBrickView({brick_page_size:brickPageSize.value}));
   all?.addEventListener('change',()=>{if(all.checked)products.forEach(item=>item.checked=false);});
   products.forEach(item=>item.addEventListener('change',()=>{if(item.checked)all.checked=false;if(!products.some(product=>product.checked))all.checked=true;}));
   document.querySelectorAll('.report-export').forEach(link=>link.addEventListener('click',event=>{
