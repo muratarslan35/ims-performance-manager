@@ -1465,12 +1465,25 @@ class ExecutiveReportingService:
         if product_rows:
             chart_data = ChartData()
             chart_data.categories = [row["product_name"] for row in product_rows]
+            chart_data.add_series("Hedef TL", [float(row.get("target_tl") or 0) for row in product_rows])
             chart_data.add_series("Gerçekleşen TL", [float(row.get("actual_tl") or 0) for row in product_rows])
-            chart = summary.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(4.65), Inches(3.32), Inches(7.65), Inches(3.25), chart_data).chart
-            chart.has_legend = False; chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(8)
-            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(9)
-            chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = blue
+            chart = summary.shapes.add_chart(
+                XL_CHART_TYPE.COLUMN_CLUSTERED,
+                Inches(4.65), Inches(3.32), Inches(7.65), Inches(3.25), chart_data,
+            ).chart
+            chart.has_legend = True
+            chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+            chart.legend.font.name = font
+            chart.legend.font.size = Pt(8)
+            chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font
+            chart.value_axis.tick_labels.font.size = Pt(8)
+            chart.category_axis.tick_labels.font.name = font
+            chart.category_axis.tick_labels.font.size = Pt(8)
+            chart.series[0].format.fill.solid()
+            chart.series[0].format.fill.fore_color.rgb = RGBColor(148, 163, 184)
+            chart.series[1].format.fill.solid()
+            chart.series[1].format.fill.fore_color.rgb = blue
 
         page += 1
         trend_slide = deck.slides.add_slide(blank)
@@ -1480,10 +1493,19 @@ class ExecutiveReportingService:
             trend_data = ChartData(); trend_data.categories = [item["label"] for item in trend]
             trend_data.add_series("Gerçekleşen TL", [float(item.get("actual_tl") or 0) for item in trend])
             chart = trend_slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Inches(.7), Inches(1.45), Inches(11.9), Inches(4.95), trend_data).chart
-            chart.has_legend = False; chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font; chart.value_axis.tick_labels.font.size = Pt(9)
-            chart.category_axis.tick_labels.font.name = font; chart.category_axis.tick_labels.font.size = Pt(10)
-            series = chart.series[0]; series.format.line.color.rgb = blue; series.format.line.width = Pt(2.5)
+            chart.has_legend = False
+            chart.has_title = False
+            chart.value_axis.tick_labels.font.name = font
+            chart.value_axis.tick_labels.font.size = Pt(9)
+            chart.category_axis.tick_labels.font.name = font
+            chart.category_axis.tick_labels.font.size = Pt(10)
+            series = chart.series[0]
+            series.format.line.color.rgb = blue
+            series.format.line.width = Pt(2.75)
+            chart.plots[0].has_data_labels = True
+            chart.plots[0].data_labels.show_value = True
+            chart.plots[0].data_labels.font.name = font
+            chart.plots[0].data_labels.font.size = Pt(8)
         else:
             text_box(trend_slide, "Seçili dönemde trend verisi bulunamadı.", .7, 2.6, 11.8, .7, size=18, color=muted, align=PP_ALIGN.CENTER)
 
@@ -1509,10 +1531,6 @@ class ExecutiveReportingService:
              ["Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Pazar payı"],
              lambda row: [row["region_name"], row["city"], row["representative_name"], f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "—"],
              [1.55, 1.45, 2.55, 1.75, 1.85, 1.45, 1.45]),
-            ("Rakip analizi", "Pazar görünümü", report.get("rival_rows") or [], 12,
-             ["Ürün", "Rakip", "Rakip kutu", "Rakip payı", "Şirket kutu", "Şirket payı", "Toplam pazar"],
-             lambda row: [row["product_name"], row["name"], f'{row["unit"]:,.0f}', f'%{row["share_percent"]:.1f}' if row["share_percent"] is not None else "—", f'{row["company_unit"]:,.0f}', f'%{row["company_share_percent"]:.1f}' if row["company_share_percent"] is not None else "—", f'{row["market_unit"]:,.0f}'],
-             [1.65, 2.5, 1.45, 1.45, 1.45, 1.45, 1.65]),
         ]
         for title, section, raw_rows, per_page, headers, formatter, widths in sections:
             formatted = [formatter(row) for row in raw_rows]
@@ -1520,6 +1538,105 @@ class ExecutiveReportingService:
             for index, chunk in enumerate(chunks, 1):
                 page += 1
                 add_table_slide(title + (f"  ·  {index}" if len(chunks) > 1 else ""), section, headers, chunk, page, widths)
+
+        for product_name, items in self._rivals_by_product(report):
+            page += 1
+            rival_slide = deck.slides.add_slide(blank)
+            add_heading(rival_slide, f"Rakip analizi · {product_name}", "Pazar görünümü", page)
+            sample = items[0] if items else {}
+            company_unit = float(sample.get("company_unit") or 0)
+            company_share = float(sample.get("company_share_percent") or 0)
+            market_unit = float(sample.get("market_unit") or 0)
+            competitor_total = sum(float(item.get("unit") or 0) for item in items)
+            rival_kpis = [
+                ("Şirket kutu", f"{company_unit:,.0f}", teal),
+                ("Şirket payı", f"%{company_share:.1f}", blue),
+                ("Rakip toplam", f"{competitor_total:,.0f}", orange),
+                ("Toplam pazar", f"{market_unit:,.0f}", RGBColor(121, 88, 181)),
+            ]
+            for index, (label, value, color) in enumerate(rival_kpis):
+                left = .58 + index * 3.08
+                card = rival_slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(left), Inches(1.35), Inches(2.78), Inches(.95),
+                )
+                fill(card, pale)
+                stripe = rival_slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE,
+                    Inches(left), Inches(1.35), Inches(.05), Inches(.95),
+                )
+                fill(stripe, color)
+                text_box(rival_slide, label.upper(), left + .18, 1.53, 2.35, .18, size=7, color=muted, bold=True)
+                text_box(rival_slide, value, left + .18, 1.82, 2.35, .3, size=17, color=navy, bold=True)
+
+            top_items = items[:7]
+            if top_items:
+                chart_data = ChartData()
+                chart_data.categories = ["Bilim"] + [str(item.get("name") or "Rakip") for item in top_items]
+                chart_data.add_series(
+                    "Kutu",
+                    [company_unit] + [float(item.get("unit") or 0) for item in top_items],
+                )
+                chart = rival_slide.shapes.add_chart(
+                    XL_CHART_TYPE.BAR_CLUSTERED,
+                    Inches(.62), Inches(2.62), Inches(6.15), Inches(3.85), chart_data,
+                ).chart
+                chart.has_legend = False
+                chart.has_title = False
+                chart.value_axis.tick_labels.font.name = font
+                chart.value_axis.tick_labels.font.size = Pt(8)
+                chart.category_axis.tick_labels.font.name = font
+                chart.category_axis.tick_labels.font.size = Pt(8)
+                series = chart.series[0]
+                series.format.fill.solid()
+                series.format.fill.fore_color.rgb = orange
+                if series.points:
+                    series.points[0].format.fill.solid()
+                    series.points[0].format.fill.fore_color.rgb = teal
+
+            table_rows = [
+                [
+                    str(item.get("name") or "Rakip"),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                ]
+                for item in top_items
+            ] or [["Veri bulunamadı", "—", "—"]]
+            table_shape = rival_slide.shapes.add_table(
+                len(table_rows) + 1, 3,
+                Inches(7.02), Inches(2.62), Inches(5.75), Inches(3.85),
+            )
+            table = table_shape.table
+            for index, width in enumerate([3.15, 1.25, 1.35]):
+                table.columns[index].width = Inches(width)
+            for index, value in enumerate(["Rakip", "Kutu", "Pazar payı"]):
+                table.cell(0, index).text = value
+            for row_index, values in enumerate(table_rows, 1):
+                for column_index, value in enumerate(values):
+                    table.cell(row_index, column_index).text = value
+            style_table(table, header_size=8, body_size=8)
+
+            remaining = items[7:]
+            if remaining:
+                detail_rows = [[
+                    str(item.get("name") or "Rakip"),
+                    f'{float(item.get("unit") or 0):,.0f}',
+                    f'%{float(item.get("share_percent") or 0):.1f}',
+                    f'{float(item.get("company_unit") or 0):,.0f}',
+                    f'%{float(item.get("company_share_percent") or 0):.1f}',
+                    f'{float(item.get("market_unit") or 0):,.0f}',
+                ] for item in remaining]
+                chunks = pages(detail_rows, 12)
+                for index, chunk in enumerate(chunks, 1):
+                    page += 1
+                    add_table_slide(
+                        f"Rakip analizi · {product_name} · devam {index}",
+                        "Pazar görünümü",
+                        ["Rakip", "Rakip kutu", "Rakip payı", "Şirket kutu", "Şirket payı", "Toplam pazar"],
+                        chunk,
+                        page,
+                        [3.2, 1.65, 1.65, 1.65, 1.65, 1.85],
+                    )
 
         priority_bricks = sorted(
             report.get("brick_rows") or [],
