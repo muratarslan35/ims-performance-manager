@@ -41,16 +41,30 @@ def app(tmp_path):
     yield application
 
 
-def _snapshot(product_id, target=100, actual=80, unit=40, market=100):
+def _snapshot(product_id, target=100, actual=80, unit=40, market=100, product_name="Travazol", brick="BRICK A"):
     return {"snapshots": {"monthly": {
         "products": [{
             "product": {"id": product_id}, "target_tl": target, "actual_tl": actual,
             "target_unit": 50, "actual_unit": unit,
         }],
-        "market_analysis": {"source_week": 36, "rows": [{
-            "product_id": product_id, "market_unit": market,
-            "rivals": [{"name": "Rakip A", "unit": market - unit}],
-        }]},
+        "market_analysis": {
+            "source_week": 36,
+            "rows": [{
+                "product_id": product_id, "market_unit": market,
+                "rivals": [{"name": "Rakip A", "unit": market - unit}],
+            }],
+            "brick_product_rows": [{
+                "brick": brick,
+                "product_name": product_name,
+                "company_unit": unit,
+                "competitor_unit": market - unit,
+                "market_unit": market,
+                "market_products": [
+                    {"name": product_name, "unit": unit, "is_company": True},
+                    {"name": "Rakip A", "unit": market - unit, "is_company": False},
+                ],
+            }],
+        },
     }}}
 
 
@@ -104,6 +118,122 @@ def test_scope_options_use_region_names_and_real_assignment_cities(app):
         assert city_service.scope_label() == "MARDIN"
 
 
+def test_multi_scope_regions_and_product_filter_build_only_selected_product(app, monkeypatch):
+    with app.app_context():
+        rep_a = Representative(
+            rep_code="RPT-MULTI-A", rep_name="Diyarbakır Rep",
+            region="901", city="DIYARBAKIR", active=True,
+        )
+        rep_b = Representative(
+            rep_code="RPT-MULTI-B", rep_name="Adana Rep",
+            region="701", city="ADANA", active=True,
+        )
+        rep_c = Representative(
+            rep_code="RPT-MULTI-C", rep_name="Ankara Rep",
+            region="501", city="ANKARA", active=True,
+        )
+        monurol = Product(
+            product_code="RPT-MONUROL", product_name="Monurol",
+            display_order=1, is_active=True,
+        )
+        travazol = Product(
+            product_code="RPT-TRAVAZOL", product_name="Travazol",
+            display_order=2, is_active=True,
+        )
+        db.session.add_all([rep_a, rep_b, rep_c, monurol, travazol])
+        db.session.commit()
+
+        def active_many(cls, representative_ids, year, month):
+            assert set(representative_ids) == {rep_a.id, rep_b.id}
+            return {
+                rep_a.id: _snapshot(
+                    monurol.id, target=200, actual=100, unit=20, market=50,
+                    product_name="Monurol", brick="DIYARBAKIR BRICK",
+                ),
+                rep_b.id: _snapshot(
+                    monurol.id, target=300, actual=150, unit=30, market=70,
+                    product_name="Monurol", brick="ADANA BRICK",
+                ),
+            }
+
+        monkeypatch.setattr(
+            PersistentRepresentativeSnapshotService,
+            "get_active_many",
+            classmethod(active_many),
+        )
+        service = ExecutiveReportingService(
+            year=2026, month=9, scope="region",
+            scope_values=["901", "701"], product_ids=[monurol.id],
+        )
+        report = service.build()
+
+        assert set(report["scope_values"]) == {"901", "701"}
+        assert report["scope_label"] == "Diyarbakır + Adana"
+        assert report["representative_count"] == 2
+        assert [row["product_name"] for row in report["rows"]] == ["Monurol"]
+        assert report["rows"][0]["actual_unit"] == 50
+        assert {row["representative_name"] for row in report["representative_rows"]} == {
+            "Diyarbakır Rep", "Adana Rep",
+        }
+        assert {row["region_name"] for row in report["region_rows"]} == {
+            "Diyarbakır", "Adana",
+        }
+        assert {row["brick"] for row in report["brick_rows"]} == {
+            "DIYARBAKIR BRICK", "ADANA BRICK",
+        }
+
+
+def test_multi_city_and_representative_scope_filters(app):
+    with app.app_context():
+        reps = [
+            Representative(
+                rep_code="RPT-CITY-1", rep_name="Mardin Rep",
+                region="901", city="DIYARBAKIR", active=True,
+            ),
+            Representative(
+                rep_code="RPT-CITY-2", rep_name="Şırnak Rep",
+                region="901", city="DIYARBAKIR", active=True,
+            ),
+            Representative(
+                rep_code="RPT-CITY-3", rep_name="Adana Rep",
+                region="701", city="ADANA", active=True,
+            ),
+        ]
+        db.session.add_all(reps)
+        db.session.flush()
+        db.session.add_all([
+            RepresentativeBrickAssignment(
+                representative_id=reps[0].id, year=2026, month=9, quarter="Q3",
+                brick="MARDIN B", city="MARDIN", source="AUTO", active=True,
+            ),
+            RepresentativeBrickAssignment(
+                representative_id=reps[1].id, year=2026, month=9, quarter="Q3",
+                brick="SIRNAK B", city="ŞIRNAK", source="AUTO", active=True,
+            ),
+            RepresentativeBrickAssignment(
+                representative_id=reps[2].id, year=2026, month=9, quarter="Q3",
+                brick="ADANA B", city="ADANA", source="AUTO", active=True,
+            ),
+        ])
+        db.session.commit()
+
+        city_service = ExecutiveReportingService(
+            year=2026, month=9, scope="city", scope_values=["MARDIN", "ŞIRNAK"]
+        )
+        assert {row.id for row in city_service._representatives()} == {
+            reps[0].id, reps[1].id,
+        }
+
+        rep_service = ExecutiveReportingService(
+            year=2026, month=9, scope="representative",
+            scope_values=[str(reps[0].id), str(reps[2].id)],
+        )
+        assert {row.id for row in rep_service._representatives()} == {
+            reps[0].id, reps[2].id,
+        }
+        assert rep_service.scope_label() == "Mardin Rep + Adana Rep"
+
+
 def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch):
     with app.app_context():
         rep = Representative(rep_code="RPT-1", rep_name="Rapor Temsilcisi", region="101 TEST", city="ANKARA", active=True)
@@ -132,8 +262,13 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         workbook = load_workbook(BytesIO(service.to_excel(report).getvalue()))
         assert workbook.active["A1"].value == "SATIŞ VE PAZAR PERFORMANS RAPORU"
         assert workbook.active["A9"].value == "Travazol"
-        assert workbook.sheetnames == ["Yönetim Özeti", "Dönem Trendi", "Rakip Detayı"]
-        assert workbook["Rakip Detayı"]["D5"].value == 0.6
+        assert workbook.sheetnames == [
+            "Yönetim Özeti", "Dönem Trendi", "Bölge Analizi",
+            "Temsilci Analizi", "Brick Analizi", "Rakip Analizi",
+        ]
+        assert workbook["Rakip Analizi"]["D5"].value == 0.6
+        assert workbook["Temsilci Analizi"]["C5"].value == "Rapor Temsilcisi"
+        assert workbook["Brick Analizi"]["D5"].value == "BRICK A"
         pdf = service.to_pdf(report).getvalue()
         assert pdf.startswith(b"%PDF-")
         assert pdf.count(b"/Type /Page") >= 2
@@ -156,6 +291,12 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert "window.location.href" not in report_js
     assert "anchor.dataset.pageLoader === 'false'" in layout_js
     assert "row.rivals[:3]" not in template
+    assert 'name="scope_value"' in template
+    assert 'data-scope-panel="region"' in template
+    assert 'data-scope-panel="city"' in template
+    assert 'data-scope-panel="representative"' in template
+    assert "Temsilci Analizi" in template
+    assert "Brick Analizi" in template
     assert 'a[href="/reports"]' not in css
 
 
