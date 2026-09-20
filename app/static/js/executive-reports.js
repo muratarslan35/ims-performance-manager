@@ -1,8 +1,58 @@
 (function(){
   const scope=document.getElementById('reportScope');const value=document.getElementById('reportScopeValue');
+  const form=document.getElementById('executiveReportFilters');
   const all=document.getElementById('reportAllProducts');const products=[...document.querySelectorAll('input[name="product_id"]')];
-  function syncScope(){const selected=scope.value;[...value.options].forEach(option=>{option.hidden=Boolean(option.dataset.scope&&option.dataset.scope!==selected);});value.disabled=selected==='national';if(selected==='national')value.value='';else if(![...value.selectedOptions].some(option=>!option.hidden))value.value='';document.getElementById('scopeValueLabel').textContent={region:'Bölge',city:'İl',representative:'Temsilci'}[selected]||'Kapsam';}
+
+  function syncScope(){
+    const selected=scope.value;
+    [...value.options].forEach(option=>{option.hidden=Boolean(option.dataset.scope&&option.dataset.scope!==selected);});
+    value.disabled=selected==='national';
+    if(selected==='national') value.value='';
+    else if(![...value.selectedOptions].some(option=>!option.hidden)) value.value='';
+    document.getElementById('scopeValueLabel').textContent={region:'Bölge',city:'İl',representative:'Temsilci'}[selected]||'Kapsam';
+  }
+
+  function filenameFromDisposition(response,fallback){
+    const disposition=response.headers.get('Content-Disposition')||'';
+    const utf=disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if(utf){
+      try{return decodeURIComponent(utf[1].replace(/["']/g,''));}catch(_error){}
+    }
+    const plain=disposition.match(/filename="?([^";]+)"?/i);
+    return plain&&plain[1]?plain[1]:fallback;
+  }
+
+  async function downloadReport(link){
+    const params=new URLSearchParams(new FormData(form));
+    const url=link.pathname+'?'+params.toString();
+    link.classList.add('disabled');
+    link.setAttribute('aria-busy','true');
+    try{
+      const response=await fetch(url,{credentials:'same-origin',headers:{'X-Requested-With':'fetch'}});
+      if(!response.ok) throw new Error('Rapor indirilemedi.');
+      const blob=await response.blob();
+      const fallback=link.pathname.endsWith('/pdf')?'analiz-raporu.pdf':'analiz-raporu.xlsx';
+      const filename=filenameFromDisposition(response,fallback);
+      const objectUrl=URL.createObjectURL(blob);
+      const download=document.createElement('a');
+      download.href=objectUrl;download.download=filename;download.style.display='none';
+      document.body.appendChild(download);download.click();download.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
+    }catch(error){
+      window.alert(error&&error.message?error.message:'Rapor indirilemedi.');
+    }finally{
+      link.classList.remove('disabled');
+      link.removeAttribute('aria-busy');
+      if(window.IMSPageLoader&&typeof window.IMSPageLoader.finish==='function') window.IMSPageLoader.finish();
+    }
+  }
+
   scope?.addEventListener('change',syncScope);syncScope();
-  all?.addEventListener('change',()=>{if(all.checked)products.forEach(item=>item.checked=false);});products.forEach(item=>item.addEventListener('change',()=>{if(item.checked)all.checked=false;if(!products.some(product=>product.checked))all.checked=true;}));
-  document.querySelectorAll('.report-export').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();const params=new URLSearchParams(new FormData(document.getElementById('executiveReportFilters')));window.location.href=link.pathname+'?'+params.toString();}));
+  all?.addEventListener('change',()=>{if(all.checked)products.forEach(item=>item.checked=false);});
+  products.forEach(item=>item.addEventListener('change',()=>{if(item.checked)all.checked=false;if(!products.some(product=>product.checked))all.checked=true;}));
+  document.querySelectorAll('.report-export').forEach(link=>link.addEventListener('click',event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    downloadReport(link);
+  }));
 })();
