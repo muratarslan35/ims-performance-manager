@@ -25,7 +25,8 @@ class ReportExportQueue:
 
     @classmethod
     def _root(cls) -> Path:
-        root = Path(current_app.instance_path) / "report_export_queue"
+        configured = current_app.config.get("REPORT_EXPORT_QUEUE_FOLDER")
+        root = Path(configured) if configured else Path(current_app.instance_path) / "report_export_queue"
         (root / "jobs").mkdir(parents=True, exist_ok=True)
         (root / "locks").mkdir(parents=True, exist_ok=True)
         (root / "warm").mkdir(parents=True, exist_ok=True)
