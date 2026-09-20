@@ -1079,3 +1079,13 @@ Doğrulama:
   - report worker: **active**
   - HTTP health: **PASS**
 - İlgili bekleyen deploy/aktivasyon işi: **YOK**.
+
+
+### Raporlama sadeleştirme ve aktif temsilci kapsamı — 20.09.2026
+- Raporlama read-modeli ve filtre seçenekleri yalnız `Representative.active = true` kayıtlarını kullanır.
+- Aktif `BOŞ` / `BOŞ KADRO` temsilcileri kapsamda kalır; yalnız pasif temsilciler dışarı alınır.
+- Report cache sürümü artırıldı; eski pasif temsilci içerebilecek read-model/export cache'leri yeniden kullanılmaz.
+- `/reports` ekranı seçim-only hale getirildi; sayfa açılışında rapor aggregate edilmez ve sonuç tabloları render edilmez.
+- Excel rakip analizi yönetim özeti + ürün başına ayrı detay sayfası/grafiğe ayrıldı.
+- PDF rakip analizi ürün başına ayrı sayfa, KPI, grafik ve tablo yapısına geçirildi.
+- PowerPoint rakip analizi ürün başına ayrı görsel slaytlara ayrıldı; ürün ve trend grafikleri profesyonelleştirildi.
