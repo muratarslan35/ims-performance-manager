@@ -886,3 +886,13 @@ Bunlar production iş verisinin kaynağını değiştirmez; tanılama, kontroll�
 - Filtre alanı, ürün seçimleri, KPI kartları, dönem grafiği ve rakip tablosu kurumsal görsel hiyerarşiyle yeniden düzenlendi.
 - Rakip sütunu ve geniş tablo için sabit kolon oranları, metin taşma kontrolü ve dar ekran yatay kaydırma eklendi.
 - Mobil/koyu tema uyumu ve statik dosya cache-buster güncellendi.
+
+### Rapor kapsamı ve dışa aktarma iyileştirmesi
+
+- Rapor formu global sayfa yükleyicisinden ayrıldı; filtre sonrası ekranda %99 yükleme katmanının kalması engellendi.
+- Snapshot içindeki ürün/rakip listesinde uygulanan ilk 3/ilk 10 sınırları kaldırıldı; mevcut tüm rakipler okunup rapora aktarılıyor.
+- Her rakip için `rakip kutu / ilgili ürünün toplam pazar kutusu` formülüyle dönemsel pazar payı eklendi.
+- Ekrandaki rakip alanı tüm rakipleri kutu ve pazar payıyla gösterecek kaydırılabilir detay yapısına çevrildi.
+- PDF çıktısı çok sayfalı A4 yatay yönetim raporu olarak yenilendi: kapsam/dönem başlığı, KPI özeti, ürün performansı, tüm rakipler ve pazar payları, tekrar eden tablo başlıkları, sayfa numarası ve alt bilgi.
+- Excel çıktısı üç profesyonel sekmeye ayrıldı: `Yönetim Özeti`, `Dönem Trendi`, `Rakip Detayı`. Filtreler, sabit başlıklar, sayı biçimleri, baskı alanları ve trend grafiği eklendi.
+- Örnek 7 ürün/84 rakip veri setiyle PDF 5 sayfa render edilerek; Excel de A4 PDF önizlemesine dönüştürülerek görsel taşma ve okunabilirlik kontrolü yapıldı.
