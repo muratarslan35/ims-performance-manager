@@ -50,13 +50,36 @@ class ExecutiveReportingService:
     }
 
     def __init__(self, *, year=None, month=None, period="monthly", scope="national",
-                 scope_value="", product_ids=None):
+                 scope_value="", scope_values=None, product_ids=None):
         active = PeriodService.get_active_period()
         self.year = int(year or active.get("year") or datetime.now().year)
         self.month = max(1, min(12, int(month or active.get("month") or datetime.now().month)))
         self.period = period if period in self.PERIODS else "monthly"
         self.scope = scope if scope in self.SCOPES else "national"
-        self.scope_value = str(scope_value or "").strip()
+        raw_scope_values = scope_values if scope_values is not None else [scope_value]
+        scope_values = [
+            str(value).strip()
+            for value in raw_scope_values
+            if str(value or "").strip()
+        ]
+        if self.scope == "region":
+            scope_values = sorted(
+                {self._region_code(value) or value for value in scope_values},
+                key=lambda value: int(value) if str(value).isdigit() else 9999,
+            )
+        elif self.scope == "city":
+            scope_values = sorted(set(scope_values), key=self._scope_key)
+        elif self.scope == "representative":
+            scope_values = [
+                str(value) for value in sorted(
+                    {int(value) for value in scope_values if str(value).isdigit()}
+                )
+            ]
+        else:
+            scope_values = []
+        self.scope_values = scope_values
+        # Backward-compatible scalar accessor for old links/warm jobs.
+        self.scope_value = self.scope_values[0] if self.scope_values else ""
         self.product_ids = {int(value) for value in (product_ids or []) if str(value).isdigit()}
 
     def months(self):
@@ -150,29 +173,56 @@ class ExecutiveReportingService:
 
     def _representatives(self):
         rows = Representative.query.order_by(Representative.rep_name.asc()).all()
-        if self.scope == "region" and self.scope_value:
-            selected_code = self._region_code(self.scope_value) or self.scope_value
+        if self.scope == "region" and self.scope_values:
+            selected_codes = {
+                self._region_code(value) or str(value).strip()
+                for value in self.scope_values
+            }
             rows = [
                 row for row in rows
-                if (self._region_code(row.region) or str(row.region or "").strip()) == selected_code
+                if (self._region_code(row.region) or str(row.region or "").strip()) in selected_codes
             ]
-        elif self.scope == "city" and self.scope_value:
-            selected_city = self._scope_key(self.scope_value)
+        elif self.scope == "city" and self.scope_values:
+            selected_cities = {self._scope_key(value) for value in self.scope_values}
             assignment_rep_ids = {
                 int(row.representative_id)
                 for row in self._assignment_rows()
-                if self._scope_key(row.city) == selected_city
+                if self._scope_key(row.city) in selected_cities
             }
             if assignment_rep_ids:
                 rows = [row for row in rows if int(row.id) in assignment_rep_ids]
             else:
-                rows = [row for row in rows if self._scope_key(row.city) == selected_city]
-        elif self.scope == "representative":
-            rows = [
-                row for row in rows
-                if self.scope_value.isdigit() and int(row.id) == int(self.scope_value)
-            ]
+                rows = [row for row in rows if self._scope_key(row.city) in selected_cities]
+        elif self.scope == "representative" and self.scope_values:
+            selected_ids = {
+                int(value) for value in self.scope_values if str(value).isdigit()
+            }
+            rows = [row for row in rows if int(row.id) in selected_ids]
         return rows
+
+    def _representative_city_map(self, representatives):
+        selected_ids = {int(row.id) for row in representatives}
+        cities = defaultdict(set)
+        for assignment in self._assignment_rows():
+            rep_id = int(assignment.representative_id)
+            if rep_id in selected_ids and str(assignment.city or "").strip():
+                cities[rep_id].add(str(assignment.city).strip())
+        return {
+            int(row.id): ", ".join(sorted(cities.get(int(row.id)) or {str(row.city or "").strip() or "-"}, key=self._scope_key))
+            for row in representatives
+        }
+
+    def _brick_city_map(self, representatives):
+        selected_ids = {int(row.id) for row in representatives}
+        mapping = {}
+        for assignment in self._assignment_rows():
+            rep_id = int(assignment.representative_id)
+            if rep_id not in selected_ids:
+                continue
+            brick_key = self._scope_key(assignment.brick)
+            if brick_key:
+                mapping[(rep_id, brick_key)] = str(assignment.city or "").strip() or "-"
+        return mapping
 
     @staticmethod
     def _rival_rows(market):
@@ -184,11 +234,32 @@ class ExecutiveReportingService:
 
     def build(self):
         representatives = self._representatives()
-        rep_ids = [row.id for row in representatives]
-        product_meta = {row.id: row for row in Product.query.order_by(Product.display_order, Product.product_name).all()}
+        rep_ids = [int(row.id) for row in representatives]
+        rep_meta = {int(row.id): row for row in representatives}
+        rep_city_map = self._representative_city_map(representatives)
+        brick_city_map = self._brick_city_map(representatives)
+
+        products = Product.query.order_by(Product.display_order, Product.product_name).all()
+        product_meta = {int(row.id): row for row in products}
+        product_name_to_id = {
+            self._scope_key(row.product_name): int(row.id)
+            for row in products
+        }
+
         buckets = defaultdict(lambda: {
             "target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0, "actual_unit": 0.0,
             "market_unit": 0.0, "rivals": defaultdict(float), "months": set(),
+        })
+        rep_buckets = {
+            rep_id: {
+                "target_tl": 0.0, "actual_tl": 0.0, "target_unit": 0.0,
+                "actual_unit": 0.0, "market_unit": 0.0,
+            }
+            for rep_id in rep_ids
+        }
+        brick_buckets = defaultdict(lambda: {
+            "company_unit": 0.0, "competitor_unit": 0.0, "market_unit": 0.0,
+            "rivals": defaultdict(float),
         })
         trend = []
         source_weeks = []
@@ -197,7 +268,10 @@ class ExecutiveReportingService:
             snapshots = PersistentRepresentativeSnapshotService.get_active_many(rep_ids, year, month)
             monthly_totals = defaultdict(float)
             for rep_id, payload in snapshots.items():
+                rep_id = int(rep_id)
                 monthly = ((payload or {}).get("snapshots") or {}).get("monthly") or {}
+                rep_bucket = rep_buckets.setdefault(rep_id, defaultdict(float))
+
                 for row in monthly.get("products") or []:
                     product = row.get("product") or {}
                     product_id = row.get("product_id") or product.get("id")
@@ -210,12 +284,15 @@ class ExecutiveReportingService:
                     for key in ("target_tl", "actual_tl", "target_unit", "actual_unit"):
                         value = float(row.get(key, 0) or 0)
                         bucket[key] += value
+                        rep_bucket[key] += value
                         monthly_totals[key] += value
                     bucket["months"].add((year, month))
+
                 market = monthly.get("market_analysis") or {}
                 source_week = market.get("source_week") or market.get("latest_week")
                 if source_week is not None:
                     source_weeks.append(int(source_week))
+
                 for row in market.get("rows") or []:
                     product = row.get("product") or {}
                     product_id = row.get("product_id") or product.get("id")
@@ -224,7 +301,10 @@ class ExecutiveReportingService:
                     product_id = int(product_id)
                     if self.product_ids and product_id not in self.product_ids:
                         continue
-                    buckets[product_id]["market_unit"] += float(row.get("market_unit", 0) or 0)
+                    market_unit = float(row.get("market_unit", 0) or 0)
+                    buckets[product_id]["market_unit"] += market_unit
+                    rep_bucket["market_unit"] += market_unit
+
                 for product_id, rival in self._rival_rows(market):
                     if product_id is None:
                         continue
@@ -235,6 +315,34 @@ class ExecutiveReportingService:
                     buckets[product_id]["rivals"][name] += float(
                         rival.get("unit", rival.get("value", rival.get("metric_value", 0))) or 0
                     )
+
+                for row in market.get("brick_product_rows") or []:
+                    product_name = str(row.get("product_name") or "").strip()
+                    product_id = product_name_to_id.get(self._scope_key(product_name))
+                    if self.product_ids and (product_id is None or product_id not in self.product_ids):
+                        continue
+                    brick = str(row.get("brick") or "Brick bilgisi yok").strip()
+                    key = (rep_id, self._scope_key(brick), product_id or self._scope_key(product_name))
+                    brick_bucket = brick_buckets[key]
+                    brick_bucket["representative_id"] = rep_id
+                    brick_bucket["brick"] = brick
+                    brick_bucket["product_id"] = product_id
+                    brick_bucket["product_name"] = (
+                        product_meta[product_id].product_name
+                        if product_id in product_meta else product_name or "Ürün"
+                    )
+                    company_unit = float(row.get("company_unit", 0) or 0)
+                    competitor_unit = float(row.get("competitor_unit", 0) or 0)
+                    market_unit = float(row.get("market_unit", 0) or 0)
+                    brick_bucket["company_unit"] += company_unit
+                    brick_bucket["competitor_unit"] += competitor_unit
+                    brick_bucket["market_unit"] += market_unit
+                    for market_product in row.get("market_products") or []:
+                        if market_product.get("is_company"):
+                            continue
+                        rival_name = str(market_product.get("name") or "Rakip").strip()
+                        brick_bucket["rivals"][rival_name] += float(market_product.get("unit", 0) or 0)
+
             trend.append({
                 "label": f"{month:02d}/{year}",
                 "actual_tl": round(monthly_totals["actual_tl"], 2),
@@ -248,47 +356,196 @@ class ExecutiveReportingService:
                 continue
             market_unit = values["market_unit"]
             company_unit = values["actual_unit"]
-            competitor_unit = max(market_unit - company_unit, 0.0) if market_unit else sum(values["rivals"].values())
+            competitor_unit = (
+                max(market_unit - company_unit, 0.0)
+                if market_unit else sum(values["rivals"].values())
+            )
             rows.append({
                 "product_id": product_id,
                 "product_name": product.product_name,
                 "target_tl": round(values["target_tl"], 2),
                 "actual_tl": round(values["actual_tl"], 2),
-                "realization_percent": realization_percent(values["actual_tl"], values["target_tl"]) if values["target_tl"] else 0,
+                "realization_percent": (
+                    realization_percent(values["actual_tl"], values["target_tl"])
+                    if values["target_tl"] else 0
+                ),
                 "target_unit": round(values["target_unit"], 2),
                 "actual_unit": round(company_unit, 2),
                 "market_unit": round(market_unit, 2),
                 "competitor_unit": round(competitor_unit, 2),
-                "market_share_percent": round(company_unit * 100 / market_unit, 1) if market_unit else None,
+                "market_share_percent": (
+                    round(company_unit * 100 / market_unit, 1) if market_unit else None
+                ),
                 "rivals": [
                     {
                         "name": name,
                         "unit": round(value, 2),
-                        "share_percent": round(value * 100 / market_unit, 1) if market_unit else None,
+                        "share_percent": (
+                            round(value * 100 / market_unit, 1) if market_unit else None
+                        ),
                     }
-                    for name, value in sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)
+                    for name, value in sorted(
+                        values["rivals"].items(), key=lambda item: item[1], reverse=True
+                    )
                 ],
             })
         rows.sort(key=lambda row: (product_meta[row["product_id"]].display_order, row["product_name"]))
+
         totals = {
             key: round(sum(row[key] for row in rows), 2)
-            for key in ("target_tl", "actual_tl", "target_unit", "actual_unit", "market_unit", "competitor_unit")
+            for key in (
+                "target_tl", "actual_tl", "target_unit", "actual_unit",
+                "market_unit", "competitor_unit",
+            )
         }
-        totals["realization_percent"] = realization_percent(totals["actual_tl"], totals["target_tl"]) if totals["target_tl"] else 0
-        totals["market_share_percent"] = round(totals["actual_unit"] * 100 / totals["market_unit"], 1) if totals["market_unit"] else None
+        totals["realization_percent"] = (
+            realization_percent(totals["actual_tl"], totals["target_tl"])
+            if totals["target_tl"] else 0
+        )
+        totals["market_share_percent"] = (
+            round(totals["actual_unit"] * 100 / totals["market_unit"], 1)
+            if totals["market_unit"] else None
+        )
+
+        representative_rows = []
+        for rep_id in rep_ids:
+            representative = rep_meta[rep_id]
+            values = rep_buckets.get(rep_id) or {}
+            target_tl = float(values.get("target_tl", 0) or 0)
+            actual_tl = float(values.get("actual_tl", 0) or 0)
+            actual_unit = float(values.get("actual_unit", 0) or 0)
+            market_unit = float(values.get("market_unit", 0) or 0)
+            representative_rows.append({
+                "representative_id": rep_id,
+                "representative_name": representative.rep_name,
+                "region_code": self._region_code(representative.region) or str(representative.region or ""),
+                "region_name": self._region_label(representative.region),
+                "city": rep_city_map.get(rep_id, str(representative.city or "") or "-"),
+                "target_tl": round(target_tl, 2),
+                "actual_tl": round(actual_tl, 2),
+                "realization_percent": (
+                    realization_percent(actual_tl, target_tl) if target_tl else 0
+                ),
+                "target_unit": round(float(values.get("target_unit", 0) or 0), 2),
+                "actual_unit": round(actual_unit, 2),
+                "market_unit": round(market_unit, 2),
+                "market_share_percent": (
+                    round(actual_unit * 100 / market_unit, 1) if market_unit else None
+                ),
+            })
+        representative_rows.sort(
+            key=lambda row: (
+                int(row["region_code"]) if str(row["region_code"]).isdigit() else 9999,
+                self._scope_key(row["representative_name"]),
+            )
+        )
+
+        region_buckets = defaultdict(lambda: {
+            "target_tl": 0.0, "actual_tl": 0.0, "actual_unit": 0.0,
+            "market_unit": 0.0, "representative_count": 0,
+        })
+        for row in representative_rows:
+            bucket = region_buckets[row["region_code"]]
+            bucket["region_name"] = row["region_name"]
+            bucket["target_tl"] += row["target_tl"]
+            bucket["actual_tl"] += row["actual_tl"]
+            bucket["actual_unit"] += row["actual_unit"]
+            bucket["market_unit"] += row["market_unit"]
+            bucket["representative_count"] += 1
+        region_rows = []
+        for region_code, values in region_buckets.items():
+            region_rows.append({
+                "region_code": region_code,
+                "region_name": values["region_name"],
+                "representative_count": values["representative_count"],
+                "target_tl": round(values["target_tl"], 2),
+                "actual_tl": round(values["actual_tl"], 2),
+                "realization_percent": (
+                    realization_percent(values["actual_tl"], values["target_tl"])
+                    if values["target_tl"] else 0
+                ),
+                "actual_unit": round(values["actual_unit"], 2),
+                "market_unit": round(values["market_unit"], 2),
+                "market_share_percent": (
+                    round(values["actual_unit"] * 100 / values["market_unit"], 1)
+                    if values["market_unit"] else None
+                ),
+            })
+        region_rows.sort(
+            key=lambda row: (
+                int(row["region_code"]) if str(row["region_code"]).isdigit() else 9999,
+                row["region_name"],
+            )
+        )
+
+        brick_rows = []
+        for values in brick_buckets.values():
+            rep_id = int(values["representative_id"])
+            representative = rep_meta.get(rep_id)
+            if representative is None:
+                continue
+            market_unit = float(values["market_unit"] or 0)
+            company_unit = float(values["company_unit"] or 0)
+            rivals = sorted(values["rivals"].items(), key=lambda item: item[1], reverse=True)
+            brick_key = self._scope_key(values["brick"])
+            brick_rows.append({
+                "region_name": self._region_label(representative.region),
+                "city": brick_city_map.get(
+                    (rep_id, brick_key),
+                    rep_city_map.get(rep_id, str(representative.city or "") or "-"),
+                ),
+                "representative_id": rep_id,
+                "representative_name": representative.rep_name,
+                "brick": values["brick"],
+                "product_id": values["product_id"],
+                "product_name": values["product_name"],
+                "company_unit": round(company_unit, 2),
+                "competitor_unit": round(float(values["competitor_unit"] or 0), 2),
+                "market_unit": round(market_unit, 2),
+                "share_percent": (
+                    round(company_unit * 100 / market_unit, 1) if market_unit else None
+                ),
+                "rivals": [
+                    {"name": name, "unit": round(unit, 2)}
+                    for name, unit in rivals
+                ],
+            })
+        brick_rows.sort(
+            key=lambda row: (
+                self._scope_key(row["region_name"]),
+                self._scope_key(row["city"]),
+                self._scope_key(row["representative_name"]),
+                self._scope_key(row["brick"]),
+                self._scope_key(row["product_name"]),
+            )
+        )
+
         rival_rows = [
             {
-                "product_name": row["product_name"], "market_unit": row["market_unit"],
-                "company_unit": row["actual_unit"], "company_share_percent": row["market_share_percent"],
+                "product_name": row["product_name"],
+                "market_unit": row["market_unit"],
+                "company_unit": row["actual_unit"],
+                "company_share_percent": row["market_share_percent"],
                 **rival,
             }
             for row in rows for rival in row["rivals"]
         ]
+
         return {
-            "year": self.year, "month": self.month, "period": self.period,
-            "period_label": self.PERIODS[self.period], "scope": self.scope,
-            "scope_label": self.scope_label(), "rows": rows, "totals": totals,
-            "trend": trend, "rival_rows": rival_rows,
+            "year": self.year,
+            "month": self.month,
+            "period": self.period,
+            "period_label": self.PERIODS[self.period],
+            "scope": self.scope,
+            "scope_values": list(self.scope_values),
+            "scope_label": self.scope_label(),
+            "rows": rows,
+            "totals": totals,
+            "trend": trend,
+            "region_rows": region_rows,
+            "representative_rows": representative_rows,
+            "rival_rows": rival_rows,
+            "brick_rows": brick_rows,
             "representative_count": len(representatives),
             "source_week": max(source_weeks) if source_weeks else None,
             "generated_at": datetime.now(),
@@ -297,14 +554,29 @@ class ExecutiveReportingService:
     def scope_label(self):
         if self.scope == "national":
             return "Türkiye Geneli"
-        if self.scope == "region" and self.scope_value:
-            return self._region_label(self.scope_value)
-        if self.scope == "city" and self.scope_value:
-            return self.scope_value
-        if self.scope == "representative" and self.scope_value.isdigit():
-            row = Representative.query.filter_by(id=int(self.scope_value)).first()
-            return row.rep_name if row else "Temsilci"
-        return self.SCOPES[self.scope]
+
+        labels = []
+        if self.scope == "region":
+            labels = [self._region_label(value) for value in self.scope_values]
+        elif self.scope == "city":
+            labels = list(self.scope_values)
+        elif self.scope == "representative":
+            ids = [int(value) for value in self.scope_values if str(value).isdigit()]
+            names = {
+                int(row.id): row.rep_name
+                for row in Representative.query.filter(Representative.id.in_(ids)).all()
+            } if ids else {}
+            labels = [str(names.get(value, f"Temsilci {value}")) for value in ids]
+
+        if not labels:
+            return {
+                "region": "Tüm Bölgeler",
+                "city": "Tüm İller",
+                "representative": "Tüm Temsilciler",
+            }.get(self.scope, self.SCOPES[self.scope])
+        if len(labels) <= 3:
+            return " + ".join(labels)
+        return " + ".join(labels[:3]) + f" +{len(labels) - 3}"
 
     @staticmethod
     def _filename_slug(value):
@@ -427,7 +699,108 @@ class ExecutiveReportingService:
         trend.page_setup.orientation = "landscape"; trend.page_setup.paperSize = trend.PAPERSIZE_A4
         trend.page_setup.fitToWidth = 1; trend.page_setup.fitToHeight = 1; trend.sheet_properties.pageSetUpPr.fitToPage = True
 
-        rivals = workbook.create_sheet("Rakip Detayı")
+        regions = workbook.create_sheet("Bölge Analizi")
+        self._excel_title(regions, "BÖLGE PERFORMANS ANALİZİ", subtitle, 9)
+        regions.append([])
+        regions.append([
+            "Bölge", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon %",
+            "Gerçekleşen Kutu", "Toplam Pazar Kutu", "Pazar Payı %", "Bölge Kodu",
+        ])
+        for item in report.get("region_rows") or []:
+            regions.append([
+                item["region_name"], item["representative_count"], item["target_tl"],
+                item["actual_tl"], item["realization_percent"], item["actual_unit"],
+                item["market_unit"], item["market_share_percent"], item["region_code"],
+            ])
+        self._style_excel_header(regions[4])
+        regions.freeze_panes = "A5"
+        regions.auto_filter.ref = f"A4:I{max(4, regions.max_row)}"
+        regions.sheet_view.showGridLines = False
+        for row in regions.iter_rows(min_row=5, max_row=regions.max_row):
+            row[2].number_format = '₺#,##0'
+            row[3].number_format = '₺#,##0'
+            row[4].number_format = '0"%"'
+            row[5].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '0.0"%"'
+        for index, width in enumerate([22, 12, 17, 18, 15, 18, 18, 15, 12], 1):
+            regions.column_dimensions[get_column_letter(index)].width = width
+        regions.page_setup.orientation = "landscape"
+        regions.page_setup.paperSize = regions.PAPERSIZE_A4
+        regions.page_setup.fitToWidth = 1
+        regions.page_setup.fitToHeight = 0
+        regions.sheet_properties.pageSetUpPr.fitToPage = True
+
+        reps = workbook.create_sheet("Temsilci Analizi")
+        self._excel_title(reps, "TEMSİLCİ PERFORMANS ANALİZİ", subtitle, 10)
+        reps.append([])
+        reps.append([
+            "Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon %",
+            "Hedef Kutu", "Gerçekleşen Kutu", "Toplam Pazar", "Pazar Payı %",
+        ])
+        for item in report.get("representative_rows") or []:
+            reps.append([
+                item["region_name"], item["city"], item["representative_name"],
+                item["target_tl"], item["actual_tl"], item["realization_percent"],
+                item["target_unit"], item["actual_unit"], item["market_unit"],
+                item["market_share_percent"],
+            ])
+        self._style_excel_header(reps[4])
+        reps.freeze_panes = "A5"
+        reps.auto_filter.ref = f"A4:J{max(4, reps.max_row)}"
+        reps.sheet_view.showGridLines = False
+        for row in reps.iter_rows(min_row=5, max_row=reps.max_row):
+            row[3].number_format = '₺#,##0'
+            row[4].number_format = '₺#,##0'
+            row[5].number_format = '0"%"'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '#,##0'
+            row[8].number_format = '#,##0'
+            row[9].number_format = '0.0"%"'
+        for index, width in enumerate([20, 18, 28, 17, 18, 15, 15, 18, 18, 15], 1):
+            reps.column_dimensions[get_column_letter(index)].width = width
+        reps.page_setup.orientation = "landscape"
+        reps.page_setup.paperSize = reps.PAPERSIZE_A4
+        reps.page_setup.fitToWidth = 1
+        reps.page_setup.fitToHeight = 0
+        reps.sheet_properties.pageSetUpPr.fitToPage = True
+
+        bricks = workbook.create_sheet("Brick Analizi")
+        self._excel_title(bricks, "BRICK VE REKABET ANALİZİ", subtitle, 11)
+        bricks.append([])
+        bricks.append([
+            "Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket Kutu",
+            "Rakip Kutu", "Toplam Pazar", "Pazar Payı %", "Başlıca Rakipler", "Rakip Kutu Detayı",
+        ])
+        for item in report.get("brick_rows") or []:
+            rivals_text = ", ".join(rival["name"] for rival in item.get("rivals") or [])
+            rival_units = ", ".join(
+                f'{rival["name"]}: {float(rival["unit"] or 0):,.0f}'
+                for rival in item.get("rivals") or []
+            )
+            bricks.append([
+                item["region_name"], item["city"], item["representative_name"], item["brick"],
+                item["product_name"], item["company_unit"], item["competitor_unit"],
+                item["market_unit"], item["share_percent"], rivals_text, rival_units,
+            ])
+        self._style_excel_header(bricks[4])
+        bricks.freeze_panes = "A5"
+        bricks.auto_filter.ref = f"A4:K{max(4, bricks.max_row)}"
+        bricks.sheet_view.showGridLines = False
+        for row in bricks.iter_rows(min_row=5, max_row=bricks.max_row):
+            row[5].number_format = '#,##0'
+            row[6].number_format = '#,##0'
+            row[7].number_format = '#,##0'
+            row[8].number_format = '0.0"%"'
+        for index, width in enumerate([18, 16, 24, 24, 20, 14, 14, 16, 14, 38, 42], 1):
+            bricks.column_dimensions[get_column_letter(index)].width = width
+        bricks.page_setup.orientation = "landscape"
+        bricks.page_setup.paperSize = bricks.PAPERSIZE_A4
+        bricks.page_setup.fitToWidth = 1
+        bricks.page_setup.fitToHeight = 0
+        bricks.sheet_properties.pageSetUpPr.fitToPage = True
+
+        rivals = workbook.create_sheet("Rakip Analizi")
         self._excel_title(rivals, "TÜM RAKİPLER VE PAZAR PAYLARI", subtitle, 7)
         rivals.append([]); rivals.append(["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar Kutu"])
         for item in report["rival_rows"]:
@@ -488,12 +861,115 @@ class ExecutiveReportingService:
         for row in report["rows"]:
             product_data.append([Paragraph(row["product_name"], normal), f'₺{row["target_tl"]:,.0f}', f'₺{row["actual_tl"]:,.0f}', f'%{row["realization_percent"]}', f'{row["target_unit"]:,.0f}', f'{row["actual_unit"]:,.0f}', f'{row["market_unit"]:,.0f}', f'%{row["market_share_percent"]:.1f}' if row["market_share_percent"] is not None else "-"])
         product_table = Table(product_data, repeatRows=1, colWidths=[39*mm,35*mm,38*mm,28*mm,31*mm,36*mm,31*mm,27*mm])
-        product_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),7),("ALIGN",(1,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.35,line),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)])); story += [product_table, PageBreak(), Paragraph("Tüm rakipler ve aylık pazar payları", heading), Paragraph("Pazar payı, seçilen kapsam ve dönemde ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.", normal), Spacer(1, 3*mm)]
+        product_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),7),("ALIGN",(1,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.35,line),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+        story += [product_table, PageBreak(), Paragraph("Bölge karşılaştırması", heading)]
+        region_data = [["Bölge", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Gerçekleşen Kutu", "Toplam Pazar", "Pazar Payı"]]
+        for item in report.get("region_rows") or []:
+            region_data.append([
+                Paragraph(item["region_name"], small),
+                f'{item["representative_count"]}',
+                f'₺{item["target_tl"]:,.0f}',
+                f'₺{item["actual_tl"]:,.0f}',
+                f'%{item["realization_percent"]}',
+                f'{item["actual_unit"]:,.0f}',
+                f'{item["market_unit"]:,.0f}',
+                f'%{item["market_share_percent"]:.1f}' if item["market_share_percent"] is not None else "-",
+            ])
+        if len(region_data) == 1:
+            region_data.append(["Veri yok", "-", "-", "-", "-", "-", "-", "-"])
+        region_table = Table(
+            region_data, repeatRows=1,
+            colWidths=[45*mm, 25*mm, 36*mm, 39*mm, 29*mm, 36*mm, 31*mm, 27*mm],
+        )
+        region_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.6),("ALIGN",(1,1),(-1,-1),"RIGHT"),
+            ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
+            ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ]))
+        story += [region_table, PageBreak(), Paragraph("Temsilci performansı", heading)]
+        representative_data = [["Bölge", "İl", "Temsilci", "Hedef TL", "Gerçekleşen TL", "Realizasyon", "Gerçekleşen Kutu", "Pazar Payı"]]
+        for item in report.get("representative_rows") or []:
+            representative_data.append([
+                Paragraph(item["region_name"], small),
+                Paragraph(item["city"], small),
+                Paragraph(item["representative_name"], small),
+                f'₺{item["target_tl"]:,.0f}',
+                f'₺{item["actual_tl"]:,.0f}',
+                f'%{item["realization_percent"]}',
+                f'{item["actual_unit"]:,.0f}',
+                f'%{item["market_share_percent"]:.1f}' if item["market_share_percent"] is not None else "-",
+            ])
+        if len(representative_data) == 1:
+            representative_data.append(["Veri yok", "-", "-", "-", "-", "-", "-", "-"])
+        representative_table = Table(
+            representative_data, repeatRows=1,
+            colWidths=[29*mm, 27*mm, 53*mm, 34*mm, 36*mm, 27*mm, 34*mm, 28*mm],
+        )
+        representative_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),blue),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.6),("ALIGN",(3,1),(-1,-1),"RIGHT"),
+            ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),
+            ("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ]))
+        story += [representative_table, PageBreak(), Paragraph("Tüm rakipler ve aylık pazar payları", heading), Paragraph("Pazar payı, seçilen kapsam ve dönemde ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.", normal), Spacer(1, 3*mm)]
         rival_data = [["Ürün", "Rakip", "Rakip Kutu", "Rakibin Pazar Payı", "Şirket Kutu", "Şirket Pazar Payı", "Toplam Pazar"]]
         for item in report["rival_rows"]:
             rival_data.append([Paragraph(item["product_name"], small), Paragraph(item["name"], small), f'{item["unit"]:,.0f}', f'%{item["share_percent"]:.1f}' if item["share_percent"] is not None else "-", f'{item["company_unit"]:,.0f}', f'%{item["company_share_percent"]:.1f}' if item["company_share_percent"] is not None else "-", f'{item["market_unit"]:,.0f}'])
         if len(rival_data) == 1: rival_data.append(["Veri yok", "-", "-", "-", "-", "-", "-"])
         rival_table = Table(rival_data, repeatRows=1, colWidths=[35*mm,74*mm,29*mm,37*mm,29*mm,37*mm,28*mm])
-        rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)])); story.append(rival_table)
+        rival_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),("FONTSIZE",(0,0),(-1,-1),6.7),("ALIGN",(2,1),(-1,-1),"RIGHT"),("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),("GRID",(0,0),(-1,-1),.3,line),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+        story += [rival_table, PageBreak(), Paragraph("Brick ve rekabet analizi", heading)]
+        brick_data = [["Bölge", "İl", "Temsilci", "Brick", "Ürün", "Şirket", "Rakip", "Pazar", "Pay"]]
+        all_pdf_bricks = report.get("brick_rows") or []
+        pdf_bricks = all_pdf_bricks
+        if len(all_pdf_bricks) > 500:
+            pdf_bricks = sorted(
+                all_pdf_bricks,
+                key=lambda item: (
+                    -float(item.get("competitor_unit") or 0),
+                    str(item.get("brick") or ""),
+                ),
+            )[:500]
+            story.append(Paragraph(
+                f"PDF yönetim görünümünde en yüksek rakip baskısına sahip 500 brick satırı gösterilir. "
+                f"Tam {len(all_pdf_bricks)} satır Excel Brick Analizi sayfasında bulunur.",
+                normal,
+            ))
+            story.append(Spacer(1, 2*mm))
+        for item in pdf_bricks:
+            brick_data.append([
+                Paragraph(item["region_name"], small),
+                Paragraph(item["city"], small),
+                Paragraph(item["representative_name"], small),
+                Paragraph(item["brick"], small),
+                Paragraph(item["product_name"], small),
+                f'{item["company_unit"]:,.0f}',
+                f'{item["competitor_unit"]:,.0f}',
+                f'{item["market_unit"]:,.0f}',
+                f'%{item["share_percent"]:.1f}' if item["share_percent"] is not None else "-",
+            ])
+        if len(brick_data) == 1:
+            brick_data.append(["Veri yok", "-", "-", "-", "-", "-", "-", "-", "-"])
+        brick_table = Table(
+            brick_data, repeatRows=1,
+            colWidths=[25*mm,24*mm,42*mm,43*mm,31*mm,22*mm,22*mm,22*mm,21*mm],
+        )
+        brick_table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),navy),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),bold_name),("FONTNAME",(0,1),(-1,-1),font_name),
+            ("FONTSIZE",(0,0),(-1,-1),6.1),("ALIGN",(5,1),(-1,-1),"RIGHT"),
+            ("ALIGN",(0,0),(-1,0),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,pale]),
+            ("GRID",(0,0),(-1,-1),.25,line),("TOPPADDING",(0,0),(-1,-1),3),
+            ("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ]))
+        story.append(brick_table)
         doc.build(story, onFirstPage=footer, onLaterPages=footer)
         output.seek(0); return output
