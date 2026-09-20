@@ -27,11 +27,15 @@ class DummyService:
     period = "monthly"
     scope = "region"
     scope_value = "901 DIYARBAKIR"
+    scope_values = ["901 DIYARBAKIR"]
     product_ids = set()
 
-    def __init__(self, counter, lock):
+    def __init__(self, counter, lock, scope_values=None):
         self.counter = counter
         self.lock = lock
+        if scope_values is not None:
+            self.scope_values = scope_values
+            self.scope_value = scope_values[0] if scope_values else ""
 
     def months(self):
         return [(2026, 9)]
@@ -83,6 +87,29 @@ def test_report_cache_singleflight_builds_once_for_concurrent_users(cache_app, m
     assert len({row[1] for row in rows}) == 1
     assert sum(1 for row in rows if row[2]) == 1
     assert {row[0] for row in rows} == {"Diyarbakır"}
+
+
+def test_multi_scope_cache_identity_is_order_independent(cache_app, monkeypatch):
+    monkeypatch.setattr(
+        ReportCacheService,
+        "source_sets",
+        classmethod(lambda cls, service: [{"year": 2026, "month": 9, "set_id": 2517}]),
+    )
+    counter = {"builds": 0}
+    lock = threading.Lock()
+    with cache_app.app_context():
+        first = ReportCacheService.identity(
+            DummyService(counter, lock, ["901", "701"])
+        )[0]
+        second = ReportCacheService.identity(
+            DummyService(counter, lock, ["701", "901"])
+        )[0]
+        different = ReportCacheService.identity(
+            DummyService(counter, lock, ["901"])
+        )[0]
+
+    assert first == second
+    assert first != different
 
 
 def test_cache_key_changes_with_snapshot_generation(cache_app, monkeypatch):
