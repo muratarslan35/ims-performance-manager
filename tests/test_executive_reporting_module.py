@@ -13,6 +13,8 @@ from app.models import Product, Representative, RepresentativeBrickAssignment, U
 from werkzeug.security import generate_password_hash
 from app.services.executive_reporting_service import ExecutiveReportingService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+from app.services.report_cache_service import ReportCacheService
+from app.services.report_export_queue import ReportExportQueue
 
 
 @pytest.fixture()
@@ -30,6 +32,8 @@ def app(tmp_path):
         BACKUP_FOLDER = tmp_path / "backups"
         LOG_FOLDER = tmp_path / "logs"
         TEMP_FOLDER = tmp_path / "temp"
+        REPORT_CACHE_FOLDER = tmp_path / "report_cache"
+        REPORT_EXPORT_QUEUE_FOLDER = tmp_path / "report_export_queue"
 
     application = create_app(Config)
     with application.app_context():
@@ -155,7 +159,7 @@ def test_reports_navigation_is_visible_with_direct_reports_name():
     assert 'a[href="/reports"]' not in css
 
 
-def test_admin_can_render_reports_and_download_both_formats(app):
+def test_admin_report_exports_are_queued_then_served_from_cached_artifact(app):
     with app.app_context():
         db.session.add(User(
             full_name="Murat Arslan", email="admin@example.com", role="Admin", active=True,
@@ -168,12 +172,42 @@ def test_admin_can_render_reports_and_download_both_formats(app):
     page = client.get("/reports?year=2026&month=8&period=monthly&scope=national")
     assert page.status_code == 200
     assert "Satış ve pazar performansı" in page.get_data(as_text=True)
-    excel = client.get("/reports/export/xlsx?year=2026&month=8&period=monthly&scope=national")
-    pdf = client.get("/reports/export/pdf?year=2026&month=8&period=monthly&scope=national")
-    assert excel.status_code == 200 and excel.data.startswith(b"PK")
-    assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF-1.4")
-    assert "national-analiz-raporu-2026-08.xlsx" in excel.headers["Content-Disposition"]
-    assert "national-analiz-raporu-2026-08.pdf" in pdf.headers["Content-Disposition"]
+
+    for file_type, prefix in (("xlsx", b"PK"), ("pdf", b"%PDF-")):
+        queued = client.get(
+            f"/reports/export/{file_type}?year=2026&month=8&period=monthly&scope=national"
+        )
+        assert queued.status_code == 202
+        payload = queued.get_json()
+        assert payload["status"] == "QUEUED"
+
+        with app.app_context():
+            job = ReportExportQueue.read(payload["job_id"])
+            report = ReportCacheService.read_by_key(job["cache_key"])
+            service = ExecutiveReportingService(
+                year=report["year"], month=report["month"],
+                period=report["period"], scope=report["scope"],
+            )
+            output = service.to_excel(report) if file_type == "xlsx" else service.to_pdf(report)
+            ReportCacheService.write_export(job["cache_key"], file_type, output.getvalue())
+            ReportExportQueue.complete(job)
+
+        status = client.get(payload["status_url"])
+        assert status.status_code == 200
+        status_payload = status.get_json()
+        assert status_payload["status"] == "COMPLETED"
+        downloaded = client.get(status_payload["download_url"])
+        assert downloaded.status_code == 200
+        assert downloaded.data.startswith(prefix)
+        assert f"national-analiz-raporu-2026-08.{file_type}" in downloaded.headers["Content-Disposition"]
+
+        # A second request for the same source/filter combination is an
+        # immediate cached file response; no new PDF/XLSX work is queued.
+        cached = client.get(
+            f"/reports/export/{file_type}?year=2026&month=8&period=monthly&scope=national"
+        )
+        assert cached.status_code == 200
+        assert cached.data.startswith(prefix)
 
 
 def test_export_filenames_follow_selected_scope(app):
