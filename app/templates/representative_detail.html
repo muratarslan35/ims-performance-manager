@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ representative.rep_name|representative_display_name }} | Temsilci Performansı{% endblock %}
 {% block page_title %}Temsilci Performansı{% endblock %}
-{% block styles %}<link href="{{ url_for('static', filename='css/representative_detail.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/scoped-ai.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/representative-period-workspace.css') }}" rel="stylesheet">{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/representative_detail.css', v='20260921-profile-bar') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/scoped-ai.css') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/representative-period-workspace.css') }}" rel="stylesheet">{% endblock %}
 
 {% block content %}
 {% if field_portal_scoped %}
