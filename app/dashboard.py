@@ -12,28 +12,42 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 
 def _ensure_ytd_product_rankings(payload, service):
     """One-time compatibility upgrade for older dashboard read models."""
+    upgraded = dict(payload or {})
+    changed = False
     existing = (payload or {}).get("ytd_product_rankings")
-    if (
+    ytd_current = (
         isinstance(existing, dict)
         and int(existing.get("rank_trend_version") or 0) >= 1
         and int(existing.get("source_version") or 0) >= 2
-    ):
-        return payload
+    )
+    if not ytd_current:
+        rows = service.query_layer.load_ytd_product_rankings(
+            service.year, service.month
+        )
+        rankings = service._ytd_product_rankings(
+            rows, service.year, service.month
+        )
+        upgraded["ytd_product_rankings"] = service._ytd_rankings_with_previous_trend(
+            rankings
+        )
+        changed = True
 
-    upgraded = dict(payload or {})
-    rows = service.query_layer.load_ytd_product_rankings(
-        service.year, service.month
-    )
-    rankings = service._ytd_product_rankings(
-        rows, service.year, service.month
-    )
+    # The first realization-based release could still serve a durable payload
+    # created while this leaderboard was TL-ranked. Rebuild only this field
+    # once from the existing period data; no IMS replay is required.
+    if int(upgraded.get("top_representative_ranking_version") or 0) < 2:
+        rows = service.query_layer.load_top_representatives(
+            filters=service.query_filters, limit=None
+        )
+        mapped = service.mapper.map_top_reps(rows)
+        upgraded.update(service.formatter.format_top_reps(mapped))
+        upgraded["top_representative_ranking_version"] = 2
+        changed = True
 
-    upgraded["ytd_product_rankings"] = service._ytd_rankings_with_previous_trend(
-        rankings
-    )
-    PersistentDashboardSnapshotService.publish(
-        service.year, service.month, upgraded
-    )
+    if changed:
+        PersistentDashboardSnapshotService.publish(
+            service.year, service.month, upgraded
+        )
     return upgraded
 
 
