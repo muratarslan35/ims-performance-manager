@@ -87,6 +87,101 @@ def promote_test_user_to_manager(app):
         db.session.commit()
 
 
+def make_owner_admin(app):
+    from app.extensions import db
+    from app.models import User
+
+    with app.app_context():
+        user = User.query.filter_by(email="test@example.com").one()
+        user.email = "murat.arslan@bilimilac.com"
+        user.full_name = "Murat Arslan"
+        user.role = "Admin"
+        db.session.commit()
+        return user.id
+
+
+def add_managed_user(app):
+    from app.extensions import db
+    from app.models import User
+    from werkzeug.security import generate_password_hash
+
+    with app.app_context():
+        user = User(
+            full_name="Düzenlenecek Kullanıcı",
+            email="managed.user@example.com",
+            phone="05000000000",
+            role="Representative",
+            active=True,
+            password=generate_password_hash("password123"),
+        )
+        db.session.add(user)
+        db.session.commit()
+        return user.id
+
+
+def test_user_panel_is_visible_and_accessible_only_to_owner_admin(app):
+    client = app.test_client()
+    denied = client.post(
+        "/login",
+        data={"email": "test@example.com", "password": "password123", "portal": "representative"},
+        follow_redirects=True,
+    )
+    assert "Kullanıcı Paneli" not in denied.get_data(as_text=True)
+    assert client.get("/user-panel/", follow_redirects=False).status_code in (301, 302)
+
+    client.get("/logout")
+    make_owner_admin(app)
+    response = client.post(
+        "/login",
+        data={"email": "murat.arslan@bilimilac.com", "password": "password123", "portal": "manager"},
+        follow_redirects=True,
+    )
+    assert "Kullanıcı Paneli" in response.get_data(as_text=True)
+    page = client.get("/user-panel/")
+    assert page.status_code == 200
+    assert "Kayıtlı Kullanıcılar" in page.get_data(as_text=True)
+
+
+def test_owner_admin_can_update_and_delete_users(app):
+    owner_id = make_owner_admin(app)
+    managed_id = add_managed_user(app)
+    client = app.test_client()
+    client.post(
+        "/login",
+        data={"email": "murat.arslan@bilimilac.com", "password": "password123", "portal": "manager"},
+    )
+
+    updated = client.post(
+        f"/user-panel/{managed_id}/update",
+        data={
+            "full_name": "Düzeltilmiş Kullanıcı",
+            "email": "corrected.user@example.com",
+            "phone": "05551112233",
+            "role": "Representative",
+            "active": "1",
+        },
+        follow_redirects=True,
+    )
+    assert updated.status_code == 200
+    assert "veritabanında güncellendi" in updated.get_data(as_text=True)
+
+    from app.extensions import db
+    from app.models import User
+    with app.app_context():
+        managed = db.session.get(User, managed_id)
+        assert managed.full_name == "Düzeltilmiş Kullanıcı"
+        assert managed.email == "corrected.user@example.com"
+        assert managed.phone == "05551112233"
+
+    protected = client.post(f"/user-panel/{owner_id}/delete", follow_redirects=True)
+    assert "yönetici hesabı silinemez" in protected.get_data(as_text=True)
+    deleted = client.post(f"/user-panel/{managed_id}/delete", follow_redirects=True)
+    assert "kalıcı olarak silindi" in deleted.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(User, managed_id) is None
+        assert db.session.get(User, owner_id) is not None
+
+
 # ---------------------------------------------------------------------------
 # Route map evidence
 # ---------------------------------------------------------------------------
