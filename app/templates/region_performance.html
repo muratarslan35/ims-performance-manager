@@ -633,7 +633,7 @@ document.querySelectorAll('[data-region-box-targets]').forEach(panel=>{
         const title='Hedef: '+number(target)+' kutu · Gerçekleşen: '+number(actual)+' kutu';
         return '<td title="'+esc(title)+'"><span class="box-balance '+(reached?'is-reached':'is-missing')+'">'+sign+number(balance)+' <small>kutu</small></span></td>';
       }).join('');
-      return '<tr><td class="region-box-rep"><strong>'+esc(rep.name)+'</strong><small>'+esc(rep.city)+'</small></td>'+cells+'</tr>';
+      return '<tr><td class="region-box-rep"><strong>'+esc(rep.name)+'</strong></td>'+cells+'</tr>';
     }).join('');
     const hasData=repList.length>0&&productList.length>0&&rows.length>0;
     empty.hidden=hasData;
