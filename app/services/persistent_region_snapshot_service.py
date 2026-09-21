@@ -58,6 +58,7 @@ region_snapshots = sa.Table(
 
 
 class PersistentRegionSnapshotService:
+    READ_MODEL_VERSION = 4
     STATUS_BUILDING = "BUILDING"
     STATUS_ACTIVE = "ACTIVE"
     STATUS_SUPERSEDED = "SUPERSEDED"
@@ -351,6 +352,61 @@ class PersistentRegionSnapshotService:
         return report
 
     @classmethod
+    def _embed_national_product_realizations(cls, report, dashboard_payload):
+        """Attach NATIONAL percentages from the already-published dashboard snapshot."""
+        national = (dashboard_payload or {}).get("executive_metrics") or {}
+        by_id = {
+            int(item["product_id"]): item.get("realization_percent")
+            for item in national.get("products") or []
+            if item.get("product_id") is not None
+        }
+        by_name = {
+            str(item.get("product_name") or "").strip().casefold(): item.get("realization_percent")
+            for item in national.get("products") or []
+            if str(item.get("product_name") or "").strip()
+        }
+        monthly = (((report or {}).get("periods") or {}).get("monthly") or {})
+        for item in monthly.get("products") or []:
+            product_id = item.get("product_id")
+            value = by_id.get(int(product_id)) if product_id is not None else None
+            if value is None:
+                value = by_name.get(str(item.get("product_name") or "").strip().casefold())
+            item["national_realization_percent"] = value
+        return report
+
+    @classmethod
+    def upgrade_national_realizations_for_period(cls, year, month):
+        """Upgrade existing region snapshots without re-running report calculations."""
+        from app.services.persistent_dashboard_snapshot_service import (
+            PersistentDashboardSnapshotService,
+        )
+
+        set_id = cls._visible_set_id(year, month)
+        if not set_id:
+            return {"status": "WAITING_REGION", "regions": 0}
+        payloads = cls._payloads_from_set(set_id)
+        dashboard_payload = PersistentDashboardSnapshotService.get_stable(year, month) or {}
+        now = datetime.utcnow()
+        for region_key, payload in payloads.items():
+            enriched = dict(payload or {})
+            enriched["report"] = cls._embed_national_product_realizations(
+                enriched.get("report") or {}, dashboard_payload
+            )
+            enriched["read_model_version"] = cls.READ_MODEL_VERSION
+            enriched["read_model_ready_at"] = now.isoformat(timespec="seconds") + "Z"
+            db.session.execute(
+                region_snapshots.update().where(
+                    region_snapshots.c.set_id == int(set_id),
+                    region_snapshots.c.region_key == str(region_key),
+                ).values(payload_json=json.dumps(
+                    cls._json_ready(enriched), ensure_ascii=False,
+                    separators=(",", ":"), default=cls._json_default,
+                ))
+            )
+        db.session.commit()
+        return {"status": "ENRICHED", "set_id": int(set_id), "regions": len(payloads)}
+
+    @classmethod
     def enrich_for_period(cls, year, month):
         """Finalize region payloads once from already-published read models.
 
@@ -366,7 +422,7 @@ class PersistentRegionSnapshotService:
         payloads = cls._payloads_from_set(set_id)
         if not payloads:
             return {"status": "WAITING_REGION", "regions": 0}
-        if all(int((payload or {}).get("read_model_version") or 0) >= 3 for payload in payloads.values()):
+        if all(int((payload or {}).get("read_model_version") or 0) >= cls.READ_MODEL_VERSION for payload in payloads.values()):
             return {"status": "REUSED", "set_id": int(set_id), "regions": len(payloads)}
 
         from app.services.persistent_dashboard_snapshot_service import (
@@ -425,6 +481,7 @@ class PersistentRegionSnapshotService:
             report = cls._embed_representative_products(
                 report, year, month, current_region_workspaces
             )
+            report = cls._embed_national_product_realizations(report, dashboard_payload)
 
             previous_payload = previous_payloads.get(str(region_key)) or {}
             previous_market_analysis = previous_payload.get("market_analysis") or {}
@@ -456,7 +513,7 @@ class PersistentRegionSnapshotService:
             enriched = dict(payload or {})
             enriched["report"] = report
             enriched["ai_report"] = ai_report
-            enriched["read_model_version"] = 3
+            enriched["read_model_version"] = cls.READ_MODEL_VERSION
             enriched["read_model_ready_at"] = now.isoformat(timespec="seconds") + "Z"
             updates.append({
                 "region_key": str(region_key),
