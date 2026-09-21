@@ -173,7 +173,7 @@ class DashboardService:
     def _load_query_data(self) -> Dict[str, Any]:
         filters = DashboardFilterParams(year=self.year, month=self.month, representative_id=self.rep_id)
         return {
-            # Formatting owns the national Top 10 cut because this leaderboard
+            # Formatting owns the national Top 10 cut because the leaderboard
             # is ranked by realization rather than raw TL turnover.
             "top_reps": self.query_layer.load_top_representatives(filters=filters, limit=None),
             "city_perf": self.query_layer.load_city_performance(filters=filters),
