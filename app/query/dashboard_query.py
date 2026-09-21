@@ -21,7 +21,7 @@ from app.models import (
     Product,
     Representative, 
     Target, 
-    IMSSummary, ProductionResult, ProductionNationalProductResult, ProductionNationalTotal, ProductionRegionTotal
+    IMSSummary, ProductionResult, ProductionResultUpload, ProductionNationalProductResult, ProductionNationalTotal, ProductionRegionTotal
     , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
@@ -202,50 +202,94 @@ class DashboardQuery:
         return query.all()
 
     def load_ytd_product_rankings(self, year: int, through_month: int):
-        """Return all product/representative YTD box totals in one aggregate query.
+        """Return authoritative product/representative YTD box totals.
 
-        The result is intended for dashboard snapshot generation. Product-tab
-        changes in the browser never call this query again.
+        Each product/month follows the same accepted-result priority used by
+        representative screens: production stage 2, production stage 1, then
+        IMS. Product-tab changes still read the generated dashboard snapshot.
         """
-        total_unit = func.sum(IMSSummary.unit).label("total_unit")
-        return (
-            self.session.query(
-                Product.id.label("product_id"),
-                Product.product_name.label("product_name"),
-                Product.display_order.label("product_display_order"),
-                Representative.id.label("representative_id"),
-                Representative.rep_name.label("representative_name"),
-                Representative.city.label("city"),
-                Representative.region.label("region"),
-                total_unit,
-            )
-            .select_from(IMSSummary)
-            .join(Product, Product.id == IMSSummary.product_id)
-            .join(Representative, Representative.id == IMSSummary.representative_id)
-            .filter(
-                IMSSummary.year == int(year),
-                IMSSummary.month <= int(through_month),
-                Product.is_active.is_(True),
-                Representative.active.is_(True),
-                IMSSummary.representative_id.isnot(None),
-            )
-            .group_by(
-                Product.id,
-                Product.product_name,
-                Product.display_order,
-                Representative.id,
-                Representative.rep_name,
-                Representative.city,
-                Representative.region,
-            )
-            .having(func.sum(IMSSummary.unit) > 0)
-            .order_by(
-                Product.display_order.asc(),
-                desc(total_unit),
-                Representative.rep_name.asc(),
-            )
-            .all()
+        year, through_month = int(year), int(through_month)
+        products = self.session.query(Product).filter(Product.is_active.is_(True)).all()
+        representatives = self.session.query(Representative).filter(Representative.active.is_(True)).all()
+        product_by_id = {int(item.id): item for item in products}
+        representative_by_id = {int(item.id): item for item in representatives}
+
+        summaries = self.session.query(IMSSummary).filter(
+            IMSSummary.year == year,
+            IMSSummary.month <= through_month,
+            IMSSummary.representative_id.in_(representative_by_id),
+            IMSSummary.product_id.in_(product_by_id),
+        ).all() if product_by_id and representative_by_id else []
+        summary_by_key = {
+            (int(row.month), int(row.representative_id), int(row.product_id)): row
+            for row in summaries
+        }
+
+        uploads = self.session.query(ProductionResultUpload).filter(
+            ProductionResultUpload.year == year,
+            ProductionResultUpload.month <= through_month,
+            ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+        ).order_by(
+            ProductionResultUpload.month.asc(),
+            ProductionResultUpload.production_stage.desc(),
+            ProductionResultUpload.applied_at.desc(),
+            ProductionResultUpload.id.desc(),
+        ).all()
+        upload_by_id = {int(upload.id): upload for upload in uploads}
+        uploads_by_month = {}
+        for upload in uploads:
+            uploads_by_month.setdefault(int(upload.month), []).append(upload)
+        production_rows = self.session.query(ProductionResult).filter(
+            ProductionResult.upload_id.in_(upload_by_id),
+            ProductionResult.representative_id.in_(representative_by_id),
+            ProductionResult.product_id.in_(product_by_id),
+        ).all() if upload_by_id and product_by_id and representative_by_id else []
+        production_by_key = {
+            (int(row.upload_id), int(row.representative_id), int(row.product_id)): row
+            for row in production_rows
+        }
+
+        source_keys = set(summary_by_key)
+        source_keys.update(
+            (int(upload_by_id[int(row.upload_id)].month), int(row.representative_id), int(row.product_id))
+            for row in production_rows
         )
+        totals = {}
+        for month, representative_id, product_id in source_keys:
+            selected = None
+            for upload in uploads_by_month.get(month, ()):
+                selected = production_by_key.get((int(upload.id), representative_id, product_id))
+                if selected is not None:
+                    break
+            if selected is not None and selected.actual_unit is not None:
+                actual_unit = float(selected.actual_unit or 0)
+            else:
+                summary = summary_by_key.get((month, representative_id, product_id))
+                actual_unit = float(summary.unit or 0) if summary is not None else 0.0
+            key = (representative_id, product_id)
+            totals[key] = totals.get(key, 0.0) + actual_unit
+
+        rows = []
+        for (representative_id, product_id), total_unit in totals.items():
+            if total_unit <= 0:
+                continue
+            product = product_by_id.get(product_id)
+            representative = representative_by_id.get(representative_id)
+            if product is None or representative is None:
+                continue
+            rows.append(SimpleNamespace(
+                product_id=product_id,
+                product_name=product.product_name,
+                product_display_order=product.display_order,
+                representative_id=representative_id,
+                representative_name=representative.rep_name,
+                city=representative.city,
+                region=representative.region,
+                total_unit=total_unit,
+            ))
+        return sorted(rows, key=lambda row: (
+            int(row.product_display_order or 0), -float(row.total_unit), row.representative_name
+        ))
 
     def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:

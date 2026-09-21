@@ -13,19 +13,20 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 def _ensure_ytd_product_rankings(payload, service):
     """One-time compatibility upgrade for older dashboard read models."""
     existing = (payload or {}).get("ytd_product_rankings")
-    if isinstance(existing, dict) and int(existing.get("rank_trend_version") or 0) >= 1:
+    if (
+        isinstance(existing, dict)
+        and int(existing.get("rank_trend_version") or 0) >= 1
+        and int(existing.get("source_version") or 0) >= 2
+    ):
         return payload
 
     upgraded = dict(payload or {})
-    if isinstance(existing, dict):
-        rankings = existing
-    else:
-        rows = service.query_layer.load_ytd_product_rankings(
-            service.year, service.month
-        )
-        rankings = service._ytd_product_rankings(
-            rows, service.year, service.month
-        )
+    rows = service.query_layer.load_ytd_product_rankings(
+        service.year, service.month
+    )
+    rankings = service._ytd_product_rankings(
+        rows, service.year, service.month
+    )
 
     upgraded["ytd_product_rankings"] = service._ytd_rankings_with_previous_trend(
         rankings

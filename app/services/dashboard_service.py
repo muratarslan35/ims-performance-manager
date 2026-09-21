@@ -173,7 +173,9 @@ class DashboardService:
     def _load_query_data(self) -> Dict[str, Any]:
         filters = DashboardFilterParams(year=self.year, month=self.month, representative_id=self.rep_id)
         return {
-            "top_reps": self.query_layer.load_top_representatives(filters=filters),
+            # Formatting owns the national Top 10 cut because this leaderboard
+            # is ranked by realization rather than raw TL turnover.
+            "top_reps": self.query_layer.load_top_representatives(filters=filters, limit=None),
             "city_perf": self.query_layer.load_city_performance(filters=filters),
             "region_perf": self.query_layer.load_region_performance(filters=filters),
             "market_trend": self.query_layer.load_market_share_trend(filters=filters),
@@ -306,7 +308,8 @@ class DashboardService:
         return {
             "year": int(year),
             "through_month": int(month),
-            "source": "DASHBOARD_SNAPSHOT_YTD_IMS_SUMMARY",
+            "source": "DASHBOARD_SNAPSHOT_YTD_ACCEPTED_ACTUALS",
+            "source_version": 2,
             "products": products,
         }
 
