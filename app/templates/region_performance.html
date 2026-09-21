@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ report.region_name }} Bölge Performansı{% endblock %}
 {% block page_title %}Bölge Performansı{% endblock %}
-{% block styles %}<link href="{{ url_for('static', filename='css/scoped-ai.css', v='20260919p') }}" rel="stylesheet">{% endblock %}
+{% block styles %}<link href="{{ url_for('static', filename='css/scoped-ai.css', v='20260919p') }}" rel="stylesheet"><link href="{{ url_for('static', filename='css/representative_detail.css', v='20260921-region-manager-bar') }}" rel="stylesheet">{% endblock %}
 {% block content %}
 <style>
 .region-hero h1{color:#fff!important;text-shadow:0 2px 12px rgba(0,0,0,.2)}
@@ -469,7 +469,23 @@ body[data-theme="dark"] .box-balance.is-neutral {
 </style>
 {% set month_names = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'] %}
 <div class="region-page">
-  <header class="region-hero"><div><small>BÖLGESEL PERFORMANS MERKEZİ</small><h1>{{ report.region_name }} BÖLGE ANALİZİ</h1><p>Gerçek IMS satışları ve hedef kayıtlarıyla dönemsel bölge analizi</p><div class="region-meta"><span><i class="bi bi-calendar3"></i> {{ "%02d"|format(report.month) }}/{{ report.year }}</span><span><i class="bi bi-people-fill"></i> {{ report.active_count }} çalışan</span>{% if report.vacant_count %}<span><i class="bi bi-person-plus-fill"></i> {{ report.vacant_count }} boş kadro dahil</span>{% endif %}<span><i class="bi bi-person-badge"></i> {{ report.manager }}</span></div></div><div class="region-hero-tools"><div class="history-period-control"><label for="region-history-period">GEÇMİŞ AYLAR</label><select id="region-history-period" class="history-period-select" aria-label="Geçmiş ay seçimi" onchange="if(this.value)window.location.href=this.value">{% for period in market_analysis.available_periods %}<option value="{{ url_for('regions.detail', region_key=report.region_key, year=period.year, month=period.month) }}" {% if period.year == report.year and period.month == report.month %}selected{% endif %}>{{ month_names[period.month - 1] }} {{ period.year }}</option>{% endfor %}</select></div><div class="region-hero-icon"><i class="bi bi-map-fill"></i></div></div></header>
+  <header class="rep-profile-bar region-manager-bar" aria-label="Bölge müdürü ve bölge bilgileri">
+    <div class="rep-profile-main">
+      <div class="rep-profile-avatar" aria-hidden="true"><i class="bi bi-map-fill"></i></div>
+      <div class="rep-profile-identity"><span class="rep-profile-kicker">Bölgesel Performans Merkezi</span><h1>{{ report.region_name }} Bölge Analizi</h1><div class="rep-profile-status"><span class="is-active"><i class="bi bi-circle-fill"></i>{{ report.active_count }} aktif çalışan</span>{% if report.vacant_count %}<span>{{ report.vacant_count }} boş kadro</span>{% endif %}</div></div>
+    </div>
+    <div class="rep-profile-details">
+      <div><i class="bi bi-person-badge"></i><span>Bölge Müdürü<strong>{{ region_manager.full_name if region_manager else (report.manager if report.manager and report.manager != '-' else 'Atanmamış') }}</strong></span></div>
+      <div><i class="bi bi-envelope"></i><span>E-posta<strong>{{ region_manager.email if region_manager else '—' }}</strong></span></div>
+      <div><i class="bi bi-telephone"></i><span>Telefon<strong>{{ region_manager.phone if region_manager and region_manager.phone else '—' }}</strong></span></div>
+      <div><i class="bi bi-map"></i><span>Bölge<strong>{{ report.region_name }}</strong></span></div>
+    </div>
+    <div class="rep-profile-tools">
+      <label for="region-history-period">Geçmiş aylar</label>
+      <select id="region-history-period" class="form-select" aria-label="Geçmiş ay seçimi" onchange="if(this.value)window.location.href=this.value">{% for period in market_analysis.available_periods %}<option value="{{ url_for('regions.detail', region_key=report.region_key, year=period.year, month=period.month) }}" {% if period.year == report.year and period.month == report.month %}selected{% endif %}>{{ month_names[period.month - 1] }} {{ period.year }}</option>{% endfor %}</select>
+      <div class="rep-profile-period"><span>Aktif dönem</span><i aria-hidden="true">·</i><strong>{{ "%02d"|format(report.month) }}/{{ report.year }}</strong></div>
+    </div>
+  </header>
 
   <div class="region-section region-annual-card"><div class="region-section-head"><div><h2><i class="bi bi-graph-up me-2 text-primary"></i>12 Aylık Bölge Realizasyonu</h2><p>{{ report.year }} yılı bölge toplam TL hedefi ve gerçekleşen IMS verisine göre</p></div><span class="region-chip">Ay bazında %</span></div><div class="p-3"><div class="region-annual-chart"><canvas data-annual-realization-chart data-rows='{{ report.annual_realization|tojson|forceescape }}'></canvas></div></div></div>
 
