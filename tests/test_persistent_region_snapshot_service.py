@@ -1,6 +1,8 @@
 from pathlib import Path
 import tempfile
 
+import pytest
+
 from app import create_app
 from app.extensions import db
 from app.services import persistent_region_snapshot_service as snapshot_module
@@ -183,3 +185,69 @@ def test_failed_new_build_never_supersedes_previous_active(monkeypatch):
         statuses = {row.source_upload_id: row.status for row in rows}
         assert statuses[17] == PersistentRegionSnapshotService.STATUS_ACTIVE
         assert statuses[18] == PersistentRegionSnapshotService.STATUS_FAILED
+
+
+
+def test_force_refresh_replaces_same_identity_active_set(monkeypatch):
+    app = _app()
+    with app.app_context():
+        _patch_sources(monkeypatch, (17, 5))
+        first = PersistentRegionSnapshotService.build_for_period(2026, 7)
+        assert first["status"] == "ACTIVE"
+        before = PersistentRegionSnapshotService.get_active("101", 2026, 7)
+        assert before["report"]["region_name"] == "Region 101"
+
+        class RefreshedPerformance(FakePerformance):
+            def report(self):
+                payload = super().report()
+                payload["region_name"] = f"Final {self.region_key}"
+                return payload
+
+        monkeypatch.setattr(
+            snapshot_module, "RegionPerformanceService", RefreshedPerformance
+        )
+        refreshed = PersistentRegionSnapshotService.build_for_period(
+            2026, 7, force=True
+        )
+        assert refreshed["status"] == "ACTIVE"
+        assert refreshed["forced"] is True
+        assert refreshed["set_id"] == first["set_id"]
+
+        after = PersistentRegionSnapshotService.get_active("101", 2026, 7)
+        assert after["report"]["region_name"] == "Final 101"
+        rows = db.session.execute(
+            region_snapshot_sets.select().where(
+                region_snapshot_sets.c.year == 2026,
+                region_snapshot_sets.c.month == 7,
+                region_snapshot_sets.c.source_upload_id == 17,
+                region_snapshot_sets.c.production_upload_id == 5,
+            )
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == PersistentRegionSnapshotService.STATUS_ACTIVE
+
+
+def test_failed_force_refresh_keeps_previous_active_payload(monkeypatch):
+    app = _app()
+    with app.app_context():
+        _patch_sources(monkeypatch, (17, 5))
+        first = PersistentRegionSnapshotService.build_for_period(2026, 7)
+        assert first["status"] == "ACTIVE"
+        before = PersistentRegionSnapshotService.get_active("101", 2026, 7)
+
+        class FailingRefresh(FakePerformance):
+            def report(self):
+                if self.region_key == "102":
+                    raise RuntimeError("late production refresh failed")
+                payload = super().report()
+                payload["region_name"] = f"Candidate {self.region_key}"
+                return payload
+
+        monkeypatch.setattr(snapshot_module, "RegionPerformanceService", FailingRefresh)
+        with pytest.raises(RuntimeError, match="late production refresh failed"):
+            PersistentRegionSnapshotService.build_for_period(
+                2026, 7, force=True
+            )
+
+        after = PersistentRegionSnapshotService.get_active("101", 2026, 7)
+        assert after == before
