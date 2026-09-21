@@ -43,3 +43,6 @@ def test_region_national_comparison_ui_is_scoped_to_region_table():
     assert "item.realization_percent >= item.national_realization_percent" in template
     assert ".quarter-period-panel .national-comparison-pill.region-ahead" in template
     assert ".quarter-period-panel .national-comparison-pill.region-behind" in template
+    assert "product-comparison-table" in template
+    assert '<col style="width:13%"><col style="width:13%">' in template
+    assert "td:nth-child(6),.quarter-period-panel .product-comparison-table td:nth-child(7){text-align:center!important}" in template
