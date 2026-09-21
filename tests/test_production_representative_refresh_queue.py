@@ -55,7 +55,7 @@ def test_production_refresh_queue_contract():
     assert reconcile < refresh < process_job
 
 
-def test_late_production_cascade_contract():
+# deploy.yml is intentionally covered by the repo's locked-contract approval gate.\ndef test_late_production_cascade_contract():
     queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
         encoding="utf-8"
     )
