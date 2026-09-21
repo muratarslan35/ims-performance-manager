@@ -392,6 +392,11 @@ jobs:
           test "$web_state" = "active"
           test "$worker_state" = "active"
           test "$report_worker_state" = "active"
+
+          if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
+            venv/bin/python verify_production_snapshot_finalization.py --wait-seconds 1200 --poll-seconds 5
+          fi
+
           echo 'IMS worker health check passed.'
           echo 'Report worker health check passed.'
           REMOTE
@@ -409,7 +414,7 @@ jobs:
           status="SUCCESS"
           if [ "${DEPLOY_EXIT:-1}" != "0" ]; then status="FAILED"; fi
           evidence_file="$RUNNER_TEMP/ims-deploy.log"
-          evidence=$(grep -E 'RELEASE_MODE\||LIVE_COMMIT\||IMS_WORKER_IDLE\||IMS_LIVE_GATE\||SQLITE_FAST\||SQLITE_RUNTIME\||SQLITE_ONLINE_BACKUP\||REGION_MANAGER_ACCEPTANCE\||SERVICE_ACTIVATION\||WEB_ACTIVE\||WORKER_ACTIVE\||REPORT_WORKER_ACTIVE\||HTTP_HEALTH\||Production health check|IMS worker health check|Report worker health check|DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\|' "$evidence_file" | tail -n 120 || true)
+          evidence=$(grep -E 'RELEASE_MODE\||LIVE_COMMIT\||IMS_WORKER_IDLE\||IMS_LIVE_GATE\||SQLITE_FAST\||SQLITE_RUNTIME\||SQLITE_ONLINE_BACKUP\||REGION_MANAGER_ACCEPTANCE\||PRODUCTION_FINALIZATION\||SERVICE_ACTIVATION\||WEB_ACTIVE\||WORKER_ACTIVE\||REPORT_WORKER_ACTIVE\||HTTP_HEALTH\||Production health check|IMS worker health check|Report worker health check|DB_CAPACITY\||PRODUCTION_RESOURCE\||REPRESENTATIVE_PERFORMANCE\|' "$evidence_file" | tail -n 120 || true)
           body=$(jq -n --arg sha "$GITHUB_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --arg status "$status" --arg mode "$RELEASE_MODE" --arg evidence "$evidence" '{title:("IMS production deployment "+$status+" ["+$mode+"]"),body:("Commit: `"+$sha+"`\n\nWorkflow: "+$run+"\n\nMode: **"+$mode+"**\n\n```text\n"+$evidence+"\n```") }')
           curl --fail-with-body -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues" -d "$body"
 
