@@ -17,7 +17,7 @@ from sqlalchemy import desc
 from app.extensions import db
 from app.models import IMSUpload, ProductionResultUpload, Representative, Target
 from app.services.production_result_service import ProductionResultService
-from app.services.region_market_service import RegionMarketService
+from app.services.region_market_service import RegionMarketService, repair_duplicated_rival_totals
 from app.services.region_performance_service import RegionPerformanceService
 
 
@@ -150,7 +150,8 @@ class PersistentRegionSnapshotService:
                 region_snapshots.c.region_key == str(region_key).strip(),
             ).limit(1)
         ).scalar()
-        return json.loads(raw) if raw else None
+        payload = json.loads(raw) if raw else None
+        return repair_duplicated_rival_totals(payload)
 
     @classmethod
     def _payloads_from_set(cls, set_id):
@@ -163,7 +164,9 @@ class PersistentRegionSnapshotService:
         result = {}
         for region_key, raw in rows:
             try:
-                result[str(region_key)] = json.loads(raw)
+                result[str(region_key)] = repair_duplicated_rival_totals(
+                    json.loads(raw)
+                )
             except (TypeError, json.JSONDecodeError):
                 continue
         return result
@@ -258,7 +261,8 @@ class PersistentRegionSnapshotService:
             )
             .limit(1)
         ).scalar()
-        return json.loads(raw) if raw else None
+        payload = json.loads(raw) if raw else None
+        return repair_duplicated_rival_totals(payload)
 
     @classmethod
     def get_active(cls, region_key, year, month):
