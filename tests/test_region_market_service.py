@@ -49,6 +49,11 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
                 )
 
             db.session.add_all([
+                # Workbook region subtotal layer repeats the same semantic
+                # values as the brick detail and must never be added again.
+                row("901 DIYARBAKIR", "901 DIYARBAKIR", "TRAVAZOL", 120, company=True),
+                row("901 DIYARBAKIR", "901 DIYARBAKIR", "RAKIP A", 180, competitor=True),
+                row("901 DIYARBAKIR", "901 DIYARBAKIR", "RAKIP B", 60, competitor=True),
                 row("901 DIYARBAKIR", "MARDIN BRICK A", "TRAVAZOL", 120, company=True),
                 row("901 DIYARBAKIR", "MARDIN BRICK A", "RAKIP A", 180, competitor=True),
                 row("901 DIYARBAKIR", "SIRNAK BRICK B", "RAKIP B", 60, competitor=True),
@@ -69,6 +74,7 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert travazol["precise_share_percent"] == 33.333333
             assert travazol["display_share_total"] == 100
             assert [item["name"] for item in travazol["rivals"]] == ["RAKIP A", "RAKIP B"]
+            assert [item["unit"] for item in travazol["rivals"]] == [180, 60]
             assert sum([travazol["share_percent"], *[item["market_share_percent"] for item in travazol["rivals"]]]) == 100
             assert [item["brick"] for item in result["top_bricks"]] == ["MARDIN BRICK A", "SIRNAK BRICK B"]
             assert result["totals"]["competitor_unit"] == 240
@@ -99,6 +105,31 @@ def test_region_market_panel_is_above_ai_panel_and_has_product_tabs():
     assert "data-rival-group" in template
     assert "data-rival-group-list" in template
     assert "BÖLGESEL RAKİP TOPLAM KUTU ÇIKIŞI" in template
+
+
+def test_old_region_snapshot_repairs_only_exact_subtotal_detail_duplication():
+    payload = {
+        "market_analysis": {
+            "rows": [{
+                "product_id": 1,
+                "rivals": [
+                    {"name": "ZALAIN", "unit": 16474},
+                    {"name": "SINIFLANDIRILMAYAN", "unit": 9000},
+                ],
+            }],
+            "rival_rows": [
+                {"product_id": 1, "name": "ZALAIN", "unit": 8237},
+                {"product_id": 1, "name": "SINIFLANDIRILMAYAN", "unit": 4000},
+            ],
+        }
+    }
+
+    repaired = RegionMarketService.repair_duplicated_rival_totals(payload)
+
+    rivals = repaired["market_analysis"]["rows"][0]["rivals"]
+    assert rivals[0]["unit"] == 8237
+    assert rivals[1]["unit"] == 9000
+    assert repaired["market_analysis"]["rival_aggregation_version"] == 2
 
 
 def test_region_product_resolution_prefers_excel_group_over_rival_name():
