@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 from types import SimpleNamespace
 
 from app.services.dashboard_service import DashboardService
@@ -33,7 +34,8 @@ def test_ytd_product_rankings_builds_seven_products_top_ten_and_medal_positions(
 
     assert payload["year"] == 2026
     assert payload["through_month"] == 9
-    assert payload["source"] == "DASHBOARD_SNAPSHOT_YTD_IMS_SUMMARY"
+    assert payload["source"] == "DASHBOARD_SNAPSHOT_YTD_ACCEPTED_ACTUALS"
+    assert payload["source_version"] == 2
     assert [item["product_key"] for item in payload["products"]] == [
         "TRAVAZOL",
         "MONUROL",
@@ -79,15 +81,112 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
 
     assert "def load_ytd_product_rankings" in query
     ranking_query = query[query.index("def load_ytd_product_rankings"):query.index("def load_period_performance")]
-    assert ranking_query.count("self.session.query(") == 1
-    assert "func.sum(IMSSummary.unit)" in ranking_query
-    assert "IMSSummary.month <= int(through_month)" in ranking_query
+    assert "ProductionResultUpload.STATUS_APPLIED" in ranking_query
+    assert "selected.actual_unit" in ranking_query
+    assert "summary.unit" in ranking_query
+    assert "IMSSummary.month <= through_month" in ranking_query
 
     assert '"ytd_product_rankings": self.query_layer.load_ytd_product_rankings' in service
     assert 'payload["ytd_product_rankings"]' in service
     assert 'existing = (payload or {}).get("ytd_product_rankings")' in route
     assert 'rank_trend_version' in route
+    assert 'source_version' in route
     assert "PersistentDashboardSnapshotService.publish" in route
+
+
+def test_ims_turkey_ranking_is_top_ten_by_realization_with_tl_tiebreaker():
+    from app.formatters.dashboard_formatter import DashboardFormatter
+
+    rows = [
+        {
+            "rep_name": f"Temsilci {index:02d}",
+            "city": "İstanbul",
+            "actual_tl": 1000 + index,
+            "target_tl": 1000,
+            "bonus_amount": 0,
+        }
+        for index in range(12)
+    ]
+    result = DashboardFormatter().format_top_reps(rows)["top_representatives"]
+
+    assert len(result) == 10
+    assert [row["realization_percent"] for row in result] == sorted(
+        [row["realization_percent"] for row in result], reverse=True
+    )
+    assert result[0]["rep_name"] == "Temsilci 11"
+    assert result[-1]["rep_name"] == "Temsilci 02"
+
+
+def test_ims_turkey_ranking_keeps_first_three_collapsed_by_default():
+    template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
+
+    assert 'data-ranking-toggle aria-expanded="false"' in template
+    assert "Aylık ₺ realizasyon oranına göre sıralanmıştır." in template
+
+
+def test_ytd_product_ranking_prefers_accepted_units_and_falls_back_to_monthly_ims(tmp_path):
+    from app import create_app
+    from app.extensions import db
+    from app.models import (
+        IMSSummary, Product, ProductionResult, ProductionResultUpload,
+        Representative,
+    )
+    from app.query.dashboard_query import DashboardQuery
+
+    class Config:
+        TESTING = True
+        SECRET_KEY = "ytd-ranking-source"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'ranking.db'}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        UPLOAD_FOLDER = tmp_path / "uploads"
+        REPORT_FOLDER = tmp_path / "reports"
+        BACKUP_FOLDER = tmp_path / "backups"
+        LOG_FOLDER = tmp_path / "logs"
+        TEMP_FOLDER = tmp_path / "temp"
+
+    application = create_app(Config)
+    with application.app_context():
+        db.create_all()
+        representative = Representative(
+            rep_code="YTD-1", rep_name="YTD TEMSILCI", city="İstanbul",
+            region="101", active=True,
+        )
+        product = Product(
+            product_code="TRV-YTD", product_name="Travazol",
+            display_order=1, is_active=True,
+        )
+        db.session.add_all([representative, product])
+        db.session.flush()
+        db.session.add_all([
+            IMSSummary(
+                year=2026, month=1, representative_id=representative.id,
+                product_id=product.id, unit=4000, tl=1,
+            ),
+            IMSSummary(
+                year=2026, month=2, representative_id=representative.id,
+                product_id=product.id, unit=20, tl=1,
+            ),
+        ])
+        upload = ProductionResultUpload(
+            file_name="p2.xlsx", stored_file_name="p2.xlsx", source_hash="a" * 64,
+            year=2026, month=1, production_stage=2,
+            status=ProductionResultUpload.STATUS_APPLIED,
+            applied_at=datetime(2026, 1, 31, 12, 0),
+        )
+        db.session.add(upload)
+        db.session.flush()
+        db.session.add(ProductionResult(
+            upload_id=upload.id, representative_id=representative.id,
+            product_id=product.id, realization_percent=50,
+            actual_unit=10,
+        ))
+        db.session.commit()
+
+        rows = DashboardQuery().load_ytd_product_rankings(2026, 2)
+
+        assert len(rows) == 1
+        assert rows[0].total_unit == 30
 
 def test_ytd_rank_trend_marks_only_changed_positions():
     current = {
@@ -142,4 +241,3 @@ def test_dashboard_period_resolution_does_not_scan_ims_summary_hot_path():
 
     assert "PeriodService.get_active_period" in init_block
     assert "load_last_completed_period" not in init_block
-
