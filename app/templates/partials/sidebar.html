@@ -42,6 +42,9 @@
             {% if can_view_manager_module %}
             <li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('manager_users.') %}active{% endif %}" href="{{ url_for('manager_users.index') }}"><span class="sidebar-nav-icon"><i class="bi bi-person-badge-fill"></i></span><span class="sidebar-nav-label">Yönetici Modülü</span></a></li>
             {% endif %}
+            {% if user_admin_access %}
+            <li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('user_admin.') %}active{% endif %}" href="{{ url_for('user_admin.index') }}"><span class="sidebar-nav-icon"><i class="bi bi-person-gear"></i></span><span class="sidebar-nav-label">Kullanıcı Paneli</span></a></li>
+            {% endif %}
             {% if settings_access %}
             <li class="sidebar-nav-item"><a class="sidebar-nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}" href="{{ url_for('settings.index') }}"><span class="sidebar-nav-icon"><i class="bi bi-gear-fill"></i></span><span class="sidebar-nav-label">Ayarlar</span></a></li>
             {% endif %}
