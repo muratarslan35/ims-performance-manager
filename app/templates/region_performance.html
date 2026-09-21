@@ -472,7 +472,7 @@ body[data-theme="dark"] .box-balance.is-neutral {
   <header class="rep-profile-bar region-manager-bar" aria-label="Bölge müdürü ve bölge bilgileri">
     <div class="rep-profile-main">
       <div class="rep-profile-avatar" aria-hidden="true"><i class="bi bi-map-fill"></i></div>
-      <div class="rep-profile-identity"><span class="rep-profile-kicker">Bölgesel Performans Merkezi</span><h1>{{ report.region_name }} Bölge Analizi</h1><div class="rep-profile-status"><span class="is-active"><i class="bi bi-circle-fill"></i>{{ report.active_count }} aktif çalışan</span>{% if report.vacant_count %}<span>{{ report.vacant_count }} boş kadro</span>{% endif %}</div></div>
+      <div class="rep-profile-identity"><span class="rep-profile-kicker">BÖLGESEL PERFORMANS MERKEZİ</span><h1>{{ report.region_name }} BÖLGE ANALİZİ</h1><div class="rep-profile-status"><span class="is-active"><i class="bi bi-circle-fill"></i>{{ report.active_count }} aktif çalışan</span>{% if report.vacant_count %}<span>{{ report.vacant_count }} boş kadro</span>{% endif %}</div></div>
     </div>
     <div class="rep-profile-details">
       <div><i class="bi bi-person-badge"></i><span>Bölge Müdürü<strong>{{ region_manager.full_name if region_manager else (report.manager if report.manager and report.manager != '-' else 'Atanmamış') }}</strong></span></div>
@@ -481,7 +481,7 @@ body[data-theme="dark"] .box-balance.is-neutral {
       <div><i class="bi bi-map"></i><span>Bölge<strong>{{ report.region_name }}</strong></span></div>
     </div>
     <div class="rep-profile-tools">
-      <label for="region-history-period">Geçmiş aylar</label>
+      <label for="region-history-period">GEÇMİŞ AYLAR</label>
       <select id="region-history-period" class="form-select" aria-label="Geçmiş ay seçimi" onchange="if(this.value)window.location.href=this.value">{% for period in market_analysis.available_periods %}<option value="{{ url_for('regions.detail', region_key=report.region_key, year=period.year, month=period.month) }}" {% if period.year == report.year and period.month == report.month %}selected{% endif %}>{{ month_names[period.month - 1] }} {{ period.year }}</option>{% endfor %}</select>
       <div class="rep-profile-period"><span>Aktif dönem</span><i aria-hidden="true">·</i><strong>{{ "%02d"|format(report.month) }}/{{ report.year }}</strong></div>
     </div>
