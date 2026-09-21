@@ -56,7 +56,8 @@ def detail(region_key):
         # Old region generations are finalized once from the already-published
         # representative/dashboard read models. After this one-time upgrade the
         # request path is a single region payload read plus template rendering.
-        if int(read_model.get("read_model_version") or 0) < 3:
+        read_model_version = int(read_model.get("read_model_version") or 0)
+        if read_model_version < 3:
             enrichment = PersistentRegionSnapshotService.enrich_for_period(
                 year, month
             )
@@ -64,10 +65,18 @@ def detail(region_key):
                 read_model, region_data_source = _region_read_model(
                     region_key, year, month, source_upload_id=visible_upload_id
                 )
+        elif read_model_version < PersistentRegionSnapshotService.READ_MODEL_VERSION:
+            enrichment = PersistentRegionSnapshotService.upgrade_national_realizations_for_period(
+                year, month
+            )
+            if enrichment.get("status") == "ENRICHED":
+                read_model, region_data_source = _region_read_model(
+                    region_key, year, month, source_upload_id=visible_upload_id
+                )
 
         if (
             read_model is None
-            or int(read_model.get("read_model_version") or 0) < 3
+            or int(read_model.get("read_model_version") or 0) < PersistentRegionSnapshotService.READ_MODEL_VERSION
             or not isinstance(read_model.get("ai_report"), dict)
         ):
             flash(
