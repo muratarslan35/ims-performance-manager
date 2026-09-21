@@ -337,6 +337,12 @@ def test_snapshot_only_report_filters_scope_product_and_exports(app, monkeypatch
         assert "SATIŞ VE PAZAR PERFORMANS RAPORU" in slide_text
         assert "Rakip analizi" in slide_text
         assert "Öncelikli brickler" in slide_text
+        assert "Rapor kapsamı ve veri kaynağı" not in slide_text
+        assert "Metodoloji" not in slide_text
+        charts = [shape.chart for slide in deck.slides for shape in slide.shapes if shape.has_chart]
+        assert charts
+        assert all(chart.value_axis.minimum_scale == 0 for chart in charts)
+        assert any("Mn" in chart.value_axis.tick_labels.number_format for chart in charts)
 
 
 def test_reports_navigation_is_visible_with_direct_reports_name():
