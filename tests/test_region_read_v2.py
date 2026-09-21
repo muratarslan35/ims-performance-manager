@@ -319,7 +319,9 @@ def test_region_ai_is_finalized_once_into_region_read_model():
     assert "RegionAISnapshotService.build" in snapshot_service
     assert "current_region_workspaces" in snapshot_service
     assert "previous_region_workspaces" in snapshot_service
-    assert 'enriched["read_model_version"] = 3' in snapshot_service
+    assert 'enriched["read_model_version"] = cls.READ_MODEL_VERSION' in snapshot_service
+    assert "upgrade_national_realizations_for_period" in route
+    assert "_embed_national_product_realizations" in snapshot_service
     assert "Snapshot-only · 4 alan" not in partial
     assert "NATIONAL altında kalan ürünler" in partial
     assert "Rakip satışı var, şirket çıkışı yok" in partial
@@ -382,4 +384,3 @@ def test_region_box_embedding_reuses_prefetched_representative_read_models():
 
     assert result["periods"]["monthly"]["representative_products"][0]["actual_unit"] == 80
     assert result["periods"]["q3"]["representative_products"][0]["actual_unit"] == 250
-
