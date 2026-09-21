@@ -40,8 +40,13 @@ def _stop(*_args):
     stopping = True
 
 
-def _warm_dashboard_snapshot(app, year, month):
-    """Build/reuse one canonical dashboard payload across all processes."""
+def _warm_dashboard_snapshot(app, year, month, *, force=False):
+    """Build/reuse one canonical dashboard payload across all processes.
+
+    Production dependency refreshes force a rebuild because a late earlier-month
+    production result changes Q/YTD values without changing this period's own
+    source identity. The rebuilt payload is published atomically.
+    """
     started = time.monotonic()
     try:
         service = DashboardService(year=int(year), month=int(month))
@@ -53,9 +58,14 @@ def _warm_dashboard_snapshot(app, year, month):
             DashboardCache().invalidate(cache_key)
             return service.run()
 
-        _payload, built = PersistentDashboardSnapshotService.get_or_build(
-            year, month, rebuild
-        )
+        if force:
+            _payload = rebuild()
+            PersistentDashboardSnapshotService.publish(year, month, _payload)
+            built = True
+        else:
+            _payload, built = PersistentDashboardSnapshotService.get_or_build(
+                year, month, rebuild
+            )
         ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
         result = {
             "status": "ACTIVE" if built else "REUSED",
@@ -63,8 +73,10 @@ def _warm_dashboard_snapshot(app, year, month):
             "production_upload_id": production_id,
         }
         app.logger.info(
-            "dashboard_snapshot_warm status=%s year=%s month=%s ims_upload_id=%s seconds=%.3f",
-            result["status"], year, month, ims_id, time.monotonic() - started,
+            "dashboard_snapshot_warm status=%s year=%s month=%s ims_upload_id=%s "
+            "force=%s seconds=%.3f",
+            result["status"], year, month, ims_id, int(force),
+            time.monotonic() - started,
         )
 
         read_started = time.perf_counter()
@@ -87,7 +99,7 @@ def _warm_dashboard_snapshot(app, year, month):
         db.session.remove()
 
 
-def _warm_region_snapshots(app, year, month):
+def _warm_region_snapshots(app, year, month, *, force=False):
     """Build/retry the complete region generation and verify it is readable.
 
     Snapshot readiness is deliberately advisory after the IMS business import
@@ -96,12 +108,15 @@ def _warm_region_snapshots(app, year, month):
     """
     started = time.monotonic()
     try:
-        result = PersistentRegionSnapshotService.build_for_period(year, month)
+        result = PersistentRegionSnapshotService.build_for_period(
+            year, month, force=force
+        )
         status = result.get("status")
         app.logger.info(
-            "region_snapshot_warm status=%s year=%s month=%s regions=%s set_id=%s seconds=%.3f",
+            "region_snapshot_warm status=%s year=%s month=%s regions=%s set_id=%s "
+            "force=%s seconds=%.3f",
             status, year, month,
-            result.get("regions", 0), result.get("set_id", 0),
+            result.get("regions", 0), result.get("set_id", 0), int(force),
             time.monotonic() - started,
         )
         if status not in {"ACTIVE", "REUSED"}:
@@ -436,8 +451,11 @@ def _process_representative_refresh_queue(app):
         )
         return True
 
-    dashboard_result = _warm_dashboard_snapshot(app, year, month)
-    region_result = _warm_region_snapshots(app, year, month)
+    # Production refreshes always rebuild the whole target period. A late
+    # earlier-month production result can change this period's Q/YTD values even
+    # when this period's own IMS/production identity did not change.
+    dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)
+    region_result = _warm_region_snapshots(app, year, month, force=True)
     representative_result = _warm_representative_snapshots(app, year, month, force=True)
     enrichment_result = (
         PersistentRegionSnapshotService.enrich_for_period(year, month)
