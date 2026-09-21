@@ -77,6 +77,7 @@ from app.dashboard import dashboard_bp
 from app.representatives import representatives_bp
 from app.simulation import simulation_bp
 from app.regions import regions_bp
+from app.user_admin import user_admin_bp
 
 
 def register_template_context(app):
@@ -137,6 +138,7 @@ def register_blueprints(app):
     app.register_blueprint(simulation_bp)
     app.register_blueprint(regions_bp)
     app.register_blueprint(manager_users_bp)
+    app.register_blueprint(user_admin_bp)
 
 
 def create_directories(app):
