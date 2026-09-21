@@ -625,6 +625,8 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     assert "BÖLGESEL PERFORMANS MERKEZİ" in html
     assert "Ürün Bazlı 3 Aylık Realizasyon" in html
     assert "Bölge Temsilci Performansı" in html
+    assert "Bölge Realizasyonu" in html
+    assert "National Realizasyonu" in html
     assert "12 Aylık Bölge Realizasyonu" in html
     assert "annual-realization-chart.js" in html
     assert "Bölge Temsilcisi A" in html
