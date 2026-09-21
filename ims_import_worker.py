@@ -455,13 +455,15 @@ def _process_representative_refresh_queue(app):
     # earlier-month production result can change this period's Q/YTD values even
     # when this period's own IMS/production identity did not change.
     dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)
+    representative_result = _warm_representative_snapshots(
+        app, year, month, force=True
+    )
     region_result = _warm_region_snapshots(app, year, month, force=True)
-    representative_result = _warm_representative_snapshots(app, year, month, force=True)
     enrichment_result = (
         PersistentRegionSnapshotService.enrich_for_period(year, month)
         if (
-            region_result.get("status") in {"ACTIVE", "REUSED"}
-            and representative_result.get("status") in {"ACTIVE", "REUSED"}
+            representative_result.get("status") in {"ACTIVE", "REUSED"}
+            and region_result.get("status") in {"ACTIVE", "REUSED"}
         )
         else {"status": "WAITING_SNAPSHOTS"}
     )
