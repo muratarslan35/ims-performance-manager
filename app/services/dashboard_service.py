@@ -171,7 +171,7 @@ class DashboardService:
         }
 
     def _load_query_data(self) -> Dict[str, Any]:
-        filters = DashboardFilterParams(year=self.year, month=self.month, representative_id=self.rep_id)
+        filters = self.query_filters
         return {
             # Formatting owns the national Top 10 cut because the leaderboard
             # is ranked by realization rather than raw TL turnover.
@@ -189,6 +189,12 @@ class DashboardService:
                 self.year, self.month
             ),
         }
+
+    @property
+    def query_filters(self) -> DashboardFilterParams:
+        return DashboardFilterParams(
+            year=self.year, month=self.month, representative_id=self.rep_id
+        )
 
     def _load_prime(self) -> Dict[str, Any]:
         engine = self.engine_factory.create_prime_engine(self.rep_id or 0, self.year, self.month, self.overrides)
@@ -607,6 +613,7 @@ class DashboardService:
                 self.month,
             )
         )
+        payload["top_representative_ranking_version"] = 2
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_BUILDER_MS, (time.time() - t_builder) * 1000)
 
         # 6. Set Cache Safely
