@@ -732,7 +732,9 @@ class ExecutiveReportingService:
             performance_chart.type = "col"
             performance_chart.style = 10
             performance_chart.title = "Ürün Bazında Hedef / Gerçekleşen TL"
-            performance_chart.y_axis.title = "TL"
+            performance_chart.y_axis.title = "Milyon TL"
+            performance_chart.y_axis.scaling.min = 0
+            performance_chart.y_axis.numFmt = '₺0.0,," Mn"'
             performance_chart.x_axis.title = "Ürün"
             performance_chart.height = 7.8
             performance_chart.width = 14.5
@@ -770,10 +772,15 @@ class ExecutiveReportingService:
             row[1].number_format = '₺#,##0'
             row[2].number_format = '#,##0'
             row[3].number_format = '0.0%'
-        chart = LineChart()
+        chart = LineChart() if len(report["trend"]) > 1 else BarChart()
+        if isinstance(chart, BarChart):
+            chart.type = "col"
+            chart.gapWidth = 100
         chart.style = 13
         chart.title = "Gerçekleşen TL Trendi"
-        chart.y_axis.title = "TL"
+        chart.y_axis.title = "Milyon TL"
+        chart.y_axis.scaling.min = 0
+        chart.y_axis.numFmt = '₺0.0,," Mn"'
         chart.x_axis.title = "Dönem"
         chart.height = 8
         chart.width = 16
@@ -784,13 +791,16 @@ class ExecutiveReportingService:
         chart.set_categories(Reference(trend, min_col=1, min_row=5, max_row=trend.max_row))
         chart.legend = None
         if chart.series:
-            chart.series[0].graphicalProperties.line.solidFill = "0B5CAD"
-            chart.series[0].graphicalProperties.line.width = 28575
-            chart.series[0].marker.symbol = "circle"
-            chart.series[0].marker.size = 7
+            if isinstance(chart, LineChart):
+                chart.series[0].graphicalProperties.line.solidFill = "0B5CAD"
+                chart.series[0].graphicalProperties.line.width = 28575
+                chart.series[0].marker.symbol = "circle"
+                chart.series[0].marker.size = 7
+            else:
+                chart.series[0].graphicalProperties.solidFill = "0B5CAD"
         chart.dLbls = DataLabelList()
         chart.dLbls.showVal = True
-        chart.dLbls.numFmt = '#,##0'
+        chart.dLbls.numFmt = '₺0.0,," Mn"'
         trend.add_chart(chart, "F4")
         for index, width in enumerate([18, 20, 20, 14], 1):
             trend.column_dimensions[get_column_letter(index)].width = width
@@ -986,7 +996,9 @@ class ExecutiveReportingService:
                 rival_chart.type = "bar"
                 rival_chart.style = 10
                 rival_chart.title = f"{product_name} · Rakip Kutu Dağılımı"
-                rival_chart.x_axis.title = "Kutu"
+                rival_chart.x_axis.title = "Bin Kutu"
+                rival_chart.x_axis.scaling.min = 0
+                rival_chart.x_axis.numFmt = '0.0," B"'
                 rival_chart.y_axis.title = "Rakip"
                 rival_chart.height = 8
                 rival_chart.width = 12.5
@@ -1221,6 +1233,9 @@ class ExecutiveReportingService:
                     max(float(item.get("unit") or 0) for item in top_items) * 1.15,
                     1,
                 )
+                chart.valueAxis.labelTextFormat = lambda value: (
+                    f"{value / 1000:.1f} B" if abs(value) >= 1000 else f"{value:.0f}"
+                )
                 chart.valueAxis.labels.fontName = font_name
                 chart.valueAxis.labels.fontSize = 7
                 chart.categoryAxis.labels.fontName = font_name
@@ -1374,6 +1389,13 @@ class ExecutiveReportingService:
             text_box(slide, title, .55, .68, 11.9, .52, size=25, color=navy, bold=True)
             add_footer(slide, page)
 
+        def style_value_axis(chart, number_format):
+            chart.value_axis.minimum_scale = 0
+            chart.value_axis.tick_labels.number_format = number_format
+            chart.value_axis.tick_labels.number_format_is_linked = False
+            chart.value_axis.tick_labels.font.name = font
+            chart.value_axis.tick_labels.font.size = Pt(8)
+
         def style_table(table, *, header_size=9, body_size=8):
             table.first_row = True
             for column, cell in enumerate(table.rows[0].cells):
@@ -1476,8 +1498,7 @@ class ExecutiveReportingService:
             chart.legend.font.name = font
             chart.legend.font.size = Pt(8)
             chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font
-            chart.value_axis.tick_labels.font.size = Pt(8)
+            style_value_axis(chart, '₺0.0,," Mn"')
             chart.category_axis.tick_labels.font.name = font
             chart.category_axis.tick_labels.font.size = Pt(8)
             chart.series[0].format.fill.solid()
@@ -1492,18 +1513,24 @@ class ExecutiveReportingService:
         if trend:
             trend_data = ChartData(); trend_data.categories = [item["label"] for item in trend]
             trend_data.add_series("Gerçekleşen TL", [float(item.get("actual_tl") or 0) for item in trend])
-            chart = trend_slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Inches(.7), Inches(1.45), Inches(11.9), Inches(4.95), trend_data).chart
+            trend_chart_type = XL_CHART_TYPE.LINE_MARKERS if len(trend) > 1 else XL_CHART_TYPE.COLUMN_CLUSTERED
+            chart = trend_slide.shapes.add_chart(trend_chart_type, Inches(.7), Inches(1.45), Inches(11.9), Inches(4.95), trend_data).chart
             chart.has_legend = False
             chart.has_title = False
-            chart.value_axis.tick_labels.font.name = font
-            chart.value_axis.tick_labels.font.size = Pt(9)
+            style_value_axis(chart, '₺0.0,," Mn"')
             chart.category_axis.tick_labels.font.name = font
             chart.category_axis.tick_labels.font.size = Pt(10)
             series = chart.series[0]
-            series.format.line.color.rgb = blue
-            series.format.line.width = Pt(2.75)
+            if len(trend) > 1:
+                series.format.line.color.rgb = blue
+                series.format.line.width = Pt(2.75)
+            else:
+                series.format.fill.solid()
+                series.format.fill.fore_color.rgb = blue
             chart.plots[0].has_data_labels = True
             chart.plots[0].data_labels.show_value = True
+            chart.plots[0].data_labels.number_format = '₺0.0,," Mn"'
+            chart.plots[0].data_labels.number_format_is_linked = False
             chart.plots[0].data_labels.font.name = font
             chart.plots[0].data_labels.font.size = Pt(8)
         else:
@@ -1583,8 +1610,7 @@ class ExecutiveReportingService:
                 ).chart
                 chart.has_legend = False
                 chart.has_title = False
-                chart.value_axis.tick_labels.font.name = font
-                chart.value_axis.tick_labels.font.size = Pt(8)
+                style_value_axis(chart, '0.0," B"')
                 chart.category_axis.tick_labels.font.name = font
                 chart.category_axis.tick_labels.font.size = Pt(8)
                 series = chart.series[0]
@@ -1657,22 +1683,6 @@ class ExecutiveReportingService:
             )
             if index == 1 and len(report.get("brick_rows") or []) > len(priority_bricks):
                 text_box(slide, f'Rakip kutusu en yüksek 30 satır gösterilir. Tam {len(report.get("brick_rows") or [])} satır Excel çıktısında bulunur.', .62, 6.87, 10.8, .2, size=7, color=muted)
-
-        page += 1
-        closing = deck.slides.add_slide(blank)
-        add_heading(closing, "Rapor kapsamı ve veri kaynağı", "Metodoloji", page)
-        notes = [
-            "Rapor yalnız yayınlanmış temsilci snapshot verilerinden hazırlanır.",
-            "Pazar payı, ilgili ürünün toplam pazar kutusu üzerinden hesaplanır.",
-            "Altı aylık rapor Ocak ile Haziran dönemini kapsar.",
-            "Sunumdaki tablolar ve grafikler PowerPoint içinde düzenlenebilir.",
-            "Tam satır düzeyindeki brick dökümü Excel çıktısında yer alır.",
-        ]
-        for index, note in enumerate(notes, 1):
-            number = closing.shapes.add_shape(MSO_SHAPE.OVAL, Inches(.75), Inches(1.45 + (index - 1) * .94), Inches(.42), Inches(.42))
-            fill(number, blue if index < 5 else teal)
-            text_box(closing, index, .75, 1.49 + (index - 1) * .94, .42, .25, size=10, color=white, bold=True, align=PP_ALIGN.CENTER)
-            text_box(closing, note, 1.38, 1.43 + (index - 1) * .94, 10.7, .5, size=15, color=ink)
 
         deck.core_properties.title = "Satış ve Pazar Performans Raporu"
         deck.core_properties.subject = f'{report["scope_label"]} · {report["period_label"]}'
