@@ -12,6 +12,38 @@ from app.services.alias_service import AliasService
 from app.services.production_result_service import ProductionResultService
 
 
+def repair_duplicated_rival_totals(snapshot):
+    """Repair persisted subtotal-plus-detail duplication without a DB rebuild."""
+    if snapshot is None:
+        return None
+    payload = snapshot or {}
+    market = payload.get("market_analysis") if "market_analysis" in payload else payload
+    if not isinstance(market, dict):
+        return payload
+
+    def key(value):
+        return "".join(char for char in AliasService.normalize(value) if char.isalnum())
+
+    canonical = {
+        (int(item.get("product_id") or 0), key(item.get("name"))): float(item.get("unit") or 0)
+        for item in market.get("rival_rows") or []
+    }
+    repaired = False
+    for row in market.get("rows") or []:
+        product_id = int(row.get("product_id") or 0)
+        for rival in row.get("rivals") or []:
+            city_total = canonical.get((product_id, key(rival.get("name"))))
+            displayed = float(rival.get("unit") or 0)
+            if city_total is None or city_total <= 0:
+                continue
+            if abs(displayed - (city_total * 2.0)) <= max(0.01, city_total * 0.000001):
+                rival["unit"] = round(city_total, 2)
+                repaired = True
+    if repaired:
+        market["rival_aggregation_version"] = 2
+    return payload
+
+
 class RegionMarketService:
     PRODUCT_ORDER = ("TRAVAZOL", "MONUROL", "ACNEMIX", "MIXOVUL", "STIDERM", "BRIMODER", "FENTIVAG")
     PROVINCES = (
@@ -146,11 +178,20 @@ class RegionMarketService:
             CompetitionData.is_grand_total.is_(False),
             CompetitionData.territory.like(prefix),
         )
-        monthly = base.filter(
+        monthly_query = base.filter(
             func.upper(CompetitionData.sheet_name).like("%AYLIK%"),
             func.upper(CompetitionData.sheet_name).like("%REKABET%"),
             func.upper(CompetitionData.sheet_name).like("%KUTU%"),
-        ).group_by(
+        )
+        detail_filter = CompetitionData.subterritory != CompetitionData.territory
+        monthly_detail = monthly_query.filter(detail_filter).group_by(
+            CompetitionData.product_group, CompetitionData.product_name,
+            CompetitionData.subterritory, CompetitionData.is_company_product,
+            CompetitionData.is_competitor,
+        ).all()
+        if monthly_detail:
+            return monthly_detail
+        monthly = monthly_query.group_by(
             CompetitionData.product_group, CompetitionData.product_name,
             CompetitionData.subterritory, CompetitionData.is_company_product,
             CompetitionData.is_competitor,
@@ -162,6 +203,17 @@ class RegionMarketService:
             CompetitionData.subterritory, CompetitionData.is_company_product,
             CompetitionData.is_competitor,
         ).all()
+
+    @classmethod
+    def repair_duplicated_rival_totals(cls, snapshot):
+        """Repair old snapshots that counted region subtotal plus brick detail.
+
+        The city drill-down was already detail-only, so an affected persisted
+        payload exposes exactly twice the canonical city total in the upper
+        rival table. This compatibility repair is deliberately narrow and does
+        not alter non-duplicated or partially classified rival rows.
+        """
+        return repair_duplicated_rival_totals(snapshot)
 
     def _region_market_share_rows(self, upload_id, products):
         """Read workbook-authoritative region PP from TTS REKABET PP.
@@ -217,7 +269,7 @@ class RegionMarketService:
     def _official_products(self, production_upload_id):
         if not production_upload_id:
             return {}
-        return {
+        payload = {
             row.product_id: row
             for row in ProductionRegionProductResult.query.filter_by(
                 upload_id=production_upload_id, region_code=self.region_key
@@ -395,6 +447,7 @@ class RegionMarketService:
             "source": "PRODUCTION_AND_IMS_COMPETITION" if official else "IMS_COMPETITION",
             "market_share_source": "IMS_TTS_REKABET_PP_WITH_UNIT_FALLBACK" if pp_buckets else "IMS_COMPETITION_UNITS",
             "has_data": any(item["market_unit"] > 0 for item in rows),
+            "rival_aggregation_version": 2,
             "totals": {
                 "company_unit": round(total_company, 2),
                 "effective_company_unit": round(total_effective_company, 2),
@@ -404,12 +457,13 @@ class RegionMarketService:
                 "precise_share_percent": round(precise_total_share, 6),
             },
         }
+        return self.repair_duplicated_rival_totals(payload)
 
     def build(self):
         upload_id = self._latest_upload_id()
         production_upload = ProductionResultService.final_upload(self.year, self.month)
         production_upload_id = production_upload.id if production_upload else None
-        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:pp-v2"
+        key = f"region-market:{self.region_key}:{self.year}:{self.month}:{upload_id or 0}:{production_upload_id or 0}:pp-v3"
         return RepresentativeAnalysisCache.get_or_compute(
             key, lambda: self._build(upload_id, production_upload_id), ttl_seconds=60
         )
