@@ -1,9 +1,9 @@
-"""Persistent queue for representative read-model refreshes after production results.
+"""Persistent queue for read-model refreshes after production results.
 
-Production uploads are accepted by the web process, while heavy representative
-snapshot generation belongs to the existing single IMS worker.  A tiny
-filesystem queue keeps that work durable, serial, and behind any IMS job already
-in progress.  No business rows are stored here.
+Production uploads are accepted by the web process, while dashboard, region,
+and representative snapshot generation belongs to the existing single IMS
+worker.  A tiny filesystem queue keeps that work durable, serial, and behind
+any IMS job already in progress.  No business rows are stored here.
 """
 from __future__ import annotations
 

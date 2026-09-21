@@ -436,12 +436,32 @@ def _process_representative_refresh_queue(app):
         )
         return True
 
-    result = _warm_representative_snapshots(app, year, month, force=True)
-    if result.get("status") in {"ACTIVE", "REUSED"}:
+    dashboard_result = _warm_dashboard_snapshot(app, year, month)
+    region_result = _warm_region_snapshots(app, year, month)
+    representative_result = _warm_representative_snapshots(app, year, month, force=True)
+    enrichment_result = (
+        PersistentRegionSnapshotService.enrich_for_period(year, month)
+        if (
+            region_result.get("status") in {"ACTIVE", "REUSED"}
+            and representative_result.get("status") in {"ACTIVE", "REUSED"}
+        )
+        else {"status": "WAITING_SNAPSHOTS"}
+    )
+    ready = (
+        dashboard_result.get("status") in {"ACTIVE", "REUSED"}
+        and region_result.get("status") in {"ACTIVE", "REUSED"}
+        and representative_result.get("status") in {"ACTIVE", "REUSED"}
+        and enrichment_result.get("status") in {"ENRICHED", "REUSED"}
+    )
+    if ready:
         RepresentativeSnapshotRefreshQueue.complete(item)
         app.logger.info(
-            "representative_refresh_queue_completed year=%s month=%s reason=%s set_id=%s",
-            year, month, reason, result.get("set_id", 0),
+            "representative_refresh_queue_completed year=%s month=%s reason=%s "
+            "dashboard_status=%s region_status=%s representative_status=%s "
+            "enrichment_status=%s",
+            year, month, reason,
+            dashboard_result.get("status"), region_result.get("status"),
+            representative_result.get("status"), enrichment_result.get("status"),
         )
         try:
             ReportWarmQueue.enqueue(year, month)
@@ -458,8 +478,12 @@ def _process_representative_refresh_queue(app):
         # Keep the marker durable. The worker will retry after any currently
         # BUILDING generation finishes; no running IMS/snapshot work is stopped.
         app.logger.warning(
-            "representative_refresh_queue_deferred year=%s month=%s reason=%s status=%s",
-            year, month, reason, result.get("status"),
+            "representative_refresh_queue_deferred year=%s month=%s reason=%s "
+            "dashboard_status=%s region_status=%s representative_status=%s "
+            "enrichment_status=%s",
+            year, month, reason,
+            dashboard_result.get("status"), region_result.get("status"),
+            representative_result.get("status"), enrichment_result.get("status"),
         )
     db.session.remove()
     return True
