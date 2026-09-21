@@ -550,6 +550,7 @@ class PersistentRegionSnapshotService:
         year,
         month,
         *,
+        force: bool = False,
         progress: Callable[[int, int, str], None] | None = None,
     ):
         year, month = int(year), int(month)
@@ -562,8 +563,78 @@ class PersistentRegionSnapshotService:
             return {"status": "SKIPPED", "reason": "NO_REGIONS", "regions": 0}
 
         existing = cls._existing_set(year, month, ims_id, production_id)
-        if existing and existing.status == cls.STATUS_ACTIVE and int(existing.region_count or 0) == len(keys):
+        existing_complete = bool(
+            existing
+            and existing.status == cls.STATUS_ACTIVE
+            and int(existing.region_count or 0) == len(keys)
+        )
+        if existing_complete and not force:
             return {"status": "REUSED", "set_id": int(existing.id), "regions": len(keys)}
+
+        # A late production file changes Q/YTD/previous-period values of later
+        # months without changing those later months' own IMS/production ids.
+        # For those dependency refreshes, calculate every region first and swap
+        # the complete ACTIVE generation in one transaction. Readers keep seeing
+        # the previous ACTIVE payload until the replacement commits.
+        if existing_complete and force:
+            set_id = int(existing.id)
+            replacement_rows = []
+            for index, region_key in enumerate(keys, start=1):
+                performance = RegionPerformanceService(region_key, year, month)
+                report = performance.report()
+                market = RegionMarketService(
+                    report["region_key"], performance.rep_ids, year, month
+                ).build()
+                replacement_rows.append({
+                    "set_id": set_id,
+                    "region_key": str(report["region_key"]).strip(),
+                    "payload_json": json.dumps(
+                        cls._json_ready({
+                            "report": report,
+                            "market_analysis": market,
+                        }),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=cls._json_default,
+                    ),
+                    "created_at": datetime.utcnow(),
+                })
+                if progress:
+                    progress(
+                        index,
+                        len(keys),
+                        str(report.get("region_name") or region_key),
+                    )
+
+            now = datetime.utcnow()
+            try:
+                db.session.execute(
+                    region_snapshots.delete().where(
+                        region_snapshots.c.set_id == set_id
+                    )
+                )
+                if replacement_rows:
+                    db.session.execute(region_snapshots.insert(), replacement_rows)
+                db.session.execute(
+                    region_snapshot_sets.update().where(
+                        region_snapshot_sets.c.id == set_id
+                    ).values(
+                        status=cls.STATUS_ACTIVE,
+                        region_count=len(keys),
+                        created_at=now,
+                        activated_at=now,
+                    )
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                raise
+            return {
+                "status": "ACTIVE",
+                "set_id": set_id,
+                "regions": len(keys),
+                "forced": True,
+            }
 
         if existing:
             set_id = int(existing.id)
