@@ -515,14 +515,39 @@ def main():
         IMSImportQueue.recover_stale()
         _backfill_latest_region_snapshots(app)
         next_publication_retry = 0.0
+        next_production_reconcile = 0.0
         while not stopping:
             job = IMSImportQueue.claim_next()
             if job is None:
-                if time.monotonic() >= next_publication_retry:
+                now = time.monotonic()
+                if now >= next_publication_retry:
                     retry_job = _retryable_publication_job()
                     if retry_job is not None:
                         _prepare_and_publish(app, retry_job)
-                    next_publication_retry = time.monotonic() + 60
+                    next_publication_retry = now + 60
+                if now >= next_production_reconcile:
+                    try:
+                        queued = (
+                            RepresentativeSnapshotRefreshQueue
+                            .enqueue_stale_production_dependencies()
+                        )
+                        if queued:
+                            periods = ",".join(
+                                "{:04d}-{:02d}".format(
+                                    int(item["year"]), int(item["month"])
+                                )
+                                for item in queued
+                            )
+                            app.logger.info(
+                                "production_refresh_reconcile queued=%s periods=%s",
+                                len(queued), periods,
+                            )
+                    except Exception:
+                        db.session.rollback()
+                        app.logger.exception("production_refresh_reconcile_failed")
+                    finally:
+                        db.session.remove()
+                    next_production_reconcile = now + 60
                 # Production-result refreshes are deliberately lower priority
                 # than IMS imports/publication. Once started they finish
                 # atomically; newly queued IMS work waits for the next loop.
