@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Kullanıcı Paneli{% endblock %}
+{% block page_title %}Kullanıcı Paneli{% endblock %}
+
+{% block content %}
+<style>
+.user-admin-hero{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:18px;padding:22px;border-radius:17px;background:linear-gradient(135deg,#10385f,#0b6e9f);color:#fff}.user-admin-hero h1{margin:3px 0 5px;color:#fff;font-size:25px}.user-admin-hero p{margin:0;color:#d9edfa}.user-admin-count{min-width:104px;padding:13px;border:1px solid rgba(255,255,255,.2);border-radius:13px;background:rgba(255,255,255,.1);text-align:center}.user-admin-count strong,.user-admin-count span{display:block}.user-admin-count strong{font-size:25px}.user-admin-count span{font-size:10px}.user-admin-table{min-width:930px}.user-admin-table th{white-space:nowrap;color:var(--text-light);font-size:10px;text-transform:uppercase}.user-admin-table td{vertical-align:middle}.user-admin-name{font-weight:800;color:var(--text)}.user-admin-meta{display:block;margin-top:2px;color:var(--text-light);font-size:9px}.user-admin-actions{display:flex;justify-content:flex-end;gap:6px;white-space:nowrap}.user-admin-status{display:inline-flex;padding:5px 8px;border-radius:99px;font-size:10px;font-weight:800}.user-admin-status.active{background:#def7e9;color:#087843}.user-admin-status.passive{background:#ffe6e6;color:#bd3030}[data-theme="dark"] .user-admin-status.active,[data-bs-theme="dark"] .user-admin-status.active{background:#143d2c;color:#7df0b0}[data-theme="dark"] .user-admin-status.passive,[data-bs-theme="dark"] .user-admin-status.passive{background:#4a2428;color:#ffaaa9}@media(max-width:767px){.user-admin-hero{align-items:flex-start;flex-direction:column}.user-admin-count{width:100%}}
+</style>
+
+<section class="user-admin-hero">
+  <div><span class="small fw-bold">SİSTEM YÖNETİMİ</span><h1>Kayıtlı Kullanıcılar</h1><p>Kullanıcı hesaplarını görüntüleyin, düzeltin veya sistemden kaldırın.</p></div>
+  <div class="user-admin-count"><strong>{{ users|length }}</strong><span>TOPLAM KULLANICI</span></div>
+</section>
+
+<div class="card">
+  <div class="card-header"><div><h3 class="card-title mb-1">Kullanıcı Kayıtları</h3><div class="text-secondary small">Değişiklikler kaydetme işlemiyle birlikte veritabanına uygulanır.</div></div></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table user-admin-table mb-0">
+      <thead><tr><th>Kullanıcı</th><th>E-posta</th><th>Telefon</th><th>Rol</th><th>Durum</th><th>Son Giriş</th><th>Kayıt Tarihi</th><th></th></tr></thead>
+      <tbody>{% for user in users %}
+        <tr>
+          <td><span class="user-admin-name">{{ user.full_name }}</span><span class="user-admin-meta">ID {{ user.id }}{% if user.id == current_user.id %} · Mevcut hesap{% endif %}</span></td>
+          <td>{{ user.email }}</td><td>{{ user.phone or '—' }}</td><td><span class="badge bg-blue-lt">{{ user.role }}</span></td>
+          <td><span class="user-admin-status {{ 'active' if user.active else 'passive' }}">{{ 'Aktif' if user.active else 'Pasif' }}</span></td>
+          <td>{{ user.last_login|istanbul_datetime if user.last_login else '—' }}</td><td>{{ user.created_at|istanbul_datetime }}</td>
+          <td><div class="user-admin-actions"><button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editUser{{ user.id }}"><i class="bi bi-pencil-square me-1"></i>Düzenle</button>{% if user.id != current_user.id %}<form method="post" action="{{ url_for('user_admin.delete', user_id=user.id) }}" onsubmit="return window.confirm('{{ user.full_name|e }} kullanıcısını kalıcı olarak silmek istediğinize emin misiniz?');"><button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash3 me-1"></i>Sil</button></form>{% endif %}</div></td>
+        </tr>
+      {% else %}<tr><td colspan="8" class="text-center text-secondary py-5">Kayıtlı kullanıcı bulunamadı.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</div>
+
+{% for user in users %}
+<div class="modal modal-blur fade" id="editUser{{ user.id }}" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <form method="post" action="{{ url_for('user_admin.update', user_id=user.id) }}">
+    <div class="modal-header"><div><h5 class="modal-title">Kullanıcıyı Düzenle</h5><div class="text-secondary small">{{ user.email }}</div></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><div class="row g-3">
+      <div class="col-12"><label class="form-label">Ad Soyad</label><input class="form-control" name="full_name" value="{{ user.full_name }}" required minlength="3"></div>
+      <div class="col-12"><label class="form-label">E-posta</label><input class="form-control" type="email" name="email" value="{{ user.email }}" required></div>
+      <div class="col-md-6"><label class="form-label">Telefon</label><input class="form-control" name="phone" value="{{ user.phone or '' }}"></div>
+      <div class="col-md-6"><label class="form-label">Rol</label><select class="form-select" name="role" {% if user.id == current_user.id %}disabled{% endif %}>{% for role in roles %}<option value="{{ role }}" {% if user.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% if user.id == current_user.id %}<input type="hidden" name="role" value="Admin">{% endif %}</div>
+      <div class="col-12"><label class="form-label">Yeni Şifre</label><input class="form-control" type="password" name="password" minlength="8" autocomplete="new-password"><div class="form-hint">Değiştirmeyecekseniz boş bırakın.</div></div>
+      <div class="col-12"><label class="form-check form-switch"><input class="form-check-input" type="checkbox" name="active" value="1" {% if user.active %}checked{% endif %} {% if user.id == current_user.id %}disabled{% endif %}><span class="form-check-label">Kullanıcı aktif</span></label>{% if user.id == current_user.id %}<input type="hidden" name="active" value="1">{% endif %}</div>
+    </div></div>
+    <div class="modal-footer"><button type="button" class="btn btn-link" data-bs-dismiss="modal">Vazgeç</button><button class="btn btn-primary" type="submit"><i class="bi bi-check2 me-1"></i>Değişiklikleri Kaydet</button></div>
+  </form>
+</div></div></div>
+{% endfor %}
+{% endblock %}

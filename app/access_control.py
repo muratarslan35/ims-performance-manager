@@ -8,6 +8,7 @@ from flask_login import current_user
 
 MANAGER_ROLES = {"admin", "administrator", "manager", "yönetici", "yonetici"}
 MANAGER_ONLY_ENDPOINT_PREFIXES = ("ims.", "settings.", "representatives.territory_")
+USER_ADMIN_EMAIL = "murat.arslan@bilimilac.com"
 DUAL_PORTAL_EMAIL_HASHES = {
     "192ef0622a370d063bbada9e29ff3137d7580691186bed0ab0a44c3d631278c0",
 }
@@ -40,6 +41,17 @@ def has_manager_access(user):
     )
 
 
+def can_manage_all_users(user):
+    """Restrict the full user registry to the named system administrator."""
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and str(getattr(user, "role", "") or "").strip().casefold()
+        in {"admin", "administrator"}
+        and str(getattr(user, "email", "") or "").strip().casefold()
+        == USER_ADMIN_EMAIL
+    )
+
+
 def register_access_control(app):
     @app.context_processor
     def role_context():
@@ -47,6 +59,7 @@ def register_access_control(app):
             "manager_access": has_manager_access(current_user),
             "dual_portal_access": has_dual_portal_access(current_user),
             "portal_mode": session.get("portal"),
+            "user_admin_access": can_manage_all_users(current_user),
         }
 
     @app.before_request

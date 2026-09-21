@@ -102,6 +102,18 @@ class UserVaultService:
                     )
 
     @classmethod
+    def delete_user(cls, user_id, email):
+        """Remove a deleted primary user from the independent login vault."""
+        if not cls._enabled():
+            return
+        with closing(cls._connect()) as connection:
+            with connection:
+                connection.execute(
+                    "DELETE FROM users WHERE user_id = ? OR lower(email) = lower(?)",
+                    (int(user_id), str(email or "").strip()),
+                )
+
+    @classmethod
     def load_user_by_id(cls, user_id):
         """Load a detached Flask-Login user from the independent vault.
 
