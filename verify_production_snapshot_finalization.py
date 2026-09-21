@@ -11,7 +11,10 @@ import time
 
 from app import create_app
 from app.extensions import db
-from app.models import ProductionResultUpload
+from app.models import ProductionResultUpload, User
+from app.services.persistent_region_snapshot_service import (
+    PersistentRegionSnapshotService,
+)
 from app.services.production_result_service import ProductionResultService
 from app.services.representative_snapshot_refresh_queue import (
     RepresentativeSnapshotRefreshQueue,
@@ -65,6 +68,43 @@ def _stale_dependencies():
     return stale
 
 
+def _historical_region_route_check(app, sources):
+    if not sources:
+        return "none"
+    # Prefer the oldest finalized period because delayed production normally
+    # targets history. Any prepared region key is sufficient for route readiness.
+    source = sources[0]
+    regions = PersistentRegionSnapshotService.get_active_all(
+        int(source.year), int(source.month)
+    )
+    if not regions:
+        raise RuntimeError(
+            f"No active region snapshot for {int(source.year):04d}-{int(source.month):02d}"
+        )
+    region_key = sorted(regions)[0]
+    admin = User.query.filter(
+        db.func.lower(User.email) == "admin@ipm.local"
+    ).one_or_none()
+    if admin is None:
+        raise RuntimeError("Production finalization route verifier needs admin@ipm.local")
+
+    client = app.test_client()
+    app.login_manager.session_protection = None
+    with client.session_transaction() as session:
+        session["_user_id"] = str(admin.id)
+        session["_fresh"] = True
+        session["portal"] = "manager"
+    path = (
+        f"/regions/{region_key}?year={int(source.year)}&month={int(source.month)}"
+    )
+    response = client.get(path, follow_redirects=False)
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Historical region route is not ready: path={path} status={response.status_code}"
+        )
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--wait-seconds", type=int, default=1200)
@@ -87,9 +127,11 @@ def main():
                     f"{int(item.year):04d}-{int(item.month):02d}:P{int(item.production_stage)}#{int(item.id)}"
                     for item in sources
                 ) or "none"
+                route = _historical_region_route_check(app, sources)
                 print(
                     "PRODUCTION_FINALIZATION|status=PASS|"
-                    f"sources={source_text}|attempts={attempts}|queued={len(queued)}"
+                    f"sources={source_text}|attempts={attempts}|queued={len(queued)}|"
+                    f"historical_route={route}"
                 )
                 return 0
 
