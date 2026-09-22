@@ -82,6 +82,53 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
         assert rows[travazol.product_name]["quota_exit_months"] == []
 
 
+
+def test_region_market_official_products_returns_authoritative_rows(tmp_path):
+    from app.services.region_market_service import RegionMarketService
+
+    app = _app(tmp_path)
+    with app.app_context():
+        db.create_all()
+        representative = Representative(
+            rep_code="OFFICIAL-REP", rep_name="OFFICIAL REP", region="901", active=True
+        )
+        product = Product(
+            product_code="OFFICIAL-PROD", product_name="Monurol", is_active=True
+        )
+        db.session.add_all([representative, product])
+        db.session.flush()
+        upload = ProductionResultUpload(
+            file_name="Temmuz_2_Uretim.xlsx",
+            stored_file_name="2044-07-p2.xlsx",
+            source_hash="o" * 64,
+            year=2044,
+            month=7,
+            production_stage=2,
+            status=ProductionResultUpload.STATUS_APPLIED,
+        )
+        db.session.add(upload)
+        db.session.flush()
+        row = ProductionRegionProductResult(
+            upload_id=upload.id,
+            region_code="901",
+            product_id=product.id,
+            target_tl=1000,
+            actual_tl=800,
+            target_unit=10,
+            actual_unit=8,
+            realization_percent=80,
+            unit_realization_percent=80,
+        )
+        db.session.add(row)
+        db.session.commit()
+
+        service = RegionMarketService("901", [representative.id], 2044, 7)
+        official = service._official_products(upload.id)
+
+        assert isinstance(official, dict)
+        assert official[product.id].id == row.id
+
+
 def test_region_template_renders_compact_quota_exit_badge():
     template = Path("app/templates/region_performance.html").read_text(encoding="utf-8")
     assert "quota-exit-badge" in template
