@@ -305,7 +305,86 @@ def test_region_box_title_left_and_period_controls_centered():
     assert "region-box-toolbar-meta" in template
     assert template.index('data-box-period="monthly"') < template.index('data-box-threshold="75"')
 
-def test_region_ai_is_finalized_once_into_region_read_model():
+def test_historical_region_falls_back_to_live_business_data_when_exact_snapshot_missing(monkeypatch):
+    import app.regions as regions
+
+    monkeypatch.setattr(
+        regions.PersistentRegionSnapshotService,
+        "source_identity",
+        classmethod(lambda cls, year, month: (44, 9)),
+    )
+    monkeypatch.setattr(
+        regions.PersistentRegionSnapshotService,
+        "get_active_for_visible_upload",
+        classmethod(lambda cls, region_key, year, month, source_upload_id: None),
+    )
+
+    class FakePerformance:
+        def __init__(self, region_key, year, month):
+            self.rep_ids = [97]
+            self.region_key = region_key
+            self.year = year
+            self.month = month
+
+        def report(self):
+            return {
+                "region_key": self.region_key,
+                "region_name": "901 DIYARBAKIR",
+                "periods": {"monthly": {"target_tl": 100, "actual_tl": 80}},
+            }
+
+    class FakeMarket:
+        def __init__(self, region_key, rep_ids, year, month):
+            self.region_key = region_key
+
+        def build(self):
+            return {"products": []}
+
+    monkeypatch.setattr(regions, "RegionPerformanceService", FakePerformance)
+    monkeypatch.setattr(regions, "RegionMarketService", FakeMarket)
+    monkeypatch.setattr(
+        regions.ScopedAIInsightService,
+        "build",
+        staticmethod(lambda **kwargs: {"scope": kwargs["scope_name"]}),
+    )
+
+    payload, source = regions._region_read_model(
+        "901", 2026, 7, source_upload_id=None
+    )
+
+    assert source == "compatibility"
+    assert payload["report"]["periods"]["monthly"]["actual_tl"] == 80
+    assert payload["ai_report"]["scope"] == "901 DIYARBAKIR"
+
+
+def test_active_region_stays_snapshot_gated_when_exact_snapshot_missing(monkeypatch):
+    import app.regions as regions
+
+    monkeypatch.setattr(
+        regions.PersistentRegionSnapshotService,
+        "get_active_for_visible_upload",
+        classmethod(lambda cls, region_key, year, month, source_upload_id: None),
+    )
+    monkeypatch.setattr(
+        regions.PersistentRegionSnapshotService,
+        "get_active",
+        classmethod(lambda cls, region_key, year, month: None),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("active period must not run live compatibility calculation")
+
+    monkeypatch.setattr(regions, "RegionPerformanceService", forbidden)
+
+    payload, source = regions._region_read_model(
+        "901", 2026, 9, source_upload_id=50
+    )
+
+    assert payload is None
+    assert source == "unavailable"
+
+
+def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fallback():
     route = Path("app/regions.py").read_text(encoding="utf-8")
     snapshot_service = Path("app/services/persistent_region_snapshot_service.py").read_text(encoding="utf-8")
     partial = Path("app/templates/partials/scoped_ai_panel.html").read_text(encoding="utf-8")
@@ -314,6 +393,10 @@ def test_region_ai_is_finalized_once_into_region_read_model():
     assert "PersistentRepresentativeSnapshotService.get_active_many" not in route
     assert "RegionAISnapshotService.build" not in route
     assert "PersistentRegionSnapshotService.enrich_for_period" in route
+    assert "_compatibility_region_read_model" in route
+    assert "RegionPerformanceService(" in route
+    assert "RegionMarketService(" in route
+    assert 'region_data_source == "read-model"' in route
     assert "PersistentDashboardSnapshotService.get_stable" in snapshot_service
     assert "PersistentRepresentativeSnapshotService.get_active_many" in snapshot_service
     assert "RegionAISnapshotService.build" in snapshot_service

@@ -56,7 +56,9 @@ def test_runtime_deploy_reuses_current_snapshot_before_web_activation():
     assert 'REGION_SNAPSHOT_ACTIVATION|building_latest_before_web_activation' in installer
     assert 'REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current' in installer
     assert 'backfill_active_region_snapshots.py\" --force' not in installer
-    assert '[ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]' in installer
+    # Backend-only deploys intentionally no longer run snapshot backfills;
+    # import/heavy activation owns that work.
+    assert '[ "$release_mode" = "heavy" ]' in installer
 
 
 def test_force_backfill_invalidates_only_snapshot_cache_not_business_data():
