@@ -399,9 +399,13 @@ def test_active_region_stays_snapshot_gated_when_exact_snapshot_missing(monkeypa
     )
 
     def forbidden(*_args, **_kwargs):
-        raise AssertionError("active period must not run live compatibility calculation")
+        raise AssertionError("active period must not run historical compatibility calculation")
 
-    monkeypatch.setattr(regions, "RegionPerformanceService", forbidden)
+    monkeypatch.setattr(
+        regions.HistoricalRegionReadModelService,
+        "get_or_build",
+        classmethod(lambda cls, *args, **kwargs: forbidden(*args, **kwargs)),
+    )
 
     payload, source = regions._region_read_model(
         "901", 2026, 9, source_upload_id=50
