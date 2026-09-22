@@ -193,8 +193,11 @@ class PersistentRegionSnapshotService:
                     region_snapshot_sets.c.source_upload_id != int(ims_id),
                 ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
             ).scalar()
-            if previous:
-                return int(previous)
+            # Do not fall through to the current IMS while publication
+            # is pending. If this is the first IMS for the month there may be no
+            # previous same-period generation, in which case readers must wait
+            # rather than expose a partial new generation.
+            return int(previous) if previous else None
         current = cls._existing_set(year, month, ims_id, production_id)
         if current and current.status == cls.STATUS_ACTIVE:
             return int(current.id)
