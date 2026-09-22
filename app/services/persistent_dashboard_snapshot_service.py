@@ -100,7 +100,44 @@ class PersistentDashboardSnapshotService:
         )
 
     @classmethod
+    def get_generation_for_source(
+        cls,
+        year: int,
+        month: int,
+        ims_id: int,
+        production_id: int,
+    ) -> dict | None:
+        """Read one exact immutable dashboard generation, bypassing visibility gates."""
+        path = cls._generation_path(year, month, ims_id, production_id)
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+        if (
+            envelope.get("version") != cls.VERSION
+            or int(envelope.get("year", 0)) != int(year)
+            or int(envelope.get("month", 0)) != int(month)
+            or int(envelope.get("ims_upload_id", -1)) != int(ims_id)
+            or int(envelope.get("production_upload_id", -1)) != int(production_id)
+        ):
+            return None
+        payload = envelope.get("payload")
+        return payload if isinstance(payload, dict) else None
+
+    @classmethod
     def get_active(cls, year: int, month: int) -> dict | None:
+        # Never expose a newly built dashboard generation before region and
+        # representative generations are fully ready. During publication, all
+        # user-facing screens stay on the last visible IMS generation.
+        from app.services.ims_publication_service import IMSPublicationService
+        if IMSPublicationService.pending_job(year, month) is not None:
+            visible = IMSPublicationService.latest_visible_upload(year, month)
+            if visible is None:
+                return None
+            return cls.get_generation_for_upload(
+                int(year), int(month), int(visible.id)
+            )
+
         ims_id, production_id = cls.source_identity(year, month)
         generation_path = cls._generation_path(year, month, ims_id, production_id)
         stable_path = cls._path(year, month)
