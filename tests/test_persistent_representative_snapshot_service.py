@@ -37,6 +37,17 @@ def test_persistent_generation_is_atomic_and_keeps_previous_active_during_build(
     assert "status=cls.STATUS_ACTIVE" in source
 
 
+def test_late_production_keeps_same_ims_representative_generation_visible():
+    source = (
+        ROOT / "app/services/persistent_representative_snapshot_service.py"
+    ).read_text(encoding="utf-8")
+    visible = source[source.index("def _visible_set_id"):source.index("def get_active", source.index("def _visible_set_id"))]
+    assert "same_ims_previous" in visible
+    assert "source_upload_id == int(ims_id)" in visible
+    assert "production_upload_id <= int(production_id)" in visible
+    assert "if same_ims_previous:" in visible
+
+
 def test_background_worker_warms_representatives_without_first_user_request():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     assert "def _warm_representative_snapshots" in worker
