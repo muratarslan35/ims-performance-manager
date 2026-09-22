@@ -114,6 +114,8 @@ def test_release_transition_finalizer_repairs_only_fully_published_exact_generat
     assert "PersistentRepresentativeSnapshotService._latest_exact_active" in script
     assert "PersistentRegionSnapshotService.enrich_for_period" in script
     assert "LATEST_SNAPSHOT_FINALIZE|PASS" in script
+    assert "Path(__file__).resolve().parents[1]" in script
+    assert "sys.path.insert(0, str(ROOT))" in script
     compile(script, "scripts/finalize_latest_snapshot_publication.py", "exec")
 
 def test_completed_progress_without_db_publication_marker_stays_pending():
