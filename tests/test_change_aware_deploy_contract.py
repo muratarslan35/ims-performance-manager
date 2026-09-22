@@ -71,7 +71,12 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'database_capacity_audit.py' not in ops_block
 
     assert 'IMS_WORKER_IDLE|processing=' in text
-    assert 'Active IMS import detected; deploy refused' in text
+    assert 'publication_processing=' in text
+    assert 'instance/ims_progress' in text
+    assert '"region_snapshots"' in text
+    assert '"representative_snapshots"' in text
+    assert '"snapshot_retry"' in text
+    assert 'Active IMS import or snapshot publication detected' in text
     assert 'PRAGMA quick_check(1)' in text
     assert 'SQLITE_RUNTIME|' in text
     assert 'quick_check=skipped_backend_no_db_change' in text
