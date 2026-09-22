@@ -198,6 +198,31 @@ class PersistentRegionSnapshotService:
         current = cls._existing_set(year, month, ims_id, production_id)
         if current and current.status == cls.STATUS_ACTIVE:
             return int(current.id)
+
+        # Late production must replace the read model atomically. Until the
+        # current P1/P2 generation is ACTIVE, keep the latest ACTIVE generation
+        # belonging to the same IMS upload visible. This preserves historical
+        # navigation without ever crossing an IMS publication boundary.
+        same_ims_previous = db.session.execute(
+            sa.select(region_snapshot_sets.c.id).where(
+                region_snapshot_sets.c.year == year,
+                region_snapshot_sets.c.month == month,
+                region_snapshot_sets.c.source_upload_id == int(ims_id),
+                region_snapshot_sets.c.production_upload_id <= int(production_id),
+                region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                *(
+                    [region_snapshot_sets.c.id != int(current.id)]
+                    if current else []
+                ),
+            ).order_by(
+                desc(region_snapshot_sets.c.production_upload_id),
+                desc(region_snapshot_sets.c.activated_at),
+                desc(region_snapshot_sets.c.id),
+            ).limit(1)
+        ).scalar()
+        if same_ims_previous:
+            return int(same_ims_previous)
+
         if not current or current.status != cls.STATUS_BUILDING:
             return None
         previous = db.session.execute(
