@@ -82,6 +82,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'WORKER_ACTIVE|' in text
     assert 'venv/bin/python verify_region_manager_production.py' in text
     assert 'verify_production_snapshot_finalization.py --latest-source-only' in text
+    finalizer = Path('verify_production_snapshot_finalization.py').read_text(encoding='utf-8')
+    assert 'source_period_only=bool(args.latest_source_only)' in finalizer
+    assert 'Downstream Q/YTD dependencies remain queued' in finalizer
     finalizer_index = text.index(
         'verify_production_snapshot_finalization.py --latest-source-only'
     )
@@ -99,7 +102,8 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '"historical_production_period": historical_production_period' in acceptance
     assert '"historical_production_mode": historical_production_mode' in acceptance
     assert 'historical_production_mode == "snapshot"' in acceptance
-    assert '"historical_production_region_compatibility_slow"' in acceptance
+    assert '"historical_production_region_compatibility_slow"' not in acceptance
+    assert 'latency must not block activation' in acceptance
     compile(acceptance, 'verify_region_manager_production.py', 'exec')
 
     # Real-workbook acceptance remains manual qualification rather than an
