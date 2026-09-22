@@ -30,22 +30,26 @@ def test_production_refresh_queue_contract():
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in retry_source
     assert "_process_representative_refresh_queue" in worker
     assert "representative_refresh_queue_started year=%s month=%s reason=%s" in worker
-    assert "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)" in worker
-    assert "region_result = _warm_region_snapshots(app, year, month, force=True)" in worker
+    assert "force_dependency = True" in worker
+    assert "production_source = db.session.get(" in worker
+    assert "int(production_source.year) == year" in worker
+    assert "int(production_source.month) == month" in worker
+    assert "force_dependency = False" in worker
+    assert "representative_refresh_queue_strategy year=%s month=%s reason=%s force_dependency=%s" in worker
+    assert "force=force_dependency" in worker
     assert "_warm_representative_snapshots(" in worker
-    assert "app, year, month, force=True" in worker
     assert "PersistentRegionSnapshotService.enrich_for_period(year, month)" in worker
     assert "enqueue_stale_production_dependencies" in worker
 
     refresh_worker = worker[worker.index("def _process_representative_refresh_queue(app):") :]
     dashboard = refresh_worker.index(
-        "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)"
+        "dashboard_result = _warm_dashboard_snapshot("
     )
     representative = refresh_worker.index(
         "representative_result = _warm_representative_snapshots("
     )
     region = refresh_worker.index(
-        "region_result = _warm_region_snapshots(app, year, month, force=True)"
+        "region_result = _warm_region_snapshots("
     )
     enrichment = refresh_worker.index(
         "PersistentRegionSnapshotService.enrich_for_period(year, month)"
@@ -57,6 +61,12 @@ def test_production_refresh_queue_contract():
     assert 'region_result.get("status") in {"ACTIVE", "REUSED"}' in refresh_worker
     assert 'enrichment_result.get("status") in {"ENRICHED", "REUSED"}' in refresh_worker
     assert "RepresentativeSnapshotRefreshQueue.defer(item)" in refresh_worker
+    # The finalized source month gets a new production identity, so exact
+    # dashboard/representative generations can be reused while a failed region
+    # generation is retried. Later Q/YTD dependencies remain forced.
+    assert "production_source is not None" in refresh_worker
+    assert "force_dependency = False" in refresh_worker
+    assert refresh_worker.index("force_dependency = False") < dashboard
 
     # IMS/publication remains first in the single worker loop; refresh work is
     # only examined when no IMS job was claimed.
