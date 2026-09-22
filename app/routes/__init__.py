@@ -11,20 +11,14 @@ from flask import send_file
 from flask_login import current_user
 from flask_login import login_required
 from functools import wraps
-from sqlalchemy import desc
-
-from app.cache.region_manager_snapshot_cache import RegionManagerSnapshotCache
-from app.extensions import db
-from app.models import IMSUpload, Representative
-from app.services.dashboard_service import DashboardService
+from app.models import Representative
+from app.services.historical_region_read_model_service import HistoricalRegionReadModelService
 from app.services.executive_market_cockpit_service import ExecutiveMarketCockpitService
 from app.services.market_analysis_service import MarketAnalysisService
 from app.services.period_service import PeriodService
+from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-from app.services.production_result_service import ProductionResultService
 from app.services.quarter_entitlement_service import QuarterEntitlementService
-from app.services.region_market_service import RegionMarketService
-from app.services.region_performance_service import RegionPerformanceService
 from app.services.executive_reporting_service import ExecutiveReportingService
 from app.services.report_cache_service import ReportCacheService
 from app.services.report_export_queue import ReportExportQueue
@@ -47,37 +41,20 @@ def reports_access_required(view):
     return wrapped
 
 
-def _region_snapshot_key(region_key, year, month):
-    latest_ims_id = db.session.query(IMSUpload.id).filter(
-        IMSUpload.year == int(year),
-        IMSUpload.month == int(month),
-        IMSUpload.status == "COMPLETED",
-    ).order_by(
-        desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)
-    ).limit(1).scalar()
-    production_upload = ProductionResultService.final_upload(int(year), int(month))
-    production_id = production_upload.id if production_upload is not None else 0
-    return f"manager-region:{region_key}:{year}:{month}:{latest_ims_id or 0}:{production_id}:v1"
-
-
-def _build_region_snapshot(region_key, year, month):
-    performance = RegionPerformanceService(region_key, year, month)
-    report = performance.report()
-    market = RegionMarketService(
-        report["region_key"], performance.rep_ids, year, month
-    ).build()
-    return {"report": report, "market_analysis": market}
-
-
 def _region_manager_snapshot(region_key, year, month):
+    """Read manager region detail without rebuilding current source data in HTTP."""
     persistent = PersistentRegionSnapshotService.get_active(region_key, year, month)
     if persistent is not None:
         return persistent
 
-    key = _region_snapshot_key(region_key, year, month)
-    return RegionManagerSnapshotCache.get_or_compute(
-        key, lambda: _build_region_snapshot(region_key, year, month)
-    )
+    active = PeriodService.get_active_period()
+    if (
+        int(year) == int(active["year"])
+        and int(month) == int(active["month"])
+    ):
+        raise RuntimeError("Güncel bölge read-modeli henüz hazır değil.")
+
+    return HistoricalRegionReadModelService.get_or_build(region_key, year, month)
 
 
 def _render_region_snapshot(snapshot):
@@ -126,25 +103,25 @@ def dashboard():
 @main_bp.route("/market-analysis")
 @login_required
 def market_analysis():
-    dashboard_service = DashboardService()
-    payload = dashboard_service.run()
+    active = PeriodService.get_active_period()
+    year, month = int(active["year"]), int(active["month"])
 
-    try:
-        payload["competition_analysis"] = MarketAnalysisService(
-            dashboard_service.year,
-            dashboard_service.month,
-        ).build()
-    except Exception:
-        current_app.logger.exception(
-            "Türkiye Pazar Analizi national market read failed for %s/%s",
-            dashboard_service.year,
-            dashboard_service.month,
+    # The IMS worker publishes dashboard + national market in one durable
+    # read-model. HTTP requests never rebuild either calculation chain.
+    payload = (
+        PersistentDashboardSnapshotService.get_active(year, month)
+        or PersistentDashboardSnapshotService.get_stable(year, month)
+        or {}
+    )
+    payload = dict(payload)
+    competition_analysis = payload.get("competition_analysis")
+    if not isinstance(competition_analysis, dict):
+        competition_analysis = _empty_market_analysis(
+            year,
+            month,
+            "Türkiye pazar read-modeli hazırlanıyor. Hazır bölgesel snapshotlar kullanılmaya devam edebilir.",
         )
-        payload["competition_analysis"] = _empty_market_analysis(
-            dashboard_service.year,
-            dashboard_service.month,
-            "Pazar verisi okunurken geçici bir hata oluştu. Bölgesel performans ekranı kullanılmaya devam edebilir.",
-        )
+    payload["competition_analysis"] = competition_analysis
 
     region_rows = payload.get("region_realization") or []
     selected_region = request.args.get("region") or (
@@ -153,13 +130,13 @@ def market_analysis():
 
     try:
         durable_snapshots = PersistentRegionSnapshotService.get_active_all(
-            dashboard_service.year, dashboard_service.month
+            year, month
         ) or {}
     except Exception:
         current_app.logger.exception(
             "Türkiye Pazar Analizi durable region pack read failed for %s/%s",
-            dashboard_service.year,
-            dashboard_service.month,
+            year,
+            month,
         )
         durable_snapshots = {}
 
@@ -173,45 +150,33 @@ def market_analysis():
             current_app.logger.exception(
                 "Türkiye Pazar Analizi stale/invalid cached region snapshot skipped: region=%s period=%s/%s",
                 region_key,
-                dashboard_service.year,
-                dashboard_service.month,
+                year,
+                month,
             )
 
     try:
         executive_cockpit = ExecutiveMarketCockpitService.build(
-            payload.get("competition_analysis") or {},
+            competition_analysis,
             usable_snapshots,
             region_rows,
         )
     except Exception:
         current_app.logger.exception(
             "Türkiye Pazar Analizi executive cockpit build failed for %s/%s",
-            dashboard_service.year,
-            dashboard_service.month,
+            year,
+            month,
         )
         executive_cockpit = ExecutiveMarketCockpitService.build(
-            payload.get("competition_analysis") or {}, {}, region_rows
+            competition_analysis, {}, region_rows
         )
 
-    initial_region_snapshot = usable_snapshots.get(str(selected_region)) if selected_region else None
+    initial_region_snapshot = (
+        usable_snapshots.get(str(selected_region)) if selected_region else None
+    )
     if selected_region and initial_region_snapshot is None:
-        try:
-            initial_region_snapshot = _build_region_snapshot(
-                selected_region, dashboard_service.year, dashboard_service.month
-            )
-            _render_region_snapshot(initial_region_snapshot)
-        except ValueError:
-            selected_region = None
-            initial_region_snapshot = None
-        except Exception:
-            current_app.logger.exception(
-                "Türkiye Pazar Analizi initial region build failed: region=%s period=%s/%s",
-                selected_region,
-                dashboard_service.year,
-                dashboard_service.month,
-            )
-            selected_region = None
-            initial_region_snapshot = None
+        # Current-period manager UI remains snapshot-gated. The background
+        # worker owns rebuilds; a user click must never launch source queries.
+        selected_region = None
 
     return render_template(
         "market_analysis.html",
@@ -221,10 +186,9 @@ def market_analysis():
         initial_region_snapshot=initial_region_snapshot,
         embedded_region_html=embedded_region_html,
         executive_cockpit=executive_cockpit,
-        selected_year=dashboard_service.year,
-        selected_month=dashboard_service.month,
+        selected_year=year,
+        selected_month=month,
     )
-
 
 @main_bp.route("/market-analysis/regions-pack")
 @login_required
@@ -272,24 +236,18 @@ def market_analysis_region(region_key):
         snapshot = _region_manager_snapshot(region_key, year, month)
         return _render_region_snapshot(snapshot)
     except ValueError as exc:
-        return render_template("partials/market_region_workspace_error.html", message=str(exc)), 404
+        return render_template(
+            "partials/market_region_workspace_error.html", message=str(exc)
+        ), 404
     except Exception:
         current_app.logger.exception(
-            "Türkiye Pazar Analizi region detail failed: region=%s period=%s/%s",
+            "Türkiye Pazar Analizi region read-model unavailable: region=%s period=%s/%s",
             region_key, year, month,
         )
-        try:
-            snapshot = _build_region_snapshot(region_key, year, month)
-            return _render_region_snapshot(snapshot)
-        except Exception:
-            current_app.logger.exception(
-                "Türkiye Pazar Analizi fresh region fallback failed: region=%s period=%s/%s",
-                region_key, year, month,
-            )
-            return render_template(
-                "partials/market_region_workspace_error.html",
-                message="Bölge verisi geçici olarak hazırlanamadı. Ana Türkiye Pazar Analizi ekranı kullanılabilir.",
-            ), 503
+        return render_template(
+            "partials/market_region_workspace_error.html",
+            message="Bölge verisi hazırlanıyor. Ana Türkiye Pazar Analizi ekranı kullanılabilir.",
+        ), 503
 
 
 @main_bp.route("/prime")

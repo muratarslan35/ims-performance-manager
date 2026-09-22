@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSImportJob, ProductionResultUpload, Representative, User
+from app.models import IMSImportJob, IMSUpload, ProductionResultUpload, Representative, User
 from app.region_manager import (
     RegionManagerScope,
     assigned_region,
@@ -25,6 +25,7 @@ from app.region_manager import (
     region_code,
 )
 from app.services.access_permission_service import enabled as access_enabled
+from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from sqlalchemy import event
 
 DENIED_REGION = "Bu bölgenin yöneticisi değilsiniz."
@@ -91,12 +92,16 @@ def main():
     own_region_seconds = None
     other_region_seconds = None
     dashboard_read = None
+    market_analysis_read = None
     region_read = None
     representative_read = None
     historical_production_period = None
     historical_production_status = None
     historical_production_read = None
     historical_production_mode = None
+    historical_compatibility_period = None
+    historical_compatibility_status = None
+    historical_compatibility_read = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -188,6 +193,22 @@ def main():
             _check(not dashboard_read["heavy_reads"], "dashboard_heavy_source_read", failures)
             _check(dashboard_read["seconds"] <= 2.0, "dashboard_hot_route_slow", failures)
 
+            # Türkiye Pazar Analizi must consume the dashboard national market
+            # read-model and region snapshots; it must never aggregate IMS or
+            # competition source tables inside the HTTP request.
+            _check(client.get("/market-analysis").status_code == 200,
+                   "market_analysis_route", failures)
+            market_response, market_analysis_read = _measure_route(
+                client, "/market-analysis"
+            )
+            _check(market_response.status_code == 200,
+                   "market_analysis_hot_route", failures)
+            _check(
+                not market_analysis_read["heavy_reads"],
+                "market_analysis_heavy_source_read",
+                failures,
+            )
+
             manager_page = client.get("/manager-users/", follow_redirects=True)
             _check(("Kayıtlı Yöneticiler" in manager_page.get_data(as_text=True)) == permission_state["manager_module"],
                    "manager_module_read", failures)
@@ -228,10 +249,6 @@ def main():
                 )
                 historical_client = app.test_client()
                 _login_as(historical_client, admin.id)
-
-                from app.services.persistent_region_snapshot_service import (
-                    PersistentRegionSnapshotService,
-                )
 
                 historical_ims_id, historical_production_id = (
                     PersistentRegionSnapshotService.source_identity(
@@ -292,25 +309,116 @@ def main():
                         "historical_production_region_hot_route",
                         failures,
                     )
-                    if historical_production_mode == "snapshot":
+                    _check(
+                        not historical_production_read["heavy_reads"],
+                        "historical_production_region_heavy_source_read",
+                        failures,
+                    )
+                    _check(
+                        historical_production_read["seconds"] <= 2.0,
+                        "historical_production_region_hot_route_slow",
+                        failures,
+                    )
+
+            # Also prove the pre-snapshot historical compatibility case itself.
+            # The first read may build one durable compatibility generation; the
+            # immediately repeated request must be read-model-only and fast.
+            if admin is not None and own_code:
+                latest_ims = (
+                    IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED)
+                    .order_by(
+                        IMSUpload.year.desc(),
+                        IMSUpload.month.desc(),
+                        IMSUpload.week_number.desc(),
+                        IMSUpload.completed_at.desc(),
+                        IMSUpload.id.desc(),
+                    )
+                    .first()
+                )
+                candidates = (
+                    db.session.query(IMSUpload.year, IMSUpload.month)
+                    .filter(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
+                    .distinct()
+                    .order_by(IMSUpload.year.desc(), IMSUpload.month.desc())
+                    .all()
+                )
+                for candidate_year, candidate_month in candidates:
+                    candidate_year, candidate_month = (
+                        int(candidate_year), int(candidate_month)
+                    )
+                    if (
+                        latest_ims is not None
+                        and candidate_year == int(latest_ims.year)
+                        and candidate_month == int(latest_ims.month)
+                    ):
+                        continue
+                    candidate_ims_id, candidate_production_id = (
+                        PersistentRegionSnapshotService.source_identity(
+                            candidate_year, candidate_month
+                        )
+                    )
+                    if not candidate_ims_id:
+                        continue
+                    exact_candidate = (
+                        PersistentRegionSnapshotService.get_active_for_visible_upload(
+                            own_code,
+                            candidate_year,
+                            candidate_month,
+                            candidate_ims_id,
+                        )
+                    )
+                    exact_ready = bool(
+                        exact_candidate
+                        and int(exact_candidate.get("read_model_version") or 0)
+                        >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+                        and isinstance(exact_candidate.get("ai_report"), dict)
+                    )
+                    if exact_ready:
+                        continue
+
+                    historical_compatibility_period = [
+                        candidate_year,
+                        candidate_month,
+                        int(candidate_ims_id),
+                        int(candidate_production_id or 0),
+                    ]
+                    compatibility_path = (
+                        f"/regions/{own_code}?year={candidate_year}"
+                        f"&month={candidate_month}"
+                    )
+                    compatibility_client = app.test_client()
+                    _login_as(compatibility_client, admin.id)
+                    warm = compatibility_client.get(
+                        compatibility_path, follow_redirects=False
+                    )
+                    _check(
+                        warm.status_code == 200,
+                        "historical_compatibility_region_route",
+                        failures,
+                    )
+                    if warm.status_code == 200:
+                        measured, historical_compatibility_read = _measure_route(
+                            compatibility_client,
+                            compatibility_path,
+                            follow_redirects=False,
+                        )
+                        historical_compatibility_status = int(measured.status_code)
                         _check(
-                            not historical_production_read["heavy_reads"],
-                            "historical_production_region_heavy_source_read",
+                            measured.status_code == 200,
+                            "historical_compatibility_region_hot_route",
                             failures,
                         )
                         _check(
-                            historical_production_read["seconds"] <= 2.0,
-                            "historical_production_region_hot_route_slow",
+                            not historical_compatibility_read["heavy_reads"],
+                            "historical_compatibility_heavy_source_read",
                             failures,
                         )
-                    else:
-                        # Compatibility mode is only the temporary fallback while
-                        # a late production snapshot is rebuilding. Route
-                        # availability and authoritative-source correctness are
-                        # mandatory here, but latency must not block activation
-                        # of the worker that is responsible for replacing this
-                        # fallback with the exact snapshot.
-                        pass
+                        _check(
+                            historical_compatibility_read["seconds"] <= 2.0,
+                            "historical_compatibility_hot_route_slow",
+                            failures,
+                        )
+                    break
 
             other_region_started = time.perf_counter()
             other_region_response = client.get(
@@ -379,12 +487,16 @@ def main():
             "own_region_seconds": own_region_seconds,
             "other_region_seconds": other_region_seconds,
             "dashboard_read": dashboard_read,
+            "market_analysis_read": market_analysis_read,
             "region_read": region_read,
             "representative_read": representative_read,
             "historical_production_period": historical_production_period,
             "historical_production_status": historical_production_status,
             "historical_production_read": historical_production_read,
             "historical_production_mode": historical_production_mode,
+            "historical_compatibility_period": historical_compatibility_period,
+            "historical_compatibility_status": historical_compatibility_status,
+            "historical_compatibility_read": historical_compatibility_read,
             "tested_manager_id": manager.id if manager else None,
             "tested_region": own_code,
             "admin_preserved": admin is not None,

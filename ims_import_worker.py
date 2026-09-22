@@ -21,6 +21,7 @@ from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_progress_store import IMSProgressStore
 from app.services.import_roster_sync import IMSRosterSyncService
 from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+from app.services.market_analysis_service import MarketAnalysisService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
@@ -56,9 +57,23 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
 
         def rebuild():
             DashboardCache().invalidate(cache_key)
-            return service.run()
+            payload = service.run()
+            # Türkiye Pazar Analizi is a user-facing read model too. Build the
+            # national competition payload here once, alongside the dashboard,
+            # instead of querying IMS/competition source tables on every page.
+            payload["competition_analysis"] = MarketAnalysisService(
+                int(year), int(month)
+            ).build()
+            payload["market_read_model_version"] = 1
+            return payload
 
-        if force:
+        existing = PersistentDashboardSnapshotService.get_active(year, month)
+        market_ready = bool(
+            isinstance(existing, dict)
+            and int(existing.get("market_read_model_version") or 0) >= 1
+            and isinstance(existing.get("competition_analysis"), dict)
+        )
+        if force or not market_ready:
             _payload = rebuild()
             PersistentDashboardSnapshotService.publish(year, month, _payload)
             built = True

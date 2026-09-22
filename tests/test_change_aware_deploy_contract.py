@@ -101,15 +101,49 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '"historical_production_region_hot_route"' in acceptance
     assert '"historical_production_period": historical_production_period' in acceptance
     assert '"historical_production_mode": historical_production_mode' in acceptance
-    assert 'historical_production_mode == "snapshot"' in acceptance
-    assert '"historical_production_region_compatibility_slow"' not in acceptance
-    assert 'latency must not block activation' in acceptance
+    assert '"market_analysis_heavy_source_read"' in acceptance
+    assert '"historical_production_region_heavy_source_read"' in acceptance
+    assert '"historical_compatibility_heavy_source_read"' in acceptance
+    assert '"historical_compatibility_period": historical_compatibility_period' in acceptance
+    assert 'latency must not block activation' not in acceptance
     compile(acceptance, 'verify_region_manager_production.py', 'exec')
 
     # Real-workbook acceptance remains manual qualification rather than an
     # automatic production re-import.
     assert 'venv/bin/python verify_ims_acceptance.py' not in text
     assert 'sqlite_online_backup.py instance/ipm.db "$acceptance_db"' not in text
+
+
+def test_interactive_market_and_historical_reads_use_durable_read_models():
+    worker = Path("ims_import_worker.py").read_text(encoding="utf-8")
+    routes = Path("app/routes/__init__.py").read_text(encoding="utf-8")
+    regions = Path("app/regions.py").read_text(encoding="utf-8")
+    historical = Path(
+        "app/services/historical_region_read_model_service.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'payload["competition_analysis"] = MarketAnalysisService(' in worker
+    assert 'payload["market_read_model_version"] = 1' in worker
+    assert "market_ready = bool(" in worker
+
+    market_start = routes.index('def market_analysis():')
+    market_end = routes.index(
+        '@main_bp.route("/market-analysis/regions-pack")', market_start
+    )
+    market_route = routes[market_start:market_end]
+    assert "PersistentDashboardSnapshotService.get_active" in market_route
+    assert "PersistentRegionSnapshotService.get_active_all" in market_route
+    assert "DashboardService" not in market_route
+    assert "MarketAnalysisService(" not in market_route
+    assert "_build_region_snapshot" not in market_route
+
+    assert "HistoricalRegionReadModelService.get_or_build" in regions
+    assert "RegionPerformanceService(" not in regions
+    assert "RegionMarketService(" not in regions
+    assert "fcntl.flock" in historical
+    assert "PersistentRegionSnapshotService.source_identity" in historical
+    assert "_build_authoritative" in historical
+    compile(historical, "historical_region_read_model_service.py", "exec")
 
 
 def test_ops_release_avoids_heavy_db_work_and_service_activation():
