@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/region-snapshot-health.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/region-snapshot-health.yml"
   workflow_dispatch:
 
 permissions:
@@ -463,4 +467,270 @@ jobs:
             | grep -E 'region_snapshot|manager_region_snapshots|UNIQUE constraint|IntegrityError' \
             | tail -n 200 || true
           echo "RECENT_REGION_SNAPSHOT_ERRORS_END"
+          REMOTE
+
+
+      - name: Audit historical month routes and July P2 authority
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_snapshot_health_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "MONTH_ROUTE_AUDIT_BEGIN"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+
+          from app import create_app
+          from app.extensions import db
+          from app.models import (
+              ProductionRegionProductResult,
+              ProductionRepresentativeTotal,
+              ProductionResultUpload,
+              Representative,
+              User,
+          )
+          from app.services.persistent_dashboard_snapshot_service import (
+              PersistentDashboardSnapshotService,
+          )
+          from app.services.persistent_region_snapshot_service import (
+              PersistentRegionSnapshotService,
+              region_snapshot_sets,
+          )
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshot_sets,
+          )
+
+          def n(value):
+              try:
+                  return float(value or 0)
+              except (TypeError, ValueError):
+                  return 0.0
+
+          def login_as(client, user_id):
+              client.application.login_manager.session_protection = None
+              with client.session_transaction() as session:
+                  session["_user_id"] = str(user_id)
+                  session["_fresh"] = True
+                  session["portal"] = "manager"
+
+          app = create_app()
+          with app.app_context():
+              admin = User.query.filter(
+                  db.func.lower(User.email) == "admin@ipm.local"
+              ).one()
+              client = app.test_client()
+              login_as(client, admin.id)
+
+              total_routes = 0
+              non_200 = []
+              for month in range(1, 10):
+                  keys = PersistentRegionSnapshotService.region_keys(2026, month)
+                  month_bad = []
+                  month_ok = 0
+                  for key in keys:
+                      path = f"/regions/{key}?year=2026&month={month}"
+                      response = client.get(path, follow_redirects=False)
+                      total_routes += 1
+                      location = response.headers.get("Location", "")
+                      preparing = "Bölge görünümü hazırlanıyor" in response.get_data(as_text=True)
+                      if response.status_code == 200:
+                          month_ok += 1
+                      else:
+                          month_bad.append((key, response.status_code, location, int(preparing)))
+                          non_200.append((month, key, response.status_code, location))
+                  print(
+                      f"MONTH_ROUTE_SUMMARY|2026-{month:02d}|regions={len(keys)}|"
+                      f"ok={month_ok}|bad={len(month_bad)}"
+                  )
+                  for key, status, location, preparing in month_bad:
+                      print(
+                          f"MONTH_ROUTE_BAD|2026-{month:02d}|region={key}|"
+                          f"status={status}|location={location}|preparing={preparing}"
+                      )
+              print(
+                  f"MONTH_ROUTE_TOTAL|routes={total_routes}|non_200={len(non_200)}"
+              )
+
+              july = (
+                  ProductionResultUpload.query
+                  .filter_by(
+                      year=2026,
+                      month=7,
+                      status=ProductionResultUpload.STATUS_APPLIED,
+                  )
+                  .order_by(
+                      ProductionResultUpload.production_stage.desc(),
+                      ProductionResultUpload.applied_at.desc(),
+                      ProductionResultUpload.id.desc(),
+                  )
+                  .first()
+              )
+              assert july is not None
+              print(
+                  f"JULY_P2_SOURCE|upload={july.id}|stage={july.production_stage}|"
+                  f"status={july.status}|file={july.file_name}|applied={july.applied_at}"
+              )
+
+              ims_id, production_id = PersistentRegionSnapshotService.source_identity(
+                  2026, 7
+              )
+              exact_region = db.session.execute(
+                  sa.select(
+                      region_snapshot_sets.c.id,
+                      region_snapshot_sets.c.status,
+                      region_snapshot_sets.c.region_count,
+                      region_snapshot_sets.c.activated_at,
+                  ).where(
+                      region_snapshot_sets.c.year == 2026,
+                      region_snapshot_sets.c.month == 7,
+                      region_snapshot_sets.c.source_upload_id == int(ims_id),
+                      region_snapshot_sets.c.production_upload_id == int(production_id),
+                  ).order_by(region_snapshot_sets.c.id.desc()).limit(1)
+              ).first()
+              print(
+                  f"JULY_REGION_IDENTITY|ims={ims_id}|production={production_id}|"
+                  f"exact_set={int(exact_region.id) if exact_region else 0}|"
+                  f"exact_status={exact_region.status if exact_region else 'NONE'}|"
+                  f"exact_count={int(exact_region.region_count or 0) if exact_region else 0}"
+              )
+
+              region_expected = {}
+              rows = ProductionRegionProductResult.query.filter_by(
+                  upload_id=int(july.id)
+              ).all()
+              for row in rows:
+                  key = str(row.region_code or "").strip()
+                  agg = region_expected.setdefault(key, [0.0, 0.0])
+                  agg[0] += n(row.target_tl)
+                  agg[1] += n(row.actual_tl)
+
+              region_target_mismatch = 0
+              region_actual_mismatch = 0
+              for key in sorted(region_expected):
+                  payload = PersistentRegionSnapshotService.get_active(
+                      key, 2026, 7
+                  ) or {}
+                  monthly = (
+                      ((payload.get("report") or {}).get("periods") or {})
+                      .get("monthly") or {}
+                  )
+                  snap_target = n(monthly.get("target_tl"))
+                  snap_actual = n(monthly.get("actual_tl"))
+                  exp_target, exp_actual = region_expected[key]
+                  target_diff = round(snap_target - exp_target, 2)
+                  actual_diff = round(snap_actual - exp_actual, 2)
+                  if abs(target_diff) > 0.05:
+                      region_target_mismatch += 1
+                  if abs(actual_diff) > 0.05:
+                      region_actual_mismatch += 1
+                  print(
+                      f"JULY_REGION_COMPARE|region={key}|"
+                      f"p2_target={exp_target:.2f}|snap_target={snap_target:.2f}|"
+                      f"target_diff={target_diff:.2f}|"
+                      f"p2_actual={exp_actual:.2f}|snap_actual={snap_actual:.2f}|"
+                      f"actual_diff={actual_diff:.2f}|"
+                      f"version={int(payload.get('read_model_version') or 0)}"
+                  )
+              print(
+                  f"JULY_REGION_SUMMARY|regions={len(region_expected)}|"
+                  f"target_mismatch={region_target_mismatch}|"
+                  f"actual_mismatch={region_actual_mismatch}"
+              )
+
+              rep_ims, rep_prod = PersistentRepresentativeSnapshotService.source_identity(
+                  2026, 7
+              )
+              exact_rep = db.session.execute(
+                  sa.select(
+                      representative_snapshot_sets.c.id,
+                      representative_snapshot_sets.c.status,
+                      representative_snapshot_sets.c.representative_count,
+                      representative_snapshot_sets.c.activated_at,
+                  ).where(
+                      representative_snapshot_sets.c.year == 2026,
+                      representative_snapshot_sets.c.month == 7,
+                      representative_snapshot_sets.c.source_upload_id == int(rep_ims),
+                      representative_snapshot_sets.c.production_upload_id == int(rep_prod),
+                  ).order_by(representative_snapshot_sets.c.id.desc()).limit(1)
+              ).first()
+              print(
+                  f"JULY_REP_IDENTITY|ims={rep_ims}|production={rep_prod}|"
+                  f"exact_set={int(exact_rep.id) if exact_rep else 0}|"
+                  f"exact_status={exact_rep.status if exact_rep else 'NONE'}|"
+                  f"exact_count={int(exact_rep.representative_count or 0) if exact_rep else 0}"
+              )
+
+              rep_rows = ProductionRepresentativeTotal.query.filter_by(
+                  upload_id=int(july.id)
+              ).all()
+              rep_actual_mismatch = 0
+              rep_target_mismatch = 0
+              rep_label_mismatch = 0
+              checked = 0
+              samples = []
+              for prod in rep_rows:
+                  rep = db.session.get(Representative, int(prod.representative_id))
+                  if rep is None:
+                      continue
+                  ws = PersistentRepresentativeSnapshotService.get_active(
+                      int(rep.id), 2026, 7
+                  ) or {}
+                  monthly = ((ws.get("snapshots") or {}).get("monthly") or {})
+                  totals = monthly.get("totals") or {}
+                  snap_target = n(totals.get("target_tl"))
+                  snap_actual = n(totals.get("actual_tl"))
+                  target_diff = round(snap_target - n(prod.target_tl), 2)
+                  actual_diff = round(snap_actual - n(prod.actual_tl), 2)
+                  label = str(monthly.get("result_source_label") or "")
+                  checked += 1
+                  if abs(target_diff) > 0.05:
+                      rep_target_mismatch += 1
+                  if abs(actual_diff) > 0.05:
+                      rep_actual_mismatch += 1
+                  if "2. üretim" not in label.lower():
+                      rep_label_mismatch += 1
+                  if len(samples) < 12 and (
+                      abs(target_diff) > 0.05
+                      or abs(actual_diff) > 0.05
+                      or "2. üretim" not in label.lower()
+                  ):
+                      samples.append(
+                          (
+                              rep.id, rep.rep_name, target_diff, actual_diff, label,
+                              n(prod.target_tl), snap_target,
+                              n(prod.actual_tl), snap_actual,
+                          )
+                      )
+              for sample in samples:
+                  print(
+                      f"JULY_REP_MISMATCH|id={sample[0]}|name={sample[1]}|"
+                      f"target_diff={sample[2]:.2f}|actual_diff={sample[3]:.2f}|"
+                      f"label={sample[4]}|p2_target={sample[5]:.2f}|"
+                      f"snap_target={sample[6]:.2f}|p2_actual={sample[7]:.2f}|"
+                      f"snap_actual={sample[8]:.2f}"
+                  )
+              print(
+                  f"JULY_REP_SUMMARY|checked={checked}|"
+                  f"target_mismatch={rep_target_mismatch}|"
+                  f"actual_mismatch={rep_actual_mismatch}|"
+                  f"label_mismatch={rep_label_mismatch}"
+              )
+
+              dash_ims, dash_prod = PersistentDashboardSnapshotService.source_identity(
+                  2026, 7
+              )
+              dash_ready = PersistentDashboardSnapshotService.generation_ready(
+                  2026, 7, dash_ims, dash_prod
+              )
+              print(
+                  f"JULY_DASHBOARD_IDENTITY|ims={dash_ims}|production={dash_prod}|"
+                  f"exact_generation_ready={int(bool(dash_ready))}"
+              )
+          PY
+          echo "MONTH_ROUTE_AUDIT_END"
           REMOTE
