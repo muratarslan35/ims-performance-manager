@@ -297,25 +297,29 @@ class PersistentDashboardSnapshotService:
 
     @classmethod
     def get_or_build(cls, year: int, month: int, builder: Callable[[], dict]) -> tuple[dict, bool]:
-        """Return a ready payload; allow only one process to perform a cold rebuild.
+        """Build/reuse the exact current-source generation behind the visibility gate.
 
-        The first caller after an IMS/source identity change owns the file lock.
-        Other Gunicorn workers wait on that same lock, then read the newly
-        published payload instead of launching duplicate OLAP/AI/prime queries.
-        ``built`` is True only for the process that executed ``builder``.
+        User-facing reads may intentionally stay on the previous visible upload
+        while a new IMS is publishing. The worker must still be able to build the
+        new hidden dashboard generation, so this path bypasses ``get_active``
+        and checks only the exact immutable current-source file.
         """
-        active = cls.get_active(year, month)
-        if active is not None:
-            return active, False
+        ims_id, production_id = cls.source_identity(year, month)
+        exact = cls.get_generation_for_source(year, month, ims_id, production_id)
+        if exact is not None:
+            return exact, False
 
         lock_path = cls._lock_path(year, month)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+", encoding="utf-8") as lock_handle:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
             try:
-                active = cls.get_active(year, month)
-                if active is not None:
-                    return active, False
+                ims_id, production_id = cls.source_identity(year, month)
+                exact = cls.get_generation_for_source(
+                    year, month, ims_id, production_id
+                )
+                if exact is not None:
+                    return exact, False
                 payload = builder()
                 cls.publish(year, month, payload)
                 return payload, True
