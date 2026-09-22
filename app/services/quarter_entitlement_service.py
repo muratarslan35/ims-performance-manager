@@ -121,8 +121,8 @@ class QuarterEntitlementService:
         """Read one historical month through the same authoritative sales chain.
 
         This is deliberately narrow: no market, AI or representative workspace is
-        rebuilt. effective_products resolves P2 > P1 > IMS in one bounded batch,
-        then PrimeEngine applies the existing product/prime configuration.
+        rebuilt. effective_products resolves all products in one bounded P2 > P1 > IMS
+        batch, and the existing prime metadata is applied without per-product queries.
         """
         effective = ProductionResultService.effective_products(
             self.year, int(month), self.representative_id
@@ -130,26 +130,36 @@ class QuarterEntitlementService:
         if not effective:
             return []
 
-        # PrimeEngine caches by (product_id, month). Keep this read deterministic
-        # if the same service instance is asked to resolve a month more than once.
-        calc_cache = getattr(self.engine, "_calc_cache", None)
-        if isinstance(calc_cache, dict):
-            for key in [key for key in calc_cache if len(key) > 1 and int(key[1]) == int(month)]:
-                calc_cache.pop(key, None)
-
-        with ProductionResultService.use_effective_batch(
-            self.year, int(month), self.representative_id, effective
-        ):
-            calculated = self.engine.calculate_monthly_products(month=int(month))
-
+        meta = self._product_meta()
         rows = []
-        for item in calculated or []:
-            row = dict(item)
-            row["month"] = int(month)
-            row["quota_exit"] = False
-            row["quota_uplift_tl"] = 0.0
-            row["quota_uplift_unit"] = 0.0
-            rows.append(row)
+        for raw_product_id, resolved in effective.items():
+            product_id = int(raw_product_id)
+            config = meta.get(product_id)
+            if not config:
+                continue
+            target_tl = float(resolved.get("target_tl") or 0)
+            actual_tl = float(resolved.get("actual_tl") or 0)
+            target_unit = float(resolved.get("target_unit") or 0)
+            actual_unit = float(resolved.get("actual_unit") or 0)
+            rows.append({
+                "product_id": product_id,
+                "product_name": config["product_name"],
+                "month": int(month),
+                "target_unit": round(target_unit, 2),
+                "target_tl": round(target_tl, 2),
+                "actual_unit": round(actual_unit, 2),
+                "actual_tl": round(actual_tl, 2),
+                "percent": round(actual_tl / target_tl * 100.0, 2) if target_tl else 0.0,
+                "gap_tl": round(max(0.0, target_tl - actual_tl), 2),
+                "required_percent": float(config.get("required_percent") or 0),
+                "include_in_total_tl": bool(config.get("include_in_total_tl")),
+                "include_in_prime": bool(config.get("include_in_prime")),
+                "quota_exit": False,
+                "quota_uplift_tl": 0.0,
+                "quota_uplift_unit": 0.0,
+                "source": resolved.get("source"),
+            })
+        rows.sort(key=lambda row: row["product_name"])
         return rows
 
     def _snapshot_products(self, month):
