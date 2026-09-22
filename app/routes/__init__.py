@@ -441,9 +441,24 @@ def quarter():
     representative_id = request.args.get("representative_id", type=int)
     report = None
     selected_representative = None
+
+    quarter_months = list(range((quarter - 1) * 3 + 1, (quarter - 1) * 3 + 4)) if quarter in (1, 2, 3, 4) else []
+    quota_exit_by_month = {}
+    for month in quarter_months:
+        key = f"quota_exit_{month}"
+        if key not in request.args:
+            continue
+        raw_value = (request.args.get(key) or "").strip()
+        quota_exit_by_month[month] = int(raw_value) if raw_value.isdigit() else None
+
     if representative_id:
         selected_representative = Representative.query.get_or_404(representative_id)
-        report = QuarterEntitlementService(representative_id, year, quarter).report()
+        report = QuarterEntitlementService(
+            representative_id,
+            year,
+            quarter,
+            quota_exit_by_month=quota_exit_by_month,
+        ).report()
     return render_template(
         "quarter.html",
         representatives=representatives,
