@@ -93,7 +93,8 @@ def _install_dashboard_guard():
         """Reject a same-id snapshot that was created before today's IMS row."""
         ims_id, production_id = guarded_cls.source_identity(year, month)
         generation_path = guarded_cls._generation_path(year, month, ims_id, production_id)
-        for path in (generation_path, guarded_cls._path(year, month)):
+        stable_path = guarded_cls._path(year, month)
+        for path in (generation_path, stable_path):
             try:
                 envelope = json.loads(path.read_text(encoding="utf-8"))
             except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -123,6 +124,27 @@ def _install_dashboard_guard():
                 )
                 os.replace(temp, generation_path)
             return payload
+
+        # A new P1/P2 result does not invalidate the already-published payload
+        # for the same IMS generation. Keep that stable pointer readable until
+        # the exact production generation is published, while retaining the
+        # reused-id freshness protection.
+        try:
+            envelope = json.loads(stable_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        if (
+            envelope.get("version") == guarded_cls.VERSION
+            and int(envelope.get("year", 0)) == int(year)
+            and int(envelope.get("month", 0)) == int(month)
+            and int(envelope.get("ims_upload_id", -1)) == int(ims_id)
+            and 0 <= int(envelope.get("production_upload_id", -1)) <= int(production_id)
+            and _fresh_for_source(
+                upload_id=int(ims_id), created_at=envelope.get("created_at")
+            )
+            and isinstance(envelope.get("payload"), dict)
+        ):
+            return envelope["payload"]
         return None
 
     cls.generation_ready = generation_ready

@@ -28,6 +28,29 @@ def test_snapshot_is_shared_and_rejected_when_source_identity_changes(tmp_path, 
         assert PersistentDashboardSnapshotService.get_active(2026, 4) is None
 
 
+def test_late_production_keeps_same_ims_dashboard_visible_until_replacement(tmp_path, monkeypatch):
+    app = Flask(__name__, instance_path=str(tmp_path / "instance"))
+    identity = {"value": (44, 8)}
+    monkeypatch.setattr(
+        PersistentDashboardSnapshotService,
+        "source_identity",
+        classmethod(lambda cls, year, month: identity["value"]),
+    )
+
+    with app.app_context():
+        PersistentDashboardSnapshotService.publish(2026, 7, {"production": 8})
+        identity["value"] = (44, 9)
+
+        assert PersistentDashboardSnapshotService.get_active(2026, 7) == {
+            "production": 8
+        }
+
+        PersistentDashboardSnapshotService.publish(2026, 7, {"production": 9})
+        assert PersistentDashboardSnapshotService.get_active(2026, 7) == {
+            "production": 9
+        }
+
+
 def test_get_or_build_executes_builder_once_for_same_source(tmp_path, monkeypatch):
     app = Flask(__name__, instance_path=str(tmp_path / "instance"))
     monkeypatch.setattr(

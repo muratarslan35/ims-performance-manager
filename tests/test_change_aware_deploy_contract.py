@@ -82,6 +82,14 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'WORKER_ACTIVE|' in text
     assert 'venv/bin/python verify_region_manager_production.py' in text
     assert 'verify_production_snapshot_finalization.py --latest-source-only' in text
+    finalizer_index = text.index(
+        'verify_production_snapshot_finalization.py --latest-source-only'
+    )
+    finalizer_guard_start = text.rfind(
+        'if [ "$RELEASE_MODE"', 0, finalizer_index
+    )
+    finalizer_guard = text[finalizer_guard_start:finalizer_index]
+    assert '"backend"' not in finalizer_guard
     assert 'REGION_MANAGER_ACCEPTANCE\\|' in text
     assert '|| [ "$RELEASE_MODE" = "backend" ]' in text
     acceptance = Path('verify_region_manager_production.py').read_text(encoding='utf-8')
