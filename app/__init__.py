@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import os
 
 from sqlalchemy.pool import NullPool
+from flask_login import current_user
 
 from config import Config
 
@@ -94,6 +95,14 @@ def register_template_context(app):
 
     @app.context_processor
     def shell_context():
+        # Anonymous auth pages do not render operational IMS metadata. Avoid
+        # touching period/publication/import tables before the user logs in.
+        if not current_user.is_authenticated:
+            return {
+                "active_period": "—",
+                "latest_upload_date": "—",
+                "latest_import_report": None,
+            }
         try:
             from app.services.period_service import PeriodService
             from app.services.ims_publication_service import IMSPublicationService
