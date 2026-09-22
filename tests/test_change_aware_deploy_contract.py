@@ -135,6 +135,7 @@ def test_interactive_market_and_historical_reads_use_durable_read_models():
     )
     market_route = routes[market_start:market_end]
     assert "PersistentDashboardSnapshotService.get_active" in market_route
+    assert "PersistentDashboardSnapshotService.get_stable" not in market_route
     assert "PersistentRegionSnapshotService.get_active_all" in market_route
     assert "DashboardService" not in market_route
     assert "MarketAnalysisService(" not in market_route
