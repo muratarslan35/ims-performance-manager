@@ -149,3 +149,18 @@ def test_any_publication_retry_resumes_compatible_partial_build_before_rebuildin
     # mixed into the current read-model version.
     assert "representative_snapshot_stale_building_retired" in build
     assert ".values(status=cls.STATUS_FAILED)" in build
+
+def test_representative_snapshots_remain_batched_parallel_bulk_writes():
+    source = (
+        ROOT / "app/services/persistent_representative_snapshot_service.py"
+    ).read_text(encoding="utf-8")
+    build = source[source.index("def build_for_period"):]
+
+    assert "BUILD_BATCH_SIZE = 8" in source
+    assert "BUILD_WORKERS = 3" in source
+    assert "ThreadPoolExecutor(max_workers=workers)" in build
+    assert "for offset in range(0, len(build_ids), batch_size)" in build
+    assert "list(pool.map(calculate, batch_ids))" in build
+    assert "representative_snapshots.insert(), [" in build
+    assert "pool.shutdown(wait=True)" in build
+
