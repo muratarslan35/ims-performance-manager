@@ -23,7 +23,9 @@ class IMSProgressStore:
     POST_IMPORT_STAGES = {
         "read_models",
         "dashboard_snapshot",
+        "region_snapshots",
         "representative_snapshots",
+        "snapshot_retry",
     }
 
     @classmethod
