@@ -29,7 +29,7 @@ def test_desktop_login_compacts_on_short_viewports():
     assert "body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem" in css
     assert "max-height: calc(100dvh - 190px);" in css
     assert "body.anonymous .auth-shell-login .portal-option span" in css
-    assert "auth-branding.css', v='20260922e'" in login
+    assert "auth-branding.css', v='20260922f'" in login
 
 
 def test_pc_login_and_register_use_fixed_viewport_composition():
@@ -44,8 +44,8 @@ def test_pc_login_and_register_use_fixed_viewport_composition():
     assert "overflow: hidden;" in css
     assert "body.anonymous .auth-shell-register .auth-layout" in css
     assert "@media (min-width: 1200px) and (max-height: 800px)" in css
-    assert "auth-branding.css', v='20260922e'" in login
-    assert "auth-branding.css', v='20260922e'" in register
+    assert "auth-branding.css', v='20260922f'" in login
+    assert "auth-branding.css', v='20260922f'" in register
 
 
 def test_pc_auth_cards_are_centered_and_narrower():
@@ -68,3 +68,13 @@ def test_pc_auth_true_center_balance():
     assert "width: min(66vw, 850px);" in css
     assert "height: min(430px, calc(100dvh - 210px));" in css
     assert "height: min(480px, calc(100dvh - 210px));" in css
+
+
+def test_short_pc_auth_does_not_reexpand_to_viewport():
+    css = (ROOT / "app/static/css/auth-branding.css").read_text(encoding="utf-8")
+
+    assert "/* === PC AUTH SHORT VIEWPORT CORRECTION 20260922f === */" in css
+    assert "height: min(388px, calc(100dvh - 270px));" in css
+    assert "max-height: min(388px, calc(100dvh - 270px));" in css
+    assert "height: min(438px, calc(100dvh - 270px));" in css
+    assert "padding-bottom: 16px;" in css
