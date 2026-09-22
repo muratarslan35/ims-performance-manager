@@ -188,6 +188,29 @@ def test_failed_new_build_never_supersedes_previous_active(monkeypatch):
 
 
 
+def test_late_production_keeps_same_ims_region_visible_until_replacement(monkeypatch):
+    app = _app()
+    identity = {"value": (44, 8)}
+    with app.app_context():
+        _patch_sources(monkeypatch, identity["value"])
+        monkeypatch.setattr(
+            PersistentRegionSnapshotService,
+            "source_identity",
+            classmethod(lambda cls, year, month: identity["value"]),
+        )
+        first = PersistentRegionSnapshotService.build_for_period(2026, 7)
+        assert first["status"] == "ACTIVE"
+
+        identity["value"] = (44, 9)
+        visible = PersistentRegionSnapshotService.get_active("101", 2026, 7)
+        assert visible is not None
+        assert visible["report"]["region_key"] == "101"
+
+        replacement = PersistentRegionSnapshotService.build_for_period(2026, 7)
+        assert replacement["status"] == "ACTIVE"
+        assert replacement["set_id"] != first["set_id"]
+
+
 def test_force_refresh_replaces_same_identity_active_set(monkeypatch):
     app = _app()
     with app.app_context():
