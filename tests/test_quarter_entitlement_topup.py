@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import app.services.quarter_entitlement_service as quarter_module
@@ -190,13 +191,78 @@ def test_quota_exit_lifts_only_selected_snapshot_product_to_minimum_100(monkeypa
     assert rows[0]["quota_uplift_tl"] == 20_000
 
 
-def test_missing_snapshot_never_falls_back_to_live_data(monkeypatch):
+def test_missing_historical_snapshot_uses_bounded_authoritative_history(monkeypatch):
     service = QuarterEntitlementService.__new__(QuarterEntitlementService)
     service.representative_id = 97
     service.year = 2026
     service.quarter = 3
     service.months = [7, 8, 9]
     service.quota_exit_by_month = {8: 11}
+    service._official_quota = {}
+    service._snapshot_rows = {}
+
+    product = SimpleNamespace(
+        id=11,
+        product_name="Fentivag",
+        include_total_tl=True,
+        is_prime_product=True,
+        required_percent=90,
+    )
+    rule = SimpleNamespace(
+        include_in_total_tl=True,
+        include_in_prime=True,
+        required_percent=90,
+    )
+    service.engine = SimpleNamespace(
+        products=[product],
+        get_prime_rule=lambda _product: rule,
+        _calc_cache={},
+        calculate_monthly_products=lambda month: [{
+            "product_id": 11,
+            "product_name": "Fentivag",
+            "target_tl": 100_000,
+            "actual_tl": 80_000,
+            "target_unit": 100,
+            "actual_unit": 80,
+            "percent": 80,
+            "gap_tl": 20_000,
+            "required_percent": 90,
+            "include_in_total_tl": True,
+            "include_in_prime": True,
+        }],
+    )
+
+    monkeypatch.setattr(
+        quarter_module.PersistentRepresentativeSnapshotService,
+        "get_active",
+        lambda representative_id, year, month: None,
+    )
+    monkeypatch.setattr(
+        quarter_module.ProductionResultService,
+        "effective_products",
+        lambda year, month, representative_id: {11: {"source": "PRODUCTION_2"}},
+    )
+    monkeypatch.setattr(
+        quarter_module.ProductionResultService,
+        "use_effective_batch",
+        lambda year, month, representative_id, rows: nullcontext(rows),
+    )
+
+    rows, quota, available = service._snapshot_products(8)
+
+    assert available is True
+    assert quota["source"] == "AUTHORITATIVE_HISTORY"
+    assert quota["selected_id"] == 11
+    assert rows[0]["actual_tl"] == 100_000
+    assert rows[0]["percent"] == 100
+    assert rows[0]["quota_uplift_tl"] == 20_000
+
+
+def test_all_quarters_can_resolve_historical_months_without_persisted_month_snapshot(monkeypatch):
+    service = QuarterEntitlementService.__new__(QuarterEntitlementService)
+    service.representative_id = 97
+    service.year = 2026
+    service.quota_exit_by_month = {}
     service._official_quota = {}
     service._snapshot_rows = {}
     service.engine = SimpleNamespace(products=[])
@@ -206,9 +272,33 @@ def test_missing_snapshot_never_falls_back_to_live_data(monkeypatch):
         "get_active",
         lambda representative_id, year, month: None,
     )
+    service._historical_products = lambda month: [{
+        "product_id": month,
+        "product_name": f"Ürün {month}",
+        "target_tl": 100,
+        "actual_tl": 90,
+        "target_unit": 10,
+        "actual_unit": 9,
+        "percent": 90,
+        "gap_tl": 10,
+        "required_percent": 0,
+        "include_in_total_tl": True,
+        "include_in_prime": False,
+        "quota_exit": False,
+        "quota_uplift_tl": 0,
+        "quota_uplift_unit": 0,
+    }]
 
-    rows, quota, available = service._snapshot_products(8)
-
-    assert rows is None
-    assert quota is None
-    assert available is False
+    for quarter, months in {
+        1: [1, 2, 3],
+        2: [4, 5, 6],
+        3: [7, 8, 9],
+        4: [10, 11, 12],
+    }.items():
+        service.quarter = quarter
+        service.months = months
+        for month in months:
+            rows, quota, available = service._snapshot_products(month)
+            assert available is True
+            assert rows[0]["month"] == month
+            assert quota["source"] == "AUTHORITATIVE_HISTORY"
