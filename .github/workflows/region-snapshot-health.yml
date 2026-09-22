@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/region-snapshot-health.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/region-snapshot-health.yml"
   workflow_dispatch:
 
 permissions:
@@ -46,6 +50,12 @@ jobs:
           echo "WORKER_PROCESSES_BEGIN"
           pgrep -af 'ims_import_worker.py' || true
           echo "WORKER_PROCESSES_END"
+          echo "REFRESH_QUEUE_BEGIN"
+          find instance/representative_refresh_queue -maxdepth 1 -type f -name '*.json' -printf '%f|' -exec cat {} \; -printf '\n' 2>/dev/null | sort || true
+          echo "REFRESH_QUEUE_END"
+          echo "WORKER_JOURNAL_BEGIN"
+          sudo journalctl -u ims-import-worker.service --since '45 minutes ago' --no-pager |             grep -E 'production_refresh|representative_refresh_queue|snapshot_warm|snapshot_acceptance|Traceback|ERROR|Exception|FAILED' |             tail -n 260 || true
+          echo "WORKER_JOURNAL_END"
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import sqlalchemy as sa
