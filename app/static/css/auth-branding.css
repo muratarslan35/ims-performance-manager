@@ -2472,3 +2472,82 @@ body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
     min-height: 32px;
   }
 }
+
+
+/* === PC AUTH BALANCED SIZE 20260922g === */
+/* PC-only refinement from the live short-viewport screenshot:
+   restore a little visual scale, shift the complete composition upward,
+   and preserve a clear bottom gap. Mobile/tablet remain unchanged. */
+@media (min-width: 1200px) and (max-height: 800px) {
+  body.anonymous .auth-shell.auth-shell-login,
+  body.anonymous .auth-shell.auth-shell-register {
+    row-gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 28px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack,
+  body.anonymous .auth-shell-register .auth-brand-stack,
+  body.anonymous .auth-shell-login .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    transform: translateY(-42px);
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem {
+    width: clamp(124px, 7.4vw, 146px);
+    max-height: 90px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem img,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem img {
+    max-height: 90px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-system-title,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-system-title {
+    font-size: clamp(16px, 1.05vw, 18px);
+    padding-bottom: 2px;
+  }
+
+  body.anonymous .auth-shell-login .auth-layout {
+    width: min(65vw, 840px);
+    max-width: 840px;
+    height: 410px;
+    max-height: 410px;
+    min-height: 390px;
+  }
+
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    width: min(65vw, 840px);
+    max-width: 840px;
+    height: 458px;
+    max-height: 458px;
+    min-height: 430px;
+  }
+
+  body.anonymous .auth-shell-login .auth-layout .auth-card {
+    padding: 16px 20px 12px;
+  }
+
+  body.anonymous .auth-shell-register .auth-layout .auth-card {
+    padding: 12px 18px 10px;
+  }
+
+  body.anonymous .auth-shell-login .portal-option span {
+    min-height: 60px;
+  }
+
+  body.anonymous .auth-shell-login .auth-form .form-control,
+  body.anonymous .auth-shell-register .auth-form .form-control,
+  body.anonymous .auth-shell-register .auth-form .form-select {
+    min-height: 34px;
+  }
+
+  body.anonymous .auth-shell-login .btn-auth-submit,
+  body.anonymous .auth-shell-register .btn-auth-submit {
+    min-height: 34px;
+  }
+}
