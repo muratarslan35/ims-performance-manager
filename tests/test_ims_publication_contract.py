@@ -142,3 +142,17 @@ def test_worker_reattaches_completed_job_before_atomic_publication():
     complete = publish.index('percent=100, stage="completed"')
     assert reattach < marker < commit < complete
 
+def test_only_newest_job_can_hold_publication_gate():
+    service = (ROOT / "app/services/ims_publication_service.py").read_text(
+        encoding="utf-8"
+    )
+    pending = service[
+        service.index("def pending_job"):
+        service.index("def latest_visible_upload")
+    ]
+    assert ".order_by(" in pending
+    assert ".first()" in pending
+    assert ".limit(5)" not in pending
+    assert "Older interrupted" in pending
+    assert "job = query.order_by" in pending
+
