@@ -67,7 +67,10 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
             payload["market_read_model_version"] = 1
             return payload
 
-        existing = PersistentDashboardSnapshotService.get_active(year, month)
+        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+        existing = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        )
         market_ready = bool(
             isinstance(existing, dict)
             and int(existing.get("market_read_model_version") or 0) >= 1
@@ -78,10 +81,8 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
             PersistentDashboardSnapshotService.publish(year, month, _payload)
             built = True
         else:
-            _payload, built = PersistentDashboardSnapshotService.get_or_build(
-                year, month, rebuild
-            )
-        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+            _payload = existing
+            built = False
         result = {
             "status": "ACTIVE" if built else "REUSED",
             "ims_upload_id": ims_id,
@@ -95,7 +96,9 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
         )
 
         read_started = time.perf_counter()
-        verified = PersistentDashboardSnapshotService.get_active(year, month)
+        verified = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        )
         read_seconds = time.perf_counter() - read_started
         if not isinstance(verified, dict) or not verified:
             raise RuntimeError("dashboard snapshot warm-up completed but active payload is unavailable")
