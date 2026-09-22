@@ -2,11 +2,8 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 
 from app.services.period_service import PeriodService
-from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+from app.services.historical_region_read_model_service import HistoricalRegionReadModelService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-from app.services.region_market_service import RegionMarketService
-from app.services.region_performance_service import RegionPerformanceService
-from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
 
@@ -37,28 +34,16 @@ def _assigned_region_manager(report):
 
 
 def _compatibility_region_read_model(region_key, year, month):
-    """Rebuild a historical region view from authoritative business data.
+    """Serve historical compatibility from a durable source-versioned read model.
 
-    Early 2026 periods predate durable region snapshots. Late P1/P2 production
-    can also temporarily make the newest exact snapshot unavailable. Historical
-    navigation must keep the legacy behavior in both cases: open the page from
-    current business data instead of redirecting the user to the dashboard.
+    Early 2026 periods predate durable region snapshot sets. Their authoritative
+    calculation is preserved exactly, but it is executed at most once for each
+    IMS/production identity and shared by every Gunicorn worker afterwards.
     """
-    performance_service = RegionPerformanceService(region_key, year, month)
-    report = performance_service.report()
-    market_analysis = RegionMarketService(
-        report["region_key"], performance_service.rep_ids, year, month
-    ).build()
-    return {
-        "report": report,
-        "market_analysis": market_analysis,
-        "ai_report": ScopedAIInsightService.build(
-            scope_type="region",
-            scope_name=report["region_name"],
-            periods=report["periods"],
-            market_analysis=market_analysis,
-        ),
-    }, "compatibility"
+    return (
+        HistoricalRegionReadModelService.get_or_build(region_key, year, month),
+        "compatibility",
+    )
 
 
 def _region_read_model(region_key, year, month, *, source_upload_id=None):
