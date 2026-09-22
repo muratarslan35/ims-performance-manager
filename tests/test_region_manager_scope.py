@@ -508,3 +508,92 @@ def test_production_acceptance_anonymous_probe_does_not_poison_manager_session(a
         _login_as(client, manager_id)
         assert client.get("/dashboard/").status_code == 200
 
+def test_admin_can_convert_legacy_unrestricted_manager_to_promotion(app, client):
+    from app.extensions import db
+    from app.models import User
+    from app.region_manager import (
+        RegionManagerScope,
+        is_privileged_manager,
+        manager_type,
+    )
+
+    with app.app_context():
+        murat = User(
+            full_name="Murat ASAN",
+            email="murat.asan@bilimilac.com",
+            password=generate_password_hash("password123"),
+            role="Manager",
+            active=True,
+        )
+        db.session.add(murat)
+        db.session.commit()
+        murat_id = murat.id
+        assert RegionManagerScope.query.filter_by(user_id=murat_id).one_or_none() is None
+        assert is_privileged_manager(murat)
+        assert manager_type(murat) == "privileged"
+
+    login_admin(client)
+    page = client.get("/manager-users/")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert f'id="editManager{murat_id}"' in html
+    assert "murat.asan@bilimilac.com" in html
+
+    response = client.post(
+        f"/manager-users/{murat_id}/update",
+        data={
+            "full_name": "Murat ASAN",
+            "email": "murat.asan@bilimilac.com",
+            "password": "",
+            "manager_type": "promotion",
+            "region_code": "",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Yönetici bilgileri güncellendi." in response.get_data(as_text=True)
+
+    with app.app_context():
+        murat = db.session.get(User, murat_id)
+        scope = RegionManagerScope.query.filter_by(user_id=murat_id).one()
+        assert scope.manager_type == "promotion"
+        assert scope.region_code is None
+        assert manager_type(murat) == "promotion"
+        assert not is_privileged_manager(murat)
+
+
+def test_non_admin_cannot_edit_legacy_unrestricted_manager(app, client):
+    from app.extensions import db
+    from app.models import User
+
+    with app.app_context():
+        murat = User(
+            full_name="Murat ASAN",
+            email="murat.asan@bilimilac.com",
+            password=generate_password_hash("password123"),
+            role="Manager",
+            active=True,
+        )
+        db.session.add(murat)
+        db.session.commit()
+        murat_id = murat.id
+
+    login_manager(client)
+    page = client.get("/manager-users/")
+    html = page.get_data(as_text=True)
+    assert f'id="editManager{murat_id}"' not in html
+
+    response = client.post(
+        f"/manager-users/{murat_id}/update",
+        data={
+            "full_name": "Murat ASAN",
+            "email": "murat.asan@bilimilac.com",
+            "password": "",
+            "manager_type": "promotion",
+            "region_code": "",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "yönetici ekleme veya düzenleme yetkisine sahip değildir" in response.get_data(as_text=True)
+
