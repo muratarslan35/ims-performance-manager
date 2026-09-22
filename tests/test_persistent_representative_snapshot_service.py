@@ -131,3 +131,17 @@ def test_monthly_comparison_contract_forces_one_time_snapshot_upgrade():
     assert "def _set_read_model_version" in snapshot
     assert "cls._set_read_model_version(exact.id) >= cls.READ_MODEL_VERSION" in snapshot
     assert '"read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION' in workspace
+
+
+def test_forced_refresh_retires_orphaned_building_generation_before_rebuild():
+    source = (
+        ROOT / "app/services/persistent_representative_snapshot_service.py"
+    ).read_text(encoding="utf-8")
+    build = source[source.index("def build_for_period"):]
+
+    assert "if not force:" in build
+    assert "representative_snapshot_stale_building_retired" in build
+    assert ".values(status=cls.STATUS_FAILED)" in build
+    assert build.index(".values(status=cls.STATUS_FAILED)") < build.index(
+        "representative_snapshot_sets.insert().values("
+    )
