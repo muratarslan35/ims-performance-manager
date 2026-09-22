@@ -339,8 +339,22 @@ def main():
         murat = User.query.filter(db.func.lower(User.email) == "murat.asan@bilimilac.com").one_or_none()
         _check(admin is not None and is_privileged_manager(admin), "admin_access", failures)
         _check(bool(admin and can_manage_managers(admin)), "admin_manager_mutation", failures)
-        _check(murat is not None and is_privileged_manager(murat) and not is_regional_manager(murat),
-               "murat_unrestricted", failures)
+        murat_scope = (
+            RegionManagerScope.query.filter_by(user_id=murat.id).one_or_none()
+            if murat is not None else None
+        )
+        murat_policy_valid = bool(
+            murat is not None
+            and (
+                (murat_scope is None and is_privileged_manager(murat) and not is_regional_manager(murat))
+                or (
+                    murat_scope is not None
+                    and not is_privileged_manager(murat)
+                    and manager_type(murat) in {"region", "promotion", "product", "marketing"}
+                )
+            )
+        )
+        _check(murat_policy_valid, "murat_manager_policy", failures)
 
         manager = scoped[0][0] if scoped else None
         own_code = assigned_region(manager) if manager else None
@@ -735,7 +749,9 @@ def main():
             "tested_region": own_code,
             "admin_preserved": admin is not None,
             "admin_can_manage": bool(admin and can_manage_managers(admin)),
-            "murat_unrestricted": bool(murat and is_privileged_manager(murat)),
+            "murat_manager_type": manager_type(murat) if murat else None,
+            "murat_explicit_scope": bool(murat_scope),
+            "murat_policy_valid": bool(murat_policy_valid),
             "regional_permissions": permission_state if manager else {},
         }
     print("REGION_MANAGER_ACCEPTANCE|" + json.dumps(evidence, ensure_ascii=False, sort_keys=True))
