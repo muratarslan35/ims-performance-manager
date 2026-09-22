@@ -487,3 +487,24 @@ def test_anonymous_login_skips_operational_period_metadata(client, monkeypatch):
     assert response.status_code == 200
     assert calls == {"period": 0, "upload": 0}
 
+def test_production_acceptance_anonymous_probe_does_not_poison_manager_session(app):
+    from flask import g
+
+    from app.models import User
+    from verify_region_manager_production import _login_as
+
+    with app.app_context():
+        manager = User.query.filter_by(email="manager101@example.com").one()
+        manager_id = manager.id
+
+        anonymous_client = app.test_client()
+        assert anonymous_client.get("/login").status_code == 200
+
+        # Production acceptance keeps the app context open across probes.
+        # Clear the request-independent Flask-Login cache before switching users.
+        g.pop("_login_user", None)
+
+        client = app.test_client()
+        _login_as(client, manager_id)
+        assert client.get("/dashboard/").status_code == 200
+
