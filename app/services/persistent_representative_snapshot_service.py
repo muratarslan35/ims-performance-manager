@@ -186,8 +186,10 @@ class PersistentRepresentativeSnapshotService:
                     representative_snapshot_sets.c.source_upload_id != int(ims_id),
                 ).order_by(desc(representative_snapshot_sets.c.activated_at), desc(representative_snapshot_sets.c.id)).limit(1)
             ).scalar()
-            if previous:
-                return int(previous)
+            # Publication is all-or-nothing across dashboard, region and
+            # representative read models. Never fall through to the current
+            # generation while the IMS job is still pending publication.
+            return int(previous) if previous else None
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
         if exact:
             return int(exact.id)
