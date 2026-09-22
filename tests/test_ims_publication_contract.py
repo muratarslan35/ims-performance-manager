@@ -78,3 +78,24 @@ def test_all_user_facing_snapshot_layers_stay_on_previous_generation_until_publi
     complete_index = publish.index('percent=100, stage="completed"')
     assert ready_index < publication_index < complete_index
 
+def test_region_enrichment_uses_exact_hidden_snapshot_generations():
+    regions = (ROOT / "app/services/persistent_region_snapshot_service.py").read_text(encoding="utf-8")
+    representatives = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+
+    enrich = regions[regions.index("def enrich_for_period"):regions.index("def build_for_period", regions.index("def enrich_for_period"))]
+    assert "cls._existing_set(year, month, ims_id, production_id)" in enrich
+    assert "get_exact_active_many" in enrich
+    assert "get_generation_for_source" in enrich
+    assert "get_stable(year, month)" not in enrich
+    assert "def get_exact_active_many" in representatives
+
+
+def test_progress_reaches_100_only_after_all_snapshot_layers_and_enrichment():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+    publish = worker[worker.index("def _prepare_and_publish"):]
+    representative = publish.index("representative_result = _warm_representative_snapshots")
+    enrichment = publish.index("PersistentRegionSnapshotService.enrich_for_period")
+    ready = publish.index("ready = (")
+    complete = publish.index('percent=100, stage="completed"')
+    assert representative < enrichment < ready < complete
+
