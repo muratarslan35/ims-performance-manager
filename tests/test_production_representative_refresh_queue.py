@@ -29,6 +29,7 @@ def test_production_refresh_queue_contract():
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in ims_source
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in retry_source
     assert "_process_representative_refresh_queue" in worker
+    assert "representative_refresh_queue_started year=%s month=%s reason=%s" in worker
     assert "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)" in worker
     assert "region_result = _warm_region_snapshots(app, year, month, force=True)" in worker
     assert "_warm_representative_snapshots(" in worker

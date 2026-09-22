@@ -435,6 +435,10 @@ def _process_representative_refresh_queue(app):
     year = int(item.get("year"))
     month = int(item.get("month"))
     reason = str(item.get("reason") or "production")
+    app.logger.info(
+        "representative_refresh_queue_started year=%s month=%s reason=%s",
+        year, month, reason,
+    )
     latest = IMSUpload.query.filter_by(
         year=year, month=month, status=IMSUpload.STATUS_COMPLETED
     ).order_by(
