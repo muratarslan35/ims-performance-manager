@@ -318,6 +318,9 @@ class PersistentRepresentativeSnapshotService:
             return {"status": "REUSED", "set_id": int(exact.id), "representatives": len(ids)}
 
         already_building = cls._current_source_building(year, month, ims_id, production_id)
+        set_id = None
+        completed = 0
+        build_ids = list(ids)
         if already_building:
             if not force:
                 return {
@@ -326,34 +329,77 @@ class PersistentRepresentativeSnapshotService:
                     "representatives": 0,
                 }
 
-            # A forced production refresh runs only in the single IMS worker.
-            # If that worker was restarted mid-build, the persisted BUILDING
-            # generation is orphaned derived cache and would otherwise block
-            # the exact P2 generation forever. Retire it and build a fresh
-            # atomic generation; the previous ACTIVE set stays visible.
-            db.session.execute(
-                representative_snapshot_sets.update().where(
-                    representative_snapshot_sets.c.id == int(already_building)
-                ).values(status=cls.STATUS_FAILED)
+            # Forced production refreshes are processed by the single IMS worker.
+            # A deploy can restart that worker while an atomic generation is only
+            # partially written. Those rows are valid derived cache for the same
+            # IMS/production identity, so resume the generation instead of
+            # discarding completed representative work.
+            existing_rows = db.session.execute(
+                sa.select(representative_snapshots.c.representative_id).where(
+                    representative_snapshots.c.set_id == int(already_building)
+                )
+            ).all()
+            existing_ids = {
+                int(row[0]) for row in existing_rows if row[0] is not None
+            }
+            expected_ids = set(ids)
+            existing_version = (
+                cls._set_read_model_version(already_building)
+                if existing_ids
+                else cls.READ_MODEL_VERSION
             )
-            db.session.commit()
-            current_app.logger.warning(
-                "representative_snapshot_stale_building_retired "
-                "year=%s month=%s set_id=%s ims_upload_id=%s production_upload_id=%s",
-                year, month, int(already_building), int(ims_id), int(production_id),
+            can_resume = (
+                existing_ids.issubset(expected_ids)
+                and int(existing_version or 0) >= cls.READ_MODEL_VERSION
             )
+            if can_resume:
+                set_id = int(already_building)
+                completed = len(existing_ids)
+                build_ids = [
+                    representative_id
+                    for representative_id in ids
+                    if representative_id not in existing_ids
+                ]
+                db.session.execute(
+                    representative_snapshot_sets.update().where(
+                        representative_snapshot_sets.c.id == set_id
+                    ).values(representative_count=completed)
+                )
+                db.session.commit()
+                current_app.logger.warning(
+                    "representative_snapshot_partial_build_resumed "
+                    "year=%s month=%s set_id=%s ims_upload_id=%s "
+                    "production_upload_id=%s completed=%s remaining=%s",
+                    year, month, set_id, int(ims_id), int(production_id),
+                    completed, len(build_ids),
+                )
+            else:
+                db.session.execute(
+                    representative_snapshot_sets.update().where(
+                        representative_snapshot_sets.c.id == int(already_building)
+                    ).values(status=cls.STATUS_FAILED)
+                )
+                db.session.commit()
+                current_app.logger.warning(
+                    "representative_snapshot_stale_building_retired "
+                    "year=%s month=%s set_id=%s ims_upload_id=%s "
+                    "production_upload_id=%s existing=%s version=%s",
+                    year, month, int(already_building), int(ims_id),
+                    int(production_id), len(existing_ids), existing_version,
+                )
 
-        result = db.session.execute(representative_snapshot_sets.insert().values(
-            year=year,
-            month=month,
-            source_upload_id=ims_id,
-            production_upload_id=production_id,
-            status=cls.STATUS_BUILDING,
-            representative_count=0,
-            created_at=datetime.utcnow(),
-        ))
-        set_id = int(result.inserted_primary_key[0])
-        db.session.commit()
+        if set_id is None:
+            result = db.session.execute(representative_snapshot_sets.insert().values(
+                year=year,
+                month=month,
+                source_upload_id=ims_id,
+                production_upload_id=production_id,
+                status=cls.STATUS_BUILDING,
+                representative_count=0,
+                created_at=datetime.utcnow(),
+            ))
+            set_id = int(result.inserted_primary_key[0])
+            db.session.commit()
 
         # Import lazily to avoid changing the existing calculator installation order.
         from app.services.representative_period_workspace import build_representative_workspace_payload
@@ -405,14 +451,15 @@ class PersistentRepresentativeSnapshotService:
                     db.session.rollback()
                     return representative_id, name, payload
 
-            completed = 0
+            # completed may already include persisted representatives
+            # when a worker restart resumes the same BUILDING generation.
             # Keep one executor for the whole generation. Recreating DB reader
             # threads for every eight representatives discards warm connections
             # and caches, and creates avoidable allocator pressure.
             pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
             try:
-                for offset in range(0, total, batch_size):
-                    batch_ids = ids[offset:offset + batch_size]
+                for offset in range(0, len(build_ids), batch_size):
+                    batch_ids = build_ids[offset:offset + batch_size]
                     calculated = (
                         list(pool.map(calculate, batch_ids))
                         if pool is not None
