@@ -93,6 +93,22 @@ def test_backend_deploy_reuses_representative_snapshot_without_duplicate_force_r
     assert "REPRESENTATIVE_SNAPSHOT_ACTIVATION|background_force_rebuild" not in installer
     assert "backfill_active_representative_snapshots.py\" --force" not in installer
 
+    bootstrap = installer.index("REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web")
+    bootstrap_guard = installer.rfind('if [ "$release_mode"', 0, bootstrap)
+    assert '"backend"' not in installer[bootstrap_guard:bootstrap]
+
+    region_activation = installer.index(
+        "REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current"
+    )
+    region_guard = installer.rfind('if [ "$release_mode"', 0, region_activation)
+    assert '"backend"' not in installer[region_guard:region_activation]
+
+    dashboard_activation = installer.index(
+        "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
+    )
+    dashboard_guard = installer.rfind('if [ "$release_mode"', 0, dashboard_activation)
+    assert '"backend"' not in installer[dashboard_guard:dashboard_activation]
+
 
 def test_snapshot_migration_adds_only_derived_cache_tables():
     migration = (ROOT / "migrations/versions/a2b3c4d5e6f7_add_representative_snapshots.py").read_text(encoding="utf-8")
