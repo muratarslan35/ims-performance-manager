@@ -295,20 +295,39 @@ class RepresentativeSnapshotRefreshQueue:
                 )
         return queued
 
+    @staticmethod
+    def _production_priority(payload: dict) -> int:
+        """Newest production upload wins; mtime rotates peers after failures."""
+        reason = str(payload.get("reason") or "")
+        prefix = "production_upload:"
+        if not reason.startswith(prefix):
+            return 0
+        try:
+            return int(reason[len(prefix):])
+        except (TypeError, ValueError):
+            return 0
+
     @classmethod
     def next(cls) -> dict | None:
-        paths = sorted(
-            cls._root().glob("????-??.json"),
-            key=lambda path: (path.stat().st_mtime, path.name),
-        )
-        for path in paths:
+        candidates = []
+        for path in cls._root().glob("????-??.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 payload["_path"] = str(path)
-                return payload
+                candidates.append(
+                    (
+                        -cls._production_priority(payload),
+                        path.stat().st_mtime,
+                        path.name,
+                        payload,
+                    )
+                )
             except (OSError, ValueError, json.JSONDecodeError):
                 path.unlink(missing_ok=True)
-        return None
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[:3])
+        return candidates[0][3]
 
     @classmethod
     def defer(cls, item: dict) -> None:
