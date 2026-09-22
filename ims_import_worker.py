@@ -383,8 +383,22 @@ def _prepare_and_publish(app, completed):
             message="IMS yüklendi · snapshotlar yeniden denenecek", detail=detail,
             status=IMSImportJob.STATUS_PROCESSING)
         return False
+    # Snapshot helpers remove their scoped SQLAlchemy sessions, so the
+    # completed instance passed into this function may now be detached.
+    # Re-attach the queue row before publication. 100% is written only after
+    # publication_ready is durably committed in SQLite.
+    completed = db.session.get(IMSImportJob, job_id)
+    if completed is None:
+        IMSProgressStore.write(
+            job_id, percent=98, stage="snapshot_retry",
+            message="IMS yüklendi · yayın kaydı yeniden denenecek",
+            detail="Snapshotlar hazır ancak yayın iş kaydı yeniden bağlanamadı.",
+            status=IMSImportJob.STATUS_PROCESSING,
+        )
+        return False
     summary = json.loads(completed.result_summary or "{}")
     summary["publication_ready"] = True
+    summary["publication_ready_upload_id"] = int(completed.ims_upload_id or 0)
     completed.result_summary = json.dumps(summary, ensure_ascii=False)
     completed.error_message = None
     db.session.commit()
