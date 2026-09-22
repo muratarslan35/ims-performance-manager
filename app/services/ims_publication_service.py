@@ -28,38 +28,62 @@ class IMSPublicationService:
     @classmethod
     def pending_job(cls, year=None, month=None):
         query = IMSImportJob.query.filter(
-            IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING, IMSImportJob.STATUS_COMPLETED))
+            IMSImportJob.status.in_(
+                (
+                    IMSImportJob.STATUS_QUEUED,
+                    IMSImportJob.STATUS_PROCESSING,
+                    IMSImportJob.STATUS_COMPLETED,
+                )
+            )
         )
         if year is not None:
             query = query.filter(IMSImportJob.year == int(year))
         if month is not None:
             query = query.filter(IMSImportJob.month == int(month))
-        for job in query.order_by(desc(IMSImportJob.queued_at), desc(IMSImportJob.id)).limit(5):
-            progress = IMSProgressStore.for_job(job)
-            if progress.get("status") in {IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING}:
-                return job
-            if progress.get("stage") in {"read_models", "dashboard_snapshot", "region_snapshots", "representative_snapshots", "snapshot_retry"}:
-                return job
 
-            # A durable 100% record is not enough by itself. Snapshot helper
-            # functions intentionally remove scoped sessions, so older workers
-            # could write the progress file after mutating a detached job object
-            # and fail to persist publication_ready in SQLite. Keep the newest
-            # generation hidden until the DB publication marker is authoritative.
-            stored = IMSProgressStore.read(job.id)
-            if (
-                job.status == IMSImportJob.STATUS_COMPLETED
-                and stored
-                and stored.get("status") == IMSImportJob.STATUS_COMPLETED
-                and stored.get("stage") == "completed"
-                and int(stored.get("percent") or 0) == 100
-            ):
-                try:
-                    summary = json.loads(job.result_summary or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    summary = {}
-                if summary.get("publication_ready") is not True:
-                    return job
+        # Publication authority is monotonic: only the newest queue entry for
+        # the requested scope can hold back visibility. Older interrupted
+        # progress files must never re-close the gate after a newer generation
+        # has been fully verified and published.
+        job = query.order_by(
+            desc(IMSImportJob.queued_at), desc(IMSImportJob.id)
+        ).first()
+        if job is None:
+            return None
+
+        progress = IMSProgressStore.for_job(job)
+        if progress.get("status") in {
+            IMSImportJob.STATUS_QUEUED,
+            IMSImportJob.STATUS_PROCESSING,
+        }:
+            return job
+        if progress.get("stage") in {
+            "read_models",
+            "dashboard_snapshot",
+            "region_snapshots",
+            "representative_snapshots",
+            "snapshot_retry",
+        }:
+            return job
+
+        # A durable 100% record is not enough by itself. Snapshot helper
+        # functions intentionally remove scoped sessions, so an older worker
+        # could write progress after mutating a detached job object. The newest
+        # generation remains hidden until publication_ready is durable in SQLite.
+        stored = IMSProgressStore.read(job.id)
+        if (
+            job.status == IMSImportJob.STATUS_COMPLETED
+            and stored
+            and stored.get("status") == IMSImportJob.STATUS_COMPLETED
+            and stored.get("stage") == "completed"
+            and int(stored.get("percent") or 0) == 100
+        ):
+            try:
+                summary = json.loads(job.result_summary or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                summary = {}
+            if summary.get("publication_ready") is not True:
+                return job
         return None
 
     @classmethod
