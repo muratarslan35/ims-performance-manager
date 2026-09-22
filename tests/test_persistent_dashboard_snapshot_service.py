@@ -3,7 +3,21 @@ from pathlib import Path
 from flask import Flask
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+
+
+@pytest.fixture(autouse=True)
+def no_pending_publication(monkeypatch):
+    from app.services.ims_publication_service import IMSPublicationService
+
+    monkeypatch.setattr(
+        IMSPublicationService,
+        "pending_job",
+        classmethod(lambda cls, year=None, month=None: None),
+    )
+
 
 
 def test_snapshot_is_shared_and_rejected_when_source_identity_changes(tmp_path, monkeypatch):
