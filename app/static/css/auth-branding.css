@@ -2622,3 +2622,50 @@ body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
     min-height: 36px;
   }
 }
+
+
+/* === AUTH FULL VIEWPORT BACKGROUND 20260923b === */
+/* Keep login/register background visually continuous across the full desktop
+   viewport, including the browser scrollbar/gutter edge. */
+@media (min-width: 1200px) {
+  html:has(body.auth-viewport-locked),
+  body.auth-viewport-locked,
+  body.auth-viewport-locked > .page,
+  body.auth-viewport-locked .page-wrapper,
+  body.auth-viewport-locked .page-body,
+  body.auth-viewport-locked .page-body > .container-xl {
+    background:
+      linear-gradient(135deg, #EEF4FF 0%, #F8FAFC 50%, #F5F0FF 100%) !important;
+  }
+
+  html:has(body.auth-viewport-locked),
+  body.auth-viewport-locked {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  body.auth-viewport-locked > .page,
+  body.auth-viewport-locked .page-wrapper,
+  body.auth-viewport-locked .page-body,
+  body.auth-viewport-locked .page-body > .container-xl {
+    width: 100%;
+    max-width: none;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  [data-theme="dark"]:has(body.auth-viewport-locked),
+  [data-theme="dark"] body.auth-viewport-locked,
+  [data-theme="dark"] body.auth-viewport-locked > .page,
+  [data-theme="dark"] body.auth-viewport-locked .page-wrapper,
+  [data-theme="dark"] body.auth-viewport-locked .page-body,
+  [data-theme="dark"] body.auth-viewport-locked .page-body > .container-xl {
+    background:
+      radial-gradient(circle at 20% 20%, rgba(45,127,249,.17), transparent 30%),
+      radial-gradient(circle at 82% 78%, rgba(24,179,104,.10), transparent 34%),
+      #08111f !important;
+  }
+}
