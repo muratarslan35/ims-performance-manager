@@ -30,3 +30,19 @@ def test_desktop_login_compacts_on_short_viewports():
     assert "max-height: calc(100dvh - 190px);" in css
     assert "body.anonymous .auth-shell-login .portal-option span" in css
     assert "auth-branding.css', v='20260922b'" in login
+
+
+def test_pc_login_and_register_use_fixed_viewport_composition():
+    css = (ROOT / "app/static/css/auth-branding.css").read_text(encoding="utf-8")
+    login = (ROOT / "app/templates/login.html").read_text(encoding="utf-8")
+    register = (ROOT / "app/templates/register.html").read_text(encoding="utf-8")
+
+    assert "@media (min-width: 1200px)" in css
+    assert "body.anonymous .auth-shell.auth-shell-login" in css
+    assert "body.anonymous .auth-shell.auth-shell-register" in css
+    assert "height: 100dvh;" in css
+    assert "overflow: hidden;" in css
+    assert "body.anonymous .auth-shell-register .auth-layout" in css
+    assert "@media (min-width: 1200px) and (max-height: 800px)" in css
+    assert "auth-branding.css', v='20260922c'" in login
+    assert "auth-branding.css', v='20260922c'" in register
