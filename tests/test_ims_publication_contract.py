@@ -59,3 +59,22 @@ def test_publication_receipt_does_not_hide_a_recycled_upload_id():
     assert "ims_publication_receipts.delete().where(" in service
     assert "if cls._has_current_receipt(user_id, upload):" in service
     assert "upload is None or cls._has_current_receipt(user_id, upload)" in service
+
+def test_all_user_facing_snapshot_layers_stay_on_previous_generation_until_publish():
+    dashboard = (ROOT / "app/services/persistent_dashboard_snapshot_service.py").read_text(encoding="utf-8")
+    regions = (ROOT / "app/services/persistent_region_snapshot_service.py").read_text(encoding="utf-8")
+    representatives = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+
+    assert "IMSPublicationService.pending_job(year, month) is not None" in dashboard
+    assert "IMSPublicationService.latest_visible_upload(year, month)" in dashboard
+    assert "return int(previous) if previous else None" in regions
+    assert "return int(previous) if previous else None" in representatives
+    assert "get_generation_for_source" in worker
+
+    publish = worker[worker.index("def _prepare_and_publish"):]
+    ready_index = publish.index("ready = (")
+    publication_index = publish.index('summary["publication_ready"] = True')
+    complete_index = publish.index('percent=100, stage="completed"')
+    assert ready_index < publication_index < complete_index
+
