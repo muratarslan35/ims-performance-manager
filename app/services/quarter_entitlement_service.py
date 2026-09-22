@@ -10,10 +10,10 @@ from app.services.production_result_service import ProductionResultService
 class QuarterEntitlementService:
     """Expose monthly entitlement and Q context from published representative data.
 
-    The Q screen is snapshot-only for monthly target/actual values.  Quota-exit
-    selections may lift one selected product to at least 100% for that month,
-    but they never invent data or fall back to live IMS/production queries when
-    a representative snapshot is missing.
+    The Q screen prefers published representative snapshots. Historical months
+    created before representative snapshot persistence use a bounded authoritative
+    P2 > P1 > IMS read for this screen only, so Q1-Q4 remain complete without
+    rebuilding market/AI workspaces inside the request.
     """
 
     def __init__(self, representative_id, year, quarter, quota_exit_by_month=None):
@@ -117,27 +117,34 @@ class QuarterEntitlementService:
         ]
         return (official[0] if official else None), bool(official)
 
-    def _snapshot_products(self, month):
-        monthly = self._snapshot_month(month)
-        if monthly is None:
-            self._snapshot_rows[month] = None
-            return None, None, False
+    def _historical_products(self, month):
+        """Read one historical month through the same authoritative sales chain.
+
+        This is deliberately narrow: no market, AI or representative workspace is
+        rebuilt. effective_products resolves all products in one bounded P2 > P1 > IMS
+        batch, and the existing prime metadata is applied without per-product queries.
+        """
+        effective = ProductionResultService.effective_products(
+            self.year, int(month), self.representative_id
+        )
+        if not effective:
+            return []
 
         meta = self._product_meta()
         rows = []
-        for snapshot_row in monthly.get("products") or []:
-            product_id, product_name = self._product_identity(snapshot_row)
-            if product_id is None:
+        for raw_product_id, resolved in effective.items():
+            product_id = int(raw_product_id)
+            config = meta.get(product_id)
+            if not config:
                 continue
-            config = meta.get(product_id, {})
-            target_tl = float(snapshot_row.get("target_tl") or 0)
-            actual_tl = float(snapshot_row.get("actual_tl") or 0)
-            target_unit = float(snapshot_row.get("target_unit") or 0)
-            actual_unit = float(snapshot_row.get("actual_unit") or 0)
+            target_tl = float(resolved.get("target_tl") or 0)
+            actual_tl = float(resolved.get("actual_tl") or 0)
+            target_unit = float(resolved.get("target_unit") or 0)
+            actual_unit = float(resolved.get("actual_unit") or 0)
             rows.append({
                 "product_id": product_id,
-                "product_name": config.get("product_name") or product_name,
-                "month": month,
+                "product_name": config["product_name"],
+                "month": int(month),
                 "target_unit": round(target_unit, 2),
                 "target_tl": round(target_tl, 2),
                 "actual_unit": round(actual_unit, 2),
@@ -149,7 +156,54 @@ class QuarterEntitlementService:
                 "include_in_prime": bool(config.get("include_in_prime")),
                 "quota_exit": False,
                 "quota_uplift_tl": 0.0,
+                "quota_uplift_unit": 0.0,
+                "source": resolved.get("source"),
             })
+        rows.sort(key=lambda row: row["product_name"])
+        return rows
+
+    def _snapshot_products(self, month):
+        monthly = self._snapshot_month(month)
+        source = "SNAPSHOT"
+        meta = self._product_meta()
+        rows = []
+
+        if monthly is not None:
+            for snapshot_row in monthly.get("products") or []:
+                product_id, product_name = self._product_identity(snapshot_row)
+                if product_id is None:
+                    continue
+                config = meta.get(product_id, {})
+                target_tl = float(snapshot_row.get("target_tl") or 0)
+                actual_tl = float(snapshot_row.get("actual_tl") or 0)
+                target_unit = float(snapshot_row.get("target_unit") or 0)
+                actual_unit = float(snapshot_row.get("actual_unit") or 0)
+                rows.append({
+                    "product_id": product_id,
+                    "product_name": config.get("product_name") or product_name,
+                    "month": month,
+                    "target_unit": round(target_unit, 2),
+                    "target_tl": round(target_tl, 2),
+                    "actual_unit": round(actual_unit, 2),
+                    "actual_tl": round(actual_tl, 2),
+                    "percent": round(actual_tl / target_tl * 100.0, 2) if target_tl else 0.0,
+                    "gap_tl": round(max(0.0, target_tl - actual_tl), 2),
+                    "required_percent": float(config.get("required_percent") or 0),
+                    "include_in_total_tl": bool(config.get("include_in_total_tl")),
+                    "include_in_prime": bool(config.get("include_in_prime")),
+                    "quota_exit": False,
+                    "quota_uplift_tl": 0.0,
+                    "quota_uplift_unit": 0.0,
+                })
+        else:
+            source = "AUTHORITATIVE_HISTORY"
+            rows = self._historical_products(month)
+            for row in rows or []:
+                row.setdefault("month", int(month))
+
+        if not rows:
+            self._snapshot_rows[month] = None
+            return None, None, False
 
         available_ids = {row["product_id"] for row in rows}
         selected_id, auto_selected = self._selected_quota_product(month, available_ids)
@@ -157,15 +211,15 @@ class QuarterEntitlementService:
             for row in rows:
                 if row["product_id"] != selected_id:
                     continue
-                original_actual_tl = row["actual_tl"]
-                original_actual_unit = row["actual_unit"]
-                row["actual_tl"] = round(max(row["actual_tl"], row["target_tl"]), 2)
-                row["actual_unit"] = round(max(row["actual_unit"], row["target_unit"]), 2)
+                original_actual_tl = float(row.get("actual_tl") or 0)
+                original_actual_unit = float(row.get("actual_unit") or 0)
+                row["actual_tl"] = round(max(original_actual_tl, float(row.get("target_tl") or 0)), 2)
+                row["actual_unit"] = round(max(original_actual_unit, float(row.get("target_unit") or 0)), 2)
                 row["percent"] = (
                     round(row["actual_tl"] / row["target_tl"] * 100.0, 2)
-                    if row["target_tl"] else 0.0
+                    if row.get("target_tl") else 0.0
                 )
-                row["gap_tl"] = round(max(0.0, row["target_tl"] - row["actual_tl"]), 2)
+                row["gap_tl"] = round(max(0.0, float(row.get("target_tl") or 0) - row["actual_tl"]), 2)
                 row["quota_exit"] = True
                 row["quota_uplift_tl"] = round(row["actual_tl"] - original_actual_tl, 2)
                 row["quota_uplift_unit"] = round(row["actual_unit"] - original_actual_unit, 2)
@@ -174,18 +228,19 @@ class QuarterEntitlementService:
         options = [
             {"id": row["product_id"], "name": row["product_name"]}
             for row in rows
-            if row["target_tl"] > 0
+            if float(row.get("target_tl") or 0) > 0
         ]
         self._snapshot_rows[month] = rows
         return rows, {
             "selected_id": selected_id,
             "auto_selected": auto_selected,
             "options": options,
+            "source": source,
         }, True
 
     def _monthly_row(self, month):
-        products, quota, snapshot_available = self._snapshot_products(month)
-        if not snapshot_available:
+        products, quota, data_available = self._snapshot_products(month)
+        if not data_available:
             return {
                 "month": month,
                 "label": self._month_label(month),
@@ -200,6 +255,8 @@ class QuarterEntitlementService:
                 "blocked_reasons": ["Temsilci snapshot verisi bulunamadı."],
                 "has_data": False,
                 "snapshot_available": False,
+                "source_ready": False,
+                "data_source": None,
                 "products": [],
                 "quota_exit": {"selected_id": None, "auto_selected": False, "options": []},
                 "quota_uplift_tl": 0.0,
@@ -236,7 +293,9 @@ class QuarterEntitlementService:
             "entitlement_type": entitlement_type,
             "blocked_reasons": summary["entitlement"]["blocked_reasons"],
             "has_data": bool(summary["total_target"]),
-            "snapshot_available": True,
+            "snapshot_available": quota.get("source") == "SNAPSHOT",
+            "source_ready": True,
+            "data_source": quota.get("source"),
             "products": products,
             "quota_exit": quota,
             "quota_uplift_tl": quota_uplift_tl,
@@ -247,7 +306,7 @@ class QuarterEntitlementService:
         for month in self.months:
             monthly = self._snapshot_rows.get(month)
             if monthly is None:
-                # Trigger the same snapshot-only read if report() has not built it yet.
+                # Trigger the same snapshot-first/historical-authority read if report() has not built it yet.
                 monthly, _quota, available = self._snapshot_products(month)
                 if not available:
                     continue
@@ -320,7 +379,7 @@ class QuarterEntitlementService:
         product_entitlement = self.engine.evaluate_monthly_entitlement(product_inputs)
         required_total = self.engine.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
         q_cap = round(self.engine.get_setting("MAIN_PRIME", 50000.0) * len(self.months), 2)
-        complete = all(row["has_data"] and row.get("snapshot_available", True) for row in monthly)
+        complete = all(row["has_data"] and row.get("source_ready", row.get("snapshot_available", True)) for row in monthly)
         q_topup = self._q_topup(
             monthly_paid,
             q_cap,
