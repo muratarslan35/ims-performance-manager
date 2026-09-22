@@ -417,7 +417,9 @@ class PersistentRegionSnapshotService:
         if not set_id:
             return {"status": "WAITING_REGION", "regions": 0}
         payloads = cls._payloads_from_set(set_id)
-        dashboard_payload = PersistentDashboardSnapshotService.get_stable(year, month) or {}
+        dashboard_payload = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        ) or {}
         now = datetime.utcnow()
         for region_key, payload in payloads.items():
             enriched = dict(payload or {})
@@ -447,7 +449,13 @@ class PersistentRegionSnapshotService:
         models are ready (and can also safely backfill an older active set once).
         """
         year, month = int(year), int(month)
-        set_id = cls._visible_set_id(year, month)
+        ims_id, production_id = cls.source_identity(year, month)
+        exact = cls._existing_set(year, month, ims_id, production_id)
+        set_id = (
+            int(exact.id)
+            if exact is not None and exact.status == cls.STATUS_ACTIVE
+            else None
+        )
         if not set_id:
             return {"status": "WAITING_REGION", "regions": 0}
 
@@ -471,7 +479,7 @@ class PersistentRegionSnapshotService:
             for payload in payloads.values()
             for representative_id in cls._representative_ids((payload or {}).get("report") or {})
         })
-        current_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+        current_workspaces = PersistentRepresentativeSnapshotService.get_exact_active_many(
             current_rep_ids, year, month
         ) if current_rep_ids else {}
         if current_rep_ids and len(current_workspaces) < len(current_rep_ids):
