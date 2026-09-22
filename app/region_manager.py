@@ -60,12 +60,16 @@ def _email_hash(user):
 
 def is_privileged_manager(user):
     role = str(getattr(user, "role", "") or "").strip().casefold()
+    legacy_unrestricted = (
+        _email_hash(user) in UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES
+        and _scope_for(user) is None
+    )
     return bool(
         getattr(user, "is_authenticated", False)
         and (
             role in {"admin", "administrator"}
             or has_dual_portal_access(user)
-            or _email_hash(user) in UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES
+            or legacy_unrestricted
         )
     )
 
@@ -174,6 +178,17 @@ def can_manage_managers(user):
 def can_access_settings(user):
     role = str(getattr(user, "role", "") or "").strip().casefold()
     return bool(getattr(user, "is_authenticated", False) and role in {"admin", "administrator"})
+
+
+def can_edit_manager_user(actor, target):
+    """Allow admin-only conversion of the legacy unrestricted manager account."""
+    if not can_manage_managers(actor):
+        return False
+    if target is None or str(getattr(target, "role", "") or "").strip().casefold() != "manager":
+        return False
+    if _email_hash(target) in UNRESTRICTED_REGION_MANAGER_EMAIL_HASHES:
+        return can_access_settings(actor)
+    return not is_privileged_manager(target)
 
 
 def assigned_region(user):
@@ -655,7 +670,7 @@ def manager_mutation_required(view):
     return wrapped
 
 
-def _manager_rows():
+def _manager_rows(actor):
     managers = User.query.filter(db.func.lower(User.role) == "manager").order_by(User.full_name.asc()).all()
     rows = []
     for user in managers:
@@ -665,7 +680,7 @@ def _manager_rows():
             "manager_type": manager_type(user),
             "manager_type_label": manager_type_label(user),
             "region_code": scope.region_code if scope else None,
-            "editable": not is_privileged_manager(user),
+            "editable": can_edit_manager_user(actor, user),
         })
     return rows
 
@@ -686,7 +701,7 @@ def _validated_manager_type(value):
 def index():
     return render_template(
         "manager_users.html",
-        managers=_manager_rows(),
+        managers=_manager_rows(current_user),
         regions=available_regions(),
         manager_types=MANAGER_TYPES,
         can_edit=can_manage_managers(current_user),
@@ -725,7 +740,7 @@ def create():
 @manager_mutation_required
 def update(user_id):
     user = db.session.get(User, user_id)
-    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
+    if user is None or not can_edit_manager_user(current_user, user):
         flash("Düzenlenebilir yönetici hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
 
@@ -767,7 +782,7 @@ def update(user_id):
 @manager_mutation_required
 def toggle(user_id):
     user = db.session.get(User, user_id)
-    if user is None or str(user.role or "").casefold() != "manager" or is_privileged_manager(user):
+    if user is None or not can_edit_manager_user(current_user, user):
         flash("Düzenlenebilir yönetici hesabı bulunamadı.", "danger")
         return redirect(url_for("manager_users.index"))
     user.active = not user.active
