@@ -148,6 +148,23 @@ def _latest_snapshot_coverage():
             region_snapshots.c.set_id == int(region_set.id)
         )
     ).scalar() or 0) if region_set is not None else 0
+    region_payload_rows = (
+        db.session.execute(
+            select(region_snapshots.c.payload_json).where(
+                region_snapshots.c.set_id == int(region_set.id)
+            )
+        ).scalars().all()
+        if region_set is not None
+        else []
+    )
+    region_enriched = bool(
+        region_payload_rows
+        and all(
+            int((json.loads(raw) if raw else {}).get("read_model_version") or 0)
+            >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+            for raw in region_payload_rows
+        )
+    )
 
     representative_set = db.session.execute(
         select(
@@ -214,6 +231,7 @@ def _latest_snapshot_coverage():
         "region_expected": int(region_set.region_count or 0) if region_set is not None else 0,
         "region_rows": region_rows,
         "region_complete": region_complete,
+        "region_enriched": region_enriched,
         "representative_set_id": int(representative_set.id) if representative_set is not None else None,
         "representative_status": str(representative_set.status) if representative_set is not None else None,
         "representative_expected": representative_expected,
@@ -293,6 +311,11 @@ def main():
             _check(
                 latest_snapshot_coverage.get("region_complete"),
                 "latest_region_snapshot_incomplete",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("region_enriched"),
+                "latest_region_snapshot_not_enriched",
                 failures,
             )
             _check(
