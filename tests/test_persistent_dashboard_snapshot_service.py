@@ -153,6 +153,15 @@ def test_pending_publication_keeps_previous_dashboard_generation_visible(tmp_pat
                 )
             ),
         )
+        monkeypatch.setattr(
+            PersistentDashboardSnapshotService,
+            "get_generation_for_upload",
+            classmethod(
+                lambda cls, year, month, ims_id: {"week": 37}
+                if int(ims_id) == 31
+                else None
+            ),
+        )
 
         assert PersistentDashboardSnapshotService.get_active(2026, 9) == {"week": 37}
         assert PersistentDashboardSnapshotService.get_generation_for_source(
