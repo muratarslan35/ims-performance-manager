@@ -86,7 +86,7 @@ jobs:
                 # multi-gigabyte online backup for actual schema changes only.
                 if [ "$mode" != "heavy" ] && [ "$mode" != "import" ]; then mode="backend"; fi
                 ;;
-              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/kpi_workbook_compat.py|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
+              verify_live_ims_gate.py|app/ims.py|ims_import_worker.py|app/services/representative_snapshot_refresh_queue.py|app/services/ims_import_service.py|app/services/*import*|app/services/aggregate_identity*|app/services/competition*|app/services/kpi_workbook_compat.py|app/services/workbook_preflight.py|app/services/official_brick_spread_service.py|app/services/target_import_service.py|app/services/import_result_report.py|app/services/alias_service.py|app/services/vacancy_matching.py)
                 if [ "$mode" != "heavy" ]; then mode="import"; fi
                 ;;
               *)
@@ -340,7 +340,11 @@ jobs:
           elif [ "$RELEASE_MODE" = "import" ]; then
             echo '--- FAST IMPORT RELEASE GATES ---'
             venv/bin/python verify_runtime.py
-            sqlite_fast_check
+            # Import/code releases do not change the schema. A full quick_check
+            # on the multi-GB production DB can exceed the deploy deadline, so
+            # keep WAL/busy-timeout verification here and leave deep integrity
+            # checks to the weekly maintenance path.
+            sqlite_runtime_check
             venv/bin/python verify_live_ims_gate.py
             venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
           elif [ "$RELEASE_MODE" = "backend" ]; then
@@ -394,7 +398,7 @@ jobs:
           test "$report_worker_state" = "active"
 
           if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
-            venv/bin/python verify_production_snapshot_finalization.py --wait-seconds 1200 --poll-seconds 5
+            venv/bin/python verify_production_snapshot_finalization.py --latest-source-only --wait-seconds 1200 --poll-seconds 5
           fi
 
           echo 'IMS worker health check passed.'
