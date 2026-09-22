@@ -1,8 +1,8 @@
-"""Repair/verify the latest fully-published IMS snapshot generation.
+"""Verify and atomically finalize the latest IMS snapshot publication.
 
-This is intentionally a no-op while IMS import or snapshot publication is still
-in progress. It exists for release transitions where an older worker may have
-written 100% before enriching the exact current region generation.
+The script is safe to run during deploy. It never publishes a partially built
+generation: dashboard, region, representative and enriched region read models
+must all match the latest IMS source before the one publication marker is set.
 """
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from app import create_app
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload
 from app.services.ims_progress_store import IMSProgressStore
-from app.services.ims_publication_service import IMSPublicationService
 from app.services.persistent_dashboard_snapshot_service import (
     PersistentDashboardSnapshotService,
 )
@@ -33,13 +32,12 @@ def _final_progress(job) -> tuple[bool, dict, dict]:
         summary = json.loads(job.result_summary or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         summary = {}
-    ready = bool(
+    complete = bool(
         progress.get("status") == IMSImportJob.STATUS_COMPLETED
         and progress.get("stage") == "completed"
         and int(progress.get("percent") or 0) == 100
-        and summary.get("publication_ready")
     )
-    return ready, progress, summary
+    return complete, progress, summary
 
 
 def main() -> int:
@@ -72,19 +70,27 @@ def main() -> int:
             )
             return 0
 
-        final, progress, _summary = _final_progress(job)
-        if not final:
+        final_progress, progress, summary = _final_progress(job)
+        if not final_progress:
             print(
-                "LATEST_SNAPSHOT_FINALIZE|SKIPPED|reason=publication_pending"
+                "LATEST_SNAPSHOT_FINALIZE|SKIPPED|reason=snapshot_work_in_progress"
                 f"|job_id={int(job.id)}|stage={progress.get('stage') or '-'}"
                 f"|percent={int(progress.get('percent') or 0)}"
             )
             return 0
 
-        year, month = int(latest.year), int(latest.month)
-        if IMSPublicationService.pending_job(year, month) is not None:
-            raise RuntimeError("Final progress conflicts with an active IMS publication.")
+        other_active = IMSImportJob.query.filter(
+            IMSImportJob.id != int(job.id),
+            IMSImportJob.status.in_(
+                (IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING)
+            ),
+        ).first()
+        if other_active is not None:
+            raise RuntimeError(
+                f"Another IMS job is active while finalizing publication: {other_active.id}"
+            )
 
+        year, month = int(latest.year), int(latest.month)
         ims_id, production_id = PersistentDashboardSnapshotService.source_identity(
             year, month
         )
@@ -92,6 +98,7 @@ def main() -> int:
             raise RuntimeError(
                 f"Latest snapshot source mismatch: expected={latest.id} actual={ims_id}"
             )
+
         if not PersistentDashboardSnapshotService.generation_ready(
             year, month, ims_id, production_id
         ):
@@ -118,11 +125,15 @@ def main() -> int:
                 f"rows={len(region_rows)} expected={expected_regions}"
             )
 
-        expected_representatives = PersistentRepresentativeSnapshotService.representative_ids(
-            year, month, ims_id
+        expected_representatives = (
+            PersistentRepresentativeSnapshotService.representative_ids(
+                year, month, ims_id
+            )
         )
-        representative_set = PersistentRepresentativeSnapshotService._latest_exact_active(
-            year, month, ims_id, production_id
+        representative_set = (
+            PersistentRepresentativeSnapshotService._latest_exact_active(
+                year, month, ims_id, production_id
+            )
         )
         representative_rows = (
             int(
@@ -148,7 +159,8 @@ def main() -> int:
         ):
             raise RuntimeError(
                 "Latest representative generation is incomplete: "
-                f"rows={representative_rows} expected={len(expected_representatives)}"
+                f"rows={representative_rows} "
+                f"expected={len(expected_representatives)}"
             )
 
         result = PersistentRegionSnapshotService.enrich_for_period(year, month)
@@ -163,11 +175,39 @@ def main() -> int:
         ):
             raise RuntimeError("Latest region generation is not fully enriched.")
 
+        # This commit is the single visibility switch for the new IMS generation.
+        attached = db.session.get(IMSImportJob, int(job.id))
+        if attached is None:
+            raise RuntimeError("IMS publication job disappeared during finalization.")
+        try:
+            summary = json.loads(attached.result_summary or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            summary = {}
+        summary["publication_ready"] = True
+        summary["publication_ready_upload_id"] = int(latest.id)
+        summary["publication_ready_source"] = "verified_atomic_snapshot_finalizer"
+        attached.result_summary = json.dumps(summary, ensure_ascii=False)
+        attached.error_message = None
+        db.session.commit()
+
+        IMSProgressStore.write(
+            attached.id,
+            percent=100,
+            stage="completed",
+            message="IMS yüklemesi ve tüm ekran snapshotları hazır",
+            detail=(
+                f"Dashboard hazır · Bölge {expected_regions}/{expected_regions} · "
+                f"Temsilci {len(expected_representatives)}/{len(expected_representatives)}"
+            ),
+            status=IMSImportJob.STATUS_COMPLETED,
+        )
+
         print(
             "LATEST_SNAPSHOT_FINALIZE|PASS"
             f"|year={year}|month={month}|week={int(latest.week_number or 0)}"
             f"|upload_id={int(latest.id)}|regions={expected_regions}"
             f"|representatives={len(expected_representatives)}"
+            f"|repaired={int(summary.get('publication_ready_source') == 'verified_atomic_snapshot_finalizer')}"
         )
         return 0
 
