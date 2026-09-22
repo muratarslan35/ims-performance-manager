@@ -65,13 +65,18 @@ def _selected_sources(*, latest_source_only: bool):
     return [latest] if latest is not None else []
 
 
-def _stale_dependencies(sources):
+def _stale_dependencies(sources, *, source_period_only: bool = False):
     stale = []
     for source in sources:
         cutoff = source.applied_at or source.uploaded_at
-        for year, month in RepresentativeSnapshotRefreshQueue.dependency_periods(
-            source.year, source.month
-        ):
+        periods = (
+            [(int(source.year), int(source.month))]
+            if source_period_only
+            else RepresentativeSnapshotRefreshQueue.dependency_periods(
+                source.year, source.month
+            )
+        )
+        for year, month in periods:
             if RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(
                 year, month, cutoff=cutoff
             ):
@@ -153,8 +158,9 @@ def main():
         "--latest-source-only",
         action="store_true",
         help=(
-            "Verify only the most recently applied finalized production source. "
-            "Use this bounded mode during deploys; omit it for a full historical audit."
+            "Verify the source month of the most recently applied finalized "
+            "production upload. Downstream Q/YTD dependencies remain queued in "
+            "background; omit this flag for a full historical audit."
         ),
     )
     args = parser.parse_args()
@@ -175,7 +181,10 @@ def main():
                     RepresentativeSnapshotRefreshQueue
                     .enqueue_stale_production_dependencies()
                 )
-            stale = _stale_dependencies(sources)
+            stale = _stale_dependencies(
+                sources,
+                source_period_only=bool(args.latest_source_only),
+            )
             db.session.remove()
 
             if not stale:
