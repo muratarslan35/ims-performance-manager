@@ -89,11 +89,13 @@ def _seed(tmp_path):
     db.session.add(ProductionResult(
         upload_id=p2.id, representative_id=representative_id,
         product_id=products[0].id, realization_percent=125.5,
+        target_tl=130.0, target_unit=13.0,
     ))
     # Product 2 is absent from P2, so it must fall back to P1.
     db.session.add(ProductionResult(
         upload_id=p1.id, representative_id=representative_id,
         product_id=products[1].id, realization_percent=110.0,
+        target_tl=120.0, target_unit=12.0,
     ))
     db.session.commit()
     return representative_id, product_ids
@@ -106,10 +108,17 @@ def test_batch_resolution_preserves_product_level_p2_p1_ims_priority(tmp_path):
         rows = ProductionResultService.effective_products(2026, 8, representative_id, product_ids)
 
         assert rows[product_ids[0]]["source"] == "PRODUCTION_2"
+        assert rows[product_ids[0]]["target_tl"] == Decimal("130.0")
+        assert rows[product_ids[0]]["target_unit"] == Decimal("13.0")
         assert rows[product_ids[0]]["realization_percent"] == Decimal("125.5")
-        assert rows[product_ids[0]]["actual_unit"] == Decimal("12.55")
+        assert rows[product_ids[0]]["actual_tl"] == Decimal("163.15")
+        assert rows[product_ids[0]]["actual_unit"] == Decimal("16.315")
         assert rows[product_ids[1]]["source"] == "PRODUCTION_1"
+        assert rows[product_ids[1]]["target_tl"] == Decimal("120.0")
+        assert rows[product_ids[1]]["target_unit"] == Decimal("12.0")
         assert rows[product_ids[1]]["realization_percent"] == Decimal("110.0")
+        assert rows[product_ids[1]]["actual_tl"] == Decimal("132.00")
+        assert rows[product_ids[1]]["actual_unit"] == Decimal("13.20")
         assert rows[product_ids[2]]["source"] == "IMS"
         assert rows[product_ids[2]]["complete"] is True
 
