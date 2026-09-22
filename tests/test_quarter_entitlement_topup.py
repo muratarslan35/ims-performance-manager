@@ -81,3 +81,27 @@ def test_q_topup_requires_complete_q_total_and_product_conditions():
     assert QuarterEntitlementService._q_topup(
         110_000, 150_000, complete=True, total_success=True, product_success=False
     ) == 0
+
+def test_q_summary_exposes_non_negative_remaining_tl_gap():
+    report = _service(
+        [
+            _month(1, 1_000_000, 700_000, 0),
+            _month(2, 1_000_000, 900_000, 0),
+            _month(3, 1_000_000, 800_000, 0),
+        ],
+        _q_products((80, 80, 80, 80)),
+    ).report()
+    assert report["summary"]["target_tl"] == 3_000_000
+    assert report["summary"]["actual_tl"] == 2_400_000
+    assert report["summary"]["remaining_tl"] == 600_000
+
+    over_target = _service(
+        [
+            _month(1, 1_000_000, 1_100_000, 0),
+            _month(2, 1_000_000, 1_050_000, 0),
+            _month(3, 1_000_000, 1_020_000, 0),
+        ],
+        _q_products(),
+    ).report()
+    assert over_target["summary"]["remaining_tl"] == 0
+
