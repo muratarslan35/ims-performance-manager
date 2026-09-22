@@ -2122,3 +2122,86 @@ body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
     margin-bottom: 3px !important;
   }
 }
+
+
+/* === PC AUTH CENTERED COMPACT 20260922d === */
+/* PC-only refinement: reduce total card footprint and keep the whole auth
+   composition visually centered. Mobile/tablet rules remain untouched. */
+@media (min-width: 1200px) {
+  body.anonymous .auth-shell.auth-shell-login,
+  body.anonymous .auth-shell.auth-shell-register {
+    align-items: center;
+    justify-content: center;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack,
+  body.anonymous .auth-shell-register .auth-brand-stack {
+    width: min(72vw, 720px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem {
+    width: clamp(142px, 9vw, 168px);
+    max-height: 116px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem img,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem img {
+    max-height: 116px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-system-title,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-system-title {
+    font-size: clamp(17px, 1.2vw, 20px);
+  }
+
+  body.anonymous .auth-shell-login .auth-layout {
+    width: min(72vw, 920px);
+    max-width: 920px;
+    height: min(495px, calc(100dvh - 172px));
+    max-height: min(495px, calc(100dvh - 172px));
+    margin-left: auto;
+    margin-right: auto;
+    grid-template-columns: minmax(0, .98fr) minmax(0, 1.02fr);
+  }
+
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    width: min(70vw, 900px);
+    max-width: 900px;
+    height: min(535px, calc(100dvh - 172px));
+    max-height: min(535px, calc(100dvh - 172px));
+    margin-left: auto;
+    margin-right: auto;
+    grid-template-columns: minmax(0, .98fr) minmax(0, 1.02fr);
+  }
+
+  body.anonymous .auth-shell-login .auth-layout .auth-card {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  body.anonymous .auth-shell-register .auth-layout .auth-card {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+}
+
+@media (min-width: 1200px) and (max-height: 800px) {
+  body.anonymous .auth-shell-login .auth-layout {
+    width: min(70vw, 880px);
+    max-width: 880px;
+    height: calc(100dvh - 138px);
+    max-height: calc(100dvh - 138px);
+  }
+
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    width: min(68vw, 860px);
+    max-width: 860px;
+    height: calc(100dvh - 138px);
+    max-height: calc(100dvh - 138px);
+  }
+}
