@@ -99,3 +99,18 @@ def test_progress_reaches_100_only_after_all_snapshot_layers_and_enrichment():
     complete = publish.index('percent=100, stage="completed"')
     assert representative < enrichment < ready < complete
 
+def test_release_transition_finalizer_repairs_only_fully_published_exact_generation():
+    script = (ROOT / "scripts/finalize_latest_snapshot_publication.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'progress.get("stage") == "completed"' in script
+    assert 'int(progress.get("percent") or 0) == 100' in script
+    assert 'summary.get("publication_ready")' in script
+    assert "IMSPublicationService.pending_job(year, month)" in script
+    assert "PersistentDashboardSnapshotService.generation_ready" in script
+    assert "PersistentRegionSnapshotService._existing_set" in script
+    assert "PersistentRepresentativeSnapshotService._latest_exact_active" in script
+    assert "PersistentRegionSnapshotService.enrich_for_period" in script
+    assert "LATEST_SNAPSHOT_FINALIZE|PASS" in script
+    compile(script, "scripts/finalize_latest_snapshot_publication.py", "exec")
+
