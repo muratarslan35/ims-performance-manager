@@ -330,18 +330,12 @@ class PersistentRepresentativeSnapshotService:
         completed = 0
         build_ids = list(ids)
         if already_building:
-            if not force:
-                return {
-                    "status": "BUILDING",
-                    "set_id": int(already_building),
-                    "representatives": 0,
-                }
-
-            # Forced production refreshes are processed by the single IMS worker.
-            # A deploy can restart that worker while an atomic generation is only
-            # partially written. Those rows are valid derived cache for the same
-            # IMS/production identity, so resume the generation instead of
-            # discarding completed representative work.
+            # Any exact-source BUILDING generation is durable resumable work.
+            # IMS publication retries use force=False, while production refreshes
+            # may use force=True; both must resume instead of returning BUILDING
+            # forever after a worker restart or interrupted final activation.
+            # Compatible rows are derived cache for the same IMS/production
+            # identity, so reuse them and calculate only the missing roster.
             existing_rows = db.session.execute(
                 sa.select(representative_snapshots.c.representative_id).where(
                     representative_snapshots.c.set_id == int(already_building)
