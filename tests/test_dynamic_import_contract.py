@@ -327,3 +327,20 @@ def test_competition_header_and_dimension_positions_can_move(dynamic_env):
     assert set(structure["product_columns"]) == {1, 3}
     assert structure["data_start_row"] == 26
 
+def test_semantic_import_contract_is_content_first_and_fail_closed():
+    source = Path("app/services/dynamic_import_contract.py").read_text(encoding="utf-8")
+    refinement = Path("app/services/dynamic_import_refinement.py").read_text(encoding="utf-8")
+    discovery = Path("app/services/semantic_import_discovery.py").read_text(encoding="utf-8")
+    app_init = Path("app/__init__.py").read_text(encoding="utf-8")
+
+    assert "worksheet names, order, header row numbers and dimension" in source
+    assert "equally authoritative the importer fails" in source
+    assert "for header_row in range(min(self.MAX_HEADER_SCAN_ROWS, len(frame)))" in source
+    assert "candidates[0].score == candidates[1].score" in source
+    assert "Representative summaries are one row per semantic identity" in refinement
+    assert "Sheet names remain a backwards-compatible hint only" in discovery
+    assert "install_semantic_import_discovery()" in app_init
+    assert "install_dynamic_import_contract()" in app_init
+    assert "install_dynamic_import_refinement()" in app_init
+    assert "install_aggregate_identity_refinement()" in app_init
+
