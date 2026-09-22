@@ -191,6 +191,26 @@ class PersistentRepresentativeSnapshotService:
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
         if exact:
             return int(exact.id)
+
+        # A finalized production upload may arrive weeks later than the IMS.
+        # Keep the last ACTIVE representative generation for the same IMS
+        # visible until the newer production generation is fully published.
+        same_ims_previous = db.session.execute(
+            sa.select(representative_snapshot_sets.c.id).where(
+                representative_snapshot_sets.c.year == year,
+                representative_snapshot_sets.c.month == month,
+                representative_snapshot_sets.c.source_upload_id == int(ims_id),
+                representative_snapshot_sets.c.production_upload_id <= int(production_id),
+                representative_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+            ).order_by(
+                desc(representative_snapshot_sets.c.production_upload_id),
+                desc(representative_snapshot_sets.c.activated_at),
+                desc(representative_snapshot_sets.c.id),
+            ).limit(1)
+        ).scalar()
+        if same_ims_previous:
+            return int(same_ims_previous)
+
         building = cls._current_source_building(year, month, ims_id, production_id)
         if not building:
             return None
