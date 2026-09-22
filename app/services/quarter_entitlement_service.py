@@ -198,6 +198,8 @@ class QuarterEntitlementService:
         else:
             source = "AUTHORITATIVE_HISTORY"
             rows = self._historical_products(month)
+            for row in rows or []:
+                row.setdefault("month", int(month))
 
         if not rows:
             self._snapshot_rows[month] = None
