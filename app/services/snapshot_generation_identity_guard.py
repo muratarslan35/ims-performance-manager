@@ -73,6 +73,7 @@ def _install_dashboard_guard():
         return
 
     original_generation_ready = cls.generation_ready
+    original_get_active = cls.get_active
 
     @classmethod
     def generation_ready(guarded_cls, year, month, ims_id, production_id):
@@ -90,7 +91,14 @@ def _install_dashboard_guard():
 
     @classmethod
     def get_active(guarded_cls, year, month):
-        """Reject a same-id snapshot that was created before today's IMS row."""
+        """Reject stale ids without bypassing the atomic publication gate."""
+        from app.services.ims_publication_service import IMSPublicationService
+
+        # The base service owns publication visibility. Keep that decision
+        # authoritative even though this compatibility guard wraps get_active.
+        if IMSPublicationService.pending_job(year, month) is not None:
+            return original_get_active(year, month)
+
         ims_id, production_id = guarded_cls.source_identity(year, month)
         generation_path = guarded_cls._generation_path(year, month, ims_id, production_id)
         stable_path = guarded_cls._path(year, month)
