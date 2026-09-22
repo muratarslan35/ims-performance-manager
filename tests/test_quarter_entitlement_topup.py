@@ -1,4 +1,3 @@
-from contextlib import nullcontext
 from types import SimpleNamespace
 
 import app.services.quarter_entitlement_service as quarter_module
@@ -216,20 +215,6 @@ def test_missing_historical_snapshot_uses_bounded_authoritative_history(monkeypa
     service.engine = SimpleNamespace(
         products=[product],
         get_prime_rule=lambda _product: rule,
-        _calc_cache={},
-        calculate_monthly_products=lambda month: [{
-            "product_id": 11,
-            "product_name": "Fentivag",
-            "target_tl": 100_000,
-            "actual_tl": 80_000,
-            "target_unit": 100,
-            "actual_unit": 80,
-            "percent": 80,
-            "gap_tl": 20_000,
-            "required_percent": 90,
-            "include_in_total_tl": True,
-            "include_in_prime": True,
-        }],
     )
 
     monkeypatch.setattr(
@@ -240,12 +225,13 @@ def test_missing_historical_snapshot_uses_bounded_authoritative_history(monkeypa
     monkeypatch.setattr(
         quarter_module.ProductionResultService,
         "effective_products",
-        lambda year, month, representative_id: {11: {"source": "PRODUCTION_2"}},
-    )
-    monkeypatch.setattr(
-        quarter_module.ProductionResultService,
-        "use_effective_batch",
-        lambda year, month, representative_id, rows: nullcontext(rows),
+        lambda year, month, representative_id: {11: {
+            "source": "PRODUCTION_2",
+            "target_tl": 100_000,
+            "actual_tl": 80_000,
+            "target_unit": 100,
+            "actual_unit": 80,
+        }},
     )
 
     rows, quota, available = service._snapshot_products(8)
