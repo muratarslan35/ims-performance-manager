@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import app.services.quarter_entitlement_service as quarter_module
 from app.services.quarter_entitlement_service import QuarterEntitlementService
 
 
@@ -105,3 +108,107 @@ def test_q_summary_exposes_non_negative_remaining_tl_gap():
     ).report()
     assert over_target["summary"]["remaining_tl"] == 0
 
+
+
+def test_quota_exit_is_available_for_every_quarter(monkeypatch):
+    monkeypatch.setattr(
+        quarter_module,
+        "PrimeEngine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+    monkeypatch.setattr(
+        quarter_module.ProductionResultService,
+        "quota_product_months",
+        lambda periods: {},
+    )
+
+    expected = {
+        1: [1, 2, 3],
+        2: [4, 5, 6],
+        3: [7, 8, 9],
+        4: [10, 11, 12],
+    }
+    for quarter, months in expected.items():
+        service = QuarterEntitlementService(97, 2026, quarter)
+        assert service.months == months
+
+
+def test_quota_exit_lifts_only_selected_snapshot_product_to_minimum_100(monkeypatch):
+    service = QuarterEntitlementService.__new__(QuarterEntitlementService)
+    service.representative_id = 97
+    service.year = 2026
+    service.quarter = 3
+    service.months = [7, 8, 9]
+    service.quota_exit_by_month = {8: 11}
+    service._official_quota = {}
+    service._snapshot_rows = {}
+
+    product = SimpleNamespace(
+        id=11,
+        product_name="Fentivag",
+        include_total_tl=True,
+        is_prime_product=True,
+        required_percent=90,
+    )
+    rule = SimpleNamespace(
+        include_in_total_tl=True,
+        include_in_prime=True,
+        required_percent=90,
+    )
+    service.engine = SimpleNamespace(
+        products=[product],
+        get_prime_rule=lambda _product: rule,
+    )
+
+    workspace = {
+        "snapshots": {
+            "monthly": {
+                "months": [[2026, 8]],
+                "products": [{
+                    "product": {"id": 11, "product_name": "Fentivag"},
+                    "target_tl": 100_000,
+                    "actual_tl": 80_000,
+                    "target_unit": 100,
+                    "actual_unit": 80,
+                }],
+            }
+        }
+    }
+    monkeypatch.setattr(
+        quarter_module.PersistentRepresentativeSnapshotService,
+        "get_active",
+        lambda representative_id, year, month: workspace,
+    )
+
+    rows, quota, available = service._snapshot_products(8)
+
+    assert available is True
+    assert quota["selected_id"] == 11
+    assert rows[0]["actual_tl"] == 100_000
+    assert rows[0]["actual_unit"] == 100
+    assert rows[0]["percent"] == 100
+    assert rows[0]["quota_uplift_tl"] == 20_000
+
+
+def test_missing_snapshot_never_falls_back_to_live_data(monkeypatch):
+    service = QuarterEntitlementService.__new__(QuarterEntitlementService)
+    service.representative_id = 97
+    service.year = 2026
+    service.quarter = 3
+    service.months = [7, 8, 9]
+    service.quota_exit_by_month = {8: 11}
+    service._official_quota = {}
+    service._snapshot_rows = {}
+    service.engine = SimpleNamespace(products=[])
+
+    monkeypatch.setattr(
+        quarter_module.PersistentRepresentativeSnapshotService,
+        "get_active",
+        lambda representative_id, year, month: None,
+    )
+
+    rows, quota, available = service._snapshot_products(8)
+
+    assert rows is None
+    assert quota is None
+    assert available is False
