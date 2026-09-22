@@ -133,6 +133,7 @@ class QuarterEntitlementService:
             "summary": {
                 "target_tl": round(total_target, 2),
                 "actual_tl": round(total_actual, 2),
+                "remaining_tl": round(max(0.0, total_target - total_actual), 2),
                 "total_percent": total_percent,
                 "gross_prime": gross_total,
                 "monthly_paid": monthly_paid,
