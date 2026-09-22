@@ -9,6 +9,19 @@
     linear-gradient(145deg, #0b2d67 0%, #0a2456 54%, #071b42 100%);
 }
 
+/* Desktop auth notices must not consume the locked viewport and push the form below the fold. */
+@media (min-width: 801px) {
+  body.auth-viewport-locked .page-body > .container-xl > .alert {
+    position: fixed;
+    z-index: 1040;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    margin: 0;
+  }
+}
+
 .auth-identity-panel::before {
   content: "";
   position: absolute;
