@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSImportJob, Representative, User
+from app.models import IMSImportJob, ProductionResultUpload, Representative, User
 from app.region_manager import (
     RegionManagerScope,
     assigned_region,
@@ -93,6 +93,9 @@ def main():
     dashboard_read = None
     region_read = None
     representative_read = None
+    historical_production_period = None
+    historical_production_status = None
+    historical_production_read = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -198,6 +201,69 @@ def main():
             _check(own_region_response.status_code == 200, "own_region_hot_route", failures)
             _check(not region_read["heavy_reads"], "region_heavy_source_read", failures)
             _check(region_read["seconds"] <= 2.0, "region_hot_route_slow", failures)
+
+            # Late production is expected to arrive one or more months after IMS.
+            # The historical region page must stay directly readable while the
+            # exact new production generation is being prepared in background.
+            latest_production = (
+                ProductionResultUpload.query
+                .filter_by(status=ProductionResultUpload.STATUS_APPLIED)
+                .order_by(
+                    ProductionResultUpload.applied_at.desc(),
+                    ProductionResultUpload.id.desc(),
+                )
+                .first()
+            )
+            if latest_production is not None and admin is not None and own_code:
+                historical_production_period = [
+                    int(latest_production.year),
+                    int(latest_production.month),
+                    int(latest_production.id),
+                    int(latest_production.production_stage),
+                ]
+                historical_path = (
+                    f"/regions/{own_code}?year={int(latest_production.year)}"
+                    f"&month={int(latest_production.month)}"
+                )
+                historical_client = app.test_client()
+                _login_as(historical_client, admin.id)
+
+                # One compatibility/enrichment pass is allowed. The second read
+                # is the user-visible steady state and must be snapshot-only.
+                historical_warm = historical_client.get(
+                    historical_path, follow_redirects=False
+                )
+                historical_production_status = int(historical_warm.status_code)
+                _check(
+                    historical_warm.status_code == 200,
+                    "historical_production_region_route",
+                    failures,
+                )
+                if historical_warm.status_code == 200:
+                    historical_response, historical_production_read = _measure_route(
+                        historical_client,
+                        historical_path,
+                        follow_redirects=False,
+                    )
+                    historical_production_status = int(
+                        historical_response.status_code
+                    )
+                    _check(
+                        historical_response.status_code == 200,
+                        "historical_production_region_hot_route",
+                        failures,
+                    )
+                    _check(
+                        not historical_production_read["heavy_reads"],
+                        "historical_production_region_heavy_source_read",
+                        failures,
+                    )
+                    _check(
+                        historical_production_read["seconds"] <= 2.0,
+                        "historical_production_region_hot_route_slow",
+                        failures,
+                    )
+
             other_region_started = time.perf_counter()
             other_region_response = client.get(
                 f"/regions/{region_code(other_rep.region)}", follow_redirects=True
@@ -268,6 +334,9 @@ def main():
             "dashboard_read": dashboard_read,
             "region_read": region_read,
             "representative_read": representative_read,
+            "historical_production_period": historical_production_period,
+            "historical_production_status": historical_production_status,
+            "historical_production_read": historical_production_read,
             "tested_manager_id": manager.id if manager else None,
             "tested_region": own_code,
             "admin_preserved": admin is not None,
