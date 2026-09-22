@@ -45,9 +45,29 @@ def _final_sources():
     return result
 
 
-def _stale_dependencies():
+def _latest_applied_source(sources):
+    if not sources:
+        return None
+    return max(
+        sources,
+        key=lambda item: (
+            item.applied_at or item.uploaded_at,
+            int(item.id),
+        ),
+    )
+
+
+def _selected_sources(*, latest_source_only: bool):
+    sources = _final_sources()
+    if not latest_source_only:
+        return sources
+    latest = _latest_applied_source(sources)
+    return [latest] if latest is not None else []
+
+
+def _stale_dependencies(sources):
     stale = []
-    for source in _final_sources():
+    for source in sources:
         cutoff = source.applied_at or source.uploaded_at
         for year, month in RepresentativeSnapshotRefreshQueue.dependency_periods(
             source.year, source.month
@@ -66,6 +86,26 @@ def _stale_dependencies():
                 )
             )
     return stale
+
+
+def _enqueue_stale_sources(sources):
+    queued = []
+    for source in sources:
+        cutoff = source.applied_at or source.uploaded_at
+        reason = f"production_upload:{int(source.id)}"
+        for year, month in RepresentativeSnapshotRefreshQueue.dependency_periods(
+            source.year, source.month
+        ):
+            if RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(
+                year, month, cutoff=cutoff
+            ):
+                continue
+            queued.append(
+                RepresentativeSnapshotRefreshQueue.enqueue(
+                    year, month, reason=reason
+                )
+            )
+    return queued
 
 
 def _historical_region_route_check(app, sources):
@@ -109,6 +149,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--wait-seconds", type=int, default=1200)
     parser.add_argument("--poll-seconds", type=int, default=5)
+    parser.add_argument(
+        "--latest-source-only",
+        action="store_true",
+        help=(
+            "Verify only the most recently applied finalized production source. "
+            "Use this bounded mode during deploys; omit it for a full historical audit."
+        ),
+    )
     args = parser.parse_args()
 
     app = create_app()
@@ -117,12 +165,20 @@ def main():
     with app.app_context():
         while True:
             attempts += 1
-            queued = RepresentativeSnapshotRefreshQueue.enqueue_stale_production_dependencies()
-            stale = _stale_dependencies()
+            sources = _selected_sources(
+                latest_source_only=bool(args.latest_source_only)
+            )
+            if args.latest_source_only:
+                queued = _enqueue_stale_sources(sources)
+            else:
+                queued = (
+                    RepresentativeSnapshotRefreshQueue
+                    .enqueue_stale_production_dependencies()
+                )
+            stale = _stale_dependencies(sources)
             db.session.remove()
 
             if not stale:
-                sources = _final_sources()
                 source_text = ",".join(
                     f"{int(item.year):04d}-{int(item.month):02d}:P{int(item.production_stage)}#{int(item.id)}"
                     for item in sources

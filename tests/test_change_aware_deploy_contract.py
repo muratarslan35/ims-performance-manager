@@ -13,6 +13,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'mode="ops"' in text
     assert 'mode="docs"' in text
     assert 'app/services/kpi_workbook_compat.py' in text
+    assert 'app/services/representative_snapshot_refresh_queue.py' in text
     assert 'migrations/*|app/models.py)' in text
     assert 'requirements.txt|deploy/*|sqlite_online_backup.py' in text
     assert 'multi-gigabyte online backup for actual schema changes only' in text
@@ -48,7 +49,8 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'backfill_competition_data.py' not in heavy_block
 
     assert 'verify_runtime.py' in import_block
-    assert 'sqlite_fast_check' in import_block
+    assert 'sqlite_runtime_check' in import_block
+    assert 'sqlite_fast_check' not in import_block
     assert 'verify_live_ims_gate.py' in import_block
     assert 'production_resource_gate.py' in import_block
     assert 'sqlite_online_backup.py' not in import_block
@@ -61,7 +63,8 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'sqlite_runtime_check' in backend_block
     assert 'sqlite_fast_check' not in backend_block
 
-    # DB/import/ops paths retain the full SQLite quick_check acceptance gate.
+    # Deep SQLite quick_check remains on heavy/ops paths. Import releases are
+    # schema-neutral and keep only the bounded WAL/busy-timeout runtime gate.
     assert 'verify_runtime.py' in ops_block
     assert 'sqlite_fast_check' in ops_block
     assert 'sqlite_online_backup.py' not in ops_block
@@ -78,6 +81,7 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'WEB_ACTIVE|' in text
     assert 'WORKER_ACTIVE|' in text
     assert 'venv/bin/python verify_region_manager_production.py' in text
+    assert 'verify_production_snapshot_finalization.py --latest-source-only' in text
     assert 'REGION_MANAGER_ACCEPTANCE\\|' in text
     assert '|| [ "$RELEASE_MODE" = "backend" ]' in text
     acceptance = Path('verify_region_manager_production.py').read_text(encoding='utf-8')

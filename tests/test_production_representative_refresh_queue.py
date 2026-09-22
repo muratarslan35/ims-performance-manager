@@ -1,4 +1,10 @@
+import json
+import os
 from pathlib import Path
+
+from app.services.representative_snapshot_refresh_queue import (
+    RepresentativeSnapshotRefreshQueue,
+)
 
 
 def test_production_refresh_queue_contract():
@@ -17,6 +23,8 @@ def test_production_refresh_queue_contract():
     assert "ProductionResultUpload.STATUS_APPLIED" in queue_source
     assert "requested_at" in queue_source
     assert "def defer(cls, item: dict)" in queue_source
+    assert "def _production_priority(payload: dict)" in queue_source
+    assert "-cls._production_priority(payload)" in queue_source
     assert "os.utime(path, None)" in queue_source
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in ims_source
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in retry_source
@@ -58,7 +66,68 @@ def test_production_refresh_queue_contract():
     assert reconcile < refresh < process_job
 
 
-# deploy.yml is intentionally covered by the repo's locked-contract approval gate.\ndef test_late_production_cascade_contract():
+
+def test_newest_production_upload_has_priority_and_failed_peer_rotates(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        RepresentativeSnapshotRefreshQueue,
+        "_root",
+        classmethod(lambda cls: tmp_path),
+    )
+
+    def write_marker(name, *, year, month, reason, requested_at, mtime):
+        path = tmp_path / name
+        path.write_text(
+            json.dumps(
+                {
+                    "year": year,
+                    "month": month,
+                    "reason": reason,
+                    "requested_at": requested_at,
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.utime(path, (mtime, mtime))
+
+    write_marker(
+        "2026-01.json",
+        year=2026,
+        month=1,
+        reason="production_upload:1",
+        requested_at="2026-01-01T00:00:00+00:00",
+        mtime=1,
+    )
+    write_marker(
+        "2026-07.json",
+        year=2026,
+        month=7,
+        reason="production_upload:9",
+        requested_at="2026-09-22T00:00:00+00:00",
+        mtime=2,
+    )
+    write_marker(
+        "2026-08.json",
+        year=2026,
+        month=8,
+        reason="production_upload:9",
+        requested_at="2026-09-22T00:00:01+00:00",
+        mtime=3,
+    )
+
+    first = RepresentativeSnapshotRefreshQueue.next()
+    assert first is not None
+    assert first["reason"] == "production_upload:9"
+    assert first["month"] == 7
+
+    RepresentativeSnapshotRefreshQueue.defer(first)
+    second = RepresentativeSnapshotRefreshQueue.next()
+    assert second is not None
+    assert second["reason"] == "production_upload:9"
+    assert second["month"] == 8
+
+
+# deploy.yml is intentionally covered by the repo's locked-contract approval gate.
+def test_late_production_cascade_contract():
     queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
         encoding="utf-8"
     )
