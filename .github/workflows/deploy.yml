@@ -397,7 +397,10 @@ jobs:
           test "$worker_state" = "active"
           test "$report_worker_state" = "active"
 
-          if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
+          # Snapshot finalization belongs to production/import activation.
+          # Backend/UI code releases must not wait up to 20 minutes for a
+          # pre-existing historical refresh queue; they activate immediately.
+          if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "import" ]; then
             venv/bin/python verify_production_snapshot_finalization.py --latest-source-only --wait-seconds 1200 --poll-seconds 5
           fi
 
