@@ -417,8 +417,8 @@ class PersistentRegionSnapshotService:
         if not set_id:
             return {"status": "WAITING_REGION", "regions": 0}
         payloads = cls._payloads_from_set(set_id)
-        dashboard_payload = PersistentDashboardSnapshotService.get_generation_for_source(
-            year, month, ims_id, production_id
+        dashboard_payload = PersistentDashboardSnapshotService.get_active(
+            year, month
         ) or {}
         now = datetime.utcnow()
         for region_key, payload in payloads.items():
