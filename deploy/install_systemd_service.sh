@@ -90,7 +90,7 @@ sudo systemctl enable "$report_worker_service_name"
 # Snapshot policy is unchanged. The only operational change here is priority:
 # expensive backfills run with low CPU/I/O scheduling priority so live web
 # requests keep preference when the host is under contention.
-if [ "$release_mode" = "backend" ] || [ "$release_mode" = "heavy" ]; then
+if [ "$release_mode" = "heavy" ]; then
   echo "REGION_SNAPSHOT_ACTIVATION|ensure_active_reuse_if_current|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
     run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_region_snapshots.py"
@@ -102,7 +102,7 @@ fi
 
 # Keep the existing representative bootstrap correctness rule, but make its
 # one-time/heavy work yield to the live Gunicorn service.
-if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   echo "REPRESENTATIVE_SNAPSHOT_BOOTSTRAP|ensure_active_before_web|priority=low"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
     run_low_priority "$ims_path/venv/bin/python" "$ims_path/scripts/backfill_active_representative_snapshots.py"
@@ -171,11 +171,10 @@ else
 fi
 sudo systemctl --no-pager --full status "$report_worker_service_name"
 
-# Representative and region read models are source-versioned and reused when the
-# active IMS identity is unchanged. Do not launch duplicate force rebuilds on
-# ordinary backend deploys; snapshot work belongs to IMS publication or an
-# explicit maintenance command.
-if [ "$release_mode" = "backend" ] || [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
+# Representative, region and dashboard read models are source-versioned.
+# Backend-only code deploys must never rebuild or wait on derived snapshots:
+# late-production refresh stays owned by the durable IMS worker queue.
+if [ "$release_mode" = "import" ] || [ "$release_mode" = "heavy" ]; then
   echo "DASHBOARD_SNAPSHOT_ACTIVATION|waiting_for_active_snapshot"
   PYTHONPATH="$ims_path${PYTHONPATH:+:$PYTHONPATH}" \
     "$ims_path/venv/bin/python" "$ims_path/verify_dashboard_snapshot_production.py" \
