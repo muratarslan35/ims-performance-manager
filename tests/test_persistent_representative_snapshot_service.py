@@ -133,15 +133,19 @@ def test_monthly_comparison_contract_forces_one_time_snapshot_upgrade():
     assert '"read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION' in workspace
 
 
-def test_forced_refresh_retires_orphaned_building_generation_before_rebuild():
+def test_forced_refresh_resumes_compatible_partial_build_before_rebuilding():
     source = (
         ROOT / "app/services/persistent_representative_snapshot_service.py"
     ).read_text(encoding="utf-8")
     build = source[source.index("def build_for_period"):]
 
     assert "if not force:" in build
+    assert "existing_ids.issubset(expected_ids)" in build
+    assert "representative_snapshot_partial_build_resumed" in build
+    assert "if representative_id not in existing_ids" in build
+    assert "for offset in range(0, len(build_ids), batch_size)" in build
+
+    # Incompatible/stale partial rows are still retired safely instead of being
+    # mixed into the current read-model version.
     assert "representative_snapshot_stale_building_retired" in build
     assert ".values(status=cls.STATUS_FAILED)" in build
-    assert build.index(".values(status=cls.STATUS_FAILED)") < build.index(
-        "representative_snapshot_sets.insert().values("
-    )
