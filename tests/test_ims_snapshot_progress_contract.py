@@ -57,3 +57,43 @@ def test_snapshot_progress_is_measured_not_random_or_timer_driven():
     assert 'time.monotonic()' in worker
     assert 'Math.random' not in ui
     assert "fetch('/ims/progress'" in ui
+
+def test_completed_job_keeps_all_snapshot_warmup_stages_processing(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.ims_progress_store import IMSProgressStore
+
+    job = SimpleNamespace(
+        id=77,
+        status="COMPLETED",
+        STATUS_QUEUED="QUEUED",
+        STATUS_PROCESSING="PROCESSING",
+        STATUS_COMPLETED="COMPLETED",
+        STATUS_FAILED="FAILED",
+        completed_at=None,
+        queued_at=None,
+        started_at=None,
+    )
+    for stage in (
+        "read_models",
+        "dashboard_snapshot",
+        "region_snapshots",
+        "representative_snapshots",
+        "snapshot_retry",
+    ):
+        payload = {
+            "job_id": job.id,
+            "percent": 44,
+            "stage": stage,
+            "message": "snapshot",
+            "detail": None,
+            "status": "PROCESSING",
+            "updated_at": None,
+        }
+        monkeypatch.setattr(
+            IMSProgressStore,
+            "read",
+            classmethod(lambda cls, _job_id, value=payload: value),
+        )
+        assert IMSProgressStore.for_job(job) == payload
+
