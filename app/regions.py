@@ -4,6 +4,9 @@ from flask_login import login_required
 from app.services.period_service import PeriodService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+from app.services.region_market_service import RegionMarketService
+from app.services.region_performance_service import RegionPerformanceService
+from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 regions_bp = Blueprint("regions", __name__, url_prefix="/regions")
 
@@ -33,14 +36,40 @@ def _assigned_region_manager(report):
     return None
 
 
-def _region_read_model(region_key, year, month, *, source_upload_id=None):
-    """Return only an already-published region read model.
+def _compatibility_region_read_model(region_key, year, month):
+    """Rebuild a historical region view from authoritative business data.
 
-    Interactive region pages never fall back to RegionPerformanceService or
-    RegionMarketService. Missing read models are handled as a publication/warmup
-    state instead of running heavy calculations inside a web request.
+    Early 2026 periods predate durable region snapshots. Late P1/P2 production
+    can also temporarily make the newest exact snapshot unavailable. Historical
+    navigation must keep the legacy behavior in both cases: open the page from
+    current business data instead of redirecting the user to the dashboard.
     """
-    snapshot = None
+    performance_service = RegionPerformanceService(region_key, year, month)
+    report = performance_service.report()
+    market_analysis = RegionMarketService(
+        report["region_key"], performance_service.rep_ids, year, month
+    ).build()
+    return {
+        "report": report,
+        "market_analysis": market_analysis,
+        "ai_report": ScopedAIInsightService.build(
+            scope_type="region",
+            scope_name=report["region_name"],
+            periods=report["periods"],
+            market_analysis=market_analysis,
+        ),
+    }, "compatibility"
+
+
+def _region_read_model(region_key, year, month, *, source_upload_id=None):
+    """Prefer exact snapshots, retaining the legacy historical fallback.
+
+    The active IMS period remains snapshot-gated. Historical periods are
+    different: some months were created before snapshot persistence existed,
+    and a late production upload may temporarily have no exact ACTIVE snapshot.
+    In those cases calculate the historical page from current authoritative
+    data, matching the pre-snapshot behavior and avoiding dashboard redirects.
+    """
     if source_upload_id:
         snapshot = PersistentRegionSnapshotService.get_active_for_visible_upload(
             region_key, year, month, source_upload_id
@@ -49,11 +78,31 @@ def _region_read_model(region_key, year, month, *, source_upload_id=None):
             snapshot = PersistentRegionSnapshotService.get_active(
                 region_key, year, month
             )
-    else:
-        snapshot = PersistentRegionSnapshotService.get_active(
-            region_key, year, month
+        return (
+            (snapshot, "read-model")
+            if snapshot is not None
+            else (None, "unavailable")
         )
-    return (snapshot, "read-model") if snapshot is not None else (None, "unavailable")
+
+    ims_id, _production_id = PersistentRegionSnapshotService.source_identity(
+        year, month
+    )
+    exact = (
+        PersistentRegionSnapshotService.get_active_for_visible_upload(
+            region_key, year, month, ims_id
+        )
+        if ims_id
+        else None
+    )
+    if (
+        exact is not None
+        and int(exact.get("read_model_version") or 0)
+        >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+        and isinstance(exact.get("ai_report"), dict)
+    ):
+        return exact, "read-model"
+
+    return _compatibility_region_read_model(region_key, year, month)
 
 
 @regions_bp.route("/<path:region_key>")
@@ -78,37 +127,39 @@ def detail(region_key):
             )
             return redirect(url_for("dashboard.index"))
 
-        # Old region generations are finalized once from the already-published
-        # representative/dashboard read models. After this one-time upgrade the
-        # request path is a single region payload read plus template rendering.
-        read_model_version = int(read_model.get("read_model_version") or 0)
-        if read_model_version < 3:
-            enrichment = PersistentRegionSnapshotService.enrich_for_period(
-                year, month
-            )
-            if enrichment.get("status") in {"ENRICHED", "REUSED"}:
-                read_model, region_data_source = _region_read_model(
-                    region_key, year, month, source_upload_id=visible_upload_id
+        if region_data_source == "read-model":
+            # Active/current generations retain the snapshot publication gate.
+            # Historical periods with no usable exact generation already took
+            # the compatibility path above and must not be redirected here.
+            read_model_version = int(read_model.get("read_model_version") or 0)
+            if read_model_version < 3:
+                enrichment = PersistentRegionSnapshotService.enrich_for_period(
+                    year, month
                 )
-        elif read_model_version < PersistentRegionSnapshotService.READ_MODEL_VERSION:
-            enrichment = PersistentRegionSnapshotService.upgrade_national_realizations_for_period(
-                year, month
-            )
-            if enrichment.get("status") == "ENRICHED":
-                read_model, region_data_source = _region_read_model(
-                    region_key, year, month, source_upload_id=visible_upload_id
+                if enrichment.get("status") in {"ENRICHED", "REUSED"}:
+                    read_model, region_data_source = _region_read_model(
+                        region_key, year, month, source_upload_id=visible_upload_id
+                    )
+            elif read_model_version < PersistentRegionSnapshotService.READ_MODEL_VERSION:
+                enrichment = PersistentRegionSnapshotService.upgrade_national_realizations_for_period(
+                    year, month
                 )
+                if enrichment.get("status") == "ENRICHED":
+                    read_model, region_data_source = _region_read_model(
+                        region_key, year, month, source_upload_id=visible_upload_id
+                    )
 
-        if (
-            read_model is None
-            or int(read_model.get("read_model_version") or 0) < PersistentRegionSnapshotService.READ_MODEL_VERSION
-            or not isinstance(read_model.get("ai_report"), dict)
-        ):
-            flash(
-                "Bölge görünümü hazırlanıyor. Temsilci verileri tamamlandığında otomatik olarak hazır olacaktır.",
-                "info",
-            )
-            return redirect(url_for("dashboard.index"))
+            if (
+                read_model is None
+                or int(read_model.get("read_model_version") or 0)
+                < PersistentRegionSnapshotService.READ_MODEL_VERSION
+                or not isinstance(read_model.get("ai_report"), dict)
+            ):
+                flash(
+                    "Bölge görünümü hazırlanıyor. Temsilci verileri tamamlandığında otomatik olarak hazır olacaktır.",
+                    "info",
+                )
+                return redirect(url_for("dashboard.index"))
 
         current_report = read_model["report"]
         market_analysis = read_model.get("market_analysis") or {}
