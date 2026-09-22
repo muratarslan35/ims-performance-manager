@@ -29,7 +29,7 @@ def test_desktop_login_compacts_on_short_viewports():
     assert "body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem" in css
     assert "max-height: calc(100dvh - 190px);" in css
     assert "body.anonymous .auth-shell-login .portal-option span" in css
-    assert "auth-branding.css', v='20260922g'" in login
+    assert "auth-branding.css', v='20260923a'" in login
 
 
 def test_pc_login_and_register_use_fixed_viewport_composition():
@@ -44,8 +44,8 @@ def test_pc_login_and_register_use_fixed_viewport_composition():
     assert "overflow: hidden;" in css
     assert "body.anonymous .auth-shell-register .auth-layout" in css
     assert "@media (min-width: 1200px) and (max-height: 800px)" in css
-    assert "auth-branding.css', v='20260922g'" in login
-    assert "auth-branding.css', v='20260922g'" in register
+    assert "auth-branding.css', v='20260923a'" in login
+    assert "auth-branding.css', v='20260923a'" in register
 
 
 def test_pc_auth_cards_are_centered_and_narrower():
@@ -89,3 +89,14 @@ def test_short_pc_auth_restores_balanced_scale():
     assert "height: 410px;" in css
     assert "height: 458px;" in css
     assert "max-height: 90px;" in css
+
+
+def test_short_pc_auth_matches_marked_balance():
+    css = (ROOT / "app/static/css/auth-branding.css").read_text(encoding="utf-8")
+
+    assert "/* === PC AUTH MARKED BALANCE 20260923a === */" in css
+    assert "transform: translateY(-28px);" in css
+    assert "width: min(68vw, 880px);" in css
+    assert "height: 450px;" in css
+    assert "height: 500px;" in css
+    assert "max-height: 96px;" in css

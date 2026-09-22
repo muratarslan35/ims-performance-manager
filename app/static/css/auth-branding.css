@@ -2551,3 +2551,74 @@ body[data-theme="dark"].anonymous .auth-shell-register .auth-identity-panel {
     min-height: 34px;
   }
 }
+
+
+/* === PC AUTH MARKED BALANCE 20260923a === */
+/* PC-only tuning against the marked target area from the live screenshot:
+   slightly larger card, slightly larger IMS mark, and less upward translation
+   so top/bottom breathing room reads balanced. */
+@media (min-width: 1200px) and (max-height: 800px) {
+  body.anonymous .auth-shell-login .auth-brand-stack,
+  body.anonymous .auth-shell-register .auth-brand-stack,
+  body.anonymous .auth-shell-login .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    transform: translateY(-28px);
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem {
+    width: clamp(132px, 7.8vw, 154px);
+    max-height: 96px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem img,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-ims-emblem img {
+    max-height: 96px;
+  }
+
+  body.anonymous .auth-shell-login .auth-brand-stack .auth-system-title,
+  body.anonymous .auth-shell-register .auth-brand-stack .auth-system-title {
+    font-size: clamp(16px, 1.1vw, 19px);
+  }
+
+  body.anonymous .auth-shell-login .auth-layout {
+    width: min(68vw, 880px);
+    max-width: 880px;
+    height: 450px;
+    max-height: 450px;
+    min-height: 430px;
+  }
+
+  body.anonymous .auth-shell-register .auth-layout,
+  body.anonymous .auth-shell-register .auth-layout-narrow {
+    width: min(68vw, 880px);
+    max-width: 880px;
+    height: 500px;
+    max-height: 500px;
+    min-height: 468px;
+  }
+
+  body.anonymous .auth-shell-login .auth-layout .auth-card {
+    padding: 18px 22px 14px;
+  }
+
+  body.anonymous .auth-shell-register .auth-layout .auth-card {
+    padding: 14px 20px 12px;
+  }
+
+  body.anonymous .auth-shell-login .portal-option span {
+    min-height: 64px;
+  }
+
+  body.anonymous .auth-shell-login .auth-form .form-control,
+  body.anonymous .auth-shell-register .auth-form .form-control,
+  body.anonymous .auth-shell-register .auth-form .form-select {
+    min-height: 36px;
+  }
+
+  body.anonymous .auth-shell-login .btn-auth-submit,
+  body.anonymous .auth-shell-register .btn-auth-submit {
+    min-height: 36px;
+  }
+}
