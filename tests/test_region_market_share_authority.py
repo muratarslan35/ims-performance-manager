@@ -40,6 +40,16 @@ def _competition_row(upload_id, product, name, value, *, metric_type="UNIT", she
     )
 
 
+def test_official_region_products_helper_returns_mapping():
+    source = Path("app/services/region_market_service.py").read_text(encoding="utf-8")
+    start = source.index("def _official_products")
+    end = source.index("def _build", start)
+    block = source[start:end]
+
+    assert "ProductionRegionProductResult.query.filter_by" in block
+    assert "return payload" in block
+
+
 def test_integer_pp_display_matches_workbook_cells_without_redistribution():
     from app.services.region_market_service import RegionMarketService
 
