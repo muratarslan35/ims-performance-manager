@@ -133,13 +133,13 @@ def test_monthly_comparison_contract_forces_one_time_snapshot_upgrade():
     assert '"read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION' in workspace
 
 
-def test_forced_refresh_resumes_compatible_partial_build_before_rebuilding():
+def test_any_publication_retry_resumes_compatible_partial_build_before_rebuilding():
     source = (
         ROOT / "app/services/persistent_representative_snapshot_service.py"
     ).read_text(encoding="utf-8")
     build = source[source.index("def build_for_period"):]
 
-    assert "if not force:" in build
+    assert 'return {"status": "BUILDING"' not in build
     assert "existing_ids.issubset(expected_ids)" in build
     assert "representative_snapshot_partial_build_resumed" in build
     assert "if representative_id not in existing_ids" in build
