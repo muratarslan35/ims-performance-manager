@@ -97,6 +97,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '"historical_production_region_route"' in acceptance
     assert '"historical_production_region_hot_route"' in acceptance
     assert '"historical_production_period": historical_production_period' in acceptance
+    assert '"historical_production_mode": historical_production_mode' in acceptance
+    assert 'historical_production_mode == "snapshot"' in acceptance
+    assert '"historical_production_region_compatibility_slow"' in acceptance
     compile(acceptance, 'verify_region_manager_production.py', 'exec')
 
     # Real-workbook acceptance remains manual qualification rather than an

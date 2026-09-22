@@ -96,6 +96,7 @@ def main():
     historical_production_period = None
     historical_production_status = None
     historical_production_read = None
+    historical_production_mode = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -228,8 +229,46 @@ def main():
                 historical_client = app.test_client()
                 _login_as(historical_client, admin.id)
 
-                # One compatibility/enrichment pass is allowed. The second read
-                # is the user-visible steady state and must be snapshot-only.
+                from app.services.persistent_region_snapshot_service import (
+                    PersistentRegionSnapshotService,
+                )
+
+                historical_ims_id, historical_production_id = (
+                    PersistentRegionSnapshotService.source_identity(
+                        int(latest_production.year),
+                        int(latest_production.month),
+                    )
+                )
+                exact_historical = (
+                    PersistentRegionSnapshotService.get_active_for_visible_upload(
+                        own_code,
+                        int(latest_production.year),
+                        int(latest_production.month),
+                        historical_ims_id,
+                    )
+                    if historical_ims_id
+                    else None
+                )
+                exact_historical_ready = bool(
+                    exact_historical
+                    and int(exact_historical.get("read_model_version") or 0)
+                    >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+                    and isinstance(exact_historical.get("ai_report"), dict)
+                )
+                historical_production_mode = (
+                    "snapshot" if exact_historical_ready else "compatibility"
+                )
+                _check(
+                    int(historical_production_id or 0) == int(latest_production.id),
+                    "historical_production_identity",
+                    failures,
+                )
+
+                # Historical months created before durable snapshots, and late
+                # P1/P2 generations still rebuilding in background, must remain
+                # directly readable. Exact ACTIVE generations retain the strict
+                # snapshot-only hot-path gate; compatibility mode may use the
+                # authoritative business tables but remains bounded.
                 historical_warm = historical_client.get(
                     historical_path, follow_redirects=False
                 )
@@ -253,16 +292,23 @@ def main():
                         "historical_production_region_hot_route",
                         failures,
                     )
-                    _check(
-                        not historical_production_read["heavy_reads"],
-                        "historical_production_region_heavy_source_read",
-                        failures,
-                    )
-                    _check(
-                        historical_production_read["seconds"] <= 2.0,
-                        "historical_production_region_hot_route_slow",
-                        failures,
-                    )
+                    if historical_production_mode == "snapshot":
+                        _check(
+                            not historical_production_read["heavy_reads"],
+                            "historical_production_region_heavy_source_read",
+                            failures,
+                        )
+                        _check(
+                            historical_production_read["seconds"] <= 2.0,
+                            "historical_production_region_hot_route_slow",
+                            failures,
+                        )
+                    else:
+                        _check(
+                            historical_production_read["seconds"] <= 8.0,
+                            "historical_production_region_compatibility_slow",
+                            failures,
+                        )
 
             other_region_started = time.perf_counter()
             other_region_response = client.get(
@@ -337,6 +383,7 @@ def main():
             "historical_production_period": historical_production_period,
             "historical_production_status": historical_production_status,
             "historical_production_read": historical_production_read,
+            "historical_production_mode": historical_production_mode,
             "tested_manager_id": manager.id if manager else None,
             "tested_region": own_code,
             "admin_preserved": admin is not None,
