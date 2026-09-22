@@ -411,8 +411,18 @@ jobs:
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionRepresentativeTotal, ProductionResultUpload, Representative
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
+          from app.models import (
+              ProductionRegionProductResult,
+              ProductionRepresentativeTotal,
+              ProductionResult,
+              ProductionResultUpload,
+              Representative,
+          )
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshot_sets,
+          )
 
           def n(v):
               try: return float(v or 0)
@@ -427,6 +437,56 @@ jobs:
                                 ProductionResultUpload.id.desc())
                       .first())
               assert upload is not None
+              product_rows=ProductionResult.query.filter_by(upload_id=upload.id).count()
+              product_reps=int(db.session.query(
+                  sa.func.count(sa.distinct(ProductionResult.representative_id))
+              ).filter(ProductionResult.upload_id==upload.id).scalar() or 0)
+              product_count=int(db.session.query(
+                  sa.func.count(sa.distinct(ProductionResult.product_id))
+              ).filter(ProductionResult.upload_id==upload.id).scalar() or 0)
+              representative_totals=ProductionRepresentativeTotal.query.filter_by(
+                  upload_id=upload.id
+              ).count()
+              region_product_rows=ProductionRegionProductResult.query.filter_by(
+                  upload_id=upload.id
+              ).count()
+              region_count=int(db.session.query(
+                  sa.func.count(sa.distinct(ProductionRegionProductResult.region_code))
+              ).filter(ProductionRegionProductResult.upload_id==upload.id).scalar() or 0)
+              region_products=int(db.session.query(
+                  sa.func.count(sa.distinct(ProductionRegionProductResult.product_id))
+              ).filter(ProductionRegionProductResult.upload_id==upload.id).scalar() or 0)
+              ims_id, production_id=PersistentRegionSnapshotService.source_identity(2026,7)
+              rep_set=db.session.execute(
+                  sa.select(
+                      representative_snapshot_sets.c.id,
+                      representative_snapshot_sets.c.status,
+                      representative_snapshot_sets.c.representative_count,
+                      representative_snapshot_sets.c.activated_at,
+                  ).where(
+                      representative_snapshot_sets.c.year==2026,
+                      representative_snapshot_sets.c.month==7,
+                      representative_snapshot_sets.c.source_upload_id==int(ims_id),
+                      representative_snapshot_sets.c.production_upload_id==int(upload.id),
+                  ).order_by(representative_snapshot_sets.c.id.desc()).limit(1)
+              ).first()
+              rep_version=(
+                  PersistentRepresentativeSnapshotService._set_read_model_version(int(rep_set.id))
+                  if rep_set else 0
+              )
+              print(
+                  f"JULY_P2_COMPLETENESS|upload={upload.id}|stage={upload.production_stage}|"
+                  f"product_rows={product_rows}|representatives={product_reps}|products={product_count}|"
+                  f"representative_totals={representative_totals}|region_product_rows={region_product_rows}|"
+                  f"regions={region_count}|region_products={region_products}|"
+                  f"source_ims={ims_id}|source_production={production_id}"
+              )
+              print(
+                  f"JULY_REP_SET|id={int(rep_set.id) if rep_set else 0}|"
+                  f"status={rep_set.status if rep_set else 'NONE'}|"
+                  f"count={int(rep_set.representative_count or 0) if rep_set else 0}|"
+                  f"version={rep_version}|activated={rep_set.activated_at if rep_set else None}"
+              )
               reps=(Representative.query
                     .filter(Representative.region=="901", Representative.active.is_(True))
                     .order_by(Representative.rep_name.asc()).all())
