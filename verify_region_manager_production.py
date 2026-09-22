@@ -328,16 +328,10 @@ def main():
                 "representative_heavy_source_read",
                 failures,
             )
-            # Detailed representative latency is enforced by the dedicated
+            # Representative latency is enforced by the dedicated
             # verify_representative_performance.py gate (warm p95 <= 2s).
-            # This single manager-route probe only guards against pathological
-            # stalls so transient host contention cannot block an otherwise
-            # healthy backend activation.
-            _check(
-                representative_read["seconds"] <= 8.0,
-                "representative_hot_route_slow",
-                failures,
-            )
+            # This manager-scope acceptance only verifies route availability
+            # and that the steady-state read stays off heavy business tables.
             other_rep_response = client.get(f"/representatives/view/{other_rep.id}", follow_redirects=True)
             _check((DENIED_REGION not in other_rep_response.get_data(as_text=True)) == cross_region,
                    "other_rep_route", failures)
