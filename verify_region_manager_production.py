@@ -9,6 +9,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from flask import g
+
 from app import create_app
 from app.extensions import db
 from app.models import IMSImportJob, IMSUpload, ProductionResultUpload, Representative, User
@@ -191,6 +193,12 @@ def main():
             _check(login_response.status_code == 200, "login_route", failures)
             _check(not login_read["heavy_reads"], "login_heavy_source_read", failures)
             _check(login_read["selects"] <= 2, "login_query_count", failures)
+
+            # The verifier intentionally keeps one outer app context open while
+            # issuing multiple test-client requests. Flask-Login caches the
+            # resolved user on that app context's g object; the anonymous login
+            # probe above must not poison the following authenticated probes.
+            g.pop("_login_user", None)
 
             client = app.test_client()
             _login_as(client, manager.id)
