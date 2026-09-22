@@ -320,7 +320,7 @@ class QuarterEntitlementService:
         product_entitlement = self.engine.evaluate_monthly_entitlement(product_inputs)
         required_total = self.engine.get_setting("TOTAL_PERCENT_REQUIRED", 100.0)
         q_cap = round(self.engine.get_setting("MAIN_PRIME", 50000.0) * len(self.months), 2)
-        complete = all(row["has_data"] and row["snapshot_available"] for row in monthly)
+        complete = all(row["has_data"] and row.get("snapshot_available", True) for row in monthly)
         q_topup = self._q_topup(
             monthly_paid,
             q_cap,
@@ -357,7 +357,7 @@ class QuarterEntitlementService:
                 "q_total_success": complete and total_percent >= required_total,
                 "q_product_success": complete and product_entitlement["product_success"],
                 "snapshot_complete": complete,
-                "quota_uplift_tl": round(sum(row["quota_uplift_tl"] for row in monthly), 2),
+                "quota_uplift_tl": round(sum(row.get("quota_uplift_tl", 0) for row in monthly), 2),
                 "main_prime_months": sum(1 for row in monthly if row["main_prime"] > 0),
                 "ciro_prime_months": sum(1 for row in monthly if row["ciro_prime"] > 0),
             },
