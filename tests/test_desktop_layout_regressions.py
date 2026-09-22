@@ -29,7 +29,7 @@ def test_desktop_login_compacts_on_short_viewports():
     assert "body.anonymous .auth-shell-login .auth-brand-stack .auth-ims-emblem" in css
     assert "max-height: calc(100dvh - 190px);" in css
     assert "body.anonymous .auth-shell-login .portal-option span" in css
-    assert "auth-branding.css', v='20260922d'" in login
+    assert "auth-branding.css', v='20260922e'" in login
 
 
 def test_pc_login_and_register_use_fixed_viewport_composition():
@@ -44,8 +44,8 @@ def test_pc_login_and_register_use_fixed_viewport_composition():
     assert "overflow: hidden;" in css
     assert "body.anonymous .auth-shell-register .auth-layout" in css
     assert "@media (min-width: 1200px) and (max-height: 800px)" in css
-    assert "auth-branding.css', v='20260922d'" in login
-    assert "auth-branding.css', v='20260922d'" in register
+    assert "auth-branding.css', v='20260922e'" in login
+    assert "auth-branding.css', v='20260922e'" in register
 
 
 def test_pc_auth_cards_are_centered_and_narrower():
@@ -56,3 +56,15 @@ def test_pc_auth_cards_are_centered_and_narrower():
     assert "width: min(70vw, 900px);" in css
     assert "margin-left: auto;" in css
     assert "margin-right: auto;" in css
+
+
+def test_pc_auth_true_center_balance():
+    css = (ROOT / "app/static/css/auth-branding.css").read_text(encoding="utf-8")
+
+    assert "/* === PC AUTH TRUE CENTER BALANCE 20260922e === */" in css
+    assert "grid-template-rows: auto auto;" in css
+    assert "align-content: center;" in css
+    assert "justify-items: center;" in css
+    assert "width: min(66vw, 850px);" in css
+    assert "height: min(430px, calc(100dvh - 210px));" in css
+    assert "height: min(480px, calc(100dvh - 210px));" in css
