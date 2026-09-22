@@ -251,11 +251,15 @@ jobs:
             venv/bin/python - <<'PY'
           import json
           import sqlite3
+          from datetime import datetime
           from pathlib import Path
 
           database = Path("instance/ipm.db")
           if not database.exists():
-              print("IMS_WORKER_IDLE|database=missing|processing=0|publication_processing=0")
+              print(
+                  "IMS_WORKER_IDLE|database=missing|processing=0|"
+                  "publication_processing=0|publication_stale=0"
+              )
               raise SystemExit(0)
 
           connection = sqlite3.connect(database, timeout=30)
@@ -274,6 +278,7 @@ jobs:
               if str(status) in {"QUEUED", "PROCESSING"}
           )
           publication_processing = 0
+          publication_stale = 0
           active_stages = {
               "read_models",
               "dashboard_snapshot",
@@ -282,26 +287,52 @@ jobs:
               "snapshot_retry",
           }
           progress_root = Path("instance/ims_progress")
-          for job_id, _status in rows:
+          now = datetime.utcnow()
+          stale_after_seconds = 15 * 60
+
+          for job_id, job_status in rows:
               path = progress_root / f"job-{int(job_id)}.json"
               try:
                   payload = json.loads(path.read_text(encoding="utf-8"))
               except (OSError, ValueError, TypeError, json.JSONDecodeError):
                   continue
-              if (
+              if not (
                   str(payload.get("status") or "") in {"QUEUED", "PROCESSING"}
                   and str(payload.get("stage") or "") in active_stages
               ):
+                  continue
+
+              is_stale = False
+              try:
+                  updated_at = datetime.fromisoformat(
+                      str(payload.get("updated_at") or "")
+                  )
+                  is_stale = (
+                      str(job_status) == "COMPLETED"
+                      and (now - updated_at).total_seconds() >= stale_after_seconds
+                  )
+              except (TypeError, ValueError):
+                  is_stale = False
+
+              if is_stale:
+                  publication_stale += 1
+              else:
                   publication_processing += 1
 
           print(
               f"IMS_WORKER_IDLE|processing={db_active}|"
-              f"publication_processing={publication_processing}"
+              f"publication_processing={publication_processing}|"
+              f"publication_stale={publication_stale}"
           )
           if db_active or publication_processing:
               raise SystemExit(
                   "Active IMS import or snapshot publication detected; "
                   "deploy refused before service reload/restart."
+              )
+          if publication_stale:
+              print(
+                  "IMS_WORKER_RECOVERY|stale_publication_detected|"
+                  f"count={publication_stale}|resume_on_new_worker=1"
               )
           PY
           }
