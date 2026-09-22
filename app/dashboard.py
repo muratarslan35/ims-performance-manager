@@ -68,14 +68,19 @@ def index():
         DashboardCache().invalidate(cache_key)
         return service.run()
 
-    payload = None
-    if IMSPublicationService.pending_job(service.year, service.month) is not None:
-        payload = PersistentDashboardSnapshotService.get_stable(service.year, service.month)
-    if payload is None:
+    pending = IMSPublicationService.pending_job(service.year, service.month)
+    payload = PersistentDashboardSnapshotService.get_active(service.year, service.month)
+    if payload is None and pending is None:
         payload, _built = PersistentDashboardSnapshotService.get_or_build(
             service.year,
             service.month,
             rebuild,
         )
-    payload = _ensure_ytd_product_rankings(payload, service)
+    if payload is None:
+        payload = {}
+    # Compatibility upgrades may republish a payload. Never do that while a new
+    # IMS generation is being prepared, otherwise old visible data could be
+    # written under the new source identity.
+    if pending is None:
+        payload = _ensure_ytd_product_rankings(payload, service)
     return render_template("dashboard.html", payload=payload)

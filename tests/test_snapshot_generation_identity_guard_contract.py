@@ -43,3 +43,13 @@ def test_permanent_delete_purges_derived_generations_for_deleted_upload_id():
     assert "representative_snapshot_sets.c.source_upload_id == int(upload_id)" in source
     assert "dashboard-{year:04d}-{month:02d}-ims{int(upload_id)}-production*.json" in source
     assert "legacy.unlink(missing_ok=True)" in source
+
+def test_dashboard_identity_guard_preserves_atomic_publication_gate():
+    source = GUARD.read_text(encoding="utf-8")
+    start = source.index("def _install_dashboard_guard")
+    end = source.index("def _install_region_guard", start)
+    block = source[start:end]
+    assert "original_get_active = cls.get_active" in block
+    assert "IMSPublicationService.pending_job(year, month) is not None" in block
+    assert "return original_get_active(year, month)" in block
+

@@ -100,7 +100,44 @@ class PersistentDashboardSnapshotService:
         )
 
     @classmethod
+    def get_generation_for_source(
+        cls,
+        year: int,
+        month: int,
+        ims_id: int,
+        production_id: int,
+    ) -> dict | None:
+        """Read one exact immutable dashboard generation, bypassing visibility gates."""
+        path = cls._generation_path(year, month, ims_id, production_id)
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+        if (
+            envelope.get("version") != cls.VERSION
+            or int(envelope.get("year", 0)) != int(year)
+            or int(envelope.get("month", 0)) != int(month)
+            or int(envelope.get("ims_upload_id", -1)) != int(ims_id)
+            or int(envelope.get("production_upload_id", -1)) != int(production_id)
+        ):
+            return None
+        payload = envelope.get("payload")
+        return payload if isinstance(payload, dict) else None
+
+    @classmethod
     def get_active(cls, year: int, month: int) -> dict | None:
+        # Never expose a newly built dashboard generation before region and
+        # representative generations are fully ready. During publication, all
+        # user-facing screens stay on the last visible IMS generation.
+        from app.services.ims_publication_service import IMSPublicationService
+        if IMSPublicationService.pending_job(year, month) is not None:
+            visible = IMSPublicationService.latest_visible_upload(year, month)
+            if visible is None:
+                return None
+            return cls.get_generation_for_upload(
+                int(year), int(month), int(visible.id)
+            )
+
         ims_id, production_id = cls.source_identity(year, month)
         generation_path = cls._generation_path(year, month, ims_id, production_id)
         stable_path = cls._path(year, month)
@@ -260,25 +297,29 @@ class PersistentDashboardSnapshotService:
 
     @classmethod
     def get_or_build(cls, year: int, month: int, builder: Callable[[], dict]) -> tuple[dict, bool]:
-        """Return a ready payload; allow only one process to perform a cold rebuild.
+        """Build/reuse the exact current-source generation behind the visibility gate.
 
-        The first caller after an IMS/source identity change owns the file lock.
-        Other Gunicorn workers wait on that same lock, then read the newly
-        published payload instead of launching duplicate OLAP/AI/prime queries.
-        ``built`` is True only for the process that executed ``builder``.
+        User-facing reads may intentionally stay on the previous visible upload
+        while a new IMS is publishing. The worker must still be able to build the
+        new hidden dashboard generation, so this path bypasses ``get_active``
+        and checks only the exact immutable current-source file.
         """
-        active = cls.get_active(year, month)
-        if active is not None:
-            return active, False
+        ims_id, production_id = cls.source_identity(year, month)
+        exact = cls.get_generation_for_source(year, month, ims_id, production_id)
+        if exact is not None:
+            return exact, False
 
         lock_path = cls._lock_path(year, month)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+", encoding="utf-8") as lock_handle:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
             try:
-                active = cls.get_active(year, month)
-                if active is not None:
-                    return active, False
+                ims_id, production_id = cls.source_identity(year, month)
+                exact = cls.get_generation_for_source(
+                    year, month, ims_id, production_id
+                )
+                if exact is not None:
+                    return exact, False
                 payload = builder()
                 cls.publish(year, month, payload)
                 return payload, True

@@ -429,7 +429,8 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
     assert "RegionPerformanceService(" not in route
     assert "RegionMarketService(" not in route
     assert 'region_data_source == "read-model"' in route
-    assert "PersistentDashboardSnapshotService.get_stable" in snapshot_service
+    assert "PersistentDashboardSnapshotService.get_generation_for_source" in snapshot_service
+    assert "PersistentRepresentativeSnapshotService.get_exact_active_many" in snapshot_service
     assert "PersistentRepresentativeSnapshotService.get_active_many" in snapshot_service
     assert "RegionAISnapshotService.build" in snapshot_service
     assert "current_region_workspaces" in snapshot_service

@@ -35,6 +35,7 @@ from app.services.persistent_region_snapshot_service import (
     region_snapshots,
 )
 from app.services.persistent_representative_snapshot_service import (
+    PersistentRepresentativeSnapshotService,
     representative_snapshot_sets,
     representative_snapshots,
 )
@@ -147,6 +148,23 @@ def _latest_snapshot_coverage():
             region_snapshots.c.set_id == int(region_set.id)
         )
     ).scalar() or 0) if region_set is not None else 0
+    region_payload_rows = (
+        db.session.execute(
+            select(region_snapshots.c.payload_json).where(
+                region_snapshots.c.set_id == int(region_set.id)
+            )
+        ).scalars().all()
+        if region_set is not None
+        else []
+    )
+    region_enriched = bool(
+        region_payload_rows
+        and all(
+            int((json.loads(raw) if raw else {}).get("read_model_version") or 0)
+            >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+            for raw in region_payload_rows
+        )
+    )
 
     representative_set = db.session.execute(
         select(
@@ -165,6 +183,11 @@ def _latest_snapshot_coverage():
             representative_snapshots.c.set_id == int(representative_set.id)
         )
     ).scalar() or 0) if representative_set is not None else 0
+    representative_expected = len(
+        PersistentRepresentativeSnapshotService.representative_ids(
+            year, month, source_upload_id
+        )
+    )
 
     dashboard_ready = PersistentDashboardSnapshotService.generation_ready(
         year, month, source_upload_id, production_upload_id
@@ -178,8 +201,8 @@ def _latest_snapshot_coverage():
     representative_complete = bool(
         representative_set is not None
         and representative_set.status == "ACTIVE"
-        and int(representative_set.representative_count or 0) > 0
-        and representative_rows == int(representative_set.representative_count or 0)
+        and representative_expected > 0
+        and representative_rows == representative_expected
     )
     final_progress = bool(
         progress
@@ -208,9 +231,11 @@ def _latest_snapshot_coverage():
         "region_expected": int(region_set.region_count or 0) if region_set is not None else 0,
         "region_rows": region_rows,
         "region_complete": region_complete,
+        "region_enriched": region_enriched,
         "representative_set_id": int(representative_set.id) if representative_set is not None else None,
         "representative_status": str(representative_set.status) if representative_set is not None else None,
-        "representative_expected": int(representative_set.representative_count or 0) if representative_set is not None else 0,
+        "representative_expected": representative_expected,
+        "representative_completed": int(representative_set.representative_count or 0) if representative_set is not None else 0,
         "representative_rows": representative_rows,
         "representative_complete": representative_complete,
         "final_progress": final_progress,
@@ -286,6 +311,11 @@ def main():
             _check(
                 latest_snapshot_coverage.get("region_complete"),
                 "latest_region_snapshot_incomplete",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("region_enriched"),
+                "latest_region_snapshot_not_enriched",
                 failures,
             )
             _check(

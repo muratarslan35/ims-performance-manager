@@ -186,8 +186,10 @@ class PersistentRepresentativeSnapshotService:
                     representative_snapshot_sets.c.source_upload_id != int(ims_id),
                 ).order_by(desc(representative_snapshot_sets.c.activated_at), desc(representative_snapshot_sets.c.id)).limit(1)
             ).scalar()
-            if previous:
-                return int(previous)
+            # Publication is all-or-nothing across dashboard, region and
+            # representative read models. Never fall through to the current
+            # generation while the IMS job is still pending publication.
+            return int(previous) if previous else None
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
         if exact:
             return int(exact.id)
@@ -245,18 +247,9 @@ class PersistentRepresentativeSnapshotService:
             return None
 
     @classmethod
-    def get_active_many(cls, representative_ids, year, month):
-        """Read several representative workspaces with one snapshot member query.
-
-        Region manager pages use this only as a compatibility bridge for ACTIVE
-        region snapshots created before representative-product box rows were
-        embedded. It never recalculates representative data.
-        """
+    def _payloads_from_set(cls, set_id, representative_ids):
         ids = sorted({int(item) for item in representative_ids if item is not None})
-        if not ids:
-            return {}
-        set_id = cls._visible_set_id(year, month)
-        if not set_id:
+        if not ids or not set_id:
             return {}
         rows = db.session.execute(
             sa.select(
@@ -274,6 +267,21 @@ class PersistentRepresentativeSnapshotService:
             except (TypeError, json.JSONDecodeError):
                 continue
         return result
+
+    @classmethod
+    def get_active_many(cls, representative_ids, year, month):
+        """Read the currently visible representative generation in one query."""
+        set_id = cls._visible_set_id(year, month)
+        return cls._payloads_from_set(set_id, representative_ids)
+
+    @classmethod
+    def get_exact_active_many(cls, representative_ids, year, month):
+        """Read the exact current-source ACTIVE generation behind publication gate."""
+        year, month = int(year), int(month)
+        ims_id, production_id = cls.source_identity(year, month)
+        exact = cls._latest_exact_active(year, month, ims_id, production_id)
+        set_id = int(exact.id) if exact else None
+        return cls._payloads_from_set(set_id, representative_ids)
 
     @classmethod
     def _set_read_model_version(cls, set_id):
@@ -322,18 +330,12 @@ class PersistentRepresentativeSnapshotService:
         completed = 0
         build_ids = list(ids)
         if already_building:
-            if not force:
-                return {
-                    "status": "BUILDING",
-                    "set_id": int(already_building),
-                    "representatives": 0,
-                }
-
-            # Forced production refreshes are processed by the single IMS worker.
-            # A deploy can restart that worker while an atomic generation is only
-            # partially written. Those rows are valid derived cache for the same
-            # IMS/production identity, so resume the generation instead of
-            # discarding completed representative work.
+            # Any exact-source BUILDING generation is durable resumable work.
+            # IMS publication retries use force=False, while production refreshes
+            # may use force=True; both must resume instead of returning BUILDING
+            # forever after a worker restart or interrupted final activation.
+            # Compatible rows are derived cache for the same IMS/production
+            # identity, so reuse them and calculate only the missing roster.
             existing_rows = db.session.execute(
                 sa.select(representative_snapshots.c.representative_id).where(
                     representative_snapshots.c.set_id == int(already_building)

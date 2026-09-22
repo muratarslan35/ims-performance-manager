@@ -249,28 +249,93 @@ jobs:
 
           worker_idle_check() {
             venv/bin/python - <<'PY'
+          import json
           import sqlite3
+          from datetime import datetime
           from pathlib import Path
+
           database = Path("instance/ipm.db")
           if not database.exists():
-              print("IMS_WORKER_IDLE|database=missing|processing=0")
+              print(
+                  "IMS_WORKER_IDLE|database=missing|processing=0|"
+                  "publication_processing=0|publication_stale=0"
+              )
               raise SystemExit(0)
+
           connection = sqlite3.connect(database, timeout=30)
           try:
               exists = connection.execute(
                   "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ims_import_jobs'"
               ).fetchone()
-              processing = 0 if not exists else int(connection.execute(
-                  "SELECT COUNT(*) FROM ims_import_jobs WHERE status='PROCESSING'"
-              ).fetchone()[0])
+              rows = [] if not exists else connection.execute(
+                  "SELECT id, status FROM ims_import_jobs ORDER BY id DESC LIMIT 20"
+              ).fetchall()
           finally:
               connection.close()
-          print(f"IMS_WORKER_IDLE|processing={processing}")
-          if processing:
-              raise SystemExit("Active IMS import detected; deploy refused before service reload/restart.")
+
+          db_active = sum(
+              1 for _job_id, status in rows
+              if str(status) in {"QUEUED", "PROCESSING"}
+          )
+          publication_processing = 0
+          publication_stale = 0
+          active_stages = {
+              "read_models",
+              "dashboard_snapshot",
+              "region_snapshots",
+              "representative_snapshots",
+              "snapshot_retry",
+          }
+          progress_root = Path("instance/ims_progress")
+          now = datetime.utcnow()
+          stale_after_seconds = 15 * 60
+
+          for job_id, job_status in rows:
+              path = progress_root / f"job-{int(job_id)}.json"
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                  continue
+              if not (
+                  str(payload.get("status") or "") in {"QUEUED", "PROCESSING"}
+                  and str(payload.get("stage") or "") in active_stages
+              ):
+                  continue
+
+              is_stale = False
+              try:
+                  updated_at = datetime.fromisoformat(
+                      str(payload.get("updated_at") or "")
+                  )
+                  is_stale = (
+                      str(job_status) == "COMPLETED"
+                      and (now - updated_at).total_seconds() >= stale_after_seconds
+                  )
+              except (TypeError, ValueError):
+                  is_stale = False
+
+              if is_stale:
+                  publication_stale += 1
+              else:
+                  publication_processing += 1
+
+          print(
+              f"IMS_WORKER_IDLE|processing={db_active}|"
+              f"publication_processing={publication_processing}|"
+              f"publication_stale={publication_stale}"
+          )
+          if db_active or publication_processing:
+              raise SystemExit(
+                  "Active IMS import or snapshot publication detected; "
+                  "deploy refused before service reload/restart."
+              )
+          if publication_stale:
+              print(
+                  "IMS_WORKER_RECOVERY|stale_publication_detected|"
+                  f"count={publication_stale}|resume_on_new_worker=1"
+              )
           PY
           }
-
           sqlite_fast_check() {
             venv/bin/python - <<'PY'
           import sqlite3
@@ -363,6 +428,7 @@ jobs:
           fi
 
           if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
+            venv/bin/python scripts/finalize_latest_snapshot_publication.py
             venv/bin/python verify_region_manager_production.py
           fi
 

@@ -117,11 +117,7 @@ def market_analysis():
 
     # The IMS worker publishes dashboard + national market in one durable
     # read-model. HTTP requests never rebuild either calculation chain.
-    payload = (
-        PersistentDashboardSnapshotService.get_active(year, month)
-        or PersistentDashboardSnapshotService.get_stable(year, month)
-        or {}
-    )
+    payload = PersistentDashboardSnapshotService.get_active(year, month) or {}
     payload = dict(payload)
     competition_analysis = payload.get("competition_analysis")
     if not isinstance(competition_analysis, dict):

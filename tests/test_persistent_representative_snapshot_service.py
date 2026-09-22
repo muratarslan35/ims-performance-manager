@@ -133,13 +133,13 @@ def test_monthly_comparison_contract_forces_one_time_snapshot_upgrade():
     assert '"read_model_version": MONTHLY_COMPARISON_CONTRACT_VERSION' in workspace
 
 
-def test_forced_refresh_resumes_compatible_partial_build_before_rebuilding():
+def test_any_publication_retry_resumes_compatible_partial_build_before_rebuilding():
     source = (
         ROOT / "app/services/persistent_representative_snapshot_service.py"
     ).read_text(encoding="utf-8")
     build = source[source.index("def build_for_period"):]
 
-    assert "if not force:" in build
+    assert 'return {"status": "BUILDING"' not in build
     assert "existing_ids.issubset(expected_ids)" in build
     assert "representative_snapshot_partial_build_resumed" in build
     assert "if representative_id not in existing_ids" in build
@@ -149,3 +149,18 @@ def test_forced_refresh_resumes_compatible_partial_build_before_rebuilding():
     # mixed into the current read-model version.
     assert "representative_snapshot_stale_building_retired" in build
     assert ".values(status=cls.STATUS_FAILED)" in build
+
+def test_representative_snapshots_remain_batched_parallel_bulk_writes():
+    source = (
+        ROOT / "app/services/persistent_representative_snapshot_service.py"
+    ).read_text(encoding="utf-8")
+    build = source[source.index("def build_for_period"):]
+
+    assert "BUILD_BATCH_SIZE = 8" in source
+    assert "BUILD_WORKERS = 3" in source
+    assert "ThreadPoolExecutor(max_workers=workers)" in build
+    assert "for offset in range(0, len(build_ids), batch_size)" in build
+    assert "list(pool.map(calculate, batch_ids))" in build
+    assert "representative_snapshots.insert(), [" in build
+    assert "pool.shutdown(wait=True)" in build
+

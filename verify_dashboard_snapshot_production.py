@@ -13,7 +13,8 @@ import statistics
 import time
 
 from app import create_app
-from app.services.dashboard_service import DashboardService
+from app.models import IMSUpload
+from app.services.ims_publication_service import IMSPublicationService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 
 
@@ -35,28 +36,76 @@ def main() -> int:
 
     app = create_app()
     with app.app_context():
-        service = DashboardService()
-        year, month = int(service.year), int(service.month)
-        expected_ims_id, expected_production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+        latest = (
+            IMSUpload.query.filter_by(status=IMSUpload.STATUS_COMPLETED)
+            .order_by(
+                IMSUpload.year.desc(),
+                IMSUpload.month.desc(),
+                IMSUpload.week_number.desc(),
+                IMSUpload.completed_at.desc(),
+                IMSUpload.id.desc(),
+            )
+            .first()
+        )
+        if latest is None:
+            print("DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|reason=no_completed_ims")
+            return 1
+
+        year, month = int(latest.year), int(latest.month)
+        expected_ims_id, expected_production_id = (
+            PersistentDashboardSnapshotService.source_identity(year, month)
+        )
         deadline = time.monotonic() + max(0.0, args.wait_seconds)
         attempts = 0
         while True:
             attempts += 1
+            pending = IMSPublicationService.pending_job(year, month)
+            visible = IMSPublicationService.latest_visible_upload(year, month)
+            exact_ready = PersistentDashboardSnapshotService.generation_ready(
+                year, month, expected_ims_id, expected_production_id
+            )
             payload = PersistentDashboardSnapshotService.get_active(year, month)
-            if isinstance(payload, dict) and payload:
+            if (
+                pending is None
+                and visible is not None
+                and int(visible.id) == int(expected_ims_id)
+                and exact_ready
+                and isinstance(payload, dict)
+                and payload
+            ):
                 break
             if time.monotonic() >= deadline:
-                print("DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|reason=not_ready|" f"year={year}|month={month}|ims_upload_id={expected_ims_id}|" f"production_upload_id={expected_production_id}|attempts={attempts}")
+                print(
+                    "DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|reason=not_ready|"
+                    f"year={year}|month={month}|ims_upload_id={expected_ims_id}|"
+                    f"production_upload_id={expected_production_id}|attempts={attempts}|"
+                    f"pending_job_id={getattr(pending, 'id', None)}|"
+                    f"visible_upload_id={getattr(visible, 'id', None)}|"
+                    f"exact_ready={int(bool(exact_ready))}"
+                )
                 return 1
             time.sleep(max(0.05, args.poll_seconds))
 
         read_times = []
         for _ in range(max(1, args.reads)):
             started = time.perf_counter()
+            pending = IMSPublicationService.pending_job(year, month)
+            visible = IMSPublicationService.latest_visible_upload(year, month)
             ready = PersistentDashboardSnapshotService.get_active(year, month)
             elapsed = time.perf_counter() - started
-            if not isinstance(ready, dict) or not ready:
-                print("DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|reason=became_unavailable|" f"year={year}|month={month}|ims_upload_id={expected_ims_id}|" f"production_upload_id={expected_production_id}")
+            if (
+                pending is not None
+                or visible is None
+                or int(visible.id) != int(expected_ims_id)
+                or not isinstance(ready, dict)
+                or not ready
+            ):
+                print(
+                    "DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|"
+                    "reason=became_unavailable_or_unpublished|"
+                    f"year={year}|month={month}|ims_upload_id={expected_ims_id}|"
+                    f"production_upload_id={expected_production_id}"
+                )
                 return 1
             read_times.append(elapsed)
 

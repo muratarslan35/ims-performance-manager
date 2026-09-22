@@ -40,6 +40,26 @@ class IMSPublicationService:
                 return job
             if progress.get("stage") in {"read_models", "dashboard_snapshot", "region_snapshots", "representative_snapshots", "snapshot_retry"}:
                 return job
+
+            # A durable 100% record is not enough by itself. Snapshot helper
+            # functions intentionally remove scoped sessions, so older workers
+            # could write the progress file after mutating a detached job object
+            # and fail to persist publication_ready in SQLite. Keep the newest
+            # generation hidden until the DB publication marker is authoritative.
+            stored = IMSProgressStore.read(job.id)
+            if (
+                job.status == IMSImportJob.STATUS_COMPLETED
+                and stored
+                and stored.get("status") == IMSImportJob.STATUS_COMPLETED
+                and stored.get("stage") == "completed"
+                and int(stored.get("percent") or 0) == 100
+            ):
+                try:
+                    summary = json.loads(job.result_summary or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    summary = {}
+                if summary.get("publication_ready") is not True:
+                    return job
         return None
 
     @classmethod

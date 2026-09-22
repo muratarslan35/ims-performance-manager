@@ -67,7 +67,10 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
             payload["market_read_model_version"] = 1
             return payload
 
-        existing = PersistentDashboardSnapshotService.get_active(year, month)
+        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+        existing = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        )
         market_ready = bool(
             isinstance(existing, dict)
             and int(existing.get("market_read_model_version") or 0) >= 1
@@ -78,10 +81,8 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
             PersistentDashboardSnapshotService.publish(year, month, _payload)
             built = True
         else:
-            _payload, built = PersistentDashboardSnapshotService.get_or_build(
-                year, month, rebuild
-            )
-        ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+            _payload = existing
+            built = False
         result = {
             "status": "ACTIVE" if built else "REUSED",
             "ims_upload_id": ims_id,
@@ -95,7 +96,9 @@ def _warm_dashboard_snapshot(app, year, month, *, force=False):
         )
 
         read_started = time.perf_counter()
-        verified = PersistentDashboardSnapshotService.get_active(year, month)
+        verified = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        )
         read_seconds = time.perf_counter() - read_started
         if not isinstance(verified, dict) or not verified:
             raise RuntimeError("dashboard snapshot warm-up completed but active payload is unavailable")
@@ -380,8 +383,22 @@ def _prepare_and_publish(app, completed):
             message="IMS yüklendi · snapshotlar yeniden denenecek", detail=detail,
             status=IMSImportJob.STATUS_PROCESSING)
         return False
+    # Snapshot helpers remove their scoped SQLAlchemy sessions, so the
+    # completed instance passed into this function may now be detached.
+    # Re-attach the queue row before publication. 100% is written only after
+    # publication_ready is durably committed in SQLite.
+    completed = db.session.get(IMSImportJob, job_id)
+    if completed is None:
+        IMSProgressStore.write(
+            job_id, percent=98, stage="snapshot_retry",
+            message="IMS yüklendi · yayın kaydı yeniden denenecek",
+            detail="Snapshotlar hazır ancak yayın iş kaydı yeniden bağlanamadı.",
+            status=IMSImportJob.STATUS_PROCESSING,
+        )
+        return False
     summary = json.loads(completed.result_summary or "{}")
     summary["publication_ready"] = True
+    summary["publication_ready_upload_id"] = int(completed.ims_upload_id or 0)
     completed.result_summary = json.dumps(summary, ensure_ascii=False)
     completed.error_message = None
     db.session.commit()

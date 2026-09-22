@@ -71,7 +71,15 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'database_capacity_audit.py' not in ops_block
 
     assert 'IMS_WORKER_IDLE|processing=' in text
-    assert 'Active IMS import detected; deploy refused' in text
+    assert 'publication_processing=' in text
+    assert 'publication_stale=' in text
+    assert 'IMS_WORKER_RECOVERY|stale_publication_detected' in text
+    assert 'stale_after_seconds = 15 * 60' in text
+    assert 'instance/ims_progress' in text
+    assert '"region_snapshots"' in text
+    assert '"representative_snapshots"' in text
+    assert '"snapshot_retry"' in text
+    assert 'Active IMS import or snapshot publication detected' in text
     assert 'PRAGMA quick_check(1)' in text
     assert 'SQLITE_RUNTIME|' in text
     assert 'quick_check=skipped_backend_no_db_change' in text
@@ -80,6 +88,8 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'HTTP_HEALTH|PASS' in text
     assert 'WEB_ACTIVE|' in text
     assert 'WORKER_ACTIVE|' in text
+    assert 'scripts/finalize_latest_snapshot_publication.py' in text
+    assert text.index('scripts/finalize_latest_snapshot_publication.py') < text.index('venv/bin/python verify_region_manager_production.py')
     assert 'venv/bin/python verify_region_manager_production.py' in text
     assert 'verify_production_snapshot_finalization.py --latest-source-only' in text
     finalizer = Path('verify_production_snapshot_finalization.py').read_text(encoding='utf-8')
@@ -135,6 +145,7 @@ def test_interactive_market_and_historical_reads_use_durable_read_models():
     )
     market_route = routes[market_start:market_end]
     assert "PersistentDashboardSnapshotService.get_active" in market_route
+    assert "PersistentDashboardSnapshotService.get_stable" not in market_route
     assert "PersistentRegionSnapshotService.get_active_all" in market_route
     assert "DashboardService" not in market_route
     assert "MarketAnalysisService(" not in market_route
