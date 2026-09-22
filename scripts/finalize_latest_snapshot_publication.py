@@ -7,6 +7,12 @@ must all match the latest IMS source before the one publication marker is set.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import sqlalchemy as sa
 
