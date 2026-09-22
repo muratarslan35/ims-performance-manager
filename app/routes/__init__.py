@@ -58,8 +58,17 @@ def _region_manager_snapshot(region_key, year, month):
 
 
 def _render_region_snapshot(snapshot):
-    return render_template(
-        "partials/market_region_workspace.html",
+    """Render one snapshot partial without re-running app context processors.
+
+    The partial is intentionally self-contained: it only consumes the persisted
+    report + market payload. render_template would execute every Flask context
+    processor for each region and multiply permission/period metadata SELECTs
+    inside a single Türkiye Pazar request.
+    """
+    template = current_app.jinja_env.get_template(
+        "partials/market_region_workspace.html"
+    )
+    return template.render(
         report=snapshot["report"],
         market_analysis=snapshot["market_analysis"],
     )
