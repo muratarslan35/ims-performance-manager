@@ -68,6 +68,12 @@ jobs:
             case "$file" in
               PROJECT_WORK_PROGRESS.md|CODEX_HANDOFF_CURRENT.md|docs/*|*.md)
                 ;;
+              .github/workflows/deploy.yml)
+                # Changes to the production deploy path must exercise the import
+                # activation path itself; otherwise workflow-only fixes would be
+                # classified as ops and could never restart the import worker.
+                if [ "$mode" != "heavy" ]; then mode="import"; fi
+                ;;
               .github/workflows/*|scripts/run_production_maintenance.sh|tests/*)
                 if [ "$mode" = "docs" ]; then mode="ops"; fi
                 ;;
@@ -340,7 +346,11 @@ jobs:
           elif [ "$RELEASE_MODE" = "import" ]; then
             echo '--- FAST IMPORT RELEASE GATES ---'
             venv/bin/python verify_runtime.py
-            sqlite_fast_check
+            # The multi-GB production database can spend tens of minutes in
+            # PRAGMA quick_check while the snapshot worker is writing. Import
+            # releases do not mutate schema, so use the bounded WAL/runtime
+            # gate here and keep full integrity checks for heavy releases.
+            sqlite_runtime_check
             venv/bin/python verify_live_ims_gate.py
             venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
           elif [ "$RELEASE_MODE" = "backend" ]; then
