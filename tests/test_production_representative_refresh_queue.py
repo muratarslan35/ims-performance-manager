@@ -16,6 +16,8 @@ def test_production_refresh_queue_contract():
     assert "enqueue_stale_production_dependencies" in queue_source
     assert "ProductionResultUpload.STATUS_APPLIED" in queue_source
     assert "requested_at" in queue_source
+    assert "def defer(cls, item: dict)" in queue_source
+    assert "os.utime(path, None)" in queue_source
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in ims_source
     assert "RepresentativeSnapshotRefreshQueue.enqueue_for_production" in retry_source
     assert "_process_representative_refresh_queue" in worker
@@ -45,6 +47,7 @@ def test_production_refresh_queue_contract():
     assert dashboard < representative < region < enrichment < completion
     assert 'region_result.get("status") in {"ACTIVE", "REUSED"}' in refresh_worker
     assert 'enrichment_result.get("status") in {"ENRICHED", "REUSED"}' in refresh_worker
+    assert "RepresentativeSnapshotRefreshQueue.defer(item)" in refresh_worker
 
     # IMS/publication remains first in the single worker loop; refresh work is
     # only examined when no IMS job was claimed.

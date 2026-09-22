@@ -495,8 +495,10 @@ def _process_representative_refresh_queue(app):
                 year, month,
             )
     else:
-        # Keep the marker durable. The worker will retry after any currently
-        # BUILDING generation finishes; no running IMS/snapshot work is stopped.
+        # Keep the marker durable, but rotate it behind other pending periods.
+        # One unrebuildable historical month must never starve later production
+        # refreshes such as a finalized July upload arriving in September.
+        RepresentativeSnapshotRefreshQueue.defer(item)
         app.logger.warning(
             "representative_refresh_queue_deferred year=%s month=%s reason=%s "
             "dashboard_status=%s region_status=%s representative_status=%s "

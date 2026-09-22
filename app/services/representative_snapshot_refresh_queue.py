@@ -311,6 +311,24 @@ class RepresentativeSnapshotRefreshQueue:
         return None
 
     @classmethod
+    def defer(cls, item: dict) -> None:
+        """Keep a failed marker durable but move it behind pending periods."""
+        path = Path(str(item.get("_path") or ""))
+        if not path:
+            return
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+            return
+        if (
+            str(current.get("requested_at") or "")
+            == str(item.get("requested_at") or "")
+            and str(current.get("reason") or "")
+            == str(item.get("reason") or "")
+        ):
+            os.utime(path, None)
+
+    @classmethod
     def complete(cls, item: dict) -> None:
         """Delete only the exact marker that was actually processed.
 
