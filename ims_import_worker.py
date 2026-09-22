@@ -15,7 +15,7 @@ from app import create_app
 from app.cache.dashboard_cache import DashboardCache
 from app.constants.dashboard_constants import DashboardConstants
 from app.extensions import db
-from app.models import IMSImportJob, IMSUpload
+from app.models import IMSImportJob, IMSUpload, ProductionResultUpload
 from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_progress_store import IMSProgressStore
@@ -455,14 +455,44 @@ def _process_representative_refresh_queue(app):
         )
         return True
 
-    # Production refreshes always rebuild the whole target period. A late
-    # earlier-month production result can change this period's Q/YTD values even
-    # when this period's own IMS/production identity did not change.
-    dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)
-    representative_result = _warm_representative_snapshots(
-        app, year, month, force=True
+    # The production month itself gets a new production identity. Reuse any
+    # already-published exact components for that identity and rebuild only the
+    # missing/failed component. This prevents a failed July region generation
+    # from needlessly recalculating every July representative on each retry.
+    #
+    # Later dependent months keep their own source identity even though their
+    # Q/YTD/comparison values changed, so those months still require a forced
+    # full rebuild.
+    force_dependency = True
+    production_source = None
+    if reason.startswith("production_upload:"):
+        try:
+            production_source = db.session.get(
+                ProductionResultUpload,
+                int(reason.split(":", 1)[1]),
+            )
+        except (TypeError, ValueError):
+            production_source = None
+    if (
+        production_source is not None
+        and int(production_source.year) == year
+        and int(production_source.month) == month
+    ):
+        force_dependency = False
+
+    app.logger.info(
+        "representative_refresh_queue_strategy year=%s month=%s reason=%s force_dependency=%s",
+        year, month, reason, int(force_dependency),
     )
-    region_result = _warm_region_snapshots(app, year, month, force=True)
+    dashboard_result = _warm_dashboard_snapshot(
+        app, year, month, force=force_dependency
+    )
+    representative_result = _warm_representative_snapshots(
+        app, year, month, force=force_dependency
+    )
+    region_result = _warm_region_snapshots(
+        app, year, month, force=force_dependency
+    )
     enrichment_result = (
         PersistentRegionSnapshotService.enrich_for_period(year, month)
         if (
