@@ -11,7 +11,7 @@ import re
 from functools import wraps
 from urllib.parse import unquote
 
-from flask import Blueprint, flash, has_request_context, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, g, has_request_context, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from werkzeug.security import generate_password_hash
 
@@ -74,10 +74,27 @@ def _scope_for(user):
     user_id = getattr(user, "id", None)
     if not user_id:
         return None
+
+    # This helper is used repeatedly by the permission/context pipeline during
+    # one page render. Keep the durable DB row authoritative between requests,
+    # but resolve it only once per user inside the current request.
+    cache = None
+    if has_request_context():
+        cache = getattr(g, "_region_manager_scope_cache", None)
+        if cache is None:
+            cache = {}
+            g._region_manager_scope_cache = cache
+        if user_id in cache:
+            return cache[user_id]
+
     try:
-        return RegionManagerScope.query.filter_by(user_id=user_id).one_or_none()
+        scope = RegionManagerScope.query.filter_by(user_id=user_id).one_or_none()
     except Exception:
-        return None
+        scope = None
+
+    if cache is not None:
+        cache[user_id] = scope
+    return scope
 
 
 def manager_type(user):

@@ -436,3 +436,54 @@ def test_murat_asan_manager_keeps_unrestricted_special_access(app):
         db.session.commit()
         assert is_privileged_manager(murat)
         assert not is_regional_manager(murat)
+
+def test_region_scope_lookup_is_cached_once_per_request(app):
+    from sqlalchemy import event
+
+    from app.extensions import db
+    from app.models import User
+    from app.region_manager import _scope_for
+
+    with app.test_request_context("/dashboard/"):
+        manager = User.query.filter_by(email="manager101@example.com").one()
+        statements = []
+
+        def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+            if "region_manager_scopes" in str(statement).lower():
+                statements.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", capture)
+        try:
+            first = _scope_for(manager)
+            second = _scope_for(manager)
+            third = _scope_for(manager)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture)
+
+        assert first is not None
+        assert second is first
+        assert third is first
+        assert len(statements) == 1
+
+
+def test_anonymous_login_skips_operational_period_metadata(client, monkeypatch):
+    from app.services.ims_publication_service import IMSPublicationService
+    from app.services.period_service import PeriodService
+
+    calls = {"period": 0, "upload": 0}
+
+    def active_period():
+        calls["period"] += 1
+        return {"year": 2026, "month": 9, "week_number": 39}
+
+    def visible_upload():
+        calls["upload"] += 1
+        return None
+
+    monkeypatch.setattr(PeriodService, "get_active_period", staticmethod(active_period))
+    monkeypatch.setattr(IMSPublicationService, "latest_visible_upload", staticmethod(visible_upload))
+
+    response = client.get("/login")
+    assert response.status_code == 200
+    assert calls == {"period": 0, "upload": 0}
+

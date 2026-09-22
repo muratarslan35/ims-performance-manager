@@ -79,10 +79,12 @@ def _measure_route(client, path, *, follow_redirects=False):
         for table in HEAVY_READ_TABLES
         if table in statement
     ]
+    scope_reads = sum(" REGION_MANAGER_SCOPES " in statement for statement in selects)
     return response, {
         "seconds": seconds,
         "selects": len(selects),
         "heavy_reads": sorted(set(heavy)),
+        "scope_reads": scope_reads,
     }
 
 
@@ -91,6 +93,7 @@ def main():
     failures = []
     own_region_seconds = None
     other_region_seconds = None
+    login_read = None
     dashboard_read = None
     market_analysis_read = None
     market_region_pack_read = None
@@ -182,6 +185,13 @@ def main():
             _check(can_access_representative(manager, other_rep) == cross_region,
                    "other_rep_policy", failures)
 
+            # Anonymous login rendering must not touch operational IMS data.
+            anonymous_client = app.test_client()
+            login_response, login_read = _measure_route(anonymous_client, "/login")
+            _check(login_response.status_code == 200, "login_route", failures)
+            _check(not login_read["heavy_reads"], "login_heavy_source_read", failures)
+            _check(login_read["selects"] <= 2, "login_query_count", failures)
+
             client = app.test_client()
             _login_as(client, manager.id)
 
@@ -192,6 +202,7 @@ def main():
             dashboard_response, dashboard_read = _measure_route(client, "/dashboard/")
             _check(dashboard_response.status_code == 200, "dashboard_hot_route", failures)
             _check(not dashboard_read["heavy_reads"], "dashboard_heavy_source_read", failures)
+            _check(dashboard_read["scope_reads"] <= 1, "dashboard_scope_query_fanout", failures)
             _check(dashboard_read["seconds"] <= 2.0, "dashboard_hot_route_slow", failures)
 
             # Türkiye Pazar Analizi must consume the dashboard national market
@@ -511,6 +522,7 @@ def main():
             "regional_scope_count": len(scoped),
             "own_region_seconds": own_region_seconds,
             "other_region_seconds": other_region_seconds,
+            "login_read": login_read,
             "dashboard_read": dashboard_read,
             "market_analysis_read": market_analysis_read,
             "market_region_pack_read": market_region_pack_read,
