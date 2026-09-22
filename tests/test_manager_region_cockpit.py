@@ -73,12 +73,16 @@ def test_region_cockpit_switches_period_locally_and_reuses_browser_snapshot_cach
     assert "Chart.getChart" in script
 
 
-def test_region_snapshot_cache_is_upload_versioned_and_long_lived():
+def test_region_cockpit_uses_durable_snapshot_or_source_versioned_historical_read_model():
     route_source = Path("app/routes/__init__.py").read_text(encoding="utf-8")
-    cache_source = Path("app/cache/region_manager_snapshot_cache.py").read_text(encoding="utf-8")
+    historical_source = Path(
+        "app/services/historical_region_read_model_service.py"
+    ).read_text(encoding="utf-8")
 
-    assert "latest_ims_id" in route_source
-    assert "production_id" in route_source
-    assert 'manager-region:{region_key}:{year}:{month}:{latest_ims_id or 0}:{production_id}:v1' in route_source
-    assert "8 * 24 * 60 * 60" in cache_source
-    assert "_inflight" in cache_source
+    assert "PersistentRegionSnapshotService.get_active" in route_source
+    assert "HistoricalRegionReadModelService.get_or_build" in route_source
+    assert "RegionPerformanceService(" not in route_source
+    assert "RegionMarketService(" not in route_source
+    assert "PersistentRegionSnapshotService.source_identity" in historical_source
+    assert "production_upload_id" in historical_source
+    assert "fcntl.flock" in historical_source
