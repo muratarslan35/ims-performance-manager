@@ -275,6 +275,7 @@ class RegionMarketService:
                 upload_id=production_upload_id, region_code=self.region_key
             ).all()
         }
+        return payload
 
     def _build(self, upload_id, production_upload_id):
         products = self._products()
