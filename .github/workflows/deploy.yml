@@ -397,6 +397,7 @@ jobs:
           fi
 
           if [ "$RELEASE_MODE" = "heavy" ] || [ "$RELEASE_MODE" = "backend" ] || [ "$RELEASE_MODE" = "import" ]; then
+            venv/bin/python scripts/finalize_latest_snapshot_publication.py
             venv/bin/python verify_region_manager_production.py
           fi
 
