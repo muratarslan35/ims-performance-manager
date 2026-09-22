@@ -17,7 +17,7 @@ def test_representative_roster_comes_from_exact_ims_upload():
     source = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
     assert "IMSRawData.upload_id == upload_id" in source
     assert "Target.year == int(year)" not in source
-    assert "for offset in range(0, total, batch_size)" in source
+    assert "for offset in range(0, len(build_ids), batch_size)" in source
     assert "db.session.execute(representative_snapshots.insert(), [" in source
 
 
