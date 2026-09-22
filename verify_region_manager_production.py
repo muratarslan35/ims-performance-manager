@@ -93,6 +93,7 @@ def main():
     other_region_seconds = None
     dashboard_read = None
     market_analysis_read = None
+    market_region_pack_read = None
     region_read = None
     representative_read = None
     historical_production_period = None
@@ -206,6 +207,30 @@ def main():
             _check(
                 not market_analysis_read["heavy_reads"],
                 "market_analysis_heavy_source_read",
+                failures,
+            )
+            _check(
+                market_analysis_read["selects"] <= 100,
+                "market_analysis_query_count",
+                failures,
+            )
+
+            region_pack_response, market_region_pack_read = _measure_route(
+                client, "/market-analysis/regions-pack"
+            )
+            _check(
+                region_pack_response.status_code == 200,
+                "market_region_pack_route",
+                failures,
+            )
+            _check(
+                not market_region_pack_read["heavy_reads"],
+                "market_region_pack_heavy_source_read",
+                failures,
+            )
+            _check(
+                market_region_pack_read["selects"] <= 80,
+                "market_region_pack_query_count",
                 failures,
             )
 
@@ -488,6 +513,7 @@ def main():
             "other_region_seconds": other_region_seconds,
             "dashboard_read": dashboard_read,
             "market_analysis_read": market_analysis_read,
+            "market_region_pack_read": market_region_pack_read,
             "region_read": region_read,
             "representative_read": representative_read,
             "historical_production_period": historical_production_period,

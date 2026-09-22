@@ -102,6 +102,9 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '"historical_production_period": historical_production_period' in acceptance
     assert '"historical_production_mode": historical_production_mode' in acceptance
     assert '"market_analysis_heavy_source_read"' in acceptance
+    assert '"market_analysis_query_count"' in acceptance
+    assert '"market_region_pack_heavy_source_read"' in acceptance
+    assert '"market_region_pack_query_count"' in acceptance
     assert '"historical_production_region_heavy_source_read"' in acceptance
     assert '"historical_compatibility_heavy_source_read"' in acceptance
     assert '"historical_compatibility_period": historical_compatibility_period' in acceptance
@@ -136,6 +139,12 @@ def test_interactive_market_and_historical_reads_use_durable_read_models():
     assert "DashboardService" not in market_route
     assert "MarketAnalysisService(" not in market_route
     assert "_build_region_snapshot" not in market_route
+    assert 'current_app.jinja_env.get_template(' in routes
+    render_start = routes.index("def _render_region_snapshot")
+    render_end = routes.index("def _empty_market_analysis", render_start)
+    render_helper = routes[render_start:render_end]
+    assert "render_template(" not in render_helper
+    assert "template.render(" in render_helper
 
     assert "HistoricalRegionReadModelService.get_or_build" in regions
     assert "RegionPerformanceService(" not in regions
