@@ -162,14 +162,40 @@ class ProductionResultService:
                     break
 
             if selected_result is not None:
-                percent = cls._d(selected_result.actual_tl) * Decimal("100") / target_tl if target_tl and selected_result.actual_tl is not None else cls._d(selected_result.realization_percent)
-                actual_tl = cls._d(selected_result.actual_tl) if selected_result.actual_tl is not None else target_tl * percent / Decimal("100")
-                actual_unit = cls._d(selected_result.actual_unit) if selected_result.actual_unit is not None else target_unit * percent / Decimal("100")
+                # A finalized production workbook is authoritative for both
+                # targets and actuals. Keep IMS Target rows only as a fallback
+                # for older production uploads that did not persist target
+                # columns. This also makes P2 replace P1/IMS completely.
+                production_target_tl = (
+                    cls._d(selected_result.target_tl)
+                    if selected_result.target_tl is not None
+                    else target_tl
+                )
+                production_target_unit = (
+                    cls._d(selected_result.target_unit)
+                    if selected_result.target_unit is not None
+                    else target_unit
+                )
+                percent = (
+                    cls._d(selected_result.actual_tl) * Decimal("100") / production_target_tl
+                    if production_target_tl and selected_result.actual_tl is not None
+                    else cls._d(selected_result.realization_percent)
+                )
+                actual_tl = (
+                    cls._d(selected_result.actual_tl)
+                    if selected_result.actual_tl is not None
+                    else production_target_tl * percent / Decimal("100")
+                )
+                actual_unit = (
+                    cls._d(selected_result.actual_unit)
+                    if selected_result.actual_unit is not None
+                    else production_target_unit * percent / Decimal("100")
+                )
                 resolved[product_id] = {
                     "source": f"PRODUCTION_{selected_upload.production_stage}",
                     "complete": True,
-                    "target_tl": target_tl,
-                    "target_unit": target_unit,
+                    "target_tl": production_target_tl,
+                    "target_unit": production_target_unit,
                     "realization_percent": percent,
                     "actual_tl": actual_tl,
                     "actual_unit": actual_unit,
@@ -226,14 +252,36 @@ class ProductionResultService:
             ).first()
             if result is None:
                 continue
-            percent = cls._d(result.actual_tl) * Decimal("100") / target_tl if target_tl and result.actual_tl is not None else cls._d(result.realization_percent)
-            actual_tl = cls._d(result.actual_tl) if result.actual_tl is not None else target_tl * percent / Decimal("100")
-            actual_unit = cls._d(result.actual_unit) if result.actual_unit is not None else target_unit * percent / Decimal("100")
+            production_target_tl = (
+                cls._d(result.target_tl)
+                if result.target_tl is not None
+                else target_tl
+            )
+            production_target_unit = (
+                cls._d(result.target_unit)
+                if result.target_unit is not None
+                else target_unit
+            )
+            percent = (
+                cls._d(result.actual_tl) * Decimal("100") / production_target_tl
+                if production_target_tl and result.actual_tl is not None
+                else cls._d(result.realization_percent)
+            )
+            actual_tl = (
+                cls._d(result.actual_tl)
+                if result.actual_tl is not None
+                else production_target_tl * percent / Decimal("100")
+            )
+            actual_unit = (
+                cls._d(result.actual_unit)
+                if result.actual_unit is not None
+                else production_target_unit * percent / Decimal("100")
+            )
             return {
                 "source": f"PRODUCTION_{upload.production_stage}",
                 "complete": True,
-                "target_tl": target_tl,
-                "target_unit": target_unit,
+                "target_tl": production_target_tl,
+                "target_unit": production_target_unit,
                 "realization_percent": percent,
                 "actual_tl": actual_tl,
                 "actual_unit": actual_unit,
