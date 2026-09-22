@@ -27,8 +27,18 @@ from app.region_manager import (
     region_code,
 )
 from app.services.access_permission_service import enabled as access_enabled
-from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-from sqlalchemy import event
+from app.services.ims_progress_store import IMSProgressStore
+from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+from app.services.persistent_region_snapshot_service import (
+    PersistentRegionSnapshotService,
+    region_snapshot_sets,
+    region_snapshots,
+)
+from app.services.persistent_representative_snapshot_service import (
+    representative_snapshot_sets,
+    representative_snapshots,
+)
+from sqlalchemy import event, func, select
 
 DENIED_REGION = "Bu bölgenin yöneticisi değilsiniz."
 DENIED_SYSTEM = "Bölge müdürü hesabınızla bu alanda değişiklik yapamazsınız."
@@ -90,6 +100,123 @@ def _measure_route(client, path, *, follow_redirects=False):
     }
 
 
+def _latest_snapshot_coverage():
+    latest = (
+        IMSUpload.query
+        .filter(IMSUpload.status == "COMPLETED")
+        .order_by(
+            IMSUpload.year.desc(),
+            IMSUpload.week_number.desc(),
+            IMSUpload.completed_at.desc(),
+            IMSUpload.id.desc(),
+        )
+        .first()
+    )
+    if latest is None:
+        return {"available": False}
+
+    year, month = int(latest.year), int(latest.month)
+    source_upload_id, production_upload_id = PersistentDashboardSnapshotService.source_identity(
+        year, month
+    )
+    latest_job = (
+        IMSImportJob.query.filter_by(ims_upload_id=int(latest.id))
+        .order_by(IMSImportJob.id.desc())
+        .first()
+    )
+    progress = IMSProgressStore.read(latest_job.id) if latest_job is not None else None
+    try:
+        summary = json.loads(latest_job.result_summary or "{}") if latest_job else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        summary = {}
+
+    region_set = db.session.execute(
+        select(
+            region_snapshot_sets.c.id,
+            region_snapshot_sets.c.status,
+            region_snapshot_sets.c.region_count,
+        ).where(
+            region_snapshot_sets.c.year == year,
+            region_snapshot_sets.c.month == month,
+            region_snapshot_sets.c.source_upload_id == int(source_upload_id),
+            region_snapshot_sets.c.production_upload_id == int(production_upload_id),
+        ).order_by(region_snapshot_sets.c.id.desc()).limit(1)
+    ).first()
+    region_rows = int(db.session.execute(
+        select(func.count()).select_from(region_snapshots).where(
+            region_snapshots.c.set_id == int(region_set.id)
+        )
+    ).scalar() or 0) if region_set is not None else 0
+
+    representative_set = db.session.execute(
+        select(
+            representative_snapshot_sets.c.id,
+            representative_snapshot_sets.c.status,
+            representative_snapshot_sets.c.representative_count,
+        ).where(
+            representative_snapshot_sets.c.year == year,
+            representative_snapshot_sets.c.month == month,
+            representative_snapshot_sets.c.source_upload_id == int(source_upload_id),
+            representative_snapshot_sets.c.production_upload_id == int(production_upload_id),
+        ).order_by(representative_snapshot_sets.c.id.desc()).limit(1)
+    ).first()
+    representative_rows = int(db.session.execute(
+        select(func.count()).select_from(representative_snapshots).where(
+            representative_snapshots.c.set_id == int(representative_set.id)
+        )
+    ).scalar() or 0) if representative_set is not None else 0
+
+    dashboard_ready = PersistentDashboardSnapshotService.generation_ready(
+        year, month, source_upload_id, production_upload_id
+    )
+    region_complete = bool(
+        region_set is not None
+        and region_set.status == PersistentRegionSnapshotService.STATUS_ACTIVE
+        and int(region_set.region_count or 0) > 0
+        and region_rows == int(region_set.region_count or 0)
+    )
+    representative_complete = bool(
+        representative_set is not None
+        and representative_set.status == "ACTIVE"
+        and int(representative_set.representative_count or 0) > 0
+        and representative_rows == int(representative_set.representative_count or 0)
+    )
+    final_progress = bool(
+        progress
+        and progress.get("status") == IMSImportJob.STATUS_COMPLETED
+        and progress.get("stage") == "completed"
+        and int(progress.get("percent") or 0) == 100
+    )
+    return {
+        "available": True,
+        "year": year,
+        "month": month,
+        "week_number": int(latest.week_number or 0),
+        "upload_id": int(latest.id),
+        "source_upload_id": int(source_upload_id),
+        "production_upload_id": int(production_upload_id),
+        "source_matches_latest": int(source_upload_id) == int(latest.id),
+        "job_id": int(latest_job.id) if latest_job is not None else None,
+        "job_status": str(latest_job.status) if latest_job is not None else None,
+        "progress_percent": int(progress.get("percent") or 0) if progress else None,
+        "progress_stage": str(progress.get("stage") or "") if progress else None,
+        "progress_status": str(progress.get("status") or "") if progress else None,
+        "publication_ready": bool(summary.get("publication_ready")),
+        "dashboard_ready": bool(dashboard_ready),
+        "region_set_id": int(region_set.id) if region_set is not None else None,
+        "region_status": str(region_set.status) if region_set is not None else None,
+        "region_expected": int(region_set.region_count or 0) if region_set is not None else 0,
+        "region_rows": region_rows,
+        "region_complete": region_complete,
+        "representative_set_id": int(representative_set.id) if representative_set is not None else None,
+        "representative_status": str(representative_set.status) if representative_set is not None else None,
+        "representative_expected": int(representative_set.representative_count or 0) if representative_set is not None else 0,
+        "representative_rows": representative_rows,
+        "representative_complete": representative_complete,
+        "final_progress": final_progress,
+    }
+
+
 def main():
     app = create_app()
     failures = []
@@ -108,6 +235,7 @@ def main():
     historical_compatibility_period = None
     historical_compatibility_status = None
     historical_compatibility_read = None
+    latest_snapshot_coverage = None
     database = Path("instance/ipm.db")
     connection = sqlite3.connect(database, timeout=30)
     try:
@@ -137,6 +265,35 @@ def main():
     with app.app_context():
         processing = IMSImportJob.query.filter_by(status=IMSImportJob.STATUS_PROCESSING).count()
         _check(processing == 0, "ims_processing", failures)
+
+        latest_snapshot_coverage = _latest_snapshot_coverage()
+        if latest_snapshot_coverage.get("final_progress"):
+            _check(
+                latest_snapshot_coverage.get("source_matches_latest"),
+                "latest_snapshot_source_mismatch",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("publication_ready"),
+                "latest_snapshot_publication_not_ready",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("dashboard_ready"),
+                "latest_dashboard_snapshot_incomplete",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("region_complete"),
+                "latest_region_snapshot_incomplete",
+                failures,
+            )
+            _check(
+                latest_snapshot_coverage.get("representative_complete"),
+                "latest_representative_snapshot_incomplete",
+                failures,
+            )
+
         scoped = (
             db.session.query(User, RegionManagerScope)
             .join(RegionManagerScope, RegionManagerScope.user_id == User.id)
@@ -526,6 +683,7 @@ def main():
             "journal_mode": journal_mode,
             "busy_timeout": busy_timeout,
             "processing_jobs": processing,
+            "latest_snapshot_coverage": latest_snapshot_coverage,
             "scope_table": bool(table),
             "regional_scope_count": len(scoped),
             "own_region_seconds": own_region_seconds,
