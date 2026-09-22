@@ -501,7 +501,9 @@ class PersistentRegionSnapshotService:
         previous_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
             previous_rep_ids, previous_year, previous_month
         ) if previous_rep_ids else {}
-        dashboard_payload = PersistentDashboardSnapshotService.get_stable(year, month) or {}
+        dashboard_payload = PersistentDashboardSnapshotService.get_generation_for_source(
+            year, month, ims_id, production_id
+        ) or {}
 
         updates = []
         now = datetime.utcnow()
