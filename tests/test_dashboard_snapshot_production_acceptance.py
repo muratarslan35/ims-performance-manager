@@ -23,7 +23,11 @@ def test_runtime_deploy_waits_for_shared_dashboard_snapshot_acceptance():
     assert 'DASHBOARD_SNAPSHOT_ACCEPTANCE|status=FAIL|reason=not_ready' in verifier
     assert 'PersistentDashboardSnapshotService.get_active' in verifier
     assert 'PersistentDashboardSnapshotService.source_identity' in verifier
-    assert 'DashboardService()' in verifier
+    assert 'PersistentDashboardSnapshotService.generation_ready' in verifier
+    assert 'IMSPublicationService.pending_job' in verifier
+    assert 'IMSPublicationService.latest_visible_upload' in verifier
+    assert 'IMSUpload.query' in verifier
+    assert 'DashboardService()' not in verifier
     assert 'builder' not in verifier
     compile(verifier, 'verify_dashboard_snapshot_production.py', 'exec')
 
