@@ -319,7 +319,29 @@ class PersistentRepresentativeSnapshotService:
 
         already_building = cls._current_source_building(year, month, ims_id, production_id)
         if already_building:
-            return {"status": "BUILDING", "set_id": int(already_building), "representatives": 0}
+            if not force:
+                return {
+                    "status": "BUILDING",
+                    "set_id": int(already_building),
+                    "representatives": 0,
+                }
+
+            # A forced production refresh runs only in the single IMS worker.
+            # If that worker was restarted mid-build, the persisted BUILDING
+            # generation is orphaned derived cache and would otherwise block
+            # the exact P2 generation forever. Retire it and build a fresh
+            # atomic generation; the previous ACTIVE set stays visible.
+            db.session.execute(
+                representative_snapshot_sets.update().where(
+                    representative_snapshot_sets.c.id == int(already_building)
+                ).values(status=cls.STATUS_FAILED)
+            )
+            db.session.commit()
+            current_app.logger.warning(
+                "representative_snapshot_stale_building_retired "
+                "year=%s month=%s set_id=%s ims_upload_id=%s production_upload_id=%s",
+                year, month, int(already_building), int(ims_id), int(production_id),
+            )
 
         result = db.session.execute(representative_snapshot_sets.insert().values(
             year=year,
