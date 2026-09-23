@@ -6,10 +6,13 @@ seven periods, market analysis and AI on every navigation.
 """
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
 
@@ -70,6 +73,26 @@ class PersistentRepresentativeSnapshotService:
     # workers into swap/I/O contention. Config can still override this value.
     BUILD_WORKERS = 3
     READ_MODEL_VERSION = 2
+
+    @classmethod
+    @contextmanager
+    def _snapshot_writer_lock(cls):
+        """Serialize every representative snapshot writer across processes.
+
+        Import publication, production refresh, deploy backfill and maintenance
+        can all request the same generation. A process-local SQLite transaction
+        is not enough because expensive payload calculation happens before each
+        short write transaction. Use the existing shared filesystem lock so a
+        second builder queues instead of calculating/writing the same set.
+        """
+        lock_path = Path(current_app.instance_path) / "representative_snapshot_warmup.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _json_default(value):
@@ -299,63 +322,138 @@ class PersistentRepresentativeSnapshotService:
         return int(payload.get("read_model_version") or 0)
 
     @classmethod
-    def rebuild_exact_members(cls, year, month, representative_ids):
-        """Rebuild only selected members of the exact current-source generation.
+    def rebuild_exact_members(cls, year, month, representative_ids, *, set_id=None):
+        """Repair selected members of one exact current-source generation.
 
-        This is intended for maintenance of a hidden/current generation after a
-        semantic rule change. The selected members are removed, the same set is
-        returned to BUILDING, and the normal resumable batch builder calculates
-        only those missing representatives.
+        set_id may point at a complete SUPERSEDED generation selected by a
+        verified maintenance flow. This lets recovery reuse valid expensive
+        payloads while rebuilding only members that fail current acceptance.
+        All state changes and the resumed build run under the same OS writer
+        lock, so no second process can insert duplicate members concurrently.
         """
         year, month = int(year), int(month)
-        ims_id, production_id = cls.source_identity(year, month)
-        exact = cls._latest_exact_active(year, month, ims_id, production_id)
-        if exact is None:
-            return {"status": "SKIPPED", "reason": "NO_EXACT_ACTIVE", "representatives": 0}
+        with cls._snapshot_writer_lock():
+            ims_id, production_id = cls.source_identity(year, month)
+            if set_id is None:
+                exact = cls._latest_exact_active(year, month, ims_id, production_id)
+                set_id = int(exact.id) if exact is not None else None
+            else:
+                set_id = int(set_id)
 
-        roster = set(cls.representative_ids(year, month, ims_id))
-        selected = sorted({
-            int(item) for item in representative_ids
-            if item is not None and int(item) in roster
-        })
-        if not selected:
-            return {"status": "REUSED", "set_id": int(exact.id), "representatives": len(roster), "rebuilt": 0}
+            if not set_id:
+                return {"status": "SKIPPED", "reason": "NO_EXACT_GENERATION", "representatives": 0}
 
-        set_id = int(exact.id)
-        db.session.execute(
-            representative_snapshots.delete().where(
-                representative_snapshots.c.set_id == set_id,
-                representative_snapshots.c.representative_id.in_(selected),
+            candidate = db.session.execute(
+                sa.select(
+                    representative_snapshot_sets.c.id,
+                    representative_snapshot_sets.c.source_upload_id,
+                    representative_snapshot_sets.c.production_upload_id,
+                ).where(
+                    representative_snapshot_sets.c.id == set_id,
+                    representative_snapshot_sets.c.year == year,
+                    representative_snapshot_sets.c.month == month,
+                ).limit(1)
+            ).first()
+            if (
+                candidate is None
+                or int(candidate.source_upload_id or 0) != int(ims_id)
+                or int(candidate.production_upload_id or 0) != int(production_id)
+            ):
+                return {"status": "SKIPPED", "reason": "SOURCE_MISMATCH", "representatives": 0}
+
+            roster = set(cls.representative_ids(year, month, ims_id))
+            selected = sorted({
+                int(item) for item in representative_ids
+                if item is not None and int(item) in roster
+            })
+
+            # Retire any other incomplete writer for this exact source before
+            # promoting the selected reusable generation to the sole BUILDING set.
+            db.session.execute(
+                representative_snapshot_sets.update().where(
+                    representative_snapshot_sets.c.year == year,
+                    representative_snapshot_sets.c.month == month,
+                    representative_snapshot_sets.c.source_upload_id == int(ims_id),
+                    representative_snapshot_sets.c.production_upload_id == int(production_id),
+                    representative_snapshot_sets.c.status == cls.STATUS_BUILDING,
+                    representative_snapshot_sets.c.id != set_id,
+                ).values(status=cls.STATUS_FAILED)
             )
-        )
-        remaining = int(db.session.execute(
-            sa.select(sa.func.count()).select_from(representative_snapshots).where(
-                representative_snapshots.c.set_id == set_id
+
+            if not selected:
+                db.session.execute(
+                    representative_snapshot_sets.update().where(
+                        representative_snapshot_sets.c.year == year,
+                        representative_snapshot_sets.c.month == month,
+                        representative_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                        representative_snapshot_sets.c.id != set_id,
+                    ).values(status=cls.STATUS_SUPERSEDED)
+                )
+                db.session.execute(
+                    representative_snapshot_sets.update().where(
+                        representative_snapshot_sets.c.id == set_id
+                    ).values(
+                        status=cls.STATUS_ACTIVE,
+                        representative_count=len(roster),
+                        activated_at=datetime.utcnow(),
+                    )
+                )
+                db.session.commit()
+                return {
+                    "status": "ACTIVE",
+                    "set_id": set_id,
+                    "representatives": len(roster),
+                    "rebuilt": 0,
+                }
+
+            db.session.execute(
+                representative_snapshots.delete().where(
+                    representative_snapshots.c.set_id == set_id,
+                    representative_snapshots.c.representative_id.in_(selected),
+                )
             )
-        ).scalar() or 0)
-        db.session.execute(
-            representative_snapshot_sets.update().where(
-                representative_snapshot_sets.c.id == set_id
-            ).values(
-                status=cls.STATUS_BUILDING,
-                representative_count=remaining,
-                activated_at=None,
+            remaining = int(db.session.execute(
+                sa.select(sa.func.count()).select_from(representative_snapshots).where(
+                    representative_snapshots.c.set_id == set_id
+                )
+            ).scalar() or 0)
+            db.session.execute(
+                representative_snapshot_sets.update().where(
+                    representative_snapshot_sets.c.id == set_id
+                ).values(
+                    status=cls.STATUS_BUILDING,
+                    representative_count=remaining,
+                    activated_at=None,
+                )
             )
-        )
-        db.session.commit()
-        current_app.logger.warning(
-            "representative_snapshot_members_invalidated "
-            "year=%s month=%s set_id=%s ims_upload_id=%s production_upload_id=%s "
-            "members=%s remaining=%s",
-            year, month, set_id, int(ims_id), int(production_id), selected, remaining,
-        )
-        result = cls.build_for_period(year, month, force=False)
-        result["rebuilt"] = len(selected)
-        result["rebuilt_representative_ids"] = selected
-        return result
+            db.session.commit()
+            current_app.logger.warning(
+                "representative_snapshot_members_invalidated "
+                "year=%s month=%s set_id=%s ims_upload_id=%s production_upload_id=%s "
+                "members=%s remaining=%s",
+                year, month, set_id, int(ims_id), int(production_id), selected, remaining,
+            )
+            result = cls._build_for_period_unlocked(year, month, force=False)
+            result["rebuilt"] = len(selected)
+            result["rebuilt_representative_ids"] = selected
+            return result
 
     @classmethod
     def build_for_period(
+        cls,
+        year,
+        month,
+        *,
+        force: bool = False,
+        progress: Callable[[int, int, str], None] | None = None,
+    ):
+        with cls._snapshot_writer_lock():
+            return cls._build_for_period_unlocked(
+                year, month, force=force, progress=progress
+            )
+
+    @classmethod
+    def _build_for_period_unlocked(
         cls,
         year,
         month,
