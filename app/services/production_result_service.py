@@ -35,9 +35,9 @@ class ProductionResultService:
     _quota_cache = {}
     _quota_cache_lock = Lock()
     _quota_cache_seconds = 60
-    INCIDENTAL_SALE_MAX_REPRESENTATIVES = 5
+    INCIDENTAL_SALE_MAX_REPRESENTATIVES = 20
     INCIDENTAL_SALE_MAX_UNIT_PER_REPRESENTATIVE = Decimal("2")
-    INCIDENTAL_SALE_MAX_NATIONAL_UNIT = Decimal("10")
+    INCIDENTAL_SALE_MAX_NATIONAL_UNIT = Decimal("40")
 
     @staticmethod
     def _d(value):
@@ -48,8 +48,8 @@ class ProductionResultService:
         """Treat isolated 1-2 box movements as unavailable-product noise.
 
         A product is still commercially active as soon as the movement is
-        broader than five representatives, exceeds two boxes for any one
-        representative, or exceeds ten boxes nationwide.  Positive TL without
+        broader than twenty representatives, exceeds two boxes for any one
+        representative, or exceeds forty boxes nationwide. Positive TL without
         a usable box quantity is kept active (fail closed).
         """
         positive = [
