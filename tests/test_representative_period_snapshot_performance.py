@@ -12,11 +12,13 @@ from app.models import (
     IMSUpload,
     Product,
     ProductionResult,
+    ProductionRepresentativeTotal,
     ProductionResultUpload,
     Representative,
     Target,
 )
 from app.services.representative_period_snapshot_service import RepresentativePeriodSnapshotService
+from app.services.representative_period_workspace import _aggregate_sales
 from app.services.scoped_ai_insight_service import ScopedAIInsightService
 
 
@@ -158,6 +160,41 @@ def test_period_snapshot_preserves_p2_p1_ims_priority_and_over_100(tmp_path):
         assert float(half_year["actual_tl"]) == expected_ims
 
 
+def test_monthly_total_percent_uses_authoritative_workbook_representative_total(tmp_path):
+    application = _app(tmp_path)
+    with application.app_context():
+        representative = Representative(rep_code="TOTAL1", rep_name="MURAT ARSLAN", active=True)
+        product = Product(product_code="TOTALP", product_name="Product", is_active=True)
+        db.session.add_all([representative, product])
+        db.session.flush()
+        upload = _production_upload(2026, 7, 2, datetime(2026, 7, 31, 9, 0), "total")
+        db.session.add(upload)
+        db.session.flush()
+        db.session.add(Target(
+            year=2026, month=7, quarter="Q3", representative_id=representative.id,
+            product_id=product.id, tl_target=1741371.8676801524, unit_target=1,
+        ))
+        db.session.add(ProductionResult(
+            upload_id=upload.id, representative_id=representative.id,
+            product_id=product.id, target_tl=1741371.8676801524,
+            actual_tl=1184000, realization_percent=68,
+        ))
+        db.session.add(ProductionRepresentativeTotal(
+            upload_id=upload.id, representative_id=representative.id,
+            target_tl=1741371.8676801524, actual_tl=1166470,
+            realization_percent=66.98569223780822,
+        ))
+        db.session.commit()
+
+        periods = RepresentativePeriodSnapshotService.build(representative.id, 2026, 7)
+        _rows, totals, _assignments, _sources = _aggregate_sales(
+            representative.id, [(2026, 7)]
+        )
+
+        assert periods["monthly"]["realization_percent"] == 67
+        assert totals["percent"] == 67
+
+
 def test_period_snapshot_uses_bounded_query_count_for_six_months(tmp_path):
     application = _app(tmp_path)
     with application.app_context():
@@ -279,7 +316,8 @@ def test_period_snapshot_query_count_stays_constant_with_production_rows(tmp_pat
 
         assert periods["monthly"]["realization_percent"] == 108
         assert periods["half_year"]["complete"] is True
-        # One extra SELECT fetches all ProductionResult rows for all selected
-        # uploads; count does not scale with 42/70 target evaluations.
-        assert len(selects) <= 5
+        # Two extra bounded SELECTs fetch all ProductionResult and official
+        # representative-total rows for all selected uploads; count does not
+        # scale with 42/70 target evaluations.
+        assert len(selects) <= 6
         assert sum("PRODUCTION_RESULTS" in statement.upper() for statement in selects) == 1
