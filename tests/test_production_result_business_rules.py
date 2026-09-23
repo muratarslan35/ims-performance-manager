@@ -47,14 +47,14 @@ def _production_row(representative_id, units, tl=None):
 
 
 def test_isolated_one_or_two_box_movements_are_incidental_for_quota_exit():
-    rows = [_production_row(rep_id, 2) for rep_id in range(1, 6)]
+    rows = [_production_row(rep_id, 2) for rep_id in range(1, 21)]
 
     assert ProductionResultService._only_incidental_sales(rows) is True
 
 
 def test_clear_nationwide_product_sales_never_become_quota_exit():
     assert ProductionResultService._only_incidental_sales([
-        _production_row(rep_id, 1) for rep_id in range(1, 51)
+        _production_row(rep_id, 2) for rep_id in range(1, 22)
     ]) is False
     assert ProductionResultService._only_incidental_sales([
         _production_row(1, 50), _production_row(2, 50)
