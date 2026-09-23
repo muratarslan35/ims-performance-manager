@@ -220,3 +220,32 @@ def test_worker_completes_missing_region_enrichment_before_force_rebuild():
     assert enrich < second_fresh < complete < force_representatives
     assert "already_fresh_after_enrichment=1" in refresh
     assert 'and isinstance((payload or {}).get("ai_report"), dict)' in region
+
+
+def test_quota_dashboard_freshness_repairs_dashboard_before_rebuilding_representatives():
+    queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
+        encoding="utf-8"
+    )
+    worker = Path("ims_import_worker.py").read_text(encoding="utf-8")
+
+    assert "def _dashboard_quota_is_current" in queue_source
+    assert "Target.product_id.in_(quota_ids)" in queue_source
+    assert 'row.get("target_tl")' in queue_source
+    assert 'row.get("actual_tl")' in queue_source
+    assert "if not cls._dashboard_quota_is_current(year, month, dashboard_payload):" in queue_source
+
+    refresh = worker[worker.index("def _process_representative_refresh_queue(app):") :]
+    dashboard = refresh.index(
+        "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)"
+    )
+    recheck = refresh.index(
+        "_queued_production_refresh_is_fresh(item, year, month)", dashboard
+    )
+    completion = refresh.index(
+        "RepresentativeSnapshotRefreshQueue.complete(item)", recheck
+    )
+    representative = refresh.index(
+        "representative_result = _warm_representative_snapshots(", completion
+    )
+    assert dashboard < recheck < completion < representative
+    assert "already_fresh_after_dashboard=1" in refresh
