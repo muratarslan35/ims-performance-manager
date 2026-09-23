@@ -29,3 +29,11 @@ def test_july_quota_refresh_repairs_only_stale_representative_members():
     assert "status=cls.STATUS_BUILDING" in snapshot
     assert "with cls._snapshot_writer_lock():" in snapshot
     assert "result = cls._build_for_period_unlocked(year, month, force=False)" in snapshot
+
+
+def test_july_quota_maintenance_does_not_rebuild_later_months():
+    source = (ROOT / "scripts/refresh_july_quota_read_models.py").read_text(encoding="utf-8")
+
+    assert "for month in (args.month,):" in source
+    assert "range(args.month, end_month + 1)" not in source
+    assert "RepresentativeSnapshotRefreshQueue" in source
