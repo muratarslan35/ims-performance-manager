@@ -47,6 +47,7 @@ def _production_row(representative_id, units, tl=None):
 
 
 def test_isolated_one_or_two_box_movements_are_incidental_for_quota_exit():
+    # Business tolerance: up to 20 isolated representatives, 40 boxes total.
     rows = [_production_row(rep_id, 2) for rep_id in range(1, 21)]
 
     assert ProductionResultService._only_incidental_sales(rows) is True
