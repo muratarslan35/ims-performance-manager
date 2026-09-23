@@ -90,6 +90,35 @@ def _region_read_model(region_key, year, month, *, source_upload_id=None):
     return _compatibility_region_read_model(region_key, year, month)
 
 
+def _refresh_future_chart_points(report, region_key, selected_year, selected_month, active):
+    """Use the current published series for months after a historical page."""
+    if int(active["year"]) != int(selected_year) or int(active["month"]) <= int(selected_month):
+        return report
+    upload_id = active.get("upload_id")
+    if not upload_id:
+        return report
+    current = PersistentRegionSnapshotService.get_active_for_visible_upload(
+        region_key, active["year"], active["month"], upload_id
+    )
+    current_rows = ((current or {}).get("report") or {}).get("annual_realization") or []
+    prior_rows = report.get("annual_realization") or []
+    if not current_rows or not prior_rows:
+        return report
+    future = {
+        int(row["month"]): row for row in current_rows
+        if isinstance(row, dict) and row.get("month") is not None
+        and int(selected_month) < int(row["month"]) <= int(active["month"])
+    }
+    if not future:
+        return report
+    updated = dict(report)
+    updated["annual_realization"] = [
+        future.get(int(row["month"]), row) if isinstance(row, dict) and row.get("month") is not None else row
+        for row in prior_rows
+    ]
+    return updated
+
+
 @regions_bp.route("/<path:region_key>")
 @login_required
 def detail(region_key):
@@ -146,7 +175,7 @@ def detail(region_key):
                 )
                 return redirect(url_for("dashboard.index"))
 
-        current_report = read_model["report"]
+        current_report = _refresh_future_chart_points(\n            read_model["report"], region_key, year, month, active\n        )
         market_analysis = read_model.get("market_analysis") or {}
         ai_report = read_model.get("ai_report") or {}
         region_manager = _assigned_region_manager(current_report)
