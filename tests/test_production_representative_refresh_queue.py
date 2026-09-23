@@ -152,3 +152,28 @@ def test_late_production_cascade_contract():
     assert "existing_complete and force" in region_source
     assert "replacement_rows" in region_source
     assert "PersistentDashboardSnapshotService.publish(year, month, _payload)" in worker
+
+
+def test_source_production_month_uses_exact_identity_and_downstream_keeps_cutoff():
+    cutoff = object()
+
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 7, 2026, 7, cutoff
+    ) is None
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 7, 2026, 8, cutoff
+    ) is cutoff
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 12, 2027, 1, cutoff
+    ) is cutoff
+
+    queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
+        encoding="utf-8"
+    )
+    verifier = Path("verify_production_snapshot_finalization.py").read_text(
+        encoding="utf-8"
+    )
+    assert "target_cutoff = cls._dependency_cutoff(" in queue_source
+    assert verifier.count(
+        "target_cutoff = RepresentativeSnapshotRefreshQueue._dependency_cutoff("
+    ) == 2
