@@ -27,4 +27,4 @@ def test_july_quota_refresh_repairs_only_stale_representative_members():
     assert "def rebuild_exact_members" in snapshot
     assert "representative_snapshots.delete()" in snapshot
     assert "status=cls.STATUS_BUILDING" in snapshot
-    assert "result = cls.build_for_period(year, month, force=False)" in snapshot
+    assert "with cls._snapshot_writer_lock():" in snapshot\n    assert "result = cls._build_for_period_unlocked(year, month, force=False)" in snapshot
