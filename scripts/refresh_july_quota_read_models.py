@@ -138,6 +138,7 @@ def main():
                                      if item.get("product_id") == product_id), None)
                         if item and float(item.get("target_tl") or 0) > 0 and round(float(item.get("actual_tl") or 0), 2) != round(float(item["target_tl"]), 2):
                             raise RuntimeError(f"staged region {region_key} Fentivag quota did not close")
+                    stale_representatives = []
                     for representative_id, snapshot in raw.items():
                         target = Target.query.filter_by(year=args.year, month=month,
                             representative_id=representative_id, product_id=product_id).first()
@@ -147,7 +148,30 @@ def main():
                         item = next((item for item in monthly.get("products", [])
                                      if (item.get("product_id") or (item.get("product") or {}).get("id")) == product_id), None)
                         if not item or round(float(item.get("actual_tl") or 0), 2) != round(float(target.tl_target), 2):
-                            raise RuntimeError(f"staged representative {representative_id} Fentivag quota did not close")
+                            stale_representatives.append(int(representative_id))
+                    if stale_representatives:
+                        print("REPRESENTATIVE_QUOTA_STALE|ids=%s" % ",".join(
+                            str(item) for item in stale_representatives), flush=True)
+                        repair = PersistentRepresentativeSnapshotService.rebuild_exact_members(
+                            args.year, month, stale_representatives
+                        )
+                        if repair.get("status") not in {"ACTIVE", "REUSED"}:
+                            raise RuntimeError(f"representative selective repair status={repair}")
+                        exact = PersistentRepresentativeSnapshotService._latest_exact_active(
+                            args.year, month, ims_id, production_id)
+                        raw = (PersistentRepresentativeSnapshotService._payloads_from_set(exact.id, ids)
+                               if exact else {})
+                        for representative_id in stale_representatives:
+                            target = Target.query.filter_by(year=args.year, month=month,
+                                representative_id=representative_id, product_id=product_id).first()
+                            snapshot = raw.get(representative_id) or {}
+                            monthly = (snapshot.get("snapshots") or {}).get("monthly") or {}
+                            item = next((item for item in monthly.get("products", [])
+                                         if (item.get("product_id") or (item.get("product") or {}).get("id")) == product_id), None)
+                            if (target is None or not item
+                                    or round(float(item.get("actual_tl") or 0), 2) != round(float(target.tl_target or 0), 2)):
+                                raise RuntimeError(f"repaired representative {representative_id} Fentivag quota did not close")
+                        print(f"REPRESENTATIVE_QUOTA_REPAIR|PASS|rebuilt={len(stale_representatives)}", flush=True)
                 print(f"REPRESENTATIVE_READ_MODEL|STAGED|representatives={len(raw)}", flush=True)
                 # The completed IMS job's stale publication marker must only be
                 # repaired after every current-source read model is durable.
