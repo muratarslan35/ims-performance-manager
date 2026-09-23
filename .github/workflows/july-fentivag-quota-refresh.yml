@@ -32,7 +32,7 @@ jobs:
           printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_deploy_key
           chmod 600 ~/.ssh/ims_deploy_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-      - name: Refresh only July to September published read models
+      - name: Refresh only the July production-month read models
         shell: bash
         run: |
           set -Eeuo pipefail
