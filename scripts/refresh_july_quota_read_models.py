@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 
 from sqlalchemy import func
@@ -15,6 +16,7 @@ from app.services.production_result_service import ProductionResultService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 from app.services.ims_publication_service import IMSPublicationService
+from app.services.ims_progress_store import IMSProgressStore
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 from config import Config
 from scripts.refresh_live_read_models import (
@@ -82,6 +84,7 @@ def main():
             _wait_for_idle(deadline)
             print(f"QUOTA_REFRESH_START|{args.year}-{month:02d}", flush=True)
             _refresh_dashboard(args.year, month)
+            blocked_job = None
             try:
                 _refresh_regions(args.year, month)
             except RuntimeError:
@@ -97,8 +100,71 @@ def main():
                       f"|set_id={existing.id if existing else None}"
                       f"|set_status={existing.status if existing else None}"
                       f"|raw_regions={raw_count}", flush=True)
-                raise
-            _refresh_representatives(args.year, month)
+                if not (pending and pending.status == IMSImportJob.STATUS_COMPLETED
+                        and int(pending.ims_upload_id or 0) == ims_id
+                        and existing and existing.status == PersistentRegionSnapshotService.STATUS_ACTIVE
+                        and raw_count == 11):
+                    raise
+                blocked_job = pending
+            if blocked_job is None:
+                _refresh_representatives(args.year, month)
+            else:
+                result = PersistentRepresentativeSnapshotService.build_for_period(
+                    args.year, month, force=True)
+                if result.get("status") not in {"ACTIVE", "REUSED"}:
+                    raise RuntimeError(f"representative refresh status={result}")
+                ims_id, production_id = PersistentRepresentativeSnapshotService.source_identity(args.year, month)
+                exact = PersistentRepresentativeSnapshotService._latest_exact_active(
+                    args.year, month, ims_id, production_id)
+                ids = PersistentRepresentativeSnapshotService.representative_ids(args.year, month, ims_id)
+                raw = (PersistentRepresentativeSnapshotService._payloads_from_set(exact.id, ids)
+                       if exact else {})
+                if len(raw) != len(ids) or int(exact.representative_count or 0) != len(ids):
+                    raise RuntimeError(f"representative raw coverage={len(raw)}/{len(ids)}")
+                if month == args.month:
+                    dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
+                    products = (dashboard or {}).get("executive_metrics", {}).get("products", [])
+                    row = next((item for item in products if item.get("product_id") == product.id), None)
+                    if not row or round(float(row.get("actual_tl") or 0), 2) != round(float(row.get("target_tl") or 0), 2):
+                        raise RuntimeError("staged national Fentivag quota did not close")
+                    for region_key, payload in PersistentRegionSnapshotService._payloads_from_set(
+                            PersistentRegionSnapshotService._existing_set(
+                                args.year, month, ims_id, production_id).id).items():
+                        monthly = ((payload or {}).get("report") or {}).get("periods", {}).get("monthly", {})
+                        item = next((item for item in monthly.get("products", [])
+                                     if item.get("product_id") == product.id), None)
+                        if item and float(item.get("target_tl") or 0) > 0 and round(float(item.get("actual_tl") or 0), 2) != round(float(item["target_tl"]), 2):
+                            raise RuntimeError(f"staged region {region_key} Fentivag quota did not close")
+                    for representative_id, snapshot in raw.items():
+                        target = Target.query.filter_by(year=args.year, month=month,
+                            representative_id=representative_id, product_id=product.id).first()
+                        if target is None or not target.tl_target:
+                            continue
+                        monthly = (snapshot.get("snapshots") or {}).get("monthly") or {}
+                        item = next((item for item in monthly.get("products", [])
+                                     if (item.get("product_id") or (item.get("product") or {}).get("id")) == product.id), None)
+                        if not item or round(float(item.get("actual_tl") or 0), 2) != round(float(target.tl_target), 2):
+                            raise RuntimeError(f"staged representative {representative_id} Fentivag quota did not close")
+                print(f"REPRESENTATIVE_READ_MODEL|STAGED|representatives={len(raw)}", flush=True)
+                # The completed IMS job's stale publication marker must only be
+                # repaired after every current-source read model is durable.
+                _wait_for_idle(deadline)
+                blocked_job = db.session.get(IMSImportJob, blocked_job.id)
+                if (blocked_job.status != IMSImportJob.STATUS_COMPLETED
+                        or int(blocked_job.ims_upload_id or 0) != ims_id):
+                    raise RuntimeError("IMS publication job changed during refresh")
+                summary = json.loads(blocked_job.result_summary or "{}")
+                summary["publication_ready"] = True
+                summary["publication_ready_source"] = "verified_july_quota_read_model_refresh"
+                summary["publication_ready_upload_id"] = ims_id
+                blocked_job.result_summary = json.dumps(summary, ensure_ascii=False, default=str)
+                db.session.commit()
+                IMSProgressStore.write(blocked_job.id, percent=100, stage="completed",
+                    message="IMS yüklemesi ve ekran güncellemeleri tamamlandı",
+                    status=IMSImportJob.STATUS_COMPLETED)
+                if len(PersistentRegionSnapshotService.get_active_all(args.year, month)) != 11:
+                    raise RuntimeError("region visibility did not recover after verified publication")
+                print(f"IMS_PUBLICATION_RECOVERED|job={blocked_job.id}|upload={ims_id}", flush=True)
             if month == args.month:
                 dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
                 products = (dashboard or {}).get("executive_metrics", {}).get("products", [])
