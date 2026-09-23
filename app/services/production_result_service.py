@@ -169,7 +169,13 @@ class ProductionResultService:
                 # product was deliberately omitted from a national workbook.
                 and any(upload_id == int(upload.id) for upload_id, _ in national)
                 and all(cls._d(value) <= 0 for value in production.get((int(upload.id), product_id), (0, 0)))
-                and all(cls._d(value) <= 0 for value in ims_sales.get((year, month, product_id), (0, 0)))
+                and (
+                    # Final production rows supersede earlier IMS sales.
+                    # When the product is wholly absent from production,
+                    # nationwide IMS must also show no sale.
+                    (int(upload.id), product_id) in production
+                    or all(cls._d(value) <= 0 for value in ims_sales.get((year, month, product_id), (0, 0)))
+                )
                 and (
                     (int(upload.id), product_id) not in national
                     or (
