@@ -55,6 +55,19 @@ jobs:
           app=create_app()
           with app.app_context():
               year,month=2026,7
+              history=db.session.execute(
+                  representative_snapshot_sets.select().where(
+                      representative_snapshot_sets.c.year==year,
+                      representative_snapshot_sets.c.month==month,
+                  ).order_by(representative_snapshot_sets.c.id.asc())
+              ).all()
+              for hist in history:
+                  hist_count=int(db.session.execute(
+                      db.select(func.count()).select_from(representative_snapshots).where(
+                          representative_snapshots.c.set_id==int(hist.id)
+                      )
+                  ).scalar() or 0)
+                  print(f"JULY_SET_HISTORY|id={hist.id}|status={hist.status}|count={hist_count}|ims={hist.source_upload_id}|production={hist.production_upload_id}|activated={hist.activated_at}")
               product=Product.query.filter(func.upper(Product.product_name)=="FENTIVAG").first()
               product_id=int(product.id)
               ims_id,production_id=PersistentRepresentativeSnapshotService.source_identity(year,month)
