@@ -50,9 +50,13 @@ def test_production_refresh_queue_contract():
     enrichment = refresh_worker.index(
         "PersistentRegionSnapshotService.enrich_for_period(year, month)"
     )
-    completion = refresh_worker.index(
-        "RepresentativeSnapshotRefreshQueue.complete(item)", enrichment
+    force_path = refresh_worker.index(
+        "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)"
     )
+    completion = refresh_worker.index(
+        "RepresentativeSnapshotRefreshQueue.complete(item)", max(enrichment, force_path)
+    )
+    assert force_path == dashboard
     assert dashboard < representative < region < enrichment < completion
     assert 'region_result.get("status") in {"ACTIVE", "REUSED"}' in refresh_worker
     assert 'enrichment_result.get("status") in {"ENRICHED", "REUSED"}' in refresh_worker
