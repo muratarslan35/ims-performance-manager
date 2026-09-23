@@ -93,6 +93,11 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
     buckets = {}
     sources = set()
     assignments = []
+    quota_periods = {
+        (quota_year, quota_month, int(product_id))
+        for product_id, periods in ProductionResultService.quota_product_months(months).items()
+        for quota_year, quota_month in periods
+    }
 
     for year, month in months:
         cache_key = (int(year), int(month))
@@ -119,6 +124,9 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
             resolved = effective.get(target.product_id, {})
             target_tl = float(resolved.get("target_tl", target.tl_target or 0.0))
             actual_tl = float(resolved.get("actual_tl", 0.0))
+            if (year, month, int(target.product_id)) in quota_periods:
+                target_tl = float(target.tl_target or target_tl)
+                actual_tl = target_tl
             target_unit = float(resolved.get("target_unit", target.unit_target or 0.0))
             actual_unit = float(resolved.get("actual_unit", 0.0))
             source = resolved.get("source", "IMS")

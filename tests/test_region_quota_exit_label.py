@@ -134,3 +134,94 @@ def test_region_template_renders_compact_quota_exit_badge():
     assert "quota-exit-badge" in template
     assert "Kota Çıkış" in template
     assert "item.quota_exit_months" in template
+
+
+def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_path):
+    from types import SimpleNamespace
+    from app.models import IMSSummary, ProductionNationalProductResult, ProductionResult
+    from app.services.production_result_service import ProductionResultService
+    from app.services.quarter_entitlement_service import QuarterEntitlementService
+
+    app = _app(tmp_path)
+    with app.app_context():
+        db.create_all()
+        reps = [
+            Representative(rep_code=f"JULY-{index}", rep_name=f"July Rep {index}",
+                           region=str(900 + index), active=True)
+            for index in (1, 2)
+        ]
+        fentivag = Product(product_code="JULY-FEN", product_name="Fentivag", is_active=True)
+        db.session.add_all([*reps, fentivag])
+        db.session.flush()
+        upload = ProductionResultUpload(
+            file_name="Temmuz_2_Uretim.xlsx", stored_file_name="2044-07-p2.xlsx",
+            source_hash="j" * 64, year=2044, month=7, production_stage=2,
+            status=ProductionResultUpload.STATUS_APPLIED,
+        )
+        db.session.add(upload)
+        db.session.flush()
+        for rep in reps:
+            db.session.add_all([
+                Target(year=2044, month=7, representative_id=rep.id,
+                       product_id=fentivag.id, tl_target=500, unit_target=5),
+                IMSSummary(year=2044, month=7, representative_id=rep.id,
+                           product_id=fentivag.id, tl=0, unit=0),
+                ProductionResult(upload_id=upload.id, representative_id=rep.id,
+                                 product_id=fentivag.id, target_tl=0, target_unit=0,
+                                 actual_tl=0, actual_unit=0, realization_percent=0),
+            ])
+        for rep in reps:
+            db.session.add(ProductionRegionProductResult(
+                upload_id=upload.id, region_code=rep.region,
+                product_id=fentivag.id, target_tl=0, actual_tl=0,
+                target_unit=0, actual_unit=0,
+                realization_percent=0, unit_realization_percent=0,
+            ))
+        db.session.add(ProductionNationalProductResult(
+            upload_id=upload.id, product_id=fentivag.id, actual_tl=0,
+            actual_unit=0, realization_percent=0, unit_realization_percent=0,
+        ))
+        db.session.commit()
+
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {
+            fentivag.id: [(2044, 7)]
+        }
+        from app.services.region_performance_service import RegionPerformanceService
+        from app.services.representative_period_snapshot_service import RepresentativePeriodSnapshotService
+        from app.services.annual_realization_service import AnnualRealizationService
+        region = RegionPerformanceService(reps[0].region, 2044, 7).report()
+        region_monthly = region["periods"]["monthly"]
+        assert region_monthly["target_tl"] == 500
+        assert region_monthly["actual_tl"] == 500
+        assert region_monthly["realization_percent"] == 100
+        assert region["annual_realization"][6]["percent"] == 100
+        for rep in reps:
+            snapshot = RepresentativePeriodSnapshotService.build(rep.id, 2044, 7)
+            assert snapshot["monthly"]["actual_tl"] == 500
+            assert snapshot["monthly"]["realization_percent"] == 100
+            assert AnnualRealizationService.build_representative(2044, rep.id)[6]["percent"] == 100
+            service = QuarterEntitlementService.__new__(QuarterEntitlementService)
+            service.year, service.representative_id = 2044, rep.id
+            service._official_quota = {7: [fentivag.id]}
+            service.quota_exit_by_month = {}
+            service._snapshot_rows = {}
+            service.engine = SimpleNamespace(
+                products=[fentivag], get_prime_rule=lambda _product: None,
+            )
+            service._snapshot_month = lambda _month: {
+                "months": [[2044, 7]], "products": [{
+                    "product": {"id": fentivag.id, "product_name": "Fentivag"},
+                    "target_tl": 0, "actual_tl": 0,
+                    "target_unit": 0, "actual_unit": 0,
+                }],
+            }
+            products, quota, available = service._snapshot_products(7)
+            assert available and quota["auto_selected"] is True
+            assert products[0]["target_tl"] == 500
+            assert products[0]["actual_tl"] == 500
+            assert products[0]["quota_uplift_tl"] == 500
+
+        # One genuine IMS sale anywhere in Türkiye blocks the exemption.
+        db.session.query(IMSSummary).filter_by(representative_id=reps[1].id).update({"tl": 1})
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {}

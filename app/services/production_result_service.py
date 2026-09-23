@@ -2,9 +2,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
+from sqlalchemy import and_, func, or_
+
 from app.extensions import db
 from app.models import (
     IMSSummary,
+    ProductionNationalProductResult,
     ProductionRegionProductResult,
     ProductionResult,
     ProductionResultUpload,
@@ -64,6 +67,67 @@ class ProductionResultService:
         for row in rows:
             rows_by_upload.setdefault(int(row.upload_id), []).append(row)
 
+        # A product with an IMS quota but no positive sale anywhere in Türkiye
+        # and no active product line in the final production workbook is a
+        # stock quota exit. This applies to existing P2 uploads without
+        # renaming or reimporting the workbook.
+        period_filter = or_(*[
+            and_(Target.year == year, Target.month == month)
+            for year, month in periods
+        ])
+        ims_filter = or_(*[
+            and_(IMSSummary.year == year, IMSSummary.month == month)
+            for year, month in periods
+        ])
+        target_amounts = {
+            (int(year), int(month), int(product_id)): amount
+            for year, month, product_id, amount in db.session.query(
+                Target.year, Target.month, Target.product_id, func.sum(Target.tl_target)
+            ).filter(period_filter).group_by(
+                Target.year, Target.month, Target.product_id
+            ).all()
+        }
+        ims_sales = {
+            (int(year), int(month), int(product_id)): (tl, unit)
+            for year, month, product_id, tl, unit in db.session.query(
+                IMSSummary.year, IMSSummary.month, IMSSummary.product_id,
+                func.max(IMSSummary.tl), func.max(IMSSummary.unit),
+            ).filter(ims_filter).group_by(
+                IMSSummary.year, IMSSummary.month, IMSSummary.product_id
+            ).all()
+        }
+        selected_ids = [int(upload.id) for upload in selected.values()]
+        production = {
+            (int(upload_id), int(product_id)): (actual, unit)
+            for upload_id, product_id, actual, unit in db.session.query(
+                ProductionResult.upload_id, ProductionResult.product_id,
+                func.max(ProductionResult.actual_tl), func.max(ProductionResult.actual_unit),
+            ).filter(ProductionResult.upload_id.in_(selected_ids)).group_by(
+                ProductionResult.upload_id, ProductionResult.product_id
+            ).all()
+        }
+        national = {
+            (int(row.upload_id), int(row.product_id)): row
+            for row in ProductionNationalProductResult.query.filter(
+                ProductionNationalProductResult.upload_id.in_(selected_ids)
+            ).all()
+        }
+        empty_by_period = {}
+        for period, upload in selected.items():
+            year, month = period
+            empty_by_period[period] = {
+                product_id for (target_year, target_month, product_id), target
+                in target_amounts.items()
+                if (target_year, target_month) == period
+                and cls._d(target) > 0
+                and (int(upload.id), product_id) in production
+                and (int(upload.id), product_id) in national
+                and all(cls._d(value) <= 0 for value in production[(int(upload.id), product_id)])
+                and all(cls._d(value) <= 0 for value in ims_sales.get((year, month, product_id), (0, 0)))
+                and cls._d(national[(int(upload.id), product_id)].actual_tl) <= 0
+                and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
+            }
+
         result = {}
         tolerance = Decimal("0.05")
         for period, upload in selected.items():
@@ -72,7 +136,11 @@ class ProductionResultService:
             by_product = {}
             for row in upload_rows:
                 by_product.setdefault(int(row.product_id), []).append(row)
-            for product_id, product_rows in by_product.items():
+            for product_id in set(by_product) | empty_by_period[period]:
+                if product_id in empty_by_period[period]:
+                    result.setdefault(product_id, []).append(period)
+                    continue
+                product_rows = by_product[product_id]
                 product_regions = {str(row.region_code) for row in product_rows}
                 if not expected_regions or product_regions != expected_regions:
                     continue

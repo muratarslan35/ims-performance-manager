@@ -7,6 +7,7 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models import IMSSummary, ProductionResult, ProductionResultUpload, Target
+from app.services.production_result_service import ProductionResultService
 
 
 class AnnualRealizationService:
@@ -117,6 +118,13 @@ class AnnualRealizationService:
         ).all() if upload_ids else []
         production_by_key = {(int(item.upload_id), int(item.product_id)): item for item in production_rows}
 
+        quota_periods = {
+            (quota_month, int(product_id))
+            for product_id, periods in ProductionResultService.quota_product_months(
+                [(year, month) for month in uploads_by_month]
+            ).items()
+            for quota_year, quota_month in periods if quota_year == year
+        }
         month_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "sources": set()})
         for target in targets:
             month = int(target.month)
@@ -132,7 +140,10 @@ class AnnualRealizationService:
 
             if selected_result is not None:
                 percent = Decimal(str(selected_result.realization_percent or 0))
-                actual_tl = target_tl * percent / Decimal("100")
+                actual_tl = (
+                    target_tl if (month, product_id) in quota_periods
+                    else target_tl * percent / Decimal("100")
+                )
                 source = f"PRODUCTION_{int(selected_upload.production_stage)}"
             else:
                 summary = summary_by_key.get((month, product_id))

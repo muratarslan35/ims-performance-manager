@@ -291,6 +291,14 @@ class DashboardQuery:
             int(row.product_display_order or 0), -float(row.total_unit), row.representative_name
         ))
 
+    @staticmethod
+    def _quota_ids(year, month):
+        return {
+            int(product_id) for product_id, periods in
+            ProductionResultService.quota_product_months([(year, month)]).items()
+            if (year, month) in periods
+        }
+
     def load_period_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return SimpleNamespace(realization_tl=Decimal("0"), target_tl=Decimal("0"))
@@ -299,11 +307,15 @@ class DashboardQuery:
             targets = targets.filter(Target.representative_id == filters.representative_id)
         target_rows = targets.all()
         actual_by_key = self._effective_actuals_for_targets(filters.year, filters.month, target_rows)
+        quota_ids = self._quota_ids(filters.year, filters.month)
         total_target = Decimal("0")
         total_actual = Decimal("0")
         for target in target_rows:
             total_target += Decimal(str(target.tl_target or 0))
-            total_actual += actual_by_key.get((int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0")))[1]
+            total_actual += (
+                Decimal(str(target.tl_target or 0)) if int(target.product_id) in quota_ids
+                else actual_by_key.get((int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0")))[1]
+            )
         return SimpleNamespace(realization_tl=total_actual, target_tl=total_target)
 
     def load_national_dashboard_metrics(self, filters: Optional[DashboardFilterParams] = None) -> dict:
@@ -322,9 +334,21 @@ class DashboardQuery:
                 }
             if production_upload and len(production) != len(official):
                 production = {}
+            quota_ids = self._quota_ids(filters.year, filters.month) if production_upload else set()
+            quota_targets = dict(self.session.query(
+                Target.product_id, func.sum(Target.tl_target)
+            ).filter(
+                Target.year == filters.year, Target.month == filters.month,
+                Target.product_id.in_(quota_ids),
+            ).group_by(Target.product_id).all()) if quota_ids else {}
             for item in official:
                 values = production.get(item["product_id"], [Decimal(str(item["actual_tl"] or 0)), Decimal(str(item["actual_unit"] or 0))])
                 item["actual_tl"] = float(values[0]); item["actual_unit"] = float(values[1])
+                if item["product_id"] in quota_ids:
+                    quota_target = float(quota_targets.get(item["product_id"]) or 0)
+                    if quota_target > 0:
+                        item["target_tl"] = quota_target
+                        item["actual_tl"] = quota_target
             products = []
             for item in official:
                 row = {
@@ -403,14 +427,25 @@ class DashboardQuery:
                     rows = self.session.query(ProductionNationalProductResult).filter_by(upload_id=production_upload.id).all()
                     if len(rows) == len(official):
                         production = {row.product_id: Decimal(str(row.actual_tl)) for row in rows}
+                quota_ids = self._quota_ids(filters.year, filters.month) if production_upload else set()
+                quota_targets = dict(self.session.query(
+                    Target.product_id, func.sum(Target.tl_target)
+                ).filter(
+                    Target.year == filters.year, Target.month == filters.month,
+                    Target.product_id.in_(quota_ids),
+                ).group_by(Target.product_id).all()) if quota_ids else {}
                 rows = []
                 for item in official:
                     actual = production.get(item["product_id"], Decimal("0")) if production is not None else Decimal(str(item["actual_tl"] or 0))
+                    if item["product_id"] in quota_ids:
+                        actual = Decimal(str(quota_targets.get(item["product_id"]) or 0))
                     rows.append(SimpleNamespace(
                         product_id=item["product_id"],
                         product_name=item["product_name"],
                         realization_tl=actual,
-                        target_tl=Decimal(str(item["target_tl"] or 0)),
+                        target_tl=(Decimal(str(quota_targets.get(item["product_id"]) or 0))
+                                   if item["product_id"] in quota_ids
+                                   else Decimal(str(item["target_tl"] or 0))),
                     ))
                 return sorted(rows, key=lambda row: row.realization_tl, reverse=True)
         q = self.session.query(Target).filter(Target.year == filters.year, Target.month == filters.month)
@@ -418,11 +453,15 @@ class DashboardQuery:
             q = q.filter(Target.representative_id == filters.representative_id)
         totals = {}
         products = {p.id: p for p in Product.query.all()}
+        quota_ids = self._quota_ids(filters.year, filters.month)
         for target in q.all():
             bucket = totals.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
             bucket[1] += Decimal(str(target.tl_target or 0))
             effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
-            bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
+            bucket[0] += (
+                Decimal(str(target.tl_target or 0)) if target.product_id in quota_ids
+                else Decimal(str(effective.get("actual_tl") or 0))
+            )
         rows = [SimpleNamespace(product_id=pid, product_name=products[pid].product_name if pid in products else str(pid), realization_tl=vals[0], target_tl=vals[1]) for pid, vals in totals.items()]
         return sorted(rows, key=lambda row: row.realization_tl, reverse=True)
 

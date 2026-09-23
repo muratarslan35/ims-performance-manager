@@ -110,7 +110,7 @@ class RegionPerformanceService:
                 upload_id=production_upload.id, region_code=self.region_key
             ).all()
             if production_rows:
-                return {
+                result = {
                     row.product_id: [
                         Decimal(str(row.target_tl or 0)),
                         Decimal(str(row.actual_tl or 0)),
@@ -118,6 +118,24 @@ class RegionPerformanceService:
                     ]
                     for row in production_rows
                 }
+                quota_ids = {
+                    product_id for product_id, periods in
+                    ProductionResultService.quota_product_months([(year, month)]).items()
+                    if (year, month) in periods
+                }
+                if quota_ids:
+                    allocated = dict(db.session.query(
+                        Target.product_id, func.sum(Target.tl_target)
+                    ).filter(
+                        Target.year == year, Target.month == month,
+                        Target.representative_id.in_(self.rep_ids),
+                        Target.product_id.in_(quota_ids),
+                    ).group_by(Target.product_id).all())
+                    for product_id, amount in allocated.items():
+                        target = Decimal(str(amount or 0))
+                        if target > 0:
+                            result[int(product_id)] = [target, target, True]
+                return result
 
         official_targets = OfficialAggregateService.rows(year, month, self.region_key, TARGET_TYPE)
         if official_targets:
@@ -259,6 +277,12 @@ class RegionPerformanceService:
         }
 
     def aggregate(self, months):
+        quota_months = ProductionResultService.quota_product_months(months)
+        quota_periods = {
+            (year, month, product_id)
+            for product_id, periods in quota_months.items()
+            for year, month in periods
+        }
         cells = defaultdict(lambda: {
             "target": Decimal("0"), "actual": Decimal("0"), "complete": True,
             "target_unit": Decimal("0"), "actual_unit": Decimal("0"), "unit_complete": True,
@@ -272,7 +296,10 @@ class RegionPerformanceService:
             if not effective["complete"] or effective["actual_tl"] is None:
                 cells[key]["complete"] = False
             else:
-                cells[key]["actual"] += Decimal(str(effective["actual_tl"]))
+                cells[key]["actual"] += (
+                    exact_target if (year, month, product_id) in quota_periods
+                    else Decimal(str(effective["actual_tl"]))
+                )
 
             if str(effective.get("source") or "").startswith("PRODUCTION_"):
                 production_row = ProductionResultService.final_product_result(year, month, rep_id, product_id)
@@ -355,7 +382,6 @@ class RegionPerformanceService:
             item.id: item
             for item in Product.query.filter(Product.id.in_(all_product_ids)).all()
         } if all_product_ids else {}
-        quota_months = ProductionResultService.quota_product_months(months)
         total_target = sum((vals[0] for vals in month_totals.values()), Decimal("0"))
         total_actual = sum((vals[1] for vals in month_totals.values()), Decimal("0"))
         complete = all(vals[2] for vals in month_totals.values()) if month_totals else False
