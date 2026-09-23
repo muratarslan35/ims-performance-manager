@@ -35,10 +35,44 @@ class ProductionResultService:
     _quota_cache = {}
     _quota_cache_lock = Lock()
     _quota_cache_seconds = 60
+    INCIDENTAL_SALE_MAX_REPRESENTATIVES = 5
+    INCIDENTAL_SALE_MAX_UNIT_PER_REPRESENTATIVE = Decimal("2")
+    INCIDENTAL_SALE_MAX_NATIONAL_UNIT = Decimal("10")
 
     @staticmethod
     def _d(value):
         return Decimal(str(value or 0))
+
+    @classmethod
+    def _only_incidental_sales(cls, rows):
+        """Treat isolated 1-2 box movements as unavailable-product noise.
+
+        A product is still commercially active as soon as the movement is
+        broader than five representatives, exceeds two boxes for any one
+        representative, or exceeds ten boxes nationwide.  Positive TL without
+        a usable box quantity is kept active (fail closed).
+        """
+        positive = [
+            row for row in rows
+            if cls._d(row.actual_tl) > 0 or cls._d(row.actual_unit) > 0
+        ]
+        if not positive:
+            return True
+        if any(cls._d(row.actual_tl) > 0 and cls._d(row.actual_unit) <= 0 for row in positive):
+            return False
+        representatives = {
+            int(row.representative_id) for row in positive
+            if getattr(row, "representative_id", None) is not None
+        }
+        return (
+            len(representatives) <= cls.INCIDENTAL_SALE_MAX_REPRESENTATIVES
+            and all(
+                cls._d(row.actual_unit) <= cls.INCIDENTAL_SALE_MAX_UNIT_PER_REPRESENTATIVE
+                for row in positive
+            )
+            and sum((cls._d(row.actual_unit) for row in positive), Decimal("0"))
+            <= cls.INCIDENTAL_SALE_MAX_NATIONAL_UNIT
+        )
 
     @classmethod
     def applied_uploads(cls, year, month):
@@ -142,6 +176,9 @@ class ProductionResultService:
             ).all()
         }
         selected_ids = [int(upload.id) for upload in selected.values()]
+        production_rows = ProductionResult.query.filter(
+            ProductionResult.upload_id.in_(selected_ids)
+        ).all()
         production = {
             (int(upload_id), int(product_id)): (actual, unit)
             for upload_id, product_id, actual, unit in db.session.query(
@@ -151,6 +188,11 @@ class ProductionResultService:
                 ProductionResult.upload_id, ProductionResult.product_id
             ).all()
         }
+        production_rows_by_product = {}
+        for row in production_rows:
+            production_rows_by_product.setdefault(
+                (int(row.upload_id), int(row.product_id)), []
+            ).append(row)
         national = {
             (int(row.upload_id), int(row.product_id)): row
             for row in ProductionNationalProductResult.query.filter(
@@ -168,7 +210,9 @@ class ProductionResultService:
                 # An empty/incomplete synthetic upload is not proof that a
                 # product was deliberately omitted from a national workbook.
                 and any(upload_id == int(upload.id) for upload_id, _ in national)
-                and all(cls._d(value) <= 0 for value in production.get((int(upload.id), product_id), (0, 0)))
+                and cls._only_incidental_sales(
+                    production_rows_by_product.get((int(upload.id), product_id), [])
+                )
                 and (
                     # Final production rows supersede earlier IMS sales.
                     # When the product is wholly absent from production,
@@ -179,12 +223,19 @@ class ProductionResultService:
                 and (
                     (int(upload.id), product_id) not in national
                     or (
-                        cls._d(national[(int(upload.id), product_id)].actual_tl) <= 0
-                        and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
+                        cls._d(national[(int(upload.id), product_id)].actual_unit)
+                        <= cls.INCIDENTAL_SALE_MAX_NATIONAL_UNIT
+                        and not (
+                            cls._d(national[(int(upload.id), product_id)].actual_tl) > 0
+                            and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
+                        )
                     )
                 )
                 and all(
-                    cls._d(row.actual_tl) <= 0 and cls._d(row.actual_unit) <= 0
+                    cls._d(row.actual_unit) <= cls.INCIDENTAL_SALE_MAX_NATIONAL_UNIT
+                    and not (
+                        cls._d(row.actual_tl) > 0 and cls._d(row.actual_unit) <= 0
+                    )
                     for row in rows_by_upload.get(int(upload.id), [])
                     if row.product_id == product_id
                 )
