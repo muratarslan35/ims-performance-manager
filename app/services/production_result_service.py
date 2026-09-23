@@ -165,12 +165,20 @@ class ProductionResultService:
                 in target_amounts.items()
                 if (target_year, target_month) == period
                 and cls._d(target) > 0
-                and (int(upload.id), product_id) in production
-                and (int(upload.id), product_id) in national
-                and all(cls._d(value) <= 0 for value in production[(int(upload.id), product_id)])
+                and all(cls._d(value) <= 0 for value in production.get((int(upload.id), product_id), (0, 0)))
                 and all(cls._d(value) <= 0 for value in ims_sales.get((year, month, product_id), (0, 0)))
-                and cls._d(national[(int(upload.id), product_id)].actual_tl) <= 0
-                and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
+                and (
+                    (int(upload.id), product_id) not in national
+                    or (
+                        cls._d(national[(int(upload.id), product_id)].actual_tl) <= 0
+                        and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
+                    )
+                )
+                and all(
+                    cls._d(row.actual_tl) <= 0 and cls._d(row.actual_unit) <= 0
+                    for row in rows_by_upload.get(int(upload.id), [])
+                    if row.product_id == product_id
+                )
             }
 
         result = {}
