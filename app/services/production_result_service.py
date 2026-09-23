@@ -1,6 +1,10 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
+from threading import Lock
+import time
+
+from flask import current_app
 
 from sqlalchemy import and_, func, or_
 
@@ -28,6 +32,9 @@ class ProductionResultService:
     """
 
     _effective_batch_override = ContextVar("production_effective_batch_override", default=None)
+    _quota_cache = {}
+    _quota_cache_lock = Lock()
+    _quota_cache_seconds = 60
 
     @staticmethod
     def _d(value):
@@ -54,6 +61,44 @@ class ProductionResultService:
 
     @classmethod
     def quota_product_months(cls, months):
+        """Reuse nationwide approval briefly within a web worker's read path."""
+        periods = tuple(sorted({(int(year), int(month)) for year, month in months}))
+        if not periods:
+            return {}
+        if current_app.testing:
+            return cls._quota_product_months_uncached(periods)
+        database = str(current_app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+        now = time.monotonic()
+        with cls._quota_cache_lock:
+            cached = {
+                period: cls._quota_cache.get((database, period))
+                for period in periods
+            }
+        missing = [
+            period for period, entry in cached.items()
+            if entry is None or now - entry[0] >= cls._quota_cache_seconds
+        ]
+        if missing:
+            fresh = cls._quota_product_months_uncached(missing)
+            with cls._quota_cache_lock:
+                for period in missing:
+                    products = {
+                        int(product_id) for product_id, detected in fresh.items()
+                        if period in detected
+                    }
+                    cls._quota_cache[(database, period)] = (time.monotonic(), products)
+                cached = {
+                    period: cls._quota_cache[(database, period)]
+                    for period in periods
+                }
+        result = {}
+        for period in periods:
+            for product_id in cached[period][1]:
+                result.setdefault(product_id, []).append(period)
+        return result
+
+    @classmethod
+    def _quota_product_months_uncached(cls, months):
         """Detect stock-quota exemptions from official production results."""
         periods = tuple(sorted({(int(year), int(month)) for year, month in months}))
         uploads = {(year, month): cls.final_upload(year, month) for year, month in periods}
