@@ -299,6 +299,62 @@ class PersistentRepresentativeSnapshotService:
         return int(payload.get("read_model_version") or 0)
 
     @classmethod
+    def rebuild_exact_members(cls, year, month, representative_ids):
+        """Rebuild only selected members of the exact current-source generation.
+
+        This is intended for maintenance of a hidden/current generation after a
+        semantic rule change. The selected members are removed, the same set is
+        returned to BUILDING, and the normal resumable batch builder calculates
+        only those missing representatives.
+        """
+        year, month = int(year), int(month)
+        ims_id, production_id = cls.source_identity(year, month)
+        exact = cls._latest_exact_active(year, month, ims_id, production_id)
+        if exact is None:
+            return {"status": "SKIPPED", "reason": "NO_EXACT_ACTIVE", "representatives": 0}
+
+        roster = set(cls.representative_ids(year, month, ims_id))
+        selected = sorted({
+            int(item) for item in representative_ids
+            if item is not None and int(item) in roster
+        })
+        if not selected:
+            return {"status": "REUSED", "set_id": int(exact.id), "representatives": len(roster), "rebuilt": 0}
+
+        set_id = int(exact.id)
+        db.session.execute(
+            representative_snapshots.delete().where(
+                representative_snapshots.c.set_id == set_id,
+                representative_snapshots.c.representative_id.in_(selected),
+            )
+        )
+        remaining = int(db.session.execute(
+            sa.select(sa.func.count()).select_from(representative_snapshots).where(
+                representative_snapshots.c.set_id == set_id
+            )
+        ).scalar() or 0)
+        db.session.execute(
+            representative_snapshot_sets.update().where(
+                representative_snapshot_sets.c.id == set_id
+            ).values(
+                status=cls.STATUS_BUILDING,
+                representative_count=remaining,
+                activated_at=None,
+            )
+        )
+        db.session.commit()
+        current_app.logger.warning(
+            "representative_snapshot_members_invalidated "
+            "year=%s month=%s set_id=%s ims_upload_id=%s production_upload_id=%s "
+            "members=%s remaining=%s",
+            year, month, set_id, int(ims_id), int(production_id), selected, remaining,
+        )
+        result = cls.build_for_period(year, month, force=False)
+        result["rebuilt"] = len(selected)
+        result["rebuilt_representative_ids"] = selected
+        return result
+
+    @classmethod
     def build_for_period(
         cls,
         year,
