@@ -164,3 +164,17 @@ def test_representative_snapshots_remain_batched_parallel_bulk_writes():
     assert "representative_snapshots.insert(), [" in build
     assert "pool.shutdown(wait=True)" in build
 
+
+
+def test_representative_snapshot_writes_are_process_serialized_without_nested_backfill_lock():
+    snapshot = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+    backfill = (ROOT / "scripts/backfill_active_representative_snapshots.py").read_text(encoding="utf-8")
+
+    assert 'def _snapshot_writer_lock' in snapshot
+    assert 'representative_snapshot_warmup.lock' in snapshot
+    assert 'fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)' in snapshot
+    public_build = snapshot[snapshot.index("def build_for_period"):snapshot.index("def _build_for_period_unlocked")]
+    assert "with cls._snapshot_writer_lock():" in public_build
+    assert "return cls._build_for_period_unlocked(" in public_build
+    assert "fcntl.flock" not in backfill
+    assert "representative_snapshot_warmup.lock" not in backfill
