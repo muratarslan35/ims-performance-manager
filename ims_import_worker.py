@@ -503,6 +503,24 @@ def _process_representative_refresh_queue(app):
         db.session.remove()
         return True
 
+    # A prior force refresh can publish the core region rows and then fail while
+    # rebuilding representatives, leaving only region AI enrichment unfinished.
+    # Finish that cheap derived step first; never launch another full 113-rep
+    # rebuild when the exact dashboard/representative generations are already valid.
+    preflight_enrichment = PersistentRegionSnapshotService.enrich_for_period(year, month)
+    if (
+        preflight_enrichment.get("status") in {"ENRICHED", "REUSED"}
+        and _queued_production_refresh_is_fresh(item, year, month)
+    ):
+        RepresentativeSnapshotRefreshQueue.complete(item)
+        app.logger.info(
+            "representative_refresh_queue_skipped year=%s month=%s reason=%s "
+            "already_fresh_after_enrichment=1 enrichment_status=%s",
+            year, month, reason, preflight_enrichment.get("status"),
+        )
+        db.session.remove()
+        return True
+
     latest = IMSUpload.query.filter_by(
         year=year, month=month, status=IMSUpload.STATUS_COMPLETED
     ).order_by(
