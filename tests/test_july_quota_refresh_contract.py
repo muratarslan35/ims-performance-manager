@@ -53,3 +53,16 @@ def test_fast_july_acceptance_requires_region_ai_enrichment():
 
     assert 'isinstance((payload or {}).get("ai_report"), dict)' in source
     assert "AI enrichment unavailable" in source
+
+
+def test_july_dashboard_repair_is_national_only():
+    source = (ROOT / "scripts/repair_july_quota_dashboard.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/july-fentivag-quota-refresh.yml").read_text(encoding="utf-8")
+
+    assert "DashboardService(year=year, month=month).run()" in source
+    assert "PersistentDashboardSnapshotService.publish(year, month, payload)" in source
+    assert "PersistentRegionSnapshotService" not in source
+    assert "PersistentRepresentativeSnapshotService" not in source
+    assert "repair_july_quota_dashboard" in workflow
+    assert workflow.index("repair_july_quota_dashboard") < workflow.index("verify_july_quota_read_models")
+    compile(source, "scripts/repair_july_quota_dashboard.py", "exec")
