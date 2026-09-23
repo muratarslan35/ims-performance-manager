@@ -66,3 +66,15 @@ def test_july_dashboard_repair_is_national_only():
     assert "repair_july_quota_dashboard" in workflow
     assert workflow.index("repair_july_quota_dashboard") < workflow.index("verify_july_quota_read_models")
     compile(source, "scripts/repair_july_quota_dashboard.py", "exec")
+
+
+def test_july_representative_repair_is_selective_only():
+    source = (ROOT / "scripts/repair_july_quota_representatives.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/july-fentivag-quota-refresh.yml").read_text(encoding="utf-8")
+
+    assert "PersistentRepresentativeSnapshotService.rebuild_exact_members(" in source
+    assert "PersistentRepresentativeSnapshotService.build_for_period(" not in source
+    assert "JULY_REPRESENTATIVE_QUOTA_REPAIR|PASS" in source
+    assert "repair_july_quota_representatives" in workflow
+    assert workflow.index("repair_july_quota_dashboard") < workflow.index("repair_july_quota_representatives") < workflow.index("verify_july_quota_read_models")
+    compile(source, "scripts/repair_july_quota_representatives.py", "exec")
