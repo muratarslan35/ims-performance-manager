@@ -211,13 +211,34 @@ def main():
                         if round(float(item.get("actual_tl") or 0), 2) != round(float(item["target_tl"]), 2):
                             raise RuntimeError(f"July region {key} Fentivag quota did not close")
                 ids = PersistentRepresentativeSnapshotService.representative_ids(args.year, month)
+                ims_id, production_id = PersistentRepresentativeSnapshotService.source_identity(
+                    args.year, month
+                )
+                exact = PersistentRepresentativeSnapshotService._latest_exact_active(
+                    args.year, month, ims_id, production_id
+                )
+                snapshots = (
+                    PersistentRepresentativeSnapshotService._payloads_from_set(exact.id, ids)
+                    if exact else {}
+                )
+                if len(snapshots) != len(ids):
+                    raise RuntimeError(
+                        f"Published representative coverage {len(snapshots)}/{len(ids)}"
+                    )
+                targets = {
+                    int(row.representative_id): row
+                    for row in Target.query.filter(
+                        Target.year == args.year,
+                        Target.month == month,
+                        Target.product_id == product_id,
+                        Target.representative_id.in_(ids),
+                    ).all()
+                }
                 for representative_id in ids:
-                    target = Target.query.filter_by(year=args.year, month=month,
-                        representative_id=representative_id, product_id=product_id).first()
+                    target = targets.get(int(representative_id))
                     if target is None or not target.tl_target:
                         continue
-                    snapshot = PersistentRepresentativeSnapshotService.get_active(
-                        representative_id, args.year, month)
+                    snapshot = snapshots.get(int(representative_id))
                     if not snapshot:
                         raise RuntimeError(f"Representative {representative_id} snapshot missing")
                     monthly = (snapshot.get("snapshots") or {}).get("monthly") or {}
