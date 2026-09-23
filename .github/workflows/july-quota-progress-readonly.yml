@@ -35,10 +35,12 @@ jobs:
           cd "$IMS_PATH"
           echo "LIVE_SHA|$(git rev-parse HEAD)"
           echo "WRITER_PROCESSES_BEGIN"
-          ps -eo pid,etime,cmd | grep -E 'repair_july_quota_representatives|refresh_july_quota_read_models|ims_import_worker.py' | grep -v grep || true
+          ps -eo pid,ppid,stat,wchan:24,pcpu,pmem,etime,cmd | grep -E 'repair_july_quota_representatives|refresh_july_quota_read_models|ims_import_worker.py' | grep -v grep || true
           echo "WRITER_PROCESSES_END"
           echo "LOCK_HOLDERS_BEGIN"
           command -v fuser >/dev/null && fuser -v instance/representative_snapshot_warmup.lock 2>&1 || true
+          command -v lsof >/dev/null && lsof instance/representative_snapshot_warmup.lock 2>&1 || true
+          command -v lslocks >/dev/null && lslocks | grep -E 'representative_snapshot_warmup|ims_system' || true
           echo "LOCK_HOLDERS_END"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import sqlalchemy as sa
