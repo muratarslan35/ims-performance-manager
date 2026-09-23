@@ -8,7 +8,8 @@ from sqlalchemy import func
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSImportJob, IMSUpload, Product, Target
+from app.models import (IMSImportJob, IMSSummary, IMSUpload, Product, Target,
+                        ProductionResult, ProductionNationalProductResult)
 from app.services.period_service import PeriodService
 from app.services.production_result_service import ProductionResultService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
@@ -45,6 +46,26 @@ def main():
         _wait_for_idle(deadline)
         quota = ProductionResultService.quota_product_months([(args.year, args.month)])
         product = Product.query.filter(func.upper(Product.product_name) == "FENTIVAG").first()
+        if product is not None:
+            upload = ProductionResultService.final_upload(args.year, args.month)
+            production_rows = (ProductionResult.query.filter_by(
+                upload_id=upload.id, product_id=product.id).all() if upload else [])
+            national_row = (ProductionNationalProductResult.query.filter_by(
+                upload_id=upload.id, product_id=product.id).first() if upload else None)
+            ims_rows = IMSSummary.query.filter_by(
+                year=args.year, month=args.month, product_id=product.id).all()
+            print("QUOTA_PREFLIGHT|upload=%s|production_rows=%s|production_positive=%s|"
+                  "national_present=%s|national_tl=%s|national_unit=%s|"
+                  "ims_rows=%s|ims_positive=%s|approved=%s" % (
+                      upload.id if upload else None, len(production_rows),
+                      sum(1 for row in production_rows if (row.actual_tl or 0) > 0 or (row.actual_unit or 0) > 0),
+                      national_row is not None,
+                      national_row.actual_tl if national_row else None,
+                      national_row.actual_unit if national_row else None,
+                      len(ims_rows),
+                      sum(1 for row in ims_rows if (row.tl or 0) > 0 or (row.unit or 0) > 0),
+                      (args.year, args.month) in quota.get(product.id, []),
+                  ), flush=True)
         if product is None or (args.year, args.month) not in quota.get(product.id, []):
             raise RuntimeError("Final production + nationwide IMS do not approve Fentivag quota exit")
         allocated = db.session.query(func.sum(Target.tl_target)).filter_by(
