@@ -8,7 +8,13 @@ from flask import request, render_template
 from flask_login import current_user, login_required
 
 from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
-from app.models import Product, Representative, RepresentativeBrickAssignment, Target
+from app.models import (
+    Product,
+    ProductionRepresentativeTotal,
+    Representative,
+    RepresentativeBrickAssignment,
+    Target,
+)
 from app.presentation import representative_display_name
 from app.services.annual_realization_service import AnnualRealizationService
 from app.services.competitive_intelligence_service import CompetitiveIntelligenceService
@@ -164,6 +170,25 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
     rows.sort(key=lambda item: (getattr(item["product"], "display_order", 999), item["product"].product_name))
     totals = {key: round(value, 2) for key, value in totals.items()}
     totals["percent"] = realization_percent(totals["actual_tl"], totals["target_tl"]) if totals["target_tl"] else 0
+    # The production workbook carries an explicit representative-total
+    # realization.  Product rows remain independently quota-adjusted, but the
+    # monthly headline must retain that authoritative workbook total instead
+    # of deriving a different percentage from the adjusted product rows.
+    if len(months) == 1:
+        year, month = months[0]
+        upload = ProductionResultService.final_upload(year, month)
+        official_total = (
+            ProductionRepresentativeTotal.query.filter_by(
+                upload_id=upload.id,
+                representative_id=representative_id,
+            ).first()
+            if upload else None
+        )
+        if official_total is not None:
+            totals["percent"] = realization_percent(
+                official_total.actual_tl,
+                official_total.target_tl,
+            )
     return rows, totals, assignments, sources
 
 
