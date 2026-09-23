@@ -2,9 +2,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
+from sqlalchemy import func
+
 from app.extensions import db
 from app.models import (
     IMSSummary,
+    ProductionNationalProductResult,
     ProductionRegionProductResult,
     ProductionResult,
     ProductionResultUpload,
@@ -64,6 +67,46 @@ class ProductionResultService:
         for row in rows:
             rows_by_upload.setdefault(int(row.upload_id), []).append(row)
 
+        # A product with an IMS quota but no positive sale anywhere in Türkiye
+        # and no active product line in the final production workbook is a
+        # stock quota exit. This applies to existing P2 uploads without
+        # renaming or reimporting the workbook.
+        empty_by_period = {}
+        for period, upload in selected.items():
+            year, month = period
+            targets = dict(db.session.query(
+                Target.product_id, func.sum(Target.tl_target)
+            ).filter_by(year=year, month=month).group_by(Target.product_id).all())
+            ims_sales = {
+                int(product_id): (tl, unit)
+                for product_id, tl, unit in db.session.query(
+                    IMSSummary.product_id, func.max(IMSSummary.tl), func.max(IMSSummary.unit)
+                ).filter_by(year=year, month=month).group_by(IMSSummary.product_id).all()
+            }
+            production = {
+                int(product_id): (target, actual, unit)
+                for product_id, target, actual, unit in db.session.query(
+                    ProductionResult.product_id,
+                    func.max(ProductionResult.target_tl),
+                    func.max(ProductionResult.actual_tl),
+                    func.max(ProductionResult.actual_unit),
+                ).filter_by(upload_id=upload.id).group_by(ProductionResult.product_id).all()
+            }
+            national = {
+                int(row.product_id): row
+                for row in ProductionNationalProductResult.query.filter_by(upload_id=upload.id).all()
+            }
+            empty_by_period[period] = {
+                int(product_id) for product_id, target in targets.items()
+                if cls._d(target) > 0
+                and int(product_id) in production
+                and int(product_id) in national
+                and all(cls._d(value) <= 0 for value in production[int(product_id)])
+                and all(cls._d(value) <= 0 for value in ims_sales.get(int(product_id), (0, 0)))
+                and cls._d(national[int(product_id)].actual_tl) <= 0
+                and cls._d(national[int(product_id)].actual_unit) <= 0
+            }
+
         result = {}
         tolerance = Decimal("0.05")
         for period, upload in selected.items():
@@ -72,7 +115,11 @@ class ProductionResultService:
             by_product = {}
             for row in upload_rows:
                 by_product.setdefault(int(row.product_id), []).append(row)
-            for product_id, product_rows in by_product.items():
+            for product_id in set(by_product) | empty_by_period[period]:
+                if product_id in empty_by_period[period]:
+                    result.setdefault(product_id, []).append(period)
+                    continue
+                product_rows = by_product[product_id]
                 product_regions = {str(row.region_code) for row in product_rows}
                 if not expected_regions or product_regions != expected_regions:
                     continue
