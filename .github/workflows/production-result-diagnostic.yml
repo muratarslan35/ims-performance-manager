@@ -1,4 +1,4 @@
-name: Production Result Failure Diagnostic
+name: July Quota Live Read-Only Diagnostic
 
 on:
   push:
@@ -20,56 +20,82 @@ jobs:
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
       - name: Configure production SSH key
-        shell: bash
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
           set -Eeuo pipefail
-          test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
-          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
-          chmod 600 ~/.ssh/ims_diag_key
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
-
-      - name: Read production result failure evidence
-        shell: bash
+      - name: Inspect July quota snapshot state
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
-            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          ssh -i ~/.ssh/key -p "$IMS_PORT" "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
-          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
-          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          venv/bin/python - <<'PY'
+          echo "REFRESH_PROCESS_BEGIN"
+          pgrep -af 'refresh_july_quota_read_models' || true
+          echo "REFRESH_PROCESS_END"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          from sqlalchemy import func
           from app import create_app
           from app.extensions import db
-          from app.models import ProductionResultUpload
+          from app.models import IMSImportJob, Product, Target
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshot_sets,
+              representative_snapshots,
+          )
+          from app.services.ims_publication_service import IMSPublicationService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
 
-          app = create_app()
+          app=create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
-                  .all()
-              )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
-                  print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
+              year,month=2026,7
+              product=Product.query.filter(func.upper(Product.product_name)=="FENTIVAG").first()
+              product_id=int(product.id)
+              ims_id,production_id=PersistentRepresentativeSnapshotService.source_identity(year,month)
+              row=db.session.execute(
+                  representative_snapshot_sets.select().where(
+                      representative_snapshot_sets.c.year==year,
+                      representative_snapshot_sets.c.month==month,
+                      representative_snapshot_sets.c.source_upload_id==ims_id,
+                      representative_snapshot_sets.c.production_upload_id==production_id,
+                  ).order_by(representative_snapshot_sets.c.id.desc()).limit(1)
+              ).first()
+              set_id=int(row.id) if row else 0
+              count=int(db.session.execute(
+                  db.select(func.count()).select_from(representative_snapshots).where(
+                      representative_snapshots.c.set_id==set_id
                   )
+              ).scalar() or 0) if set_id else 0
+              ids=PersistentRepresentativeSnapshotService.representative_ids(year,month,ims_id)
+              raw=PersistentRepresentativeSnapshotService._payloads_from_set(set_id,ids) if set_id else {}
+              mismatches=[]
+              for representative_id,snapshot in raw.items():
+                  target=Target.query.filter_by(
+                      year=year,month=month,representative_id=representative_id,product_id=product_id
+                  ).first()
+                  if target is None or not target.tl_target:
+                      continue
+                  monthly=((snapshot.get("snapshots") or {}).get("monthly") or {})
+                  item=next((item for item in monthly.get("products",[])
+                      if (item.get("product_id") or (item.get("product") or {}).get("id"))==product_id),None)
+                  actual=float((item or {}).get("actual_tl") or 0)
+                  expected=float(target.tl_target or 0)
+                  if item is None or round(actual,2)!=round(expected,2):
+                      mismatches.append((int(representative_id),round(actual,2),round(expected,2)))
+              pending=IMSPublicationService.pending_job(year,month)
+              summary={}
+              if pending:
+                  try: summary=json.loads(pending.result_summary or "{}")
+                  except Exception: summary={}
+              regions=PersistentRegionSnapshotService.get_active_all(year,month)
+              print(f"JULY_SET|id={set_id}|status={row.status if row else None}|stored={count}|expected={len(ids)}|ims={ims_id}|production={production_id}")
+              print(f"JULY_FENTIVAG_MISMATCH|count={len(mismatches)}|rows={mismatches}")
+              print(f"JULY_PUBLICATION|pending_job={pending.id if pending else None}|ready={summary.get('publication_ready') if pending else None}|visible_regions={len(regions)}")
           PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
-          echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
