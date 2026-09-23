@@ -123,7 +123,9 @@ def main():
                 if len(raw) != len(ids) or int(exact.representative_count or 0) != len(ids):
                     raise RuntimeError(f"representative raw coverage={len(raw)}/{len(ids)}")
                 if month == args.month:
-                    dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
+                    dashboard = PersistentDashboardSnapshotService.get_generation_for_source(
+                        args.year, month, ims_id, production_id
+                    )
                     products = (dashboard or {}).get("executive_metrics", {}).get("products", [])
                     row = next((item for item in products if item.get("product_id") == product_id), None)
                     if not row or round(float(row.get("actual_tl") or 0), 2) != round(float(row.get("target_tl") or 0), 2):
