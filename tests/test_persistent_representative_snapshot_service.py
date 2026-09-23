@@ -25,6 +25,14 @@ def test_snapshot_builder_reuses_existing_calculation_path_without_formula_chang
     assert "for key, label, _kind in PERIOD_OPTIONS" in source
 
 
+def test_persisted_representative_reads_overlay_official_monthly_total_for_all_members():
+    source = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
+    assert "def _official_monthly_totals" in source
+    assert "ProductionRepresentativeTotal.query.filter" in source
+    assert "totals[\"percent\"] = realization_percent(" in source
+    assert "for representative_id, payload in payloads.items():" in source
+
+
 def test_persistent_generation_is_atomic_and_keeps_previous_active_during_build():
     source = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
     assert 'STATUS_BUILDING = "BUILDING"' in source
