@@ -194,3 +194,25 @@ def test_worker_discards_already_fresh_production_marker_before_force_rebuild():
     )
     assert fresh < complete < force_dashboard
     assert "already_fresh=1" in refresh
+
+
+def test_worker_completes_missing_region_enrichment_before_force_rebuild():
+    worker = Path("ims_import_worker.py").read_text(encoding="utf-8")
+    region = Path("app/services/persistent_region_snapshot_service.py").read_text(
+        encoding="utf-8"
+    )
+    refresh = worker[worker.index("def _process_representative_refresh_queue(app):") :]
+
+    enrich = refresh.index(
+        "preflight_enrichment = PersistentRegionSnapshotService.enrich_for_period(year, month)"
+    )
+    second_fresh = refresh.index(
+        "_queued_production_refresh_is_fresh(item, year, month)", enrich
+    )
+    complete = refresh.index("RepresentativeSnapshotRefreshQueue.complete(item)", second_fresh)
+    force_representatives = refresh.index(
+        "representative_result = _warm_representative_snapshots(", complete
+    )
+    assert enrich < second_fresh < complete < force_representatives
+    assert "already_fresh_after_enrichment=1" in refresh
+    assert 'and isinstance((payload or {}).get("ai_report"), dict)' in region
