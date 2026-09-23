@@ -1,0 +1,77 @@
+name: July Dashboard Quota Read-Only Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/july-dashboard-quota-20260923
+    paths:
+      - ".github/workflows/july-dashboard-quota-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Diagnose live July dashboard quota
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "LIVE_SHA|$(git rev-parse HEAD)"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from sqlalchemy import func
+          from app import create_app
+          from app.models import Product
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.services.ims_publication_service import IMSPublicationService
+          from app.services.production_result_service import ProductionResultService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+
+          app=create_app()
+          with app.app_context():
+              year,month=2026,7
+              product=Product.query.filter(func.upper(Product.product_name)=="FENTIVAG").first()
+              pid=int(product.id)
+              quota=ProductionResultService.quota_product_months([(year,month)])
+              ims_id,prod_id=PersistentDashboardSnapshotService.source_identity(year,month)
+              pending=IMSPublicationService.pending_job(year,month)
+              visible=IMSPublicationService.latest_visible_upload(year,month)
+              print(f"SOURCE|ims={ims_id}|prod={prod_id}|quota={int((year,month) in quota.get(pid,[]))}|pending={getattr(pending,'id',None)}|pending_status={getattr(pending,'status',None)}|visible={getattr(visible,'id',None)}")
+
+              def product_row(payload):
+                  products=((payload or {}).get("executive_metrics") or {}).get("products") or []
+                  return next((r for r in products if int(r.get("product_id") or 0)==pid),None)
+
+              for name,payload in (
+                  ("ACTIVE",PersistentDashboardSnapshotService.get_active(year,month)),
+                  ("EXACT",PersistentDashboardSnapshotService.get_generation_for_source(year,month,ims_id,prod_id)),
+                  ("STABLE",PersistentDashboardSnapshotService.get_stable(year,month)),
+              ):
+                  row=product_row(payload)
+                  print(f"{name}|row={row}")
+
+              calc=DashboardQuery().load_national_dashboard_metrics(
+                  DashboardFilterParams(year=year,month=month)
+              )
+              crow=next((r for r in (calc.get("products") or []) if int(r.get("product_id") or 0)==pid),None)
+              print(f"LIVE_CALC|row={crow}|source={calc.get('source')}")
+          PY
+          REMOTE
