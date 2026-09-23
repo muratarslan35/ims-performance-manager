@@ -4,6 +4,7 @@ from app.services.persistent_representative_snapshot_service import (
     PersistentRepresentativeSnapshotService,
 )
 from app.services.prime_engine import PrimeEngine
+from app.models import Target
 from app.services.production_result_service import ProductionResultService
 
 
@@ -211,6 +212,16 @@ class QuarterEntitlementService:
             for row in rows:
                 if row["product_id"] != selected_id:
                     continue
+                if auto_selected and float(row.get("target_tl") or 0) <= 0:
+                    # The stock-exit product has no production target column;
+                    # use its allocated IMS quota for this Q calculation only.
+                    allocated = Target.query.filter_by(
+                        year=self.year, month=int(month),
+                        representative_id=self.representative_id, product_id=selected_id,
+                    ).first()
+                    if allocated is not None and float(allocated.tl_target or 0) > 0:
+                        row["target_tl"] = round(float(allocated.tl_target), 2)
+                        row["target_unit"] = round(float(allocated.unit_target or 0), 2)
                 original_actual_tl = float(row.get("actual_tl") or 0)
                 original_actual_unit = float(row.get("actual_unit") or 0)
                 row["actual_tl"] = round(max(original_actual_tl, float(row.get("target_tl") or 0)), 2)
