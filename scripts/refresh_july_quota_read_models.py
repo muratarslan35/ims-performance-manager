@@ -49,14 +49,15 @@ def main():
         _wait_for_idle(deadline)
         quota = ProductionResultService.quota_product_months([(args.year, args.month)])
         product = Product.query.filter(func.upper(Product.product_name) == "FENTIVAG").first()
+        product_id = int(product.id) if product is not None else None
         if product is not None:
             upload = ProductionResultService.final_upload(args.year, args.month)
             production_rows = (ProductionResult.query.filter_by(
-                upload_id=upload.id, product_id=product.id).all() if upload else [])
+                upload_id=upload.id, product_id=product_id).all() if upload else [])
             national_row = (ProductionNationalProductResult.query.filter_by(
-                upload_id=upload.id, product_id=product.id).first() if upload else None)
+                upload_id=upload.id, product_id=product_id).first() if upload else None)
             ims_rows = IMSSummary.query.filter_by(
-                year=args.year, month=args.month, product_id=product.id).all()
+                year=args.year, month=args.month, product_id=product_id).all()
             print("QUOTA_PREFLIGHT|upload=%s|production_rows=%s|production_positive=%s|"
                   "national_present=%s|national_tl=%s|national_unit=%s|"
                   "ims_rows=%s|ims_positive=%s|approved=%s" % (
@@ -67,12 +68,12 @@ def main():
                       national_row.actual_unit if national_row else None,
                       len(ims_rows),
                       sum(1 for row in ims_rows if (row.tl or 0) > 0 or (row.unit or 0) > 0),
-                      (args.year, args.month) in quota.get(product.id, []),
+                      (args.year, args.month) in quota.get(product_id, []),
                   ), flush=True)
-        if product is None or (args.year, args.month) not in quota.get(product.id, []):
+        if product is None or (args.year, args.month) not in quota.get(product_id, []):
             raise RuntimeError("Final production + nationwide IMS do not approve Fentivag quota exit")
         allocated = db.session.query(func.sum(Target.tl_target)).filter_by(
-            year=args.year, month=args.month, product_id=product.id,
+            year=args.year, month=args.month, product_id=product_id,
         ).scalar() or 0
         if allocated <= 0:
             raise RuntimeError("July Fentivag allocated TL quota is unavailable")
@@ -105,12 +106,12 @@ def main():
                         and existing and existing.status == PersistentRegionSnapshotService.STATUS_ACTIVE
                         and raw_count == 11):
                     raise
-                blocked_job = pending
+                blocked_job = int(pending.id)
             if blocked_job is None:
                 _refresh_representatives(args.year, month)
             else:
                 result = PersistentRepresentativeSnapshotService.build_for_period(
-                    args.year, month, force=True)
+                    args.year, month, force=False)
                 if result.get("status") not in {"ACTIVE", "REUSED"}:
                     raise RuntimeError(f"representative refresh status={result}")
                 ims_id, production_id = PersistentRepresentativeSnapshotService.source_identity(args.year, month)
@@ -124,7 +125,7 @@ def main():
                 if month == args.month:
                     dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
                     products = (dashboard or {}).get("executive_metrics", {}).get("products", [])
-                    row = next((item for item in products if item.get("product_id") == product.id), None)
+                    row = next((item for item in products if item.get("product_id") == product_id), None)
                     if not row or round(float(row.get("actual_tl") or 0), 2) != round(float(row.get("target_tl") or 0), 2):
                         raise RuntimeError("staged national Fentivag quota did not close")
                     for region_key, payload in PersistentRegionSnapshotService._payloads_from_set(
@@ -132,24 +133,24 @@ def main():
                                 args.year, month, ims_id, production_id).id).items():
                         monthly = ((payload or {}).get("report") or {}).get("periods", {}).get("monthly", {})
                         item = next((item for item in monthly.get("products", [])
-                                     if item.get("product_id") == product.id), None)
+                                     if item.get("product_id") == product_id), None)
                         if item and float(item.get("target_tl") or 0) > 0 and round(float(item.get("actual_tl") or 0), 2) != round(float(item["target_tl"]), 2):
                             raise RuntimeError(f"staged region {region_key} Fentivag quota did not close")
                     for representative_id, snapshot in raw.items():
                         target = Target.query.filter_by(year=args.year, month=month,
-                            representative_id=representative_id, product_id=product.id).first()
+                            representative_id=representative_id, product_id=product_id).first()
                         if target is None or not target.tl_target:
                             continue
                         monthly = (snapshot.get("snapshots") or {}).get("monthly") or {}
                         item = next((item for item in monthly.get("products", [])
-                                     if (item.get("product_id") or (item.get("product") or {}).get("id")) == product.id), None)
+                                     if (item.get("product_id") or (item.get("product") or {}).get("id")) == product_id), None)
                         if not item or round(float(item.get("actual_tl") or 0), 2) != round(float(target.tl_target), 2):
                             raise RuntimeError(f"staged representative {representative_id} Fentivag quota did not close")
                 print(f"REPRESENTATIVE_READ_MODEL|STAGED|representatives={len(raw)}", flush=True)
                 # The completed IMS job's stale publication marker must only be
                 # repaired after every current-source read model is durable.
                 _wait_for_idle(deadline)
-                blocked_job = db.session.get(IMSImportJob, blocked_job.id)
+                blocked_job = db.session.get(IMSImportJob, blocked_job)
                 if (blocked_job.status != IMSImportJob.STATUS_COMPLETED
                         or int(blocked_job.ims_upload_id or 0) != ims_id):
                     raise RuntimeError("IMS publication job changed during refresh")
@@ -168,7 +169,7 @@ def main():
             if month == args.month:
                 dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
                 products = (dashboard or {}).get("executive_metrics", {}).get("products", [])
-                row = next((item for item in products if item.get("product_id") == product.id), None)
+                row = next((item for item in products if item.get("product_id") == product_id), None)
                 if not row or round(float(row.get("actual_tl") or 0), 2) != round(float(row.get("target_tl") or 0), 2):
                     raise RuntimeError("Published national July Fentivag TL quota did not close")
                 regions = PersistentRegionSnapshotService.get_active_all(args.year, month)
@@ -176,14 +177,14 @@ def main():
                     raise RuntimeError("Published July region snapshots unavailable")
                 for key, payload in regions.items():
                     monthly = ((payload or {}).get("report") or {}).get("periods", {}).get("monthly", {})
-                    item = next((row for row in monthly.get("products", []) if row.get("product_id") == product.id), None)
+                    item = next((row for row in monthly.get("products", []) if row.get("product_id") == product_id), None)
                     if item and float(item.get("target_tl") or 0) > 0:
                         if round(float(item.get("actual_tl") or 0), 2) != round(float(item["target_tl"]), 2):
                             raise RuntimeError(f"July region {key} Fentivag quota did not close")
                 ids = PersistentRepresentativeSnapshotService.representative_ids(args.year, month)
                 for representative_id in ids:
                     target = Target.query.filter_by(year=args.year, month=month,
-                        representative_id=representative_id, product_id=product.id).first()
+                        representative_id=representative_id, product_id=product_id).first()
                     if target is None or not target.tl_target:
                         continue
                     snapshot = PersistentRepresentativeSnapshotService.get_active(
@@ -192,7 +193,7 @@ def main():
                         raise RuntimeError(f"Representative {representative_id} snapshot missing")
                     monthly = (snapshot.get("snapshots") or {}).get("monthly") or {}
                     item = next((row for row in monthly.get("products", [])
-                                 if (row.get("product_id") or (row.get("product") or {}).get("id")) == product.id), None)
+                                 if (row.get("product_id") or (row.get("product") or {}).get("id")) == product_id), None)
                     if not item or round(float(item.get("actual_tl") or 0), 2) != round(float(target.tl_target), 2):
                         raise RuntimeError(f"Representative {representative_id} July Fentivag quota did not close")
                 print(f"JULY_QUOTA_ACCEPTANCE|PASS|target_tl={allocated:.2f}|regions={len(regions)}|representatives={len(ids)}", flush=True)
