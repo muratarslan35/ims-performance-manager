@@ -118,9 +118,17 @@ class RepresentativePeriodSnapshotService:
         products = Product.query.filter(Product.id.in_(product_ids)).all()
         product_by_id = {int(product.id): product for product in products}
 
+        possible_quota = any(
+            Decimal(str(item.actual_tl or 0)) <= 0
+            and Decimal(str(item.realization_percent or 0)) <= 0
+            for item in production_results
+        )
         quota_periods = {
             (quota_year, quota_month, int(product_id))
-            for product_id, periods in ProductionResultService.quota_product_months(allowed).items()
+            for product_id, periods in (
+                ProductionResultService.quota_product_months(allowed).items()
+                if possible_quota else ()
+            )
             for quota_year, quota_month in periods
         }
         resolved = {}
