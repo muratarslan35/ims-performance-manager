@@ -152,3 +152,45 @@ def test_late_production_cascade_contract():
     assert "existing_complete and force" in region_source
     assert "replacement_rows" in region_source
     assert "PersistentDashboardSnapshotService.publish(year, month, _payload)" in worker
+
+
+def test_source_production_month_uses_exact_identity_and_downstream_keeps_cutoff():
+    cutoff = object()
+
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 7, 2026, 7, cutoff
+    ) is None
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 7, 2026, 8, cutoff
+    ) is cutoff
+    assert RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        2026, 12, 2027, 1, cutoff
+    ) is cutoff
+
+    queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
+        encoding="utf-8"
+    )
+    verifier = Path("verify_production_snapshot_finalization.py").read_text(
+        encoding="utf-8"
+    )
+    assert "target_cutoff = cls._dependency_cutoff(" in queue_source
+    assert verifier.count(
+        "target_cutoff = RepresentativeSnapshotRefreshQueue._dependency_cutoff("
+    ) == 2
+
+
+def test_worker_discards_already_fresh_production_marker_before_force_rebuild():
+    worker = Path("ims_import_worker.py").read_text(encoding="utf-8")
+    refresh = worker[worker.index("def _process_representative_refresh_queue(app):") :]
+
+    assert "def _queued_production_refresh_is_fresh(item, year, month):" in worker
+    assert "ProductionResultUpload.STATUS_APPLIED" in worker
+    assert "RepresentativeSnapshotRefreshQueue._dependency_cutoff(" in worker
+    assert "RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(" in worker
+    fresh = refresh.index("_queued_production_refresh_is_fresh(item, year, month)")
+    complete = refresh.index("RepresentativeSnapshotRefreshQueue.complete(item)", fresh)
+    force_dashboard = refresh.index(
+        "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)"
+    )
+    assert fresh < complete < force_dashboard
+    assert "already_fresh=1" in refresh

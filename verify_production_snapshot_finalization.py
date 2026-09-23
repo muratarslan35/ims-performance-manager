@@ -77,8 +77,11 @@ def _stale_dependencies(sources, *, source_period_only: bool = False):
             )
         )
         for year, month in periods:
+            target_cutoff = RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+                source.year, source.month, year, month, cutoff
+            )
             if RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(
-                year, month, cutoff=cutoff
+                year, month, cutoff=target_cutoff
             ):
                 continue
             stale.append(
@@ -101,8 +104,11 @@ def _enqueue_stale_sources(sources):
         for year, month in RepresentativeSnapshotRefreshQueue.dependency_periods(
             source.year, source.month
         ):
+            target_cutoff = RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+                source.year, source.month, year, month, cutoff
+            )
             if RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(
-                year, month, cutoff=cutoff
+                year, month, cutoff=target_cutoff
             ):
                 continue
             queued.append(

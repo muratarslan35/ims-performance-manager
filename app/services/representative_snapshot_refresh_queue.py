@@ -53,6 +53,31 @@ class RepresentativeSnapshotRefreshQueue:
             value = value.astimezone(timezone.utc).replace(tzinfo=None)
         return value
 
+    @staticmethod
+    def _dependency_cutoff(
+        source_year: int,
+        source_month: int,
+        target_year: int,
+        target_month: int,
+        cutoff,
+    ):
+        """Require recency only for downstream periods.
+
+        The production month itself already carries the finalized production
+        upload in its snapshot source identity. Once all exact-source dashboard,
+        region and representative read models are complete, comparing their
+        timestamps to applied_at adds no safety and can requeue an already
+        accepted month after a targeted repair. Later Q/YTD-dependent periods do
+        not carry that source upload in their own identity, so they must remain
+        newer than the production cutoff.
+        """
+        if (
+            int(source_year) == int(target_year)
+            and int(source_month) == int(target_month)
+        ):
+            return None
+        return cutoff
+
     @classmethod
     def enqueue(cls, year: int, month: int, *, reason: str) -> dict:
         """Atomically keep one newest refresh request per target period.
@@ -286,8 +311,11 @@ class RepresentativeSnapshotRefreshQueue:
             cutoff = final.applied_at or final.uploaded_at
             reason = f"production_upload:{int(final.id)}"
             for target_year, target_month in cls.dependency_periods(year, month):
+                target_cutoff = cls._dependency_cutoff(
+                    year, month, target_year, target_month, cutoff
+                )
                 if cls._period_is_fresh_for_production(
-                    target_year, target_month, cutoff=cutoff
+                    target_year, target_month, cutoff=target_cutoff
                 ):
                     continue
                 queued.append(

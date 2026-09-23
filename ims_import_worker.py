@@ -15,7 +15,7 @@ from app import create_app
 from app.cache.dashboard_cache import DashboardCache
 from app.constants.dashboard_constants import DashboardConstants
 from app.extensions import db
-from app.models import IMSImportJob, IMSUpload
+from app.models import IMSImportJob, IMSUpload, ProductionResultUpload
 from app.services.dashboard_service import DashboardService
 from app.services.ims_import_queue import IMSImportQueue
 from app.services.ims_progress_store import IMSProgressStore
@@ -458,6 +458,28 @@ def _retryable_publication_job():
     return None
 
 
+def _queued_production_refresh_is_fresh(item, year, month):
+    """Return True when this durable marker is already fully published."""
+    reason = str(item.get("reason") or "")
+    prefix = "production_upload:"
+    if not reason.startswith(prefix):
+        return False
+    try:
+        upload_id = int(reason[len(prefix):])
+    except (TypeError, ValueError):
+        return False
+    source = db.session.get(ProductionResultUpload, upload_id)
+    if source is None or source.status != ProductionResultUpload.STATUS_APPLIED:
+        return False
+    cutoff = source.applied_at or source.uploaded_at
+    target_cutoff = RepresentativeSnapshotRefreshQueue._dependency_cutoff(
+        source.year, source.month, year, month, cutoff
+    )
+    return RepresentativeSnapshotRefreshQueue._period_is_fresh_for_production(
+        year, month, cutoff=target_cutoff
+    )
+
+
 def _process_representative_refresh_queue(app):
     """Run one durable production-triggered refresh behind IMS publication work."""
     item = RepresentativeSnapshotRefreshQueue.next()
@@ -471,6 +493,16 @@ def _process_representative_refresh_queue(app):
         "representative_refresh_queue_started year=%s month=%s reason=%s",
         year, month, reason,
     )
+    if _queued_production_refresh_is_fresh(item, year, month):
+        RepresentativeSnapshotRefreshQueue.complete(item)
+        app.logger.info(
+            "representative_refresh_queue_skipped year=%s month=%s "
+            "reason=%s already_fresh=1",
+            year, month, reason,
+        )
+        db.session.remove()
+        return True
+
     latest = IMSUpload.query.filter_by(
         year=year, month=month, status=IMSUpload.STATUS_COMPLETED
     ).order_by(
