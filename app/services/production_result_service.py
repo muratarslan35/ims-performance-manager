@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app.extensions import db
 from app.models import (
@@ -71,39 +71,61 @@ class ProductionResultService:
         # and no active product line in the final production workbook is a
         # stock quota exit. This applies to existing P2 uploads without
         # renaming or reimporting the workbook.
+        period_filter = or_(*[
+            and_(Target.year == year, Target.month == month)
+            for year, month in periods
+        ])
+        ims_filter = or_(*[
+            and_(IMSSummary.year == year, IMSSummary.month == month)
+            for year, month in periods
+        ])
+        target_amounts = {
+            (int(year), int(month), int(product_id)): amount
+            for year, month, product_id, amount in db.session.query(
+                Target.year, Target.month, Target.product_id, func.sum(Target.tl_target)
+            ).filter(period_filter).group_by(
+                Target.year, Target.month, Target.product_id
+            ).all()
+        }
+        ims_sales = {
+            (int(year), int(month), int(product_id)): (tl, unit)
+            for year, month, product_id, tl, unit in db.session.query(
+                IMSSummary.year, IMSSummary.month, IMSSummary.product_id,
+                func.max(IMSSummary.tl), func.max(IMSSummary.unit),
+            ).filter(ims_filter).group_by(
+                IMSSummary.year, IMSSummary.month, IMSSummary.product_id
+            ).all()
+        }
+        selected_ids = [int(upload.id) for upload in selected.values()]
+        production = {
+            (int(upload_id), int(product_id)): (actual, unit)
+            for upload_id, product_id, actual, unit in db.session.query(
+                ProductionResult.upload_id, ProductionResult.product_id,
+                func.max(ProductionResult.actual_tl), func.max(ProductionResult.actual_unit),
+            ).filter(ProductionResult.upload_id.in_(selected_ids)).group_by(
+                ProductionResult.upload_id, ProductionResult.product_id
+            ).all()
+        }
+        national = {
+            (int(row.upload_id), int(row.product_id)): row
+            for row in ProductionNationalProductResult.query.filter(
+                ProductionNationalProductResult.upload_id.in_(selected_ids)
+            ).all()
+        }
         empty_by_period = {}
         for period, upload in selected.items():
             year, month = period
-            targets = dict(db.session.query(
-                Target.product_id, func.sum(Target.tl_target)
-            ).filter_by(year=year, month=month).group_by(Target.product_id).all())
-            ims_sales = {
-                int(product_id): (tl, unit)
-                for product_id, tl, unit in db.session.query(
-                    IMSSummary.product_id, func.max(IMSSummary.tl), func.max(IMSSummary.unit)
-                ).filter_by(year=year, month=month).group_by(IMSSummary.product_id).all()
-            }
-            production = {
-                int(product_id): (actual, unit)
-                for product_id, actual, unit in db.session.query(
-                    ProductionResult.product_id,
-                    func.max(ProductionResult.actual_tl),
-                    func.max(ProductionResult.actual_unit),
-                ).filter_by(upload_id=upload.id).group_by(ProductionResult.product_id).all()
-            }
-            national = {
-                int(row.product_id): row
-                for row in ProductionNationalProductResult.query.filter_by(upload_id=upload.id).all()
-            }
             empty_by_period[period] = {
-                int(product_id) for product_id, target in targets.items()
-                if cls._d(target) > 0
-                and int(product_id) in production
-                and int(product_id) in national
-                and all(cls._d(value) <= 0 for value in production[int(product_id)])
-                and all(cls._d(value) <= 0 for value in ims_sales.get(int(product_id), (0, 0)))
-                and cls._d(national[int(product_id)].actual_tl) <= 0
-                and cls._d(national[int(product_id)].actual_unit) <= 0
+                product_id for (target_year, target_month, product_id), target
+                in target_amounts.items()
+                if (target_year, target_month) == period
+                and cls._d(target) > 0
+                and (int(upload.id), product_id) in production
+                and (int(upload.id), product_id) in national
+                and all(cls._d(value) <= 0 for value in production[(int(upload.id), product_id)])
+                and all(cls._d(value) <= 0 for value in ims_sales.get((year, month, product_id), (0, 0)))
+                and cls._d(national[(int(upload.id), product_id)].actual_tl) <= 0
+                and cls._d(national[(int(upload.id), product_id)].actual_unit) <= 0
             }
 
         result = {}
