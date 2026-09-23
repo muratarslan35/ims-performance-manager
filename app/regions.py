@@ -175,7 +175,9 @@ def detail(region_key):
                 )
                 return redirect(url_for("dashboard.index"))
 
-        current_report = _refresh_future_chart_points(\n            read_model["report"], region_key, year, month, active\n        )
+        current_report = _refresh_future_chart_points(
+            read_model["report"], region_key, year, month, active
+        )
         market_analysis = read_model.get("market_analysis") or {}
         ai_report = read_model.get("ai_report") or {}
         region_manager = _assigned_region_manager(current_report)
