@@ -14,6 +14,7 @@ from app.services.period_service import PeriodService
 from app.services.production_result_service import ProductionResultService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+from app.services.ims_publication_service import IMSPublicationService
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
 from config import Config
 from scripts.refresh_live_read_models import (
@@ -81,7 +82,22 @@ def main():
             _wait_for_idle(deadline)
             print(f"QUOTA_REFRESH_START|{args.year}-{month:02d}", flush=True)
             _refresh_dashboard(args.year, month)
-            _refresh_regions(args.year, month)
+            try:
+                _refresh_regions(args.year, month)
+            except RuntimeError:
+                ims_id, production_id = PersistentRegionSnapshotService.source_identity(args.year, month)
+                pending = IMSPublicationService.pending_job(args.year, month)
+                existing = PersistentRegionSnapshotService._existing_set(
+                    args.year, month, ims_id, production_id)
+                raw_count = (len(PersistentRegionSnapshotService._payloads_from_set(existing.id))
+                             if existing else 0)
+                print(f"REGION_VISIBILITY_DIAGNOSTIC|ims={ims_id}|production={production_id}"
+                      f"|pending_job={pending.id if pending else None}"
+                      f"|pending_status={pending.status if pending else None}"
+                      f"|set_id={existing.id if existing else None}"
+                      f"|set_status={existing.status if existing else None}"
+                      f"|raw_regions={raw_count}", flush=True)
+                raise
             _refresh_representatives(args.year, month)
             if month == args.month:
                 dashboard = PersistentDashboardSnapshotService.get_active(args.year, month)
