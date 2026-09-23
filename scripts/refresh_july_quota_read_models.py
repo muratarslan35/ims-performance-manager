@@ -11,7 +11,6 @@ from app import create_app
 from app.extensions import db
 from app.models import (IMSImportJob, IMSSummary, IMSUpload, Product, Target,
                         ProductionResult, ProductionNationalProductResult)
-from app.services.period_service import PeriodService
 from app.services.production_result_service import ProductionResultService
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
@@ -77,9 +76,13 @@ def main():
         ).scalar() or 0
         if allocated <= 0:
             raise RuntimeError("July Fentivag allocated TL quota is unavailable")
-        active = PeriodService.get_active_period()
-        end_month = min(9, int(active["month"])) if int(active["year"]) == args.year else 9
-        for month in range(args.month, end_month + 1):
+        # This maintenance command repairs only the production month named on
+        # the command line.  Normal production uploads already enqueue their
+        # own month and any later Q/YTD-dependent periods through
+        # RepresentativeSnapshotRefreshQueue.  Expanding a one-month quota
+        # correction here duplicated that queue, rebuilt healthy August and
+        # September snapshots, and made the guarded repair unnecessarily slow.
+        for month in (args.month,):
             if not IMSUpload.query.filter_by(year=args.year, month=month, status="COMPLETED").first():
                 continue
             _wait_for_idle(deadline)
