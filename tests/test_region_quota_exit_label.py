@@ -236,3 +236,9 @@ def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_
         assert ProductionResultService.quota_product_months([(2044, 7)]) == {
             fentivag.id: [(2044, 7)]
         }
+        db.session.add(ProductionNationalProductResult(
+            upload_id=upload.id, product_id=fentivag.id, actual_tl=1,
+            actual_unit=0, realization_percent=0, unit_realization_percent=0,
+        ))
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {}
