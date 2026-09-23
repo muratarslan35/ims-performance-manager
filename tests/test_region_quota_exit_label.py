@@ -225,3 +225,28 @@ def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_
         db.session.query(IMSSummary).filter_by(representative_id=reps[1].id).update({"tl": 1})
         db.session.commit()
         assert ProductionResultService.quota_product_months([(2044, 7)]) == {}
+
+        # A product omitted entirely from the final production workbook is
+        # still a quota exit when nationwide IMS sales are zero.
+        db.session.query(IMSSummary).update({"tl": 0})
+        db.session.query(ProductionResult).delete()
+        db.session.query(ProductionNationalProductResult).delete()
+        db.session.query(ProductionRegionProductResult).delete()
+        db.session.commit()
+        another_product = Product(product_code="JULY-OTHER", product_name="Another product", is_active=True)
+        db.session.add(another_product)
+        db.session.flush()
+        db.session.add(ProductionNationalProductResult(
+            upload_id=upload.id, product_id=another_product.id, actual_tl=10,
+            actual_unit=1, realization_percent=100, unit_realization_percent=100,
+        ))
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {
+            fentivag.id: [(2044, 7)]
+        }
+        db.session.add(ProductionNationalProductResult(
+            upload_id=upload.id, product_id=fentivag.id, actual_tl=1,
+            actual_unit=0, realization_percent=0, unit_realization_percent=0,
+        ))
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {}
