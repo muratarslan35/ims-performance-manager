@@ -22,6 +22,7 @@ from app.models import (
     Product,
     ProductionResult,
     ProductionResultUpload,
+    ProductionRepresentativeTotal,
     Target,
 )
 from app.services.realization_rounding import realization_percent
@@ -114,6 +115,16 @@ class RepresentativePeriodSnapshotService:
             (int(item.upload_id), int(item.product_id)): item
             for item in production_results
         }
+        representative_totals = (
+            ProductionRepresentativeTotal.query.filter(
+                ProductionRepresentativeTotal.upload_id.in_(upload_ids),
+                ProductionRepresentativeTotal.representative_id == representative_id,
+            ).all()
+            if upload_ids else []
+        )
+        representative_total_by_upload = {
+            int(item.upload_id): item for item in representative_totals
+        }
 
         products = Product.query.filter(Product.id.in_(product_ids)).all()
         product_by_id = {int(product.id): product for product in products}
@@ -202,11 +213,27 @@ class RepresentativePeriodSnapshotService:
             total_target = sum((values["target"] for values in month_totals.values()), Decimal("0"))
             total_actual = sum((values["actual"] for values in month_totals.values()), Decimal("0"))
             complete = bool(month_totals) and all(values["complete"] for values in month_totals.values())
+            total_percent = cls._percent(total_actual, total_target) if complete else None
+            if key == "monthly":
+                monthly_uploads = uploads_by_period.get((year, month), ())
+                official_total = next(
+                    (
+                        representative_total_by_upload.get(int(upload.id))
+                        for upload in monthly_uploads
+                        if representative_total_by_upload.get(int(upload.id)) is not None
+                    ),
+                    None,
+                )
+                if official_total is not None:
+                    total_percent = cls._percent(
+                        official_total.actual_tl,
+                        official_total.target_tl,
+                    )
             result[key] = {
                 "key": key, "label": label, "month_count": len(months),
                 "target_tl": total_target,
                 "actual_tl": total_actual if complete else None,
-                "realization_percent": cls._percent(total_actual, total_target) if complete else None,
+                "realization_percent": total_percent,
                 "gap_tl": total_target - total_actual if complete else None,
                 "complete": complete, "products": product_rows, "representatives": [],
             }
