@@ -37,3 +37,12 @@ def test_july_quota_maintenance_does_not_rebuild_later_months():
     assert "for month in (args.month,):" in source
     assert "range(args.month, end_month + 1)" not in source
     assert "RepresentativeSnapshotRefreshQueue" in source
+
+
+def test_july_acceptance_reads_representative_snapshots_and_targets_in_bulk():
+    source = (ROOT / "scripts/refresh_july_quota_read_models.py").read_text(encoding="utf-8")
+    acceptance = source[source.index('raise RuntimeError("Published July region snapshots unavailable")'):]
+
+    assert "PersistentRepresentativeSnapshotService._payloads_from_set(exact.id, ids)" in acceptance
+    assert "Target.representative_id.in_(ids)" in acceptance
+    assert "PersistentRepresentativeSnapshotService.get_active(" not in acceptance
