@@ -50,5 +50,6 @@ jobs:
           git fetch origin main
           git pull --ff-only origin main
           PYTHONPATH="$IMS_PATH" venv/bin/python -m scripts.repair_july_quota_dashboard
+          PYTHONPATH="$IMS_PATH" venv/bin/python -m scripts.repair_july_quota_representatives
           PYTHONPATH="$IMS_PATH" venv/bin/python -m scripts.verify_july_quota_read_models
           REMOTE
