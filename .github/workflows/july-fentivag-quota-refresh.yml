@@ -2,13 +2,17 @@ name: July Fentivag Quota Read Model Refresh
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/july-fentivag-quota-refresh.yml'
 
 permissions:
   contents: read
 
 concurrency:
   group: ims-july-quota-refresh
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   refresh:
