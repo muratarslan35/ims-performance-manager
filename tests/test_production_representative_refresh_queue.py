@@ -48,7 +48,7 @@ def test_production_refresh_queue_contract():
         "region_result = _warm_region_snapshots(app, year, month, force=True)"
     )
     enrichment = refresh_worker.index(
-        "PersistentRegionSnapshotService.enrich_for_period(year, month)"
+        "PersistentRegionSnapshotService.enrich_for_period(year, month)", region
     )
     force_path = refresh_worker.index(
         "dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)"
