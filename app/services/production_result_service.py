@@ -84,10 +84,9 @@ class ProductionResultService:
                 ).filter_by(year=year, month=month).group_by(IMSSummary.product_id).all()
             }
             production = {
-                int(product_id): (target, actual, unit)
-                for product_id, target, actual, unit in db.session.query(
+                int(product_id): (actual, unit)
+                for product_id, actual, unit in db.session.query(
                     ProductionResult.product_id,
-                    func.max(ProductionResult.target_tl),
                     func.max(ProductionResult.actual_tl),
                     func.max(ProductionResult.actual_unit),
                 ).filter_by(upload_id=upload.id).group_by(ProductionResult.product_id).all()
