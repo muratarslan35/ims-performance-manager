@@ -116,5 +116,24 @@ jobs:
               fen=next((item for item in rows if int(getattr(item.get("product"),"id",0) or 0)==product_id),None)
               print(f"DIRECT_QUOTA|product_id={product_id}|quota={quota}")
               print(f"DIRECT_AGGREGATE_REP1|target={float((fen or {}).get('target_tl') or 0):.2f}|actual={float((fen or {}).get('actual_tl') or 0):.2f}|source={(fen or {}).get('source')}|percent={(fen or {}).get('percent')}")
+              candidate_rows=db.session.execute(
+                  representative_snapshot_sets.select().where(
+                      representative_snapshot_sets.c.year==year,
+                      representative_snapshot_sets.c.month==month,
+                      representative_snapshot_sets.c.source_upload_id==ims_id,
+                      representative_snapshot_sets.c.production_upload_id==production_id,
+                      representative_snapshot_sets.c.representative_count==len(ids),
+                  ).order_by(representative_snapshot_sets.c.id.desc())
+              ).all()
+              for candidate in candidate_rows[:12]:
+                  candidate_raw=PersistentRepresentativeSnapshotService._payloads_from_set(int(candidate.id),ids)
+                  bad=[]
+                  for representative_id,snapshot in candidate_raw.items():
+                      target=Target.query.filter_by(year=year,month=month,representative_id=representative_id,product_id=product_id).first()
+                      if target is None or not target.tl_target: continue
+                      monthly=((snapshot.get("snapshots") or {}).get("monthly") or {})
+                      item=next((item for item in monthly.get("products",[]) if (item.get("product_id") or (item.get("product") or {}).get("id"))==product_id),None)
+                      if item is None or round(float(item.get("actual_tl") or 0),2)!=round(float(target.tl_target or 0),2): bad.append(int(representative_id))
+                  print(f"CANDIDATE_SET|id={candidate.id}|status={candidate.status}|payloads={len(candidate_raw)}|bad={len(bad)}|bad_head={bad[:12]}")
           PY
           REMOTE
