@@ -22,7 +22,8 @@ from sqlalchemy import desc
 from sqlalchemy.inspection import inspect as sa_inspect
 
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, Representative
+from app.models import IMSRawData, IMSUpload, ProductionRepresentativeTotal, Representative
+from app.services.realization_rounding import realization_percent
 from app.services.production_result_service import ProductionResultService
 
 
@@ -265,9 +266,43 @@ class PersistentRepresentativeSnapshotService:
         if not raw:
             return None
         try:
-            return json.loads(raw)
+            payload = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             return None
+        return cls._apply_official_monthly_total(
+            payload, representative_id, year, month
+        )
+
+    @classmethod
+    def _official_monthly_totals(cls, representative_ids, year, month):
+        ids = sorted({int(item) for item in representative_ids if item is not None})
+        upload = ProductionResultService.final_upload(year, month)
+        if not ids or upload is None:
+            return {}
+        rows = ProductionRepresentativeTotal.query.filter(
+            ProductionRepresentativeTotal.upload_id == int(upload.id),
+            ProductionRepresentativeTotal.representative_id.in_(ids),
+        ).all()
+        return {int(row.representative_id): row for row in rows}
+
+    @staticmethod
+    def _apply_official_total_row(payload, official_total):
+        if not isinstance(payload, dict) or official_total is None:
+            return payload
+        monthly = ((payload.get("snapshots") or {}).get("monthly") or {})
+        totals = monthly.get("totals") or {}
+        if not totals:
+            return payload
+        totals["percent"] = realization_percent(
+            official_total.actual_tl,
+            official_total.target_tl,
+        )
+        return payload
+
+    @classmethod
+    def _apply_official_monthly_total(cls, payload, representative_id, year, month):
+        official = cls._official_monthly_totals([representative_id], year, month)
+        return cls._apply_official_total_row(payload, official.get(int(representative_id)))
 
     @classmethod
     def _payloads_from_set(cls, set_id, representative_ids):
@@ -295,7 +330,11 @@ class PersistentRepresentativeSnapshotService:
     def get_active_many(cls, representative_ids, year, month):
         """Read the currently visible representative generation in one query."""
         set_id = cls._visible_set_id(year, month)
-        return cls._payloads_from_set(set_id, representative_ids)
+        payloads = cls._payloads_from_set(set_id, representative_ids)
+        official = cls._official_monthly_totals(payloads, year, month)
+        for representative_id, payload in payloads.items():
+            cls._apply_official_total_row(payload, official.get(int(representative_id)))
+        return payloads
 
     @classmethod
     def get_exact_active_many(cls, representative_ids, year, month):
