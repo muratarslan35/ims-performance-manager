@@ -110,5 +110,11 @@ jobs:
               print(f"JULY_SET|id={set_id}|status={row.status if row else None}|stored={count}|expected={len(ids)}|ims={ims_id}|production={production_id}")
               print(f"JULY_FENTIVAG_MISMATCH|count={len(mismatches)}|rows={mismatches}")
               print(f"JULY_PUBLICATION|pending_job={pending.id if pending else None}|ready={summary.get('publication_ready') if pending else None}|visible_regions={len(regions)}")
+              from app.services.representative_period_workspace import _aggregate_sales
+              quota=__import__("app.services.production_result_service",fromlist=["ProductionResultService"]).ProductionResultService.quota_product_months([(year,month)])
+              rows,totals,_assignments,_sources=_aggregate_sales(1,[(year,month)])
+              fen=next((item for item in rows if int(getattr(item.get("product"),"id",0) or 0)==product_id),None)
+              print(f"DIRECT_QUOTA|product_id={product_id}|quota={quota}")
+              print(f"DIRECT_AGGREGATE_REP1|target={float((fen or {}).get('target_tl') or 0):.2f}|actual={float((fen or {}).get('actual_tl') or 0):.2f}|source={(fen or {}).get('source')}|percent={(fen or {}).get('percent')}")
           PY
           REMOTE
