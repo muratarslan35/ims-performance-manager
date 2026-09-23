@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/region-snapshot-health.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/region-snapshot-health.yml"
   workflow_dispatch:
 
 permissions:
@@ -523,4 +527,61 @@ jobs:
             | grep -E 'region_snapshot|manager_region_snapshots|UNIQUE constraint|IntegrityError' \
             | tail -n 200 || true
           echo "RECENT_REGION_SNAPSHOT_ERRORS_END"
+          REMOTE
+
+
+      - name: Diagnose historical compatibility exceptions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_snapshot_health_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import traceback
+          from app import create_app
+
+          app = create_app()
+          app.config["TESTING"] = True
+          app.config["PROPAGATE_EXCEPTIONS"] = True
+
+          with app.app_context():
+              from app.regions import _compatibility_region_read_model
+              for month in (1, 2, 3, 5, 7):
+                  try:
+                      payload, source = _compatibility_region_read_model("901", 2026, month)
+                      monthly = (((payload.get("report") or {}).get("periods") or {}).get("monthly") or {})
+                      print(
+                          f"COMPAT_OK|month={month}|source={source}|"
+                          f"target={monthly.get('target_tl')}|actual={monthly.get('actual_tl')}"
+                      )
+                  except Exception as exc:
+                      print(f"COMPAT_FAIL|month={month}|type={type(exc).__name__}|error={exc}")
+                      traceback.print_exc()
+
+          with app.app_context():
+              from app.models import User
+              admin = User.query.filter_by(email="admin@ipm.local").one()
+              client = app.test_client()
+              client.application.login_manager.session_protection = None
+              with client.session_transaction() as session:
+                  session["_user_id"] = str(admin.id)
+                  session["_fresh"] = True
+                  session["portal"] = "manager"
+              for month in (1, 2, 3, 5, 7):
+                  try:
+                      response = client.get(
+                          f"/regions/901?year=2026&month={month}",
+                          follow_redirects=False,
+                      )
+                      print(
+                          f"ROUTE_RESULT|month={month}|status={response.status_code}|"
+                          f"location={response.headers.get('Location','')}|bytes={len(response.data)}"
+                      )
+                  except Exception as exc:
+                      print(f"ROUTE_FAIL|month={month}|type={type(exc).__name__}|error={exc}")
+                      traceback.print_exc()
+          PY
           REMOTE
