@@ -221,8 +221,13 @@ def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_
             assert products[0]["actual_tl"] == 500
             assert products[0]["quota_uplift_tl"] == 500
 
-        # One genuine IMS sale anywhere in Türkiye blocks the exemption.
+        # Finalized production supersedes earlier IMS sales.
         db.session.query(IMSSummary).filter_by(representative_id=reps[1].id).update({"tl": 1})
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {
+            fentivag.id: [(2044, 7)]
+        }
+        db.session.query(ProductionResult).filter_by(representative_id=reps[1].id).update({"actual_tl": 1})
         db.session.commit()
         assert ProductionResultService.quota_product_months([(2044, 7)]) == {}
 
@@ -240,6 +245,11 @@ def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_
             upload_id=upload.id, product_id=another_product.id, actual_tl=10,
             actual_unit=1, realization_percent=100, unit_realization_percent=100,
         ))
+        db.session.commit()
+        db.session.query(IMSSummary).filter_by(representative_id=reps[1].id).update({"tl": 1})
+        db.session.commit()
+        assert ProductionResultService.quota_product_months([(2044, 7)]) == {}
+        db.session.query(IMSSummary).filter_by(representative_id=reps[1].id).update({"tl": 0})
         db.session.commit()
         assert ProductionResultService.quota_product_months([(2044, 7)]) == {
             fentivag.id: [(2044, 7)]
