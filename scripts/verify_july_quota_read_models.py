@@ -54,6 +54,10 @@ def main():
         if len(regions) != 11:
             raise RuntimeError(f"Published July regions {len(regions)}/11")
         for region_key, payload in regions.items():
+            if not isinstance((payload or {}).get("ai_report"), dict):
+                raise RuntimeError(
+                    f"Published July region {region_key} AI enrichment unavailable"
+                )
             monthly = (((payload or {}).get("report") or {}).get("periods") or {}).get("monthly") or {}
             row = _product_row(monthly.get("products"), product_id)
             if row and float(row.get("target_tl") or 0) > 0 and not _closed(row):

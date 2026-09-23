@@ -46,3 +46,10 @@ def test_july_acceptance_reads_representative_snapshots_and_targets_in_bulk():
     assert "PersistentRepresentativeSnapshotService._payloads_from_set(exact.id, ids)" in acceptance
     assert "Target.representative_id.in_(ids)" in acceptance
     assert "PersistentRepresentativeSnapshotService.get_active(" not in acceptance
+
+
+def test_fast_july_acceptance_requires_region_ai_enrichment():
+    source = (ROOT / "scripts/verify_july_quota_read_models.py").read_text(encoding="utf-8")
+
+    assert 'isinstance((payload or {}).get("ai_report"), dict)' in source
+    assert "AI enrichment unavailable" in source

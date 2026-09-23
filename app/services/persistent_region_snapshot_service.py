@@ -462,7 +462,11 @@ class PersistentRegionSnapshotService:
         payloads = cls._payloads_from_set(set_id)
         if not payloads:
             return {"status": "WAITING_REGION", "regions": 0}
-        if all(int((payload or {}).get("read_model_version") or 0) >= cls.READ_MODEL_VERSION for payload in payloads.values()):
+        if all(
+            int((payload or {}).get("read_model_version") or 0) >= cls.READ_MODEL_VERSION
+            and isinstance((payload or {}).get("ai_report"), dict)
+            for payload in payloads.values()
+        ):
             return {"status": "REUSED", "set_id": int(set_id), "regions": len(payloads)}
 
         from app.services.persistent_dashboard_snapshot_service import (
