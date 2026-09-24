@@ -116,11 +116,12 @@ def test_ims_turkey_ranking_is_top_ten_by_realization_with_tl_tiebreaker():
     assert result[-1]["rep_name"] == "Temsilci 02"
 
 
-def test_ims_turkey_ranking_uses_production_returns_instead_of_stale_ims(tmp_path):
+def test_ims_turkey_ranking_uses_final_production_total_without_double_subtracting_returns(tmp_path):
     from app import create_app
     from app.extensions import db
     from app.models import (
-        IMSSummary, Product, ProductionResult, ProductionResultUpload,
+        IMSSummary, Product, ProductionRepresentativeTotal, ProductionResult,
+        ProductionResultUpload,
         Representative, Target,
     )
     from app.query.dashboard_query import DashboardQuery
@@ -186,6 +187,18 @@ def test_ims_turkey_ranking_uses_production_returns_instead_of_stale_ims(tmp_pat
                 actual_tl=900, actual_unit=9,
             ),
         ])
+        db.session.add_all([
+            ProductionRepresentativeTotal(
+                upload_id=upload.id, representative_id=rep_a.id,
+                realization_percent=80, target_tl=1000, actual_tl=800,
+                target_unit=10, actual_unit=8,
+            ),
+            ProductionRepresentativeTotal(
+                upload_id=upload.id, representative_id=rep_b.id,
+                realization_percent=90, target_tl=1000, actual_tl=900,
+                target_unit=10, actual_unit=9,
+            ),
+        ])
         db.session.commit()
 
         rows = DashboardQuery().load_top_representatives(
@@ -193,7 +206,9 @@ def test_ims_turkey_ranking_uses_production_returns_instead_of_stale_ims(tmp_pat
         )
         by_name = {row[1]: row for row in rows}
 
-        assert by_name["Temsilci A"][3] == -100
+        # The -100 product return is already included in the workbook's final
+        # representative total; it must not be subtracted for a second time.
+        assert by_name["Temsilci A"][3] == 800
         assert by_name["Temsilci B"][3] == 900
 
 
