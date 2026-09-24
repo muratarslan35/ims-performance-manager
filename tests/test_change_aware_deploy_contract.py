@@ -287,3 +287,8 @@ def test_ranking_refresh_preserves_full_market_read_models():
     assert "ServerAliveCountMax=40" in workflow
     assert "ConnectionAttempts=3" in workflow
     assert 'venv/bin/python -u -' in workflow
+    assert "timeout-minutes: 40" in workflow
+    assert "def region_read_model_status(year, month):" in workflow
+    assert "REGION_MARKET_REFRESH|REUSED|" in workflow
+    assert "market_ready == expected" in workflow
+    assert "previous_competitor_ready == expected" in workflow
