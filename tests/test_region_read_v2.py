@@ -329,7 +329,7 @@ def test_historical_region_uses_durable_compatibility_read_model_when_exact_snap
     }
     monkeypatch.setattr(
         regions.HistoricalRegionReadModelService,
-        "get_or_build",
+        "get_active",
         classmethod(lambda cls, region_key, year, month: expected),
     )
 
@@ -425,7 +425,8 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
     assert "RegionAISnapshotService.build" not in route
     assert "PersistentRegionSnapshotService.enrich_for_period" in route
     assert "_compatibility_region_read_model" in route
-    assert "HistoricalRegionReadModelService.get_or_build" in route
+    assert "HistoricalRegionReadModelService.get_active" in route
+    assert "HistoricalRegionReadModelService.get_or_build" not in route
     assert "RegionPerformanceService(" not in route
     assert "RegionMarketService(" not in route
     assert 'region_data_source == "read-model"' in route
