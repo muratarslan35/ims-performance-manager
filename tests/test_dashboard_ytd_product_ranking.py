@@ -157,11 +157,17 @@ def test_ims_turkey_ranking_uses_final_production_total_without_double_subtracti
         db.session.add_all([product, rep_a, rep_b])
         db.session.flush()
         for representative in (rep_a, rep_b):
-            db.session.add(Target(
-                year=2026, month=8, representative_id=representative.id,
-                product_id=product.id, tl_target=1000,
-            ))
+            db.session.add_all([
+                Target(year=2026, month=1, representative_id=representative.id,
+                       product_id=product.id, tl_target=500),
+                Target(year=2026, month=8, representative_id=representative.id,
+                       product_id=product.id, tl_target=1000),
+            ])
         db.session.add_all([
+            IMSSummary(year=2026, month=1, representative_id=rep_a.id,
+                       product_id=product.id, tl=500, unit=5),
+            IMSSummary(year=2026, month=1, representative_id=rep_b.id,
+                       product_id=product.id, tl=400, unit=4),
             IMSSummary(year=2026, month=8, representative_id=rep_a.id,
                        product_id=product.id, tl=1200, unit=12),
             IMSSummary(year=2026, month=8, representative_id=rep_b.id,
@@ -208,15 +214,16 @@ def test_ims_turkey_ranking_uses_final_production_total_without_double_subtracti
 
         # The -100 product return is already included in the workbook's final
         # representative total; it must not be subtracted for a second time.
-        assert by_name["Temsilci A"][3] == 800
-        assert by_name["Temsilci B"][3] == 900
+        assert by_name["Temsilci A"][3] == 1300
+        assert by_name["Temsilci A"][5] == 1500
+        assert by_name["Temsilci B"][3] == 1300
 
 
 def test_ims_turkey_ranking_keeps_first_three_collapsed_by_default():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
 
     assert 'data-ranking-toggle aria-expanded="false"' in template
-    assert "Aylık ₺ realizasyon oranına göre sıralanmıştır." in template
+    assert "Yılbaşından seçili aya kadar ₺ realizasyon oranına göre sıralanmıştır." in template
 
 
 def test_dashboard_snapshot_upgrade_is_not_performed_in_user_request():
