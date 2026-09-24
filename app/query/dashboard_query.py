@@ -151,55 +151,83 @@ class DashboardQuery:
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
     ) -> Sequence[Row]:
+        """Return monthly national ranking from the accepted result source.
+
+        Production workbooks are the final monthly result and may contain
+        returns (negative TL).  Ranking directly from ``IMSSummary`` left the
+        leaderboard stale after a production upload even though every other
+        dashboard metric had moved to P2 > P1 > IMS.  Resolve all target rows
+        in bounded reads so returns reduce the representative total and the
+        generated dashboard snapshot becomes the single read source again.
         """
-        Retrieves top performing representatives based on total realization.
-        Returns raw SQLAlchemy Rows to avoid ORM instantiation overhead.
-        """
-        default_order = order_by if order_by is not None else desc("total_tl")
-        
-        joins = [
-            (Representative, IMSSummary.representative_id == Representative.id, False),
-            (Target, 
-                and_(
-                    Target.representative_id == Representative.id,
-                    Target.product_id == IMSSummary.product_id,
-                    Target.year == IMSSummary.year,
-                    Target.month == IMSSummary.month,
-                ), 
-                True
-            )
-        ]
+        if not filters or filters.year is None or filters.month is None:
+            return []
 
-        select_cols = [
-            Representative.id,
-            Representative.rep_name,
-            Representative.city,
-            func.sum(IMSSummary.tl).label("total_tl"),
-            func.sum(IMSSummary.bonus_amount).label("bonus"),
-            func.sum(Target.tl_target).label("target_tl")
-        ]
-
-        group_cols = [
-            Representative.id, 
-            Representative.rep_name, 
-            Representative.city
-        ]
-
-        # Standardized Cache Hook integration ready for implementation
-        # cache_key = self._generate_cache_signature("top_reps", filters, limit, offset)
-
-        query = AggregateBuilder.build(
-            session=self.session,
-            select_entities=select_cols,
-            group_by_entities=group_cols,
-            joins=joins,
-            filter_callable=lambda q: DashboardFilter.apply(q, filters),
-            order_by=default_order,
-            limit=limit,
-            offset=offset
+        targets_query = self.session.query(Target).join(
+            Representative, Representative.id == Target.representative_id
+        ).filter(
+            Target.year == filters.year,
+            Target.month == filters.month,
+            Representative.active.is_(True),
         )
+        if filters.representative_id is not None:
+            targets_query = targets_query.filter(
+                Target.representative_id == filters.representative_id
+            )
+        target_rows = targets_query.all()
+        if not target_rows:
+            return []
 
-        return query.all()
+        actual_by_key = self._effective_actuals_for_targets(
+            filters.year, filters.month, target_rows
+        )
+        quota_ids = self._quota_ids(filters.year, filters.month)
+        representative_ids = {int(row.representative_id) for row in target_rows}
+        representatives = {
+            int(item.id): item for item in self.session.query(Representative).filter(
+                Representative.id.in_(representative_ids)
+            ).all()
+        }
+        bonus_by_rep = dict(self.session.query(
+            IMSSummary.representative_id,
+            func.coalesce(func.sum(IMSSummary.bonus_amount), 0),
+        ).filter(
+            IMSSummary.year == filters.year,
+            IMSSummary.month == filters.month,
+            IMSSummary.representative_id.in_(representative_ids),
+        ).group_by(IMSSummary.representative_id).all())
+
+        totals = {}
+        for target in target_rows:
+            representative_id = int(target.representative_id)
+            bucket = totals.setdefault(
+                representative_id, [Decimal("0"), Decimal("0")]
+            )
+            target_tl = Decimal(str(target.tl_target or 0))
+            bucket[1] += target_tl
+            bucket[0] += (
+                target_tl if int(target.product_id) in quota_ids
+                else actual_by_key.get(
+                    (representative_id, int(target.product_id)),
+                    (Decimal("0"), Decimal("0")),
+                )[1]
+            )
+
+        rows = []
+        for representative_id, (actual_tl, target_tl) in totals.items():
+            representative = representatives.get(representative_id)
+            if representative is None:
+                continue
+            rows.append((
+                representative_id,
+                representative.rep_name,
+                representative.city,
+                actual_tl,
+                Decimal(str(bonus_by_rep.get(representative_id) or 0)),
+                target_tl,
+            ))
+        # Formatting owns final realization ordering and the Top 10 cut.
+        return rows
 
     def load_ytd_product_rankings(self, year: int, through_month: int):
         """Return authoritative product/representative YTD box totals.
