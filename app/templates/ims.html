@@ -674,7 +674,7 @@
   document.querySelectorAll(".ims-cleanup-form").forEach((cleanupForm) => {
     cleanupForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!window.confirm("Bu geri alınmış IMS ve yalnız ona bağlı kayıtlar kalıcı olarak silinecek. Devam edilsin mi?")) return;
+      if (!window.confirm("Onayla ve kalıcı sil: Bu geri alınmış IMS ve yalnız ona bağlı kayıtlar kalıcı olarak silinecek. Devam edilsin mi?")) return;
       const button = cleanupForm.querySelector("button[type='submit']");
       const row = cleanupForm.closest("tr");
       const original = button ? button.innerHTML : "";
