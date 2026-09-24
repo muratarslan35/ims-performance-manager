@@ -59,9 +59,8 @@
         const ring = document.getElementById('globalPageLoaderRing');
         const value = document.getElementById('globalPageLoaderValue');
         let current = 0;
-        let timer = null;
         let finishing = false;
-        let shownAt = 0;
+        const navigationKey = 'ims-page-navigation-active';
 
         function render(next) {
             current = Math.max(current, Math.min(Math.round(next), 100));
@@ -69,37 +68,23 @@
             ring.style.setProperty('--page-load-progress', (current * 3.6) + 'deg');
         }
 
-        function show(startAt) {
+        function show(startAt, persist) {
             finishing = false;
             current = 0;
-            shownAt = performance.now();
             render(startAt || 4);
             loader.classList.remove('is-complete');
             loader.classList.add('is-visible');
             loader.setAttribute('aria-hidden', 'false');
-            if (timer) window.clearInterval(timer);
-            timer = window.setInterval(function () {
-                if (finishing) return;
-                // Normal document navigation does not expose response-byte
-                // progress. Follow elapsed navigation time smoothly up to 99
-                // instead of freezing at an artificial 92 percent; the new
-                // document replaces this overlay as soon as it is ready.
-                const elapsed = Math.max(0, performance.now() - shownAt);
-                const elapsedTarget = 5 + (94 * (1 - Math.exp(-elapsed / 3200)));
-                render(Math.min(99, Math.max(current + 1, elapsedTarget)));
-            }, 180);
+            if (persist !== false) sessionStorage.setItem(navigationKey, '1');
         }
 
         function finish() {
             if (!loader.classList.contains('is-visible')) return;
             finishing = true;
-            if (timer) {
-                window.clearInterval(timer);
-                timer = null;
-            }
             const finishTimer = window.setInterval(function () {
                 if (current >= 100) {
                     window.clearInterval(finishTimer);
+                    sessionStorage.removeItem(navigationKey);
                     window.setTimeout(function () {
                         loader.classList.add('is-complete');
                         loader.classList.remove('is-visible');
@@ -135,19 +120,38 @@
         }, true);
 
         document.addEventListener('submit', function (event) {
-            if (event.defaultPrevented) return;
             const form = event.target;
             if (!(form instanceof HTMLFormElement)) return;
             if (form.dataset.pageLoader === 'false') return;
             const target = (form.getAttribute('target') || '').toLowerCase();
             if (target && target !== '_self') return;
-            show(5);
+            // Other submit handlers may still reject the form. Start only after
+            // they have run, so an invalid form never opens a stranded loader.
+            window.setTimeout(function () {
+                if (!event.defaultPrevented) show(8);
+            }, 0);
         }, true);
+
+        window.addEventListener('beforeunload', function () {
+            if (loader.classList.contains('is-visible')) render(35);
+        });
 
         window.addEventListener('pageshow', function (event) {
             if (event.persisted) finish();
         });
-        window.addEventListener('load', finish, { once: true });
+        window.addEventListener('load', function () {
+            if (loader.classList.contains('is-visible')) render(96);
+            finish();
+        }, { once: true });
+
+        // A real navigation replaces the JavaScript context. Carry only the
+        // active flag to the new document: reaching this point means its HTML,
+        // blocking styles and scripts have actually been parsed.
+        if (sessionStorage.getItem(navigationKey) === '1') show(70, false);
+        if (document.readyState === 'complete') {
+            render(96);
+            finish();
+        }
 
         window.IMSPageLoader = { show: show, finish: finish, setProgress: render };
     }

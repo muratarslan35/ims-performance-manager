@@ -9,10 +9,21 @@ def test_login_redirects_directly_to_snapshot_dashboard():
     assert 'url_for("main.dashboard")' not in login_block
 
 
-def test_login_does_not_show_fake_timed_full_page_progress():
+def test_login_keeps_page_loader_for_real_navigation_lifecycle():
     template = Path("app/templates/login.html").read_text(encoding="utf-8")
 
-    assert 'class="auth-form" data-page-loader="false"' in template
+    assert 'class="auth-form"' in template
+    assert 'class="auth-form" data-page-loader="false"' not in template
+
+
+def test_page_loader_uses_document_milestones_not_elapsed_fake_progress():
+    source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
+
+    assert "ims-page-navigation-active" in source
+    assert "beforeunload" in source
+    assert "sessionStorage.getItem(navigationKey)" in source
+    assert "window.addEventListener('load'" in source
+    assert "Math.exp(-elapsed" not in source
 
 
 def test_dashboard_snapshot_decode_is_generation_cached():
