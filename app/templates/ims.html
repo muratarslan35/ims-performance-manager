@@ -196,7 +196,7 @@
       Final önceliği <strong>2. üretim → 1. üretim → mevcut IMS</strong> şeklindedir.
     </div>
 
-    <form method="POST" action="{{ url_for('ims.production_upload') }}" enctype="multipart/form-data">
+    <form method="POST" action="{{ url_for('ims.production_upload') }}" enctype="multipart/form-data" id="productionUploadForm" data-page-loader="false">
       <div class="row g-3 align-items-end">
         <div class="col-md-2">
           <label class="form-label fw-semibold" style="font-size:13px;">IMS yılı</label>
@@ -229,6 +229,22 @@
       </div>
     </form>
 
+    <div class="production-live-progress" id="productionLiveProgress" role="status" aria-live="polite"
+         data-upload-id="{% if production_uploads %}{{ production_uploads[0].id }}{% endif %}"
+         data-progress-url="{% if production_uploads %}{{ url_for('ims.production_progress', upload_id=production_uploads[0].id) }}{% endif %}">
+      <div class="production-live-progress-head">
+        <span class="production-live-progress-icon"><i class="bi bi-arrow-repeat"></i></span>
+        <div class="production-live-progress-copy">
+          <strong id="productionProgressMessage">Üretim dosyası hazırlanıyor</strong>
+          <small id="productionProgressDetail">Dosya yükleme durumu kontrol ediliyor.</small>
+        </div>
+        <b id="productionProgressPercent">0%</b>
+      </div>
+      <div class="production-live-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span id="productionProgressFill"></span>
+      </div>
+    </div>
+
     <div class="table-responsive mt-4">
       <table class="table table-hover align-middle mb-0">
         <thead style="background:#f4f8ff;">
@@ -238,12 +254,13 @@
         </thead>
         <tbody>
           {% for item in production_uploads %}
-          <tr>
+          <tr data-production-upload-id="{{ item.id }}">
             <td><strong>{{ item.file_name }}</strong></td>
             <td>{{ item.year }}/{{ "%02d"|format(item.month) }}</td>
             <td>{{ item.production_stage }}. üretim</td>
             <td>
-              {% if item.status == 'APPLIED' %}<span class="badge bg-success">Uygulandı</span>
+              {% if item.status == 'APPLIED' and loop.first %}<span class="badge bg-warning text-dark production-status-badge" data-production-status>Devam ediyor</span>
+              {% elif item.status == 'APPLIED' %}<span class="badge bg-success">Tamamlandı</span>
               {% elif item.status == 'VALIDATED' %}<span class="badge bg-primary">Doğrulandı</span>
               {% elif item.status == 'FAILED' %}<span class="badge bg-danger">Hatalı</span>
                 {% if item.error_message %}
@@ -432,6 +449,85 @@
 
 <script>
 (function() {
+  const productionForm = document.getElementById("productionUploadForm");
+  const productionPane = document.getElementById("productionLiveProgress");
+  const productionMessage = document.getElementById("productionProgressMessage");
+  const productionDetail = document.getElementById("productionProgressDetail");
+  const productionPercent = document.getElementById("productionProgressPercent");
+  const productionFill = document.getElementById("productionProgressFill");
+  const productionTrack = productionPane && productionPane.querySelector('[role="progressbar"]');
+  const productionBadge = document.querySelector('[data-production-status]');
+  let productionObservedActive = false;
+  let productionTimer = null;
+
+  function renderProductionProgress(payload) {
+    if (!productionPane || !payload) return false;
+    const value = Math.max(0, Math.min(Number.parseInt(payload.percent, 10) || 0, 100));
+    const completed = payload.status === "COMPLETED";
+    const failed = payload.status === "FAILED";
+    if (payload.active) productionObservedActive = true;
+
+    if (productionMessage) productionMessage.textContent = payload.message || "Üretim dosyası hazırlanıyor";
+    if (productionDetail) productionDetail.textContent = payload.detail || "";
+    if (productionPercent) productionPercent.textContent = value + "%";
+    if (productionFill) productionFill.style.width = value + "%";
+    if (productionTrack) productionTrack.setAttribute("aria-valuenow", String(value));
+    productionPane.classList.toggle("failed", failed);
+    productionPane.classList.toggle("completed", completed);
+
+    if (productionBadge) {
+      productionBadge.className = "badge production-status-badge " + (failed ? "bg-danger" : completed ? "bg-success" : "bg-warning text-dark");
+      productionBadge.textContent = failed ? "Hatalı" : completed ? "Tamamlandı" : "Devam ediyor";
+    }
+
+    if (completed) {
+      if (productionObservedActive) {
+        productionPane.classList.add("visible");
+        window.setTimeout(() => productionPane.classList.remove("visible"), 2200);
+      } else {
+        productionPane.classList.remove("visible");
+      }
+      return false;
+    }
+    productionPane.classList.add("visible");
+    return !failed;
+  }
+
+  function pollProductionProgress() {
+    if (!productionPane || !productionPane.dataset.progressUrl) return;
+    fetch(productionPane.dataset.progressUrl, {headers:{"Accept":"application/json"}, cache:"no-store"})
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload) => {
+        if (productionTimer) window.clearTimeout(productionTimer);
+        if (renderProductionProgress(payload)) {
+          productionTimer = window.setTimeout(pollProductionProgress, 2500);
+        }
+      })
+      .catch(() => {
+        if (productionTimer) window.clearTimeout(productionTimer);
+        productionTimer = window.setTimeout(pollProductionProgress, 8000);
+      });
+  }
+
+  if (productionForm) {
+    productionForm.addEventListener("submit", () => {
+      if (!productionPane) return;
+      productionObservedActive = true;
+      productionPane.classList.add("visible");
+      if (productionMessage) productionMessage.textContent = "Üretim dosyası yükleniyor ve doğrulanıyor";
+      if (productionDetail) productionDetail.textContent = "Excel şablonu, temsilciler ve ürünler kontrol ediliyor.";
+      if (productionPercent) productionPercent.textContent = "3%";
+      if (productionFill) productionFill.style.width = "3%";
+      if (productionTrack) productionTrack.setAttribute("aria-valuenow", "3");
+      const button = productionForm.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Doğrulanıyor...';
+      }
+    });
+  }
+  pollProductionProgress();
+
   const dropzone = document.getElementById("imsDropzone");
   const fileInput = document.getElementById("imsFileInput");
   const fileSelected = document.getElementById("imsFileSelected");
