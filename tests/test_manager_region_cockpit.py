@@ -80,7 +80,8 @@ def test_region_cockpit_uses_durable_snapshot_or_source_versioned_historical_rea
     ).read_text(encoding="utf-8")
 
     assert "PersistentRegionSnapshotService.get_active" in route_source
-    assert "HistoricalRegionReadModelService.get_or_build" in route_source
+    assert "HistoricalRegionReadModelService.get_active" in route_source
+    assert "HistoricalRegionReadModelService.get_or_build" not in route_source
     assert "RegionPerformanceService(" not in route_source
     assert "RegionMarketService(" not in route_source
     assert "PersistentRegionSnapshotService.source_identity" in historical_source
