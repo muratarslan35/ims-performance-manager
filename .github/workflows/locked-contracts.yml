@@ -43,6 +43,28 @@ jobs:
           while IFS= read -r file; do
             [ -n "$file" ] || continue
             case "$file" in
+              app/__init__.py|\
+              app/models.py|\
+              app/database.py|\
+              config.py|\
+              .github/CODEOWNERS|\
+              app/services/*import*.py|\
+              app/services/*snapshot*.py|\
+              app/services/*publication*.py|\
+              app/services/*market*.py|\
+              app/services/*result*.py|\
+              app/services/*authority*.py|\
+              app/services/*aggregate*.py|\
+              app/services/*read*.py|\
+              app/services/*period*.py|\
+              app/services/*resolver*.py|\
+              app/services/*reconciliation*.py|\
+              app/services/*integrity*.py|\
+              app/services/*dashboard*.py|\
+              app/services/*region_performance*.py|\
+              app/services/*brick_spread*.py|\
+              app/services/*vacancy*.py|\
+              app/services/*kpi*.py|\
               app/ims.py|\
               ims_import_worker.py|\
               app/routes/__init__.py|\
