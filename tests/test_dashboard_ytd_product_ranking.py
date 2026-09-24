@@ -116,6 +116,87 @@ def test_ims_turkey_ranking_is_top_ten_by_realization_with_tl_tiebreaker():
     assert result[-1]["rep_name"] == "Temsilci 02"
 
 
+def test_ims_turkey_ranking_uses_production_returns_instead_of_stale_ims(tmp_path):
+    from app import create_app
+    from app.extensions import db
+    from app.models import (
+        IMSSummary, Product, ProductionResult, ProductionResultUpload,
+        Representative, Target,
+    )
+    from app.query.dashboard_query import DashboardQuery
+    from app.query.filters import DashboardFilterParams
+
+    class Config:
+        TESTING = True
+        SECRET_KEY = "ranking-production-return"
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'ranking-return.db'}"
+        SQLALCHEMY_TRACK_MODIFICATIONS = False
+        WTF_CSRF_ENABLED = False
+        UPLOAD_FOLDER = tmp_path / "uploads"
+        REPORT_FOLDER = tmp_path / "reports"
+        BACKUP_FOLDER = tmp_path / "backups"
+        LOG_FOLDER = tmp_path / "logs"
+        TEMP_FOLDER = tmp_path / "temp"
+
+    application = create_app(Config)
+    with application.app_context():
+        db.create_all()
+        product = Product(
+            product_code="RETURN-PRODUCT", product_name="Return Product",
+            display_order=1, is_active=True,
+        )
+        rep_a = Representative(
+            rep_code="RETURN-A", rep_name="Temsilci A", city="Ankara",
+            region="101", active=True,
+        )
+        rep_b = Representative(
+            rep_code="RETURN-B", rep_name="Temsilci B", city="İzmir",
+            region="102", active=True,
+        )
+        db.session.add_all([product, rep_a, rep_b])
+        db.session.flush()
+        for representative in (rep_a, rep_b):
+            db.session.add(Target(
+                year=2026, month=8, representative_id=representative.id,
+                product_id=product.id, tl_target=1000,
+            ))
+        db.session.add_all([
+            IMSSummary(year=2026, month=8, representative_id=rep_a.id,
+                       product_id=product.id, tl=1200, unit=12),
+            IMSSummary(year=2026, month=8, representative_id=rep_b.id,
+                       product_id=product.id, tl=900, unit=9),
+        ])
+        upload = ProductionResultUpload(
+            file_name="august.xlsx", stored_file_name="august.xlsx",
+            source_hash="b" * 64, year=2026, month=8, production_stage=1,
+            status=ProductionResultUpload.STATUS_APPLIED,
+            applied_at=datetime(2026, 8, 31, 12, 0),
+        )
+        db.session.add(upload)
+        db.session.flush()
+        db.session.add_all([
+            ProductionResult(
+                upload_id=upload.id, representative_id=rep_a.id,
+                product_id=product.id, realization_percent=-10,
+                actual_tl=-100, actual_unit=-1,
+            ),
+            ProductionResult(
+                upload_id=upload.id, representative_id=rep_b.id,
+                product_id=product.id, realization_percent=90,
+                actual_tl=900, actual_unit=9,
+            ),
+        ])
+        db.session.commit()
+
+        rows = DashboardQuery().load_top_representatives(
+            DashboardFilterParams(year=2026, month=8)
+        )
+        by_name = {row[1]: row for row in rows}
+
+        assert by_name["Temsilci A"][3] == -100
+        assert by_name["Temsilci B"][3] == 900
+
+
 def test_ims_turkey_ranking_keeps_first_three_collapsed_by_default():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
 
