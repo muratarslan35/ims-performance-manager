@@ -501,3 +501,56 @@ def test_region_box_embedding_reuses_prefetched_representative_read_models():
 
     assert result["periods"]["monthly"]["representative_products"][0]["actual_unit"] == 80
     assert result["periods"]["q3"]["representative_products"][0]["actual_unit"] == 250
+
+
+def test_open_ims_monthly_region_box_difference_does_not_require_rep_unit_baseline(monkeypatch):
+    from app.services.region_box_authority_guard import (
+        _apply_direct_monthly_box_authority,
+    )
+    from app.services.product_unit_price_service import ProductUnitPriceService
+
+    class Service:
+        @staticmethod
+        def _official_ims_region_month(year, month):
+            assert (year, month) == (2026, 9)
+            return {
+                1: [Decimal("6466975"), Decimal("5584308"), True],
+                2: [Decimal("3063433"), Decimal("2653883"), True],
+            }
+
+    monkeypatch.setattr(
+        ProductUnitPriceService,
+        "price_map",
+        classmethod(lambda cls, product_ids, year, month: {1: 100, 2: 50}),
+    )
+    payload = {
+        "products": [
+            {
+                "product_id": 1,
+                "target_unit": Decimal("0"),
+                "actual_unit": None,
+                "unit_complete": False,
+                "unit_difference": None,
+            },
+            {
+                "product_id": 2,
+                "target_unit": Decimal("0"),
+                "actual_unit": None,
+                "unit_complete": False,
+                "unit_difference": None,
+            },
+        ]
+    }
+
+    result = _apply_direct_monthly_box_authority(Service(), payload, 2026, 9)
+
+    first, second = result["products"]
+    assert first["target_unit"] == Decimal("64670")
+    assert first["actual_unit"] == Decimal("55843")
+    assert first["unit_difference"] == Decimal("-8827")
+    assert first["unit_complete"] is True
+    assert first["box_authority"] == "REGION_TL_PERIOD_PRICE"
+    assert second["target_unit"] == Decimal("61269")
+    assert second["actual_unit"] == Decimal("53078")
+    assert second["unit_difference"] == Decimal("-8191")
+    assert second["unit_complete"] is True
