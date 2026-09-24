@@ -152,14 +152,13 @@ class DashboardQuery:
         offset: Optional[int] = None, 
         order_by: Optional[Any] = None
     ) -> Sequence[Row]:
-        """Return YTD national ranking from each month's accepted result source.
+        """Return monthly national ranking from the accepted result source.
 
         Production workbooks are the final monthly result. Ranking directly
         from ``IMSSummary`` left the leaderboard stale after a production
         upload even though every other dashboard metric had moved to the
         accepted source. Prefer the workbook's authoritative representative
         total so product-level return rows are not subtracted a second time.
-        Months without a production workbook retain their IMS result.
         """
         if not filters or filters.year is None or filters.month is None:
             return []
@@ -168,7 +167,7 @@ class DashboardQuery:
             Representative, Representative.id == Target.representative_id
         ).filter(
             Target.year == filters.year,
-            Target.month <= filters.month,
+            Target.month == filters.month,
             Representative.active.is_(True),
         )
         if filters.representative_id is not None:
@@ -179,6 +178,10 @@ class DashboardQuery:
         if not target_rows:
             return []
 
+        actual_by_key = self._effective_actuals_for_targets(
+            filters.year, filters.month, target_rows
+        )
+        quota_ids = self._quota_ids(filters.year, filters.month)
         representative_ids = {int(row.representative_id) for row in target_rows}
         representatives = {
             int(item.id): item for item in self.session.query(Representative).filter(
@@ -190,74 +193,48 @@ class DashboardQuery:
             func.coalesce(func.sum(IMSSummary.bonus_amount), 0),
         ).filter(
             IMSSummary.year == filters.year,
-            IMSSummary.month <= filters.month,
+            IMSSummary.month == filters.month,
             IMSSummary.representative_id.in_(representative_ids),
         ).group_by(IMSSummary.representative_id).all())
 
-        targets_by_month = {}
-        for target in target_rows:
-            targets_by_month.setdefault(int(target.month), []).append(target)
-
-        final_uploads = {}
-        for month in range(1, int(filters.month) + 1):
-            upload = ProductionResultService.final_upload(filters.year, month)
-            if upload is not None:
-                final_uploads[month] = upload
-        upload_month = {
-            int(upload.id): month for month, upload in final_uploads.items()
-        }
-        official_by_key = {}
-        if upload_month:
-            official_rows = self.session.query(ProductionRepresentativeTotal).filter(
-                ProductionRepresentativeTotal.upload_id.in_(upload_month),
-                ProductionRepresentativeTotal.representative_id.in_(representative_ids),
-            ).all()
-            official_by_key = {
-                (upload_month[int(row.upload_id)], int(row.representative_id)): row
-                for row in official_rows
+        final_upload = ProductionResultService.final_upload(
+            filters.year, filters.month
+        )
+        official_by_rep = {}
+        if final_upload is not None:
+            official_by_rep = {
+                int(row.representative_id): row
+                for row in self.session.query(ProductionRepresentativeTotal).filter(
+                    ProductionRepresentativeTotal.upload_id == int(final_upload.id),
+                    ProductionRepresentativeTotal.representative_id.in_(representative_ids),
+                ).all()
             }
 
         totals = {}
-        for month in range(1, int(filters.month) + 1):
-            month_targets = targets_by_month.get(month, [])
-            targets_by_rep = {}
-            for target in month_targets:
-                targets_by_rep.setdefault(int(target.representative_id), []).append(target)
-            fallback_actuals = self._effective_actuals_for_targets(
-                filters.year, month, month_targets
+        for target in target_rows:
+            representative_id = int(target.representative_id)
+            bucket = totals.setdefault(
+                representative_id, [Decimal("0"), Decimal("0")]
             )
-            quota_ids = self._quota_ids(filters.year, month)
-            month_rep_ids = set(targets_by_rep)
-            month_rep_ids.update(
-                representative_id
-                for official_month, representative_id in official_by_key
-                if official_month == month
+            target_tl = Decimal(str(target.tl_target or 0))
+            bucket[1] += target_tl
+            bucket[0] += (
+                target_tl if int(target.product_id) in quota_ids
+                else actual_by_key.get(
+                    (representative_id, int(target.product_id)),
+                    (Decimal("0"), Decimal("0")),
+                )[1]
             )
-            for representative_id in month_rep_ids:
-                bucket = totals.setdefault(
-                    representative_id, [Decimal("0"), Decimal("0")]
-                )
-                official = official_by_key.get((month, representative_id))
-                if official is not None:
-                    bucket[0] += Decimal(str(official.actual_tl or 0))
-                    bucket[1] += Decimal(str(official.target_tl or 0))
-                    continue
-                for target in targets_by_rep.get(representative_id, ()):
-                    target_tl = Decimal(str(target.tl_target or 0))
-                    bucket[1] += target_tl
-                    bucket[0] += (
-                        target_tl if int(target.product_id) in quota_ids
-                        else fallback_actuals.get(
-                            (representative_id, int(target.product_id)),
-                            (Decimal("0"), Decimal("0")),
-                        )[1]
-                    )
 
         rows = []
         for representative_id, (actual_tl, target_tl) in totals.items():
             representative = representatives.get(representative_id)
             if representative is None:
                 continue
+            official = official_by_rep.get(representative_id)
+            if official is not None:
+                actual_tl = Decimal(str(official.actual_tl or 0))
+                target_tl = Decimal(str(official.target_tl or 0))
             rows.append((
                 representative_id,
                 representative.rep_name,
