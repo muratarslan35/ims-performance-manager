@@ -131,6 +131,31 @@ def test_newest_production_upload_has_priority_and_failed_peer_rotates(tmp_path,
     assert second["month"] == 8
 
 
+def test_uploaded_source_month_precedes_later_dependent_period(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        RepresentativeSnapshotRefreshQueue,
+        "_root",
+        classmethod(lambda cls: tmp_path),
+    )
+    # Deliberately enqueue the later month first. Source priority must still
+    # publish August before its September Q/YTD dependency.
+    RepresentativeSnapshotRefreshQueue.enqueue(
+        2026, 9, reason="production_upload:10", source_year=2026, source_month=8
+    )
+    RepresentativeSnapshotRefreshQueue.enqueue(
+        2026, 8, reason="production_upload:10", source_year=2026, source_month=8
+    )
+
+    first = RepresentativeSnapshotRefreshQueue.next()
+    assert first["month"] == 8
+    assert first["source_period"] is True
+
+    # A failed source attempt rotates normally and cannot starve September.
+    RepresentativeSnapshotRefreshQueue.defer(first)
+    second = RepresentativeSnapshotRefreshQueue.next()
+    assert second["month"] == 9
+
+
 # deploy.yml is intentionally covered by the repo's locked-contract approval gate.
 def test_late_production_cascade_contract():
     queue_source = Path("app/services/representative_snapshot_refresh_queue.py").read_text(
