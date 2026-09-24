@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from functools import lru_cache
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,13 @@ from sqlalchemy import desc
 from app.extensions import db
 from app.models import IMSUpload
 from app.services.production_result_service import ProductionResultService
+
+
+@lru_cache(maxsize=12)
+def _read_snapshot_envelope(path_value: str, mtime_ns: int, size: int):
+    """Decode an immutable atomic snapshot once per process and generation."""
+    del mtime_ns, size
+    return json.loads(Path(path_value).read_text(encoding="utf-8"))
 
 
 class PersistentDashboardSnapshotService:
@@ -59,6 +67,11 @@ class PersistentDashboardSnapshotService:
     @classmethod
     def _lock_path(cls, year: int, month: int) -> Path:
         return cls._path(year, month).with_suffix(".lock")
+
+    @staticmethod
+    def _read_envelope(path: Path):
+        stat = path.stat()
+        return _read_snapshot_envelope(str(path), stat.st_mtime_ns, stat.st_size)
 
     @classmethod
     def _json_ready(cls, value: Any) -> Any:
@@ -143,7 +156,7 @@ class PersistentDashboardSnapshotService:
         stable_path = cls._path(year, month)
         for path in (generation_path, stable_path):
             try:
-                envelope = json.loads(path.read_text(encoding="utf-8"))
+                envelope = cls._read_envelope(path)
             except (FileNotFoundError, OSError, ValueError, TypeError):
                 continue
             if (
@@ -171,7 +184,7 @@ class PersistentDashboardSnapshotService:
         # the *same IMS upload* until the worker atomically publishes the newer
         # production generation. Never cross an IMS boundary here.
         try:
-            envelope = json.loads(stable_path.read_text(encoding="utf-8"))
+            envelope = cls._read_envelope(stable_path)
         except (FileNotFoundError, OSError, ValueError, TypeError):
             return None
         if (
