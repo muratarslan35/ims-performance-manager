@@ -124,54 +124,12 @@ def test_ims_turkey_ranking_keeps_first_three_collapsed_by_default():
     assert "Aylık ₺ realizasyon oranına göre sıralanmıştır." in template
 
 
-def test_old_dashboard_snapshot_rebuilds_realization_ranking_once(monkeypatch):
-    from app.dashboard import _ensure_ytd_product_rankings
-    from app.services.persistent_dashboard_snapshot_service import (
-        PersistentDashboardSnapshotService,
-    )
+def test_dashboard_snapshot_upgrade_is_not_performed_in_user_request():
+    source = Path("app/dashboard.py").read_text(encoding="utf-8")
 
-    class Query:
-        def load_top_representatives(self, filters, limit):
-            assert filters == "period-filter"
-            assert limit is None
-            return ["raw"]
-
-    class Mapper:
-        @staticmethod
-        def map_top_reps(rows):
-            assert rows == ["raw"]
-            return ["mapped"]
-
-    class Formatter:
-        @staticmethod
-        def format_top_reps(rows):
-            assert rows == ["mapped"]
-            return {"top_representatives": [{"rep_name": "REALIZASYON LIDERI"}]}
-
-    service = SimpleNamespace(
-        year=2026,
-        month=9,
-        query_filters="period-filter",
-        query_layer=Query(),
-        mapper=Mapper(),
-        formatter=Formatter(),
-    )
-    published = []
-    monkeypatch.setattr(
-        PersistentDashboardSnapshotService,
-        "publish",
-        lambda year, month, payload: published.append((year, month, payload)),
-    )
-    old = {
-        "top_representatives": [{"rep_name": "TL LIDERI"}],
-        "ytd_product_rankings": {"rank_trend_version": 1, "source_version": 2},
-    }
-
-    upgraded = _ensure_ytd_product_rankings(old, service)
-
-    assert upgraded["top_representatives"][0]["rep_name"] == "REALIZASYON LIDERI"
-    assert upgraded["top_representative_ranking_version"] == 2
-    assert len(published) == 1
+    assert "load_top_representatives" not in source
+    assert "load_ytd_product_rankings" not in source
+    assert "PersistentDashboardSnapshotService.publish" not in source
 
 
 def test_ytd_product_ranking_prefers_accepted_units_and_falls_back_to_monthly_ims(tmp_path):
