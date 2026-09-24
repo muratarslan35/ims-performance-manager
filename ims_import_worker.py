@@ -35,6 +35,11 @@ from app.services.report_export_queue import ReportWarmQueue
 # Activation revision: july-p2-resumable-building-v2.
 stopping = False
 
+# Change-aware deploy marker: production refresh queue ordering and the enlarged
+# representative cascade cache are process-resident, so this worker must restart
+# when the production-publication pipeline changes.
+PRODUCTION_PUBLICATION_PIPELINE_VERSION = 2
+
 
 def _stop(*_args):
     global stopping
