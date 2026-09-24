@@ -9,7 +9,7 @@ def test_global_page_loader_is_navigation_only_and_finishes_at_window_load():
     assert "globalPageLoaderValue" in source
     assert "Yükleniyor" in source
     assert "Sayfa hazırlanıyor" in source
-    assert "window.addEventListener('load', finish" in source
+    assert "window.addEventListener('load', function ()" in source
     assert "document.addEventListener('click'" in source
     assert "document.addEventListener('submit'" in source
     assert "url.origin !== window.location.origin" in source
@@ -17,12 +17,14 @@ def test_global_page_loader_is_navigation_only_and_finishes_at_window_load():
     assert "window.IMSPageLoader" in source
 
 
-def test_global_page_loader_tracks_navigation_without_freezing_at_92():
+def test_global_page_loader_tracks_real_navigation_milestones():
     source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
 
-    assert "const elapsedTarget" in source
-    assert "Math.min(99" in source
-    assert "92 - current" not in source
+    assert "show(8)" in source
+    assert "render(35)" in source
+    assert "show(70, false)" in source
+    assert "render(96)" in source
+    assert "Math.exp(-elapsed" not in source
 
 
 def test_global_page_loader_does_not_touch_business_calculation_contracts():
