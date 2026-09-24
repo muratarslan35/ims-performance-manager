@@ -22,6 +22,7 @@ from app.services.quarter_entitlement_service import QuarterEntitlementService
 from app.services.executive_reporting_service import ExecutiveReportingService
 from app.services.report_cache_service import ReportCacheService
 from app.services.report_export_queue import ReportExportQueue
+from app.services.source_read_model_cache import SourceReadModelCache
 
 
 main_bp = Blueprint(
@@ -54,7 +55,10 @@ def _region_manager_snapshot(region_key, year, month):
     ):
         raise RuntimeError("Güncel bölge read-modeli henüz hazır değil.")
 
-    return HistoricalRegionReadModelService.get_or_build(region_key, year, month)
+    historical = HistoricalRegionReadModelService.get_active(region_key, year, month)
+    if historical is None:
+        raise RuntimeError("Geçmiş bölge read-modeli henüz hazır değil.")
+    return historical
 
 
 def _render_region_snapshot(snapshot):
@@ -133,47 +137,50 @@ def market_analysis():
         str(region_rows[0].get("code")) if region_rows else None
     )
 
+    visible_generation_id = PersistentRegionSnapshotService.visible_generation_id(
+        year, month
+    )
+
+    def build_region_pack():
+        durable_snapshots = PersistentRegionSnapshotService.get_active_all(year, month) or {}
+        embedded_html, usable = {}, {}
+        for region_key, snapshot in durable_snapshots.items():
+            try:
+                embedded_html[str(region_key)] = _render_region_snapshot(snapshot)
+                usable[str(region_key)] = snapshot
+            except Exception:
+                current_app.logger.exception(
+                    "Türkiye Pazar Analizi geçersiz bölge snapshotı atlandı: region=%s period=%s/%s",
+                    region_key, year, month,
+                )
+        cockpit = ExecutiveMarketCockpitService.build(
+            competition_analysis, usable, region_rows
+        )
+        return {
+            "embedded_region_html": embedded_html,
+            "usable_snapshots": usable,
+            "executive_cockpit": cockpit,
+        }
+
     try:
-        durable_snapshots = PersistentRegionSnapshotService.get_active_all(
-            year, month
-        ) or {}
+        region_pack = SourceReadModelCache.get_or_build(
+            ("market-analysis", year, month, visible_generation_id),
+            build_region_pack,
+        )
     except Exception:
         current_app.logger.exception(
-            "Türkiye Pazar Analizi durable region pack read failed for %s/%s",
-            year,
-            month,
+            "Türkiye Pazar Analizi snapshot paketi okunamadı: %s/%s", year, month
         )
-        durable_snapshots = {}
-
-    embedded_region_html = {}
-    usable_snapshots = {}
-    for region_key, snapshot in durable_snapshots.items():
-        try:
-            embedded_region_html[str(region_key)] = _render_region_snapshot(snapshot)
-            usable_snapshots[str(region_key)] = snapshot
-        except Exception:
-            current_app.logger.exception(
-                "Türkiye Pazar Analizi stale/invalid cached region snapshot skipped: region=%s period=%s/%s",
-                region_key,
-                year,
-                month,
-            )
-
-    try:
-        executive_cockpit = ExecutiveMarketCockpitService.build(
-            competition_analysis,
-            usable_snapshots,
-            region_rows,
-        )
-    except Exception:
-        current_app.logger.exception(
-            "Türkiye Pazar Analizi executive cockpit build failed for %s/%s",
-            year,
-            month,
-        )
-        executive_cockpit = ExecutiveMarketCockpitService.build(
-            competition_analysis, {}, region_rows
-        )
+        region_pack = {
+            "embedded_region_html": {},
+            "usable_snapshots": {},
+            "executive_cockpit": ExecutiveMarketCockpitService.build(
+                competition_analysis, {}, region_rows
+            ),
+        }
+    embedded_region_html = region_pack["embedded_region_html"]
+    usable_snapshots = region_pack["usable_snapshots"]
+    executive_cockpit = region_pack["executive_cockpit"]
 
     initial_region_snapshot = (
         usable_snapshots.get(str(selected_region)) if selected_region else None
