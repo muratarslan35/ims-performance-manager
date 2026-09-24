@@ -295,25 +295,56 @@ jobs:
                       "region_snapshot_intelligence"
                   ) or {}).get("previous_competitor_available") is True)
               )
-              return active, expected, market_ready, previous_competitor_ready
+              box_ready = sum(
+                  1
+                  for payload in active.values()
+                  if (
+                      ((payload or {}).get("report") or {}).get("periods", {}).get(
+                          "monthly", {}
+                      ).get("products")
+                      and all(
+                          item.get("unit_difference") is not None
+                          for item in (
+                              ((payload or {}).get("report") or {})
+                              .get("periods", {})
+                              .get("monthly", {})
+                              .get("products", [])
+                          )
+                      )
+                  )
+              )
+              return (
+                  active,
+                  expected,
+                  market_ready,
+                  previous_competitor_ready,
+                  box_ready,
+              )
 
           def refresh_region_read_models(year, month):
-              active, expected, market_ready, previous_competitor_ready = (
-                  region_read_model_status(year, month)
-              )
+              (
+                  active,
+                  expected,
+                  market_ready,
+                  previous_competitor_ready,
+                  box_ready,
+              ) = region_read_model_status(year, month)
               if (
                   expected > 0
                   and len(active) == expected
                   and market_ready == expected
                   and previous_competitor_ready == expected
+                  and box_ready == expected
               ):
                   print(
                       "REGION_MARKET_REFRESH|REUSED|period={period}|regions={regions}|"
-                      "market_ready={market_ready}|previous_competitor_ready={previous_ready}".format(
+                      "market_ready={market_ready}|previous_competitor_ready={previous_ready}|"
+                      "box_ready={box_ready}".format(
                           period=f"{year}-{month:02d}",
                           regions=len(active),
                           market_ready=market_ready,
                           previous_ready=previous_competitor_ready,
+                          box_ready=box_ready,
                       )
                   )
                   return active
@@ -330,28 +361,36 @@ jobs:
                   raise RuntimeError(
                       f"Region enrichment failed for {year}-{month:02d}: {enriched}"
                   )
-              active, expected, market_ready, previous_competitor_ready = (
-                  region_read_model_status(year, month)
-              )
+              (
+                  active,
+                  expected,
+                  market_ready,
+                  previous_competitor_ready,
+                  box_ready,
+              ) = region_read_model_status(year, month)
               if (
                   expected <= 0
                   or len(active) != expected
                   or market_ready != expected
                   or previous_competitor_ready != expected
+                  or box_ready != expected
               ):
                   raise RuntimeError(
                       f"Region read-model incomplete for {year}-{month:02d}: "
                       f"active={len(active)} expected={expected} "
                       f"market_ready={market_ready} "
-                      f"previous_competitor_ready={previous_competitor_ready}"
+                      f"previous_competitor_ready={previous_competitor_ready} "
+                      f"box_ready={box_ready}"
                   )
               print(
                   "REGION_MARKET_REFRESH|PASS|period={period}|regions={regions}|"
-                  "market_ready={market_ready}|previous_competitor_ready={previous_ready}".format(
+                  "market_ready={market_ready}|previous_competitor_ready={previous_ready}|"
+                  "box_ready={box_ready}".format(
                       period=f"{year}-{month:02d}",
                       regions=len(active),
                       market_ready=market_ready,
                       previous_ready=previous_competitor_ready,
+                      box_ready=box_ready,
                   )
               )
               return active

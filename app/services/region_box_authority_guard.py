@@ -30,6 +30,61 @@ def _valid_price(value):
     except (TypeError, ValueError, ArithmeticError):
         return False
 
+def _apply_direct_monthly_box_authority(service, payload, year, month):
+    """Fill one open IMS month directly from official region TL + period price.
+
+    Monthly region rows do not need a representative-unit baseline. When the
+    IMS workbook has authoritative region/product TL totals, derive both target
+    and actual boxes from the same period-effective unit price even if legacy
+    representative actual_unit values are absent.
+    """
+    products = list((payload or {}).get("products") or [])
+    if not products:
+        return payload
+
+    official_tl = service._official_ims_region_month(int(year), int(month))
+    if not official_tl:
+        return payload
+
+    product_ids = {
+        int(item.get("product_id"))
+        for item in products
+        if item.get("product_id") is not None
+    }
+    prices = ProductUnitPriceService.price_map(product_ids, int(year), int(month))
+
+    for item in products:
+        # Healthy regions already have authoritative box values. Keep them
+        # byte-for-byte unchanged; this compatibility path only fills rows
+        # whose unit calculation is incomplete/missing.
+        if (
+            item.get("unit_difference") is not None
+            and item.get("actual_unit") is not None
+            and bool(item.get("unit_complete"))
+        ):
+            continue
+        product_id = item.get("product_id")
+        if product_id is None:
+            continue
+        product_id = int(product_id)
+        values = official_tl.get(product_id)
+        price = prices.get(product_id)
+        if values is None or not _valid_price(price):
+            continue
+        target_tl, actual_tl, complete = values
+        if not complete or actual_tl is None:
+            continue
+
+        target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, price)
+        actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
+        item["target_unit"] = target_unit
+        item["actual_unit"] = actual_unit
+        item["unit_complete"] = True
+        item["unit_difference"] = actual_unit - target_unit
+        item["box_authority"] = "REGION_TL_PERIOD_PRICE"
+
+    return payload
+
 
 def install_region_box_authority_guard():
     """Install as the final region aggregate normalization layer.
@@ -57,6 +112,16 @@ def install_region_box_authority_guard():
         products = list(payload.get("products") or [])
         if not products or not april_months:
             return payload
+
+        # A monthly row is a single-period view, so its box values can be
+        # derived directly from the authoritative region TL subtotal and the
+        # period-effective unit price. Do not require legacy representative
+        # actual_unit completeness for this calculation.
+        if len(months) == 1 and len(april_months) == 1:
+            year, month = april_months[0]
+            return _apply_direct_monthly_box_authority(
+                self, payload, year, month
+            )
 
         product_ids = {int(item.get("product_id")) for item in products if item.get("product_id") is not None}
         old_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
