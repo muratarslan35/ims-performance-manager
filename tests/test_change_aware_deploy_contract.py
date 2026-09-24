@@ -283,6 +283,8 @@ def test_ranking_refresh_preserves_full_market_read_models():
     assert "PersistentRegionSnapshotService.build_for_period(" in workflow
     assert "PersistentRegionSnapshotService.enrich_for_period(year, month)" in workflow
     assert "MARKET_READ_MODEL_REPAIR|PASS|" in workflow
+    assert "box_ready == expected" in workflow
+    assert '"box_ready={box_ready}"' in workflow
     assert "ServerAliveInterval=15" in workflow
     assert "ServerAliveCountMax=40" in workflow
     assert "ConnectionAttempts=3" in workflow
