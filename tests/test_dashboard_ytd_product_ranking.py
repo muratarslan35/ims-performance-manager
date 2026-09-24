@@ -88,10 +88,9 @@ def test_ytd_product_ranking_ui_is_snapshot_driven_and_client_switchable():
 
     assert '"ytd_product_rankings": self.query_layer.load_ytd_product_rankings' in service
     assert 'payload["ytd_product_rankings"]' in service
-    assert 'existing = (payload or {}).get("ytd_product_rankings")' in route
-    assert 'rank_trend_version' in route
-    assert 'source_version' in route
-    assert "PersistentDashboardSnapshotService.publish" in route
+    assert "PersistentDashboardSnapshotService.get_active" in route
+    assert "load_ytd_product_rankings" not in route
+    assert "PersistentDashboardSnapshotService.publish" not in route
 
 
 def test_ims_turkey_ranking_is_top_ten_by_realization_with_tl_tiebreaker():
