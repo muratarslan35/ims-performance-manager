@@ -1,0 +1,111 @@
+name: August Production Live Read-Only Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/august-production-live-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure read-only SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/audit_key
+          chmod 600 ~/.ssh/audit_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Inspect August production and downstream snapshots
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/audit_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          echo "LIVE_COMMIT|$(git rev-parse HEAD)"
+          echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
+          echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
+          echo "WORKER_PROCESS|$(pgrep -af 'ims_import_worker.py' | tr '\n' ';' || true)"
+          echo "REFRESH_QUEUE_BEGIN"
+          find instance/representative_refresh_queue -maxdepth 1 -type f -name '*.json' -print -exec cat {} \; 2>/dev/null || true
+          echo "REFRESH_QUEUE_END"
+
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import sqlalchemy as sa
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSUpload, ProductionResult, ProductionResultUpload
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import region_snapshot_sets
+          from app.services.persistent_representative_snapshot_service import representative_snapshot_sets
+
+          app = create_app()
+          with app.app_context():
+              uploads = (ProductionResultUpload.query
+                  .filter_by(year=2026, month=8)
+                  .order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc())
+                  .all())
+              print(f"AUGUST_UPLOAD_COUNT|{len(uploads)}")
+              for item in uploads:
+                  count = db.session.query(sa.func.count(ProductionResult.id)).filter_by(upload_id=item.id).scalar() or 0
+                  print(
+                      "AUGUST_UPLOAD|"
+                      f"id={item.id}|stage={item.production_stage}|status={item.status}|rows={item.row_count}|"
+                      f"matched={item.matched_row_count}|results={count}|file={item.file_name}|"
+                      f"uploaded={item.uploaded_at}|validated={item.validated_at}|applied={item.applied_at}|"
+                      f"warning={item.warning_message or ''}|error={item.error_message or ''}"
+                  )
+
+              for month in range(8, 10):
+                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(2026, month)
+                  ready = bool(ims_id and PersistentDashboardSnapshotService.generation_ready(2026, month, ims_id, production_id))
+                  rep_rows = db.session.execute(sa.select(
+                      representative_snapshot_sets.c.id,
+                      representative_snapshot_sets.c.status,
+                      representative_snapshot_sets.c.production_upload_id,
+                      representative_snapshot_sets.c.representative_count,
+                      representative_snapshot_sets.c.created_at,
+                      representative_snapshot_sets.c.activated_at,
+                  ).where(
+                      representative_snapshot_sets.c.year == 2026,
+                      representative_snapshot_sets.c.month == month,
+                  ).order_by(representative_snapshot_sets.c.id.desc()).limit(3)).all()
+                  region_rows = db.session.execute(sa.select(
+                      region_snapshot_sets.c.id,
+                      region_snapshot_sets.c.status,
+                      region_snapshot_sets.c.production_upload_id,
+                      region_snapshot_sets.c.region_count,
+                      region_snapshot_sets.c.created_at,
+                      region_snapshot_sets.c.activated_at,
+                  ).where(
+                      region_snapshot_sets.c.year == 2026,
+                      region_snapshot_sets.c.month == month,
+                  ).order_by(region_snapshot_sets.c.id.desc()).limit(3)).all()
+                  print(f"PERIOD|2026-{month:02d}|ims={ims_id}|production={production_id}|dashboard_ready={ready}")
+                  for row in rep_rows:
+                      print(f"REP_SET|month={month}|id={row.id}|status={row.status}|production={row.production_upload_id}|count={row.representative_count}|created={row.created_at}|active={row.activated_at}")
+                  for row in region_rows:
+                      print(f"REGION_SET|month={month}|id={row.id}|status={row.status}|production={row.production_upload_id}|count={row.region_count}|created={row.created_at}|active={row.activated_at}")
+          PY
+          echo "RECENT_PRODUCTION_LOGS_BEGIN"
+          sudo journalctl -u ims-performance-manager.service -u ims-import-worker.service --since '90 minutes ago' --no-pager \
+            | grep -Ei 'production|refresh|snapshot|error|failed|traceback' | tail -n 160 || true
+          echo "RECENT_PRODUCTION_LOGS_END"
+          REMOTE
