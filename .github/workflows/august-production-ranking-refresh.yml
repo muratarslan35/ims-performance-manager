@@ -1,0 +1,81 @@
+name: August Production Ranking Refresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/august-production-ranking-refresh.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure production SSH
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_key
+          chmod 600 ~/.ssh/ims_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Wait for deploy and refresh only August dashboard
+        run: |
+          set -Eeuo pipefail
+          for poll in $(seq 1 60); do
+            live=$(ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
+              "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git rev-parse HEAD")
+            [ "$live" = "$GITHUB_SHA" ] && break
+            [ "$poll" -lt 60 ] || { echo "Deploy did not reach $GITHUB_SHA"; exit 1; }
+            sleep 5
+          done
+
+          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          from app import create_app
+          from app.cache.dashboard_cache import DashboardCache
+          from app.constants.dashboard_constants import DashboardConstants
+          from app.services.dashboard_service import DashboardService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+
+          app = create_app()
+          with app.app_context():
+              year, month = 2026, 8
+              cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
+                  year=year, month=month, rep_id=None
+              )
+              DashboardCache().invalidate(cache_key)
+              payload = DashboardService(year=year, month=month).run()
+              assert int(payload.get("top_representative_ranking_version") or 0) >= 3
+              rows = payload.get("top_representatives") or []
+              assert len(rows) == 10, len(rows)
+              PersistentDashboardSnapshotService.publish(year, month, payload)
+              verified = PersistentDashboardSnapshotService.get_active(year, month) or {}
+              assert int(verified.get("top_representative_ranking_version") or 0) >= 3
+              assert verified.get("top_representatives") == rows
+              print("AUGUST_RANKING_REFRESH|PASS|rows=10|version=3")
+              for item in rows:
+                  print(
+                      "RANK|{rank}|{name}|actual_tl={actual}|percent={percent}".format(
+                          rank=item.get("rank"), name=item.get("rep_name"),
+                          actual=item.get("total_tl"),
+                          percent=item.get("realization_percent"),
+                      )
+                  )
+          PY
+          REMOTE
