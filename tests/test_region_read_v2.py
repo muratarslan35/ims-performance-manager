@@ -423,7 +423,7 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
 
     assert "PersistentRepresentativeSnapshotService.get_active_many" not in route
     assert "RegionAISnapshotService.build" not in route
-    assert "PersistentRegionSnapshotService.enrich_for_period" in route
+    assert "PersistentRegionSnapshotService.enrich_for_period" not in route
     assert "_compatibility_region_read_model" in route
     assert "HistoricalRegionReadModelService.get_active" in route
     assert "HistoricalRegionReadModelService.get_or_build" not in route
