@@ -613,7 +613,7 @@ class DashboardService:
                 self.month,
             )
         )
-        payload["top_representative_ranking_version"] = 2
+        payload["top_representative_ranking_version"] = 3
         self.telemetry.emit_metric(DashboardConstants.METRIC_DURATION_BUILDER_MS, (time.time() - t_builder) * 1000)
 
         # 6. Set Cache Safely
