@@ -157,7 +157,8 @@ def test_interactive_market_and_historical_reads_use_durable_read_models():
     assert "render_template(" not in render_helper
     assert "template.render(" in render_helper
 
-    assert "HistoricalRegionReadModelService.get_or_build" in regions
+    assert "HistoricalRegionReadModelService.get_active" in regions
+    assert "HistoricalRegionReadModelService.get_or_build" not in regions
     assert "RegionPerformanceService(" not in regions
     assert "RegionMarketService(" not in regions
     assert "fcntl.flock" in historical

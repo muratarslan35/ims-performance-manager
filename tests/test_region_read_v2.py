@@ -329,7 +329,7 @@ def test_historical_region_uses_durable_compatibility_read_model_when_exact_snap
     }
     monkeypatch.setattr(
         regions.HistoricalRegionReadModelService,
-        "get_or_build",
+        "get_active",
         classmethod(lambda cls, region_key, year, month: expected),
     )
 
@@ -423,9 +423,10 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
 
     assert "PersistentRepresentativeSnapshotService.get_active_many" not in route
     assert "RegionAISnapshotService.build" not in route
-    assert "PersistentRegionSnapshotService.enrich_for_period" in route
+    assert "PersistentRegionSnapshotService.enrich_for_period" not in route
     assert "_compatibility_region_read_model" in route
-    assert "HistoricalRegionReadModelService.get_or_build" in route
+    assert "HistoricalRegionReadModelService.get_active" in route
+    assert "HistoricalRegionReadModelService.get_or_build" not in route
     assert "RegionPerformanceService(" not in route
     assert "RegionMarketService(" not in route
     assert 'region_data_source == "read-model"' in route
@@ -436,7 +437,7 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
     assert "current_region_workspaces" in snapshot_service
     assert "previous_region_workspaces" in snapshot_service
     assert 'enriched["read_model_version"] = cls.READ_MODEL_VERSION' in snapshot_service
-    assert "upgrade_national_realizations_for_period" in route
+    assert "upgrade_national_realizations_for_period" not in route
     assert "_embed_national_product_realizations" in snapshot_service
     assert "Snapshot-only · 4 alan" not in partial
     assert "NATIONAL altında kalan ürünler" in partial

@@ -107,12 +107,12 @@ def test_previous_dashboard_generation_is_reused_after_source_rollback(tmp_path,
         assert PersistentDashboardSnapshotService.get_active(2026, 4) == {"week": 16}
 
 
-def test_dashboard_route_uses_cross_worker_get_or_build():
+def test_dashboard_route_is_snapshot_only_and_never_builds_in_http():
     source = Path("app/dashboard.py").read_text(encoding="utf-8")
     assert "PersistentDashboardSnapshotService.get_active" in source
-    assert "pending is None" in source
-    assert "DashboardCache().invalidate(cache_key)" in source
-    assert "return service.run()" in source
+    assert "PersistentDashboardSnapshotService.get_or_build" not in source
+    assert "service.run()" not in source
+    assert "PersistentDashboardSnapshotService.publish" not in source
 
 
 def test_worker_warms_dashboard_after_successful_import_and_startup_backfill():
@@ -180,4 +180,3 @@ def test_user_facing_dashboard_and_market_routes_do_not_bypass_publication_gate(
     )
     market_route = routes[market_start:market_end]
     assert "PersistentDashboardSnapshotService.get_stable" not in market_route
-

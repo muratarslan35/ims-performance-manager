@@ -308,6 +308,11 @@ class PersistentRegionSnapshotService:
         set_id = cls._visible_set_id(year, month)
         return cls._payloads_from_set(set_id) if set_id else {}
 
+    @classmethod
+    def visible_generation_id(cls, year, month):
+        """Return the exact generation readers currently see, including gates."""
+        return int(cls._visible_set_id(year, month) or 0)
+
     @staticmethod
     def _representative_ids(report):
         monthly = (((report or {}).get("periods") or {}).get("monthly") or {})

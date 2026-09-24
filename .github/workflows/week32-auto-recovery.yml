@@ -1,10 +1,7 @@
-name: Week 32 Automatic Recovery
+name: Week 32 Manual Recovery (Archived)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/week32-auto-recovery.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
