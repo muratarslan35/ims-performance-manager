@@ -11,6 +11,8 @@ Onay verilen PR gövdesinde yalnız o onaylı kapsam için şu işaret bulunur:
 
 Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, önceden kullanıcıya sunulmuş değişiklik için geçerlidir.
 
+24 Eylül 2026 itibarıyla ikinci bir kapı daha vardır: kilitli bir dosyayı değiştiren PR, bu koruma kurulumundan sonraki tüm değişikliklerde repo sahibi **muratarslan35** tarafından GitHub review veya PR comment ile ayrıca onaylanmadan CI geçemez. Chat/iş emri onayı önce alınır; bu onay PR'a kayıt olarak yansıtılır.
+
 ## Kilitli iş kuralları
 
 1. **Kaynak önceliği:** Resmi sonuçlarda `P2 > P1 > IMS`. Daha düşük öncelikli kaynak daha yüksek öncelikli kaynağı ezemez.
@@ -26,11 +28,54 @@ Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, 
 11. **Yetki ve güvenlik:** Bölge müdürü kapsamı fail-closed kalır; yetkisiz bölge/temsilci erişimi açılamaz. Admin/özel yetki kuralları mevcut merkezi yetki servisinden okunur.
 12. **Dağıtım güvenliği:** İlgili CI PASS olmadan merge yoktur. Production acceptance PASS olmadan tamamlandı denmez. Aktif `PROCESSING` IMS import işi varken deploy/restart yapılmaz. SQLite `WAL` ve `busy_timeout=30000` korunur.
 13. **Türkiye Pazar Analizi kaynak ve tekillik kilidi:** `Pazar ve Rakip Analizi` yönetici/temsilci dashboardlarında gösterilmez; yalnız yetkili yöneticilerin `Türkiye Pazar Analizi` ekranında yer alır. Seçili ayın en güncel tamamlanmış IMS haftasında gerçek rekabet TL verisi varsa aynı hafta kullanılır. Güncel haftada rekabet verisi yoksa aynı ay içindeki son kullanılabilir gerçek rekabet haftası kullanılır ve ekranda hem güncel haftanın rekabet verisi taşımadığı hem de kullanılan kaynak hafta açıkça yazılır. Aynı ayda hiç rekabet verisi yoksa ekran tamamen boş dönmez; güncel şirket IMS satışları gösterilir fakat rakip/toplam pazar alanları yapay `0` ile doldurulmaz. Her şirket ürünü tabloda en fazla bir kez yer alır; aynı ürüne ait alias/eski pazar grup satırları toplanarak çift sayım üretmez.
+14. **Import otomasyonu kilidi:** Normal hedef akış `upload → preflight/semantic discovery → atomic import/reconciliation → dashboard/region/representative read-model → enrichment → atomic publication` şeklindedir. Bu sıra kullanıcı onayı olmadan değiştirilemez.
+15. **Snapshot-only interaktif okuma kilidi:** Dashboard, Türkiye Pazar Analizi, Bölge ve Temsilci interaktif route'ları yayınlanmış read-model/snapshot üzerinden çalışır. Kullanıcı request'i içinde ağır Excel okuma, full aggregation veya alternatif hesap zinciri eklenemez.
+16. **Atomik publication kilidi:** Dashboard + region + representative zorunlu generation'ları aynı kabul edilen kaynak için hazır olmadan yeni hafta/tarih görünür olamaz ve progress %100 olamaz. Eksik/başarısız generation durumunda önceki doğrulanmış generation görünür kalır.
+17. **Geç production bağımlılık kilidi:** Sonradan gelen P1/P2 ilgili ayın IMS sonucunu değiştirir; üzerine eklenmez. Etkilenen geçmiş ay ve Q/YTD bağımlılıkları durable queue/read-model zinciriyle yenilenir. Historical route dashboard'a kaçamaz.
+18. **Ranking kilidi:** Alt IMS Türkiye Sıralaması seçili ayın temsilci ₺ realizasyon sıralamasıdır. Üst Yıllık Ürün Bazlı Türkiye Sıralaması Ocak→seçili ay ürün kutu YTD toplamıdır. Her iki alanda aylık kaynak önceliği P2 > P1 > IMS'tir.
+19. **Market payload bütünlüğü kilidi:** Dashboard/ranking refresh tam `competition_analysis` payloadını korumak zorundadır. Rekabet authority mevcutken eksik market read-model yayınlanamaz. Region market/önceki-ay competitor/kutu farkı completeness kontrolleri publication kabulünün parçasıdır.
+20. **Kanonik mimari belgesi:** `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md` bu kuralların operasyonel açıklamasıdır ve bu dosyayla birlikte kilitlidir.
 
 ## Kilitli kritik kod yolları
 
 Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 
+- `app/ims.py`
+- `ims_import_worker.py`
+- `app/services/ims_import_service.py`
+- `app/services/ims_import_queue.py`
+- `app/services/ims_publication_service.py`
+- `app/services/ims_upload_lifecycle_service.py`
+- `app/services/ims_upload_lifecycle_hooks.py`
+- `app/services/workbook_preflight.py`
+- `app/services/semantic_import_discovery.py`
+- `app/services/dynamic_import_contract.py`
+- `app/services/dynamic_import_refinement.py`
+- `app/services/kpi_workbook_compat.py`
+- `app/services/kpi_market_single_source.py`
+- `app/services/kpi_market_raw_source_override.py`
+- `app/services/kpi_competition_import_source_override.py`
+- `app/services/competition_import_service.py`
+- `app/services/compiled_competition_import_service.py`
+- `app/services/official_aggregate_service.py`
+- `app/services/official_brick_spread_service.py`
+- `app/services/target_import_service.py`
+- `app/services/alias_service.py`
+- `app/services/vacancy_matching.py`
+- `app/services/dashboard_service.py`
+- `app/services/market_analysis_service.py`
+- `app/services/persistent_dashboard_snapshot_service.py`
+- `app/services/persistent_region_snapshot_service.py`
+- `app/services/persistent_representative_snapshot_service.py`
+- `app/services/representative_snapshot_refresh_queue.py`
+- `app/services/snapshot_generation_identity_guard.py`
+- `app/services/historical_region_read_model_service.py`
+- `app/services/region_box_authority_guard.py`
+- `app/services/period_result_sum_guard.py`
+- `app/services/period_service.py`
+- `app/services/production_publication_status.py`
+- `app/routes/__init__.py`
+- `app/regions.py`
 - `app/services/production_result_service.py`
 - `app/services/tl_box_calculation_service.py`
 - `app/services/april_global_box_period_lock.py`
@@ -53,7 +98,10 @@ Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 - `.github/workflows/deploy.yml`
 - `.github/workflows/locked-contracts.yml`
 - `CANONICAL_LOCKS.md`
+- `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md`
 
 ## Değişiklik protokolü
 
-Kilitli bir alanın değişmesi gerekiyorsa sıralama şöyledir: önce sorun ve önerilen değişiklik kullanıcıya sunulur; onay alınır; yalnız onaylanan dosya/kural değiştirilir; bağımlı ekranlar hedefli regresyon testleriyle doğrulanır; tam ilgili CI PASS olur; sonra merge edilir; production acceptance PASS sonrasında tamamlandı denir. Onay kapsamı dışındaki yan değişiklikler aynı PR'a eklenmez.
+Kilitli bir alanın değişmesi gerekiyorsa sıralama şöyledir: önce sorun ve önerilen değişiklik kullanıcıya sunulur; etkilenecek dosyalar açıkça belirtilir; Murat Arslan'dan açık onay alınır; yalnız onaylanan dosya/kural değiştirilir; PR gövdesine `LOCKED-CONTRACT-APPROVED: YES` eklenir; repo sahibi onayı review/comment olarak PR'a kaydedilir; bağımlı ekranlar hedefli regresyon testleriyle doğrulanır; tam ilgili CI PASS olur; sonra merge edilir; production acceptance PASS sonrasında tamamlandı denir. Onay kapsamı dışındaki yan değişiklikler aynı PR'a eklenmez.
+
+Bu kilidin amacı geliştirmeyi durdurmak değil, import ve okuma mimarisinin kazara yeniden tasarlanmasını önlemektir. Veri dosyası formatı gerçekten değişirse sistem önce fail-closed davranır; yeni semantic uyarlama ancak yukarıdaki onay protokolüyle yapılır.
