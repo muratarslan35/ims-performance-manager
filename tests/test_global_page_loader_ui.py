@@ -21,7 +21,7 @@ def test_global_page_loader_tracks_real_navigation_milestones():
     source = Path("app/static/js/layout.js").read_text(encoding="utf-8")
 
     assert "show(8)" in source
-    assert "render(35)" in source
+    assert "render(Math.max(current, 35))" in source
     assert "show(Math.max(70, carried), false, 95)" in source
     assert "render(96)" in source
     assert "Math.exp(-elapsed" not in source

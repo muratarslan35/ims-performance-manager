@@ -406,10 +406,30 @@ def production_upload():
         return redirect(url_for("ims.index") + "#production-results")
 
     flash(
-        f"{production_stage}. üretim dosyası doğrulandı ve uygulandı. IMS hedefleri ve kaynak satış verileri korunmuştur.",
-        "success",
+        f"{production_stage}. üretim dosyası doğrulandı. Dashboard, temsilci ve bölge ekranları hazırlanıyor.",
+        "info",
     )
     return redirect(url_for("ims.index") + "#production-results")
+
+
+@ims_bp.route("/production-progress/<int:upload_id>", methods=["GET"])
+@login_required
+def production_progress(upload_id):
+    """Return measured workbook + downstream snapshot publication progress."""
+    upload = db.session.get(ProductionResultUpload, upload_id)
+    if upload is None:
+        abort(404)
+    from app.services.production_publication_status import ProductionPublicationStatus
+
+    payload = ProductionPublicationStatus.describe(upload)
+    payload.update({
+        "upload_id": int(upload.id),
+        "file_name": upload.file_name,
+        "year": int(upload.year),
+        "month": int(upload.month),
+        "production_stage": int(upload.production_stage),
+    })
+    return jsonify(payload)
 
 
 @ims_bp.route(

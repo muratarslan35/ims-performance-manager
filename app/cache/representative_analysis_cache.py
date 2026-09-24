@@ -24,7 +24,12 @@ from flask import current_app, has_app_context
 
 
 class RepresentativeAnalysisCache:
-    _MAX_ENTRIES = 512
+    # One production-finalization cascade commonly spans 113 representatives
+    # and 8-10 source months.  A 512-entry LRU evicted the first period before
+    # the dependent period started, so August -> September repeated the same
+    # immutable market/intelligence reads from scratch.  2048 keeps one full
+    # yearly cascade warm while remaining bounded.
+    _MAX_ENTRIES = 2048
     _DEFAULT_TTL_SECONDS = 45
     _MAX_TTL_SECONDS = 120
     _SOURCE_KEY_PREFIXES = ("rep-market:", "rep-intelligence:")
