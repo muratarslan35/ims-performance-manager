@@ -18,7 +18,13 @@
     <div class="rep-profile-identity">
       <span class="rep-profile-kicker">Temsilci Profili</span>
       <h1>{{ representative.rep_name|representative_display_name }}</h1>
-      <div class="rep-profile-status"><span class="{{ 'is-active' if representative.active else 'is-passive' }}"><i class="bi bi-circle-fill"></i>{{ 'Aktif kullanıcı' if representative.active else 'Pasif kullanıcı' }}</span></div>
+      <div class="rep-profile-status">
+        {% if not representative.active %}
+        <span class="is-passive text-danger fw-bold"><i class="bi bi-circle-fill"></i>PASİF KULLANICI</span>
+        {% else %}
+        <span class="is-active"><i class="bi bi-circle-fill"></i>Aktif kullanıcı</span>
+        {% endif %}
+      </div>
     </div>
   </div>
   <div class="rep-profile-details">
