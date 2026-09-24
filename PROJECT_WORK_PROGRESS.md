@@ -1,6 +1,73 @@
 # IMS Performance Manager — Kanonik Çalışma / Devir Kaydı
 
 
+# 0. 24 EYLÜL 2026 — FİNAL IMPORT / OKUMA MİMARİSİ KİLİDİ
+
+Bu bölüm önceki checkpoint'lerin üzerindedir. Bundan sonraki geliştirmelerde önce bu bölüm ve `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md` okunacaktır.
+
+## Nihai işletim hedefi
+
+Sistemin normal çalışma modeli artık sabittir:
+
+**Dosya yükle → semantic/preflight doğrula → atomic import/reconciliation → Dashboard + Bölge + Temsilci read-model paketlerini üret → market/AI enrichment → tüm generation'lar hazırsa atomik publish → kullanıcı hazır snapshotı okusun.**
+
+- Kullanıcı request'i içinde ağır Excel okuma veya tekrar aggregation yapılmaz.
+- Yeni hafta/date, publication tamamlanmadan görünmez.
+- %100 yalnız dashboard + region + representative zorunlu generation'ları gerçekten hazırsa gösterilir.
+- Import veya snapshot publication başarısızsa yarım veri canlıya çıkmaz; önceki doğrulanmış generation korunur.
+- Devam eden import kesilmez; yeni iş durable queue'ya alınır.
+- SQLite WAL, busy_timeout=30000 ve single-writer ilkeleri korunur.
+
+## Kaynak ve hesap kuralları
+
+- Aylık final kaynak: **P2 > P1 > IMS**.
+- Geç gelen üretim aynı ayın IMS sonucuna eklenmez; o ayın IMS sonucunun yerine geçer.
+- Nisan 2026+ açık IMS kutu hesabı resmi TL / dönem birim fiyatıdır; merkezi ROUND_HALF_DOWN korunur.
+- P1/P2 ile kapanan ay sonradan formül değişikliğiyle yeniden hesaplanmaz.
+- Kota çıkış sonucu tüm tüketicilerde aynı authority üzerinden uygulanır.
+- Gerçek 0 veri olarak korunur; BOS != BOŞ; BOSTANCI vacancy değildir.
+
+## Kalıcı read-model mimarisi
+
+- Dashboard: `PersistentDashboardSnapshotService`
+- Türkiye Pazar Analizi: dashboard içindeki tam `competition_analysis`
+- Bölge: `PersistentRegionSnapshotService`
+- Temsilci: `PersistentRepresentativeSnapshotService`
+- Historical: source-identity uyumlu durable historical/compatibility read-model
+- Normal interaktif route'larda `DashboardService`, `MarketAnalysisService`, `RegionPerformanceService`, `RegionMarketService` ile yeniden ağır hesap yapılmaz.
+
+## 22–24 Eylül son stabilizasyonları
+
+- PR **#973**: yarım kalan Temmuz P2 temsilci snapshot zinciri resumable hale getirildi.
+- PR **#1084**, merge `2bef9b1e61098405499ee0a7ac07948747336aca`: alt Türkiye sıralaması aylık ₺ realizasyon; üst ürün sıralaması YTD kutu toplamı olarak ayrıldı.
+- PR **#1089**, merge `27acc20679004d9567c05859ee14762859a2b968`: Ağustos publication gate tam generation doğrulaması sonrası güvenli finalize edilir hale getirildi.
+- PR **#1092**, merge `1875af85637159ecfc2ae38cd0bf99bd85a609eb`: ranking refresh sırasında full market/competition read-modelinin kaybolması engellendi.
+- PR **#1093**, merge `17f401115321f1c3e176378e2bdd1561f7feea41`: uzun production yenilemelerine SSH keepalive eklendi.
+- PR **#1096**, merge `e4af3fd5c2f5805afcf740993d1130be066c48d1`: tamamlanan dönemleri REUSED edip yalnız eksik dönemi yenileyen resumable market refresh eklendi.
+- PR **#1098**, merge `39e7cf4ebca85f21123207ccf9045eff7dd67f5b`: yalnız eksik aylık region kutu farkları resmi TL + dönem fiyatıyla tamamlandı; sağlıklı bölge satırları korunur.
+
+## Son canlı kabul
+
+- Production deploy run **36042363651 — SUCCESS**
+- Dashboard/read-model refresh run **36042363490 attempt 2 — SUCCESS**
+- Eylül source: **IMS #51 / 38. hafta CURRENT**
+- Ağustos source: **P1 #10**
+- Region count: **11/11**
+- `market_ready=11/11`
+- `previous_competitor_ready=11/11`
+- `box_ready=11/11`
+- `MARKET_READ_MODEL_REPAIR|PASS`
+
+## Yeni kalıcı değişiklik yönetişimi
+
+`CANONICAL_LOCKS.md` ve `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md` import/read-model çekirdeğini kilitler. Bu çekirdeğe değişiklik gerekiyorsa önce Murat Arslan'a sorun, kapsamı/dosyaları açıklayın ve açık onay alın. Koruma kurulumundan sonraki PR'larda yalnız PR gövdesindeki işaret yeterli değildir; repo sahibi `muratarslan35` tarafından GitHub review veya comment onayı da bulunmalıdır. Onaysız locked değişiklik CI tarafından reddedilir.
+
+Amaç artık mimariyi tekrar tekrar değiştirmek değil; mevcut kuralları koruyarak **otomatik ve fail-closed import** işletmektir.
+
+---
+
+
+
 # 0. 13 EYLÜL 2026 — YEDEK / ÇOKLU KULLANICI VE HARİTA GEÇİŞİ
 
 - Production yedek envanteri doğrulandı: yalnız bir tam rollback seti bulunuyor (`20260908-145757`); toplam backup dizini yaklaşık 2,83 GB.
