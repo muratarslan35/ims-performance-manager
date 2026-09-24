@@ -157,17 +157,11 @@ def test_ims_turkey_ranking_uses_final_production_total_without_double_subtracti
         db.session.add_all([product, rep_a, rep_b])
         db.session.flush()
         for representative in (rep_a, rep_b):
-            db.session.add_all([
-                Target(year=2026, month=1, representative_id=representative.id,
-                       product_id=product.id, tl_target=500),
-                Target(year=2026, month=8, representative_id=representative.id,
-                       product_id=product.id, tl_target=1000),
-            ])
+            db.session.add(Target(
+                year=2026, month=8, representative_id=representative.id,
+                product_id=product.id, tl_target=1000,
+            ))
         db.session.add_all([
-            IMSSummary(year=2026, month=1, representative_id=rep_a.id,
-                       product_id=product.id, tl=500, unit=5),
-            IMSSummary(year=2026, month=1, representative_id=rep_b.id,
-                       product_id=product.id, tl=400, unit=4),
             IMSSummary(year=2026, month=8, representative_id=rep_a.id,
                        product_id=product.id, tl=1200, unit=12),
             IMSSummary(year=2026, month=8, representative_id=rep_b.id,
@@ -214,16 +208,15 @@ def test_ims_turkey_ranking_uses_final_production_total_without_double_subtracti
 
         # The -100 product return is already included in the workbook's final
         # representative total; it must not be subtracted for a second time.
-        assert by_name["Temsilci A"][3] == 1300
-        assert by_name["Temsilci A"][5] == 1500
-        assert by_name["Temsilci B"][3] == 1300
+        assert by_name["Temsilci A"][3] == 800
+        assert by_name["Temsilci B"][3] == 900
 
 
 def test_ims_turkey_ranking_keeps_first_three_collapsed_by_default():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
 
     assert 'data-ranking-toggle aria-expanded="false"' in template
-    assert "Yılbaşından seçili aya kadar ₺ realizasyon oranına göre sıralanmıştır." in template
+    assert "Aylık ₺ realizasyon oranına göre sıralanmıştır." in template
 
 
 def test_dashboard_snapshot_upgrade_is_not_performed_in_user_request():
@@ -297,6 +290,27 @@ def test_ytd_product_ranking_prefers_accepted_units_and_falls_back_to_monthly_im
 
         assert len(rows) == 1
         assert rows[0].total_unit == 30
+
+        # When the next month's final production arrives, that month's IMS
+        # contribution is replaced instead of being added a second time.
+        february = ProductionResultUpload(
+            file_name="p1-feb.xlsx", stored_file_name="p1-feb.xlsx",
+            source_hash="c" * 64, year=2026, month=2, production_stage=1,
+            status=ProductionResultUpload.STATUS_APPLIED,
+            applied_at=datetime(2026, 2, 28, 12, 0),
+        )
+        db.session.add(february)
+        db.session.flush()
+        db.session.add(ProductionResult(
+            upload_id=february.id, representative_id=representative.id,
+            product_id=product.id, realization_percent=25,
+            actual_unit=5,
+        ))
+        db.session.commit()
+
+        replaced = DashboardQuery().load_ytd_product_rankings(2026, 2)
+        assert len(replaced) == 1
+        assert replaced[0].total_unit == 15
 
 def test_ytd_rank_trend_marks_only_changed_positions():
     current = {
