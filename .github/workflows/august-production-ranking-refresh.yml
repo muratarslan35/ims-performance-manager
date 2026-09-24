@@ -36,14 +36,16 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
+          SSH_OPTS="-o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=40 -o ConnectionAttempts=3"
+
+          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" $SSH_OPTS \
             "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git merge-base --is-ancestor '$RANKING_LOGIC_COMMIT' HEAD"
 
-          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
+          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" $SSH_OPTS \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          PYTHONPATH="$IMS_PATH" venv/bin/python -u - <<'PY'
           import json
           import sqlalchemy as sa
 
