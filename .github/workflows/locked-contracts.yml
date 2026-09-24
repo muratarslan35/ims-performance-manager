@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
+  issues: read
 
 concurrency:
   group: locked-contracts-${{ github.ref }}
@@ -23,6 +25,10 @@ jobs:
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PR_BODY: ${{ github.event.pull_request.body }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPOSITORY: ${{ github.repository }}
+      LOCK_OWNER: muratarslan35
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,20 +43,65 @@ jobs:
           while IFS= read -r file; do
             [ -n "$file" ] || continue
             case "$file" in
+              app/ims.py|\
+              ims_import_worker.py|\
+              app/routes/__init__.py|\
+              app/regions.py|\
+              app/services/ims_import_service.py|\
+              app/services/ims_import_queue.py|\
+              app/services/ims_publication_service.py|\
+              app/services/ims_upload_lifecycle_service.py|\
+              app/services/ims_upload_lifecycle_hooks.py|\
+              app/services/workbook_preflight.py|\
+              app/services/semantic_import_discovery.py|\
+              app/services/dynamic_import_contract.py|\
+              app/services/dynamic_import_refinement.py|\
+              app/services/kpi_workbook_compat.py|\
+              app/services/kpi_market_single_source.py|\
+              app/services/kpi_market_raw_source_override.py|\
+              app/services/kpi_competition_import_source_override.py|\
+              app/services/competition_import_service.py|\
+              app/services/compiled_competition_import_service.py|\
+              app/services/official_aggregate_service.py|\
+              app/services/official_brick_spread_service.py|\
+              app/services/target_import_service.py|\
+              app/services/alias_service.py|\
+              app/services/vacancy_matching.py|\
+              app/services/dashboard_service.py|\
+              app/services/market_analysis_service.py|\
+              app/services/persistent_dashboard_snapshot_service.py|\
+              app/services/persistent_region_snapshot_service.py|\
+              app/services/persistent_representative_snapshot_service.py|\
+              app/services/representative_snapshot_refresh_queue.py|\
+              app/services/snapshot_generation_identity_guard.py|\
+              app/services/historical_region_read_model_service.py|\
+              app/services/region_box_authority_guard.py|\
+              app/services/period_result_sum_guard.py|\
+              app/services/period_service.py|\
+              app/services/production_publication_status.py|\
               app/services/production_result_service.py|\
               app/services/tl_box_calculation_service.py|\
+              app/services/april_global_box_period_lock.py|\
+              app/services/product_unit_price_service.py|\
+              app/services/partial_ims_period_price_guard.py|\
+              app/services/period_price_read_guard.py|\
               app/services/week8_read_path_repair.py|\
               app/services/region_performance_service.py|\
+              app/services/region_performance_bulk_optimizer.py|\
               app/services/representative_period_snapshot_service.py|\
               app/services/annual_realization_service.py|\
               app/services/representative_market_service.py|\
+              app/services/region_market_service.py|\
+              app/query/dashboard_query.py|\
               app/services/competitive_intelligence_service.py|\
               app/services/actual_sales_resolution_service.py|\
+              app/products.py|\
               app/representatives.py|\
               app/region_manager.py|\
               .github/workflows/deploy.yml|\
               .github/workflows/locked-contracts.yml|\
-              CANONICAL_LOCKS.md)
+              CANONICAL_LOCKS.md|\
+              IMS_IMPORT_READ_ARCHITECTURE_LOCK.md)
                 echo "LOCKED_CHANGE|$file"
                 locked="true"
                 ;;
@@ -62,6 +113,34 @@ jobs:
               echo 'ERROR: Kilitli kanonik alan değişiyor ancak kullanıcı ön onay işareti yok.'
               echo 'Değişiklikten önce kullanıcıya kapsam sunulmalı; açık onay sonrası PR gövdesine LOCKED-CONTRACT-APPROVED: YES eklenmelidir.'
               exit 1
+            fi
+
+            # OWNER-APPROVAL-GUARD-V1
+            # Bootstrap PR: the base branch does not yet contain this marker,
+            # therefore the explicit approval that created this guard is enough.
+            # Every later locked PR must also have an owner-authored GitHub
+            # review/comment so approval cannot be inferred or silently reused.
+            base_guard="$(git show "$PR_BASE_SHA:.github/workflows/locked-contracts.yml" 2>/dev/null || true)"
+            if printf '%s' "$base_guard" | grep -Fq 'OWNER-APPROVAL-GUARD-V1'; then
+              api="https://api.github.com/repos/$REPOSITORY"
+              reviews="$(curl -fsSL                 -H "Authorization: Bearer $GH_TOKEN"                 -H "Accept: application/vnd.github+json"                 "$api/pulls/$PR_NUMBER/reviews?per_page=100")"
+              comments="$(curl -fsSL                 -H "Authorization: Bearer $GH_TOKEN"                 -H "Accept: application/vnd.github+json"                 "$api/issues/$PR_NUMBER/comments?per_page=100")"
+
+              review_ok="$(printf '%s' "$reviews" | jq -r --arg owner "$LOCK_OWNER" '
+                ([.[] | select(.user.login == $owner)] | last | .state) == "APPROVED"
+              ')"
+              comment_ok="$(printf '%s' "$comments" | jq -r --arg owner "$LOCK_OWNER" '
+                any(.[]; .user.login == $owner and (.body // "" | contains("LOCKED-CONTRACT-APPROVED: YES")))
+              ')"
+
+              if [ "$review_ok" != "true" ] && [ "$comment_ok" != "true" ]; then
+                echo "ERROR: Locked architecture change requires explicit GitHub approval by $LOCK_OWNER."
+                echo "Approve the PR review or add a PR comment containing: LOCKED-CONTRACT-APPROVED: YES"
+                exit 1
+              fi
+              echo "LOCKED_OWNER_APPROVAL|present|owner=$LOCK_OWNER"
+            else
+              echo 'LOCKED_OWNER_APPROVAL|bootstrap-current-user-approval'
             fi
             echo 'LOCKED_APPROVAL|present'
           else
@@ -84,4 +163,5 @@ jobs:
             tests/test_representative_market_read_consistency.py \
             tests/test_representative_annual_source_priority.py \
             tests/test_region_read_v2.py \
-            tests/test_region_manager_scope.py
+            tests/test_region_manager_scope.py \
+            tests/test_canonical_import_architecture_lock.py
