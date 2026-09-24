@@ -268,3 +268,18 @@ def test_heavy_benchmark_is_not_automatic_after_deploy():
     benchmark = Path('.github/workflows/ims-server-benchmark.yml').read_text(encoding='utf-8')
     assert 'workflow_dispatch:' in benchmark
     assert 'workflow_run:' not in benchmark
+
+
+def test_ranking_refresh_preserves_full_market_read_models():
+    workflow = Path(
+        ".github/workflows/august-production-ranking-refresh.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "from app.services.market_analysis_service import MarketAnalysisService" in workflow
+    assert 'market = MarketAnalysisService(year, month).build()' in workflow
+    assert 'payload["competition_analysis"] = market' in workflow
+    assert 'payload["market_read_model_version"] = 1' in workflow
+    assert 'if not market.get("has_competition"):' in workflow
+    assert "PersistentRegionSnapshotService.build_for_period(" in workflow
+    assert "PersistentRegionSnapshotService.enrich_for_period(year, month)" in workflow
+    assert "MARKET_READ_MODEL_REPAIR|PASS|" in workflow

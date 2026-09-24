@@ -55,6 +55,7 @@ jobs:
           from app.services.dashboard_service import DashboardService
           from app.services.ims_progress_store import IMSProgressStore
           from app.services.ims_publication_service import IMSPublicationService
+          from app.services.market_analysis_service import MarketAnalysisService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
           from app.services.persistent_representative_snapshot_service import (
@@ -88,6 +89,14 @@ jobs:
               )
               DashboardCache().invalidate(cache_key)
               payload = DashboardService(year=year, month=month).run()
+              market = MarketAnalysisService(year, month).build()
+              if not market.get("has_competition"):
+                  raise RuntimeError(
+                      f"Market competition read-model is missing for {year}-{month:02d}: "
+                      f"state={market.get('source_state')} week={market.get('source_week')}"
+                  )
+              payload["competition_analysis"] = market
+              payload["market_read_model_version"] = 1
 
               assert int(payload.get("top_representative_ranking_version") or 0) >= 3
               representatives = payload.get("top_representatives") or []
@@ -269,6 +278,49 @@ jobs:
                   )
               )
 
+          def refresh_region_read_models(year, month):
+              result = PersistentRegionSnapshotService.build_for_period(
+                  year, month, force=True
+              )
+              if result.get("status") not in {"ACTIVE", "REUSED"}:
+                  raise RuntimeError(
+                      f"Region rebuild failed for {year}-{month:02d}: {result}"
+                  )
+              enriched = PersistentRegionSnapshotService.enrich_for_period(year, month)
+              if enriched.get("status") not in {"ENRICHED", "REUSED"}:
+                  raise RuntimeError(
+                      f"Region enrichment failed for {year}-{month:02d}: {enriched}"
+                  )
+              active = PersistentRegionSnapshotService.get_active_all(year, month) or {}
+              expected = len(PersistentRegionSnapshotService.region_keys(year, month))
+              if expected <= 0 or len(active) != expected:
+                  raise RuntimeError(
+                      f"Region visibility mismatch for {year}-{month:02d}: "
+                      f"active={len(active)} expected={expected}"
+                  )
+              market_ready = sum(
+                  1
+                  for payload in active.values()
+                  if ((payload or {}).get("market_analysis") or {}).get("has_data")
+              )
+              previous_competitor_ready = sum(
+                  1
+                  for payload in active.values()
+                  if ((((payload or {}).get("ai_report") or {}).get(
+                      "region_snapshot_intelligence"
+                  ) or {}).get("previous_competitor_available") is True)
+              )
+              print(
+                  "REGION_MARKET_REFRESH|PASS|period={period}|regions={regions}|"
+                  "market_ready={market_ready}|previous_competitor_ready={previous_ready}".format(
+                      period=f"{year}-{month:02d}",
+                      regions=len(active),
+                      market_ready=market_ready,
+                      previous_ready=previous_competitor_ready,
+                  )
+              )
+              return active
+
           app = create_app()
           with app.app_context():
               year = 2026
@@ -356,9 +408,37 @@ jobs:
                   )
               )
 
+              # Rebuild August first so September AI comparisons see a complete
+              # previous-month competition read-model. Then rebuild September.
+              august_regions = refresh_region_read_models(year, 8)
+              september_regions = refresh_region_read_models(year, 9)
+
+              september_market = (
+                  PersistentDashboardSnapshotService.get_active(year, 9) or {}
+              ).get("competition_analysis") or {}
+              august_market = (
+                  PersistentDashboardSnapshotService.get_active(year, 8) or {}
+              ).get("competition_analysis") or {}
+              assert september_market.get("has_competition") is True
+              assert august_market.get("has_competition") is True
+              assert int(
+                  (PersistentDashboardSnapshotService.get_active(year, 9) or {}).get(
+                      "market_read_model_version"
+                  ) or 0
+              ) >= 1
+              print(
+                  "MARKET_READ_MODEL_REPAIR|PASS|"
+                  f"sep_state={september_market.get('source_state')}|"
+                  f"sep_week={september_market.get('source_week')}|"
+                  f"aug_state={august_market.get('source_state')}|"
+                  f"aug_week={august_market.get('source_week')}|"
+                  f"aug_regions={len(august_regions)}|sep_regions={len(september_regions)}"
+              )
+
               print(
                   "RANKING_REFRESH_FINAL|PASS|months=08,09|"
-                  "lower_table=monthly_tl_realization|upper_table=ytd_product_units"
+                  "lower_table=monthly_tl_realization|upper_table=ytd_product_units|"
+                  "market_read_models=complete"
               )
           PY
           REMOTE
