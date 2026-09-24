@@ -12,7 +12,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -280,26 +280,9 @@ jobs:
                   )
               )
 
-          def refresh_region_read_models(year, month):
-              result = PersistentRegionSnapshotService.build_for_period(
-                  year, month, force=True
-              )
-              if result.get("status") not in {"ACTIVE", "REUSED"}:
-                  raise RuntimeError(
-                      f"Region rebuild failed for {year}-{month:02d}: {result}"
-                  )
-              enriched = PersistentRegionSnapshotService.enrich_for_period(year, month)
-              if enriched.get("status") not in {"ENRICHED", "REUSED"}:
-                  raise RuntimeError(
-                      f"Region enrichment failed for {year}-{month:02d}: {enriched}"
-                  )
+          def region_read_model_status(year, month):
               active = PersistentRegionSnapshotService.get_active_all(year, month) or {}
               expected = len(PersistentRegionSnapshotService.region_keys(year, month))
-              if expected <= 0 or len(active) != expected:
-                  raise RuntimeError(
-                      f"Region visibility mismatch for {year}-{month:02d}: "
-                      f"active={len(active)} expected={expected}"
-                  )
               market_ready = sum(
                   1
                   for payload in active.values()
@@ -312,6 +295,56 @@ jobs:
                       "region_snapshot_intelligence"
                   ) or {}).get("previous_competitor_available") is True)
               )
+              return active, expected, market_ready, previous_competitor_ready
+
+          def refresh_region_read_models(year, month):
+              active, expected, market_ready, previous_competitor_ready = (
+                  region_read_model_status(year, month)
+              )
+              if (
+                  expected > 0
+                  and len(active) == expected
+                  and market_ready == expected
+                  and previous_competitor_ready == expected
+              ):
+                  print(
+                      "REGION_MARKET_REFRESH|REUSED|period={period}|regions={regions}|"
+                      "market_ready={market_ready}|previous_competitor_ready={previous_ready}".format(
+                          period=f"{year}-{month:02d}",
+                          regions=len(active),
+                          market_ready=market_ready,
+                          previous_ready=previous_competitor_ready,
+                      )
+                  )
+                  return active
+
+              result = PersistentRegionSnapshotService.build_for_period(
+                  year, month, force=True
+              )
+              if result.get("status") not in {"ACTIVE", "REUSED"}:
+                  raise RuntimeError(
+                      f"Region rebuild failed for {year}-{month:02d}: {result}"
+                  )
+              enriched = PersistentRegionSnapshotService.enrich_for_period(year, month)
+              if enriched.get("status") not in {"ENRICHED", "REUSED"}:
+                  raise RuntimeError(
+                      f"Region enrichment failed for {year}-{month:02d}: {enriched}"
+                  )
+              active, expected, market_ready, previous_competitor_ready = (
+                  region_read_model_status(year, month)
+              )
+              if (
+                  expected <= 0
+                  or len(active) != expected
+                  or market_ready != expected
+                  or previous_competitor_ready != expected
+              ):
+                  raise RuntimeError(
+                      f"Region read-model incomplete for {year}-{month:02d}: "
+                      f"active={len(active)} expected={expected} "
+                      f"market_ready={market_ready} "
+                      f"previous_competitor_ready={previous_competitor_ready}"
+                  )
               print(
                   "REGION_MARKET_REFRESH|PASS|period={period}|regions={regions}|"
                   "market_ready={market_ready}|previous_competitor_ready={previous_ready}".format(
