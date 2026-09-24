@@ -437,7 +437,7 @@ def test_snapshot_region_ai_is_finalized_once_with_historical_compatibility_fall
     assert "current_region_workspaces" in snapshot_service
     assert "previous_region_workspaces" in snapshot_service
     assert 'enriched["read_model_version"] = cls.READ_MODEL_VERSION' in snapshot_service
-    assert "upgrade_national_realizations_for_period" in route
+    assert "upgrade_national_realizations_for_period" not in route
     assert "_embed_national_product_realizations" in snapshot_service
     assert "Snapshot-only · 4 alan" not in partial
     assert "NATIONAL altında kalan ürünler" in partial
