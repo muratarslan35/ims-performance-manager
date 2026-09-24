@@ -28,6 +28,11 @@ def test_locked_contract_workflow_covers_import_and_read_model_core():
     )
 
     required_paths = [
+        "app/__init__.py",
+        "app/models.py",
+        "app/database.py",
+        "config.py",
+        ".github/CODEOWNERS",
         "app/ims.py",
         "ims_import_worker.py",
         "app/services/ims_import_service.py",
@@ -86,3 +91,43 @@ def test_import_core_changes_still_run_import_release_gates():
     assert "Import full suite" in deploy
     assert "PR 50-upload scale probe" in deploy
     assert "verify_live_ims_gate.py" in deploy
+
+
+def test_locked_contract_covers_future_import_read_service_families_and_codeowners():
+    workflow = (ROOT / ".github/workflows/locked-contracts.yml").read_text(
+        encoding="utf-8"
+    )
+    codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
+
+    families = [
+        "app/services/*import*.py",
+        "app/services/*snapshot*.py",
+        "app/services/*publication*.py",
+        "app/services/*market*.py",
+        "app/services/*result*.py",
+        "app/services/*authority*.py",
+        "app/services/*aggregate*.py",
+        "app/services/*read*.py",
+        "app/services/*period*.py",
+        "app/services/*resolver*.py",
+        "app/services/*reconciliation*.py",
+        "app/services/*integrity*.py",
+        "app/services/*dashboard*.py",
+        "app/services/*region_performance*.py",
+        "app/services/*brick_spread*.py",
+        "app/services/*vacancy*.py",
+        "app/services/*kpi*.py",
+    ]
+    for pattern in families:
+        assert pattern in workflow, pattern
+        assert f"/{pattern} @muratarslan35" in codeowners, pattern
+
+    for path in [
+        "/app/__init__.py @muratarslan35",
+        "/app/models.py @muratarslan35",
+        "/app/database.py @muratarslan35",
+        "/config.py @muratarslan35",
+        "/.github/workflows/locked-contracts.yml @muratarslan35",
+        "/IMS_IMPORT_READ_ARCHITECTURE_LOCK.md @muratarslan35",
+    ]:
+        assert path in codeowners, path

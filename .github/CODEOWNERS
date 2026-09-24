@@ -1,0 +1,37 @@
+# Canonical IMS import/read architecture owners.
+# The Locked Canonical Contracts workflow is the enforcing gate; CODEOWNERS
+# additionally makes the ownership explicit in GitHub review UI.
+
+/CANONICAL_LOCKS.md @muratarslan35
+/IMS_IMPORT_READ_ARCHITECTURE_LOCK.md @muratarslan35
+/.github/workflows/locked-contracts.yml @muratarslan35
+/.github/workflows/deploy.yml @muratarslan35
+/.github/CODEOWNERS @muratarslan35
+
+/app/__init__.py @muratarslan35
+/app/models.py @muratarslan35
+/app/database.py @muratarslan35
+/config.py @muratarslan35
+/app/ims.py @muratarslan35
+/ims_import_worker.py @muratarslan35
+/app/routes/__init__.py @muratarslan35
+/app/regions.py @muratarslan35
+/app/query/dashboard_query.py @muratarslan35
+
+/app/services/*import*.py @muratarslan35
+/app/services/*snapshot*.py @muratarslan35
+/app/services/*publication*.py @muratarslan35
+/app/services/*market*.py @muratarslan35
+/app/services/*result*.py @muratarslan35
+/app/services/*authority*.py @muratarslan35
+/app/services/*aggregate*.py @muratarslan35
+/app/services/*read*.py @muratarslan35
+/app/services/*period*.py @muratarslan35
+/app/services/*resolver*.py @muratarslan35
+/app/services/*reconciliation*.py @muratarslan35
+/app/services/*integrity*.py @muratarslan35
+/app/services/*dashboard*.py @muratarslan35
+/app/services/*region_performance*.py @muratarslan35
+/app/services/*brick_spread*.py @muratarslan35
+/app/services/*vacancy*.py @muratarslan35
+/app/services/*kpi*.py @muratarslan35

@@ -40,6 +40,11 @@ Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, 
 
 Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 
+- `app/__init__.py`
+- `app/models.py`
+- `app/database.py`
+- `config.py`
+- `.github/CODEOWNERS`
 - `app/ims.py`
 - `ims_import_worker.py`
 - `app/services/ims_import_service.py`
@@ -99,6 +104,30 @@ Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 - `.github/workflows/locked-contracts.yml`
 - `CANONICAL_LOCKS.md`
 - `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md`
+
+## Korunan dosya aileleri
+
+Yukarıdaki tekil dosyalara ek olarak aşağıdaki servis aileleri de kilitlidir. Yeni dosya ekleyerek kanonik akışın etrafından dolaşmak da onay gerektirir:
+
+- `app/services/*import*.py`
+- `app/services/*snapshot*.py`
+- `app/services/*publication*.py`
+- `app/services/*market*.py`
+- `app/services/*result*.py`
+- `app/services/*authority*.py`
+- `app/services/*aggregate*.py`
+- `app/services/*read*.py`
+- `app/services/*period*.py`
+- `app/services/*resolver*.py`
+- `app/services/*reconciliation*.py`
+- `app/services/*integrity*.py`
+- `app/services/*dashboard*.py`
+- `app/services/*region_performance*.py`
+- `app/services/*brick_spread*.py`
+- `app/services/*vacancy*.py`
+- `app/services/*kpi*.py`
+
+`CODEOWNERS` bu yollar için `@muratarslan35` sahipliğini ayrıca belirtir. Asıl zorunlu kapı Locked Canonical Contracts workflow'udur; CODEOWNERS inceleme görünürlüğünü güçlendirir.
 
 ## Değişiklik protokolü
 
