@@ -170,7 +170,7 @@ def test_interactive_market_and_historical_reads_use_durable_read_models():
 def test_ops_release_avoids_heavy_db_work_and_service_activation():
     text = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
 
-    assert '.github/workflows/*|scripts/run_production_maintenance.sh|tests/*' in text
+    assert '.github/workflows/*|.github/CODEOWNERS|scripts/run_production_maintenance.sh|tests/*' in text
     assert 'if [ "$mode" = "docs" ]; then mode="ops"; fi' in text
     assert 'Ops full suite' in text
     assert 'Ops smoke' in text
