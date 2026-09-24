@@ -154,6 +154,24 @@
 .ims-report-section-head small { color:#75879e; }
 .ims-report-progress { height:8px; border-radius:99px; background:#e5edf7; margin-top:10px; overflow:hidden; }
 .ims-report-progress span { display:block; height:100%; background:linear-gradient(90deg,#0b4ea2,#20ad70); border-radius:inherit; }
+
+.production-live-progress { display:none; margin-top:16px; padding:14px 16px; border:1px solid rgba(11,78,162,.2); border-radius:14px; background:linear-gradient(135deg,#f7fbff,#f1f8f5); box-shadow:0 8px 20px rgba(21,66,110,.08); }
+.production-live-progress.visible { display:block; }
+.production-live-progress.completed { border-color:rgba(25,135,84,.28); background:#f1fbf5; }
+.production-live-progress.failed { border-color:rgba(220,53,69,.3); background:#fff5f6; }
+.production-live-progress-head { display:flex; align-items:center; gap:11px; }
+.production-live-progress-icon { width:34px; height:34px; display:grid; place-items:center; flex:0 0 auto; border-radius:10px; color:#0b4ea2; background:rgba(11,78,162,.1); }
+.production-live-progress.visible:not(.completed):not(.failed) .production-live-progress-icon i { animation:production-progress-spin 1.2s linear infinite; }
+.production-live-progress-copy { min-width:0; display:flex; flex:1; flex-direction:column; }
+.production-live-progress-copy strong { color:#173a5e; font-size:13px; }
+.production-live-progress-copy small { color:#667c94; font-size:11px; line-height:1.4; margin-top:2px; }
+#productionProgressPercent { color:#0b4ea2; font-size:16px; }
+.production-live-progress-track { height:7px; margin-top:11px; overflow:hidden; border-radius:999px; background:#dbe7f3; }
+.production-live-progress-track span { display:block; width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,#0b66c3,#20ad70); transition:width .45s ease; }
+@keyframes production-progress-spin { to { transform:rotate(360deg); } }
+[data-theme="dark"] .production-live-progress { background:linear-gradient(135deg,#17283d,#17342f); border-color:#315779; }
+[data-theme="dark"] .production-live-progress-copy strong { color:#f0f6fc; }
+[data-theme="dark"] .production-live-progress-copy small { color:#b9c9d9; }
 .ims-report-columns { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .ims-report-list>div { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid rgba(11,78,162,.07); font-size:12px; color:#687c94; }
 .ims-report-list>div:last-child { border-bottom:0; }
