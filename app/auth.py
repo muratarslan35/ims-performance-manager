@@ -100,7 +100,7 @@ def login():
 
     if current_user.is_authenticated:
         return redirect(
-            url_for("main.dashboard")
+            url_for("dashboard.index")
         )
 
     if request.method == "POST":
@@ -200,7 +200,7 @@ def login():
                 return redirect(parsed_next.path)
 
         return redirect(
-            url_for("main.dashboard")
+            url_for("dashboard.index")
         )
 
     return render_template(
@@ -211,7 +211,7 @@ def login():
 @auth_bp.route("/register", methods=["GET", "POST"])
 def register():
     if current_user.is_authenticated:
-        return redirect(url_for("main.dashboard"))
+        return redirect(url_for("dashboard.index"))
 
     regions = _registration_regions()
 
