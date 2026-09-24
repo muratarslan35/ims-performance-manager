@@ -1,4 +1,4 @@
-name: August Production Ranking Refresh
+name: Dashboard Ranking Refresh
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -31,14 +31,14 @@ jobs:
           chmod 600 ~/.ssh/ims_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Wait for deploy and refresh only August dashboard
+      - name: Wait for deploy and refresh 2026 dashboard rankings
         run: |
           set -Eeuo pipefail
-          for poll in $(seq 1 60); do
+          for poll in $(seq 1 90); do
             live=$(ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
               "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git rev-parse HEAD")
             [ "$live" = "$GITHUB_SHA" ] && break
-            [ "$poll" -lt 60 ] || { echo "Deploy did not reach $GITHUB_SHA"; exit 1; }
+            [ "$poll" -lt 90 ] || { echo "Deploy did not reach $GITHUB_SHA"; exit 1; }
             sleep 5
           done
 
@@ -51,31 +51,82 @@ jobs:
           from app.cache.dashboard_cache import DashboardCache
           from app.constants.dashboard_constants import DashboardConstants
           from app.services.dashboard_service import DashboardService
+          from app.services.ims_publication_service import IMSPublicationService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.production_result_service import ProductionResultService
 
           app = create_app()
           with app.app_context():
-              year, month = 2026, 8
-              cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
-                  year=year, month=month, rep_id=None
-              )
-              DashboardCache().invalidate(cache_key)
-              payload = DashboardService(year=year, month=month).run()
-              assert int(payload.get("top_representative_ranking_version") or 0) >= 3
-              rows = payload.get("top_representatives") or []
-              assert len(rows) == 10, len(rows)
-              PersistentDashboardSnapshotService.publish(year, month, payload)
-              verified = PersistentDashboardSnapshotService.get_active(year, month) or {}
-              assert int(verified.get("top_representative_ranking_version") or 0) >= 3
-              assert verified.get("top_representatives") == rows
-              print("AUGUST_RANKING_REFRESH|PASS|rows=10|version=3")
-              for item in rows:
+              year = 2026
+              refreshed = 0
+              for month in range(1, 10):
+                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+                  if not ims_id:
+                      print(f"RANKING_REFRESH|SKIP|period={year}-{month:02d}|reason=no_completed_ims")
+                      continue
+
+                  pending = IMSPublicationService.pending_job(year, month)
+                  if pending is not None:
+                      raise RuntimeError(
+                          f"Pending publication blocks dashboard refresh for {year}-{month:02d}"
+                      )
+
+                  cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
+                      year=year, month=month, rep_id=None
+                  )
+                  DashboardCache().invalidate(cache_key)
+                  payload = DashboardService(year=year, month=month).run()
+
+                  assert int(payload.get("top_representative_ranking_version") or 0) >= 3
+                  representatives = payload.get("top_representatives") or []
+                  assert 0 < len(representatives) <= 10
+
+                  ytd = payload.get("ytd_product_rankings") or {}
+                  products = ytd.get("products") or []
+                  assert int(ytd.get("year") or 0) == year
+                  assert int(ytd.get("through_month") or 0) == month
+                  assert products
+
+                  result = PersistentDashboardSnapshotService.publish(year, month, payload)
+                  verified = PersistentDashboardSnapshotService.get_active(year, month) or {}
+                  assert verified.get("top_representatives") == representatives
+                  assert verified.get("ytd_product_rankings") == ytd
+
+                  final_upload = ProductionResultService.final_upload(year, month)
+                  source = (
+                      f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
+                      if final_upload is not None
+                      else f"IMS#{int(ims_id)}"
+                  )
+                  top_rep = representatives[0]
                   print(
-                      "RANK|{rank}|{name}|actual_tl={actual}|percent={percent}".format(
-                          rank=item.get("rank"), name=item.get("rep_name"),
-                          actual=item.get("total_tl"),
-                          percent=item.get("realization_percent"),
+                      "RANKING_REFRESH|PASS|period={period}|source={source}|"
+                      "ims={ims}|production={production}|rep_rows={rep_rows}|"
+                      "product_tabs={product_tabs}|top_rep={top_rep}|top_percent={top_percent}".format(
+                          period=f"{year}-{month:02d}",
+                          source=source,
+                          ims=int(ims_id),
+                          production=int(production_id),
+                          rep_rows=len(representatives),
+                          product_tabs=len(products),
+                          top_rep=top_rep.get("rep_name"),
+                          top_percent=top_rep.get("realization_percent"),
                       )
                   )
+                  refreshed += 1
+
+              assert refreshed >= 1
+              september = PersistentDashboardSnapshotService.get_active(2026, 9) or {}
+              september_ytd = september.get("ytd_product_rankings") or {}
+              assert int(september_ytd.get("through_month") or 0) == 9
+              assert september.get("top_representatives")
+              print(
+                  "RANKING_REFRESH_FINAL|PASS|months={months}|"
+                  "september_rep_rows={rep_rows}|september_product_tabs={product_tabs}".format(
+                      months=refreshed,
+                      rep_rows=len(september.get("top_representatives") or []),
+                      product_tabs=len(september_ytd.get("products") or []),
+                  )
+              )
           PY
           REMOTE
