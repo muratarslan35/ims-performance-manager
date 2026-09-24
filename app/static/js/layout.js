@@ -59,32 +59,54 @@
         const ring = document.getElementById('globalPageLoaderRing');
         const value = document.getElementById('globalPageLoaderValue');
         let current = 0;
+        let timer = null;
+        let phaseCap = 68;
         let finishing = false;
         const navigationKey = 'ims-page-navigation-active';
+        const progressKey = 'ims-page-navigation-progress';
 
         function render(next) {
             current = Math.max(current, Math.min(Math.round(next), 100));
             value.textContent = current + '%';
             ring.style.setProperty('--page-load-progress', (current * 3.6) + 'deg');
+            if (sessionStorage.getItem(navigationKey) === '1') {
+                sessionStorage.setItem(progressKey, String(current));
+            }
         }
 
-        function show(startAt, persist) {
+        function startPhaseAnimation(cap) {
+            phaseCap = cap;
+            if (timer) window.clearInterval(timer);
+            timer = window.setInterval(function () {
+                if (finishing || current >= phaseCap) return;
+                const remaining = phaseCap - current;
+                render(current + Math.max(1, Math.ceil(remaining * 0.08)));
+            }, 140);
+        }
+
+        function show(startAt, persist, cap) {
             finishing = false;
             current = 0;
+            if (persist !== false) sessionStorage.setItem(navigationKey, '1');
             render(startAt || 4);
             loader.classList.remove('is-complete');
             loader.classList.add('is-visible');
             loader.setAttribute('aria-hidden', 'false');
-            if (persist !== false) sessionStorage.setItem(navigationKey, '1');
+            startPhaseAnimation(cap || 68);
         }
 
         function finish() {
             if (!loader.classList.contains('is-visible')) return;
             finishing = true;
+            if (timer) {
+                window.clearInterval(timer);
+                timer = null;
+            }
             const finishTimer = window.setInterval(function () {
                 if (current >= 100) {
                     window.clearInterval(finishTimer);
                     sessionStorage.removeItem(navigationKey);
+                    sessionStorage.removeItem(progressKey);
                     window.setTimeout(function () {
                         loader.classList.add('is-complete');
                         loader.classList.remove('is-visible');
@@ -133,7 +155,10 @@
         }, true);
 
         window.addEventListener('beforeunload', function () {
-            if (loader.classList.contains('is-visible')) render(35);
+            if (loader.classList.contains('is-visible')) {
+                render(Math.max(current, 35));
+                startPhaseAnimation(68);
+            }
         });
 
         window.addEventListener('pageshow', function (event) {
@@ -147,7 +172,10 @@
         // A real navigation replaces the JavaScript context. Carry only the
         // active flag to the new document: reaching this point means its HTML,
         // blocking styles and scripts have actually been parsed.
-        if (sessionStorage.getItem(navigationKey) === '1') show(70, false);
+        if (sessionStorage.getItem(navigationKey) === '1') {
+            const carried = Number(sessionStorage.getItem(progressKey) || 0);
+            show(Math.max(70, carried), false, 95);
+        }
         if (document.readyState === 'complete') {
             render(96);
             finish();
