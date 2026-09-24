@@ -554,3 +554,34 @@ def test_open_ims_monthly_region_box_difference_does_not_require_rep_unit_baseli
     assert second["actual_unit"] == Decimal("53078")
     assert second["unit_difference"] == Decimal("-8191")
     assert second["unit_complete"] is True
+
+
+def test_direct_monthly_region_box_repair_keeps_healthy_rows_unchanged(monkeypatch):
+    from app.services.region_box_authority_guard import (
+        _apply_direct_monthly_box_authority,
+    )
+    from app.services.product_unit_price_service import ProductUnitPriceService
+
+    class Service:
+        @staticmethod
+        def _official_ims_region_month(year, month):
+            return {1: [Decimal("1000"), Decimal("500"), True]}
+
+    monkeypatch.setattr(
+        ProductUnitPriceService,
+        "price_map",
+        classmethod(lambda cls, product_ids, year, month: {1: 10}),
+    )
+    original = {
+        "product_id": 1,
+        "target_unit": Decimal("100"),
+        "actual_unit": Decimal("80"),
+        "unit_complete": True,
+        "unit_difference": Decimal("-20"),
+        "box_authority": "EXISTING_AUTHORITY",
+    }
+    payload = {"products": [dict(original)]}
+
+    result = _apply_direct_monthly_box_authority(Service(), payload, 2026, 9)
+
+    assert result["products"][0] == original
