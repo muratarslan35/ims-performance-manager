@@ -34,16 +34,9 @@ def _assigned_region_manager(report):
 
 
 def _compatibility_region_read_model(region_key, year, month):
-    """Serve historical compatibility from a durable source-versioned read model.
-
-    Early 2026 periods predate durable region snapshot sets. Their authoritative
-    calculation is preserved exactly, but it is executed at most once for each
-    IMS/production identity and shared by every Gunicorn worker afterwards.
-    """
-    return (
-        HistoricalRegionReadModelService.get_or_build(region_key, year, month),
-        "compatibility",
-    )
+    """Read an already-built historical model; never calculate on a page request."""
+    payload = HistoricalRegionReadModelService.get_active(region_key, year, month)
+    return (payload, "compatibility" if payload is not None else "unavailable")
 
 
 def _region_read_model(region_key, year, month, *, source_upload_id=None):
@@ -52,8 +45,8 @@ def _region_read_model(region_key, year, month, *, source_upload_id=None):
     The active IMS period remains snapshot-gated. Historical periods are
     different: some months were created before snapshot persistence existed,
     and a late production upload may temporarily have no exact ACTIVE snapshot.
-    In those cases calculate the historical page from current authoritative
-    data, matching the pre-snapshot behavior and avoiding dashboard redirects.
+    In those cases only a previously published compatibility model is eligible;
+    HTTP requests never run the authoritative calculation chain.
     """
     if source_upload_id:
         snapshot = PersistentRegionSnapshotService.get_active_for_visible_upload(
@@ -143,26 +136,9 @@ def detail(region_key):
 
         if region_data_source == "read-model":
             # Active/current generations retain the snapshot publication gate.
-            # Historical periods with no usable exact generation already took
-            # the compatibility path above and must not be redirected here.
+            # Snapshot upgrades are worker-owned. A page request must remain a
+            # bounded read even when an old generation is encountered.
             read_model_version = int(read_model.get("read_model_version") or 0)
-            if read_model_version < 3:
-                enrichment = PersistentRegionSnapshotService.enrich_for_period(
-                    year, month
-                )
-                if enrichment.get("status") in {"ENRICHED", "REUSED"}:
-                    read_model, region_data_source = _region_read_model(
-                        region_key, year, month, source_upload_id=visible_upload_id
-                    )
-            elif read_model_version < PersistentRegionSnapshotService.READ_MODEL_VERSION:
-                enrichment = PersistentRegionSnapshotService.upgrade_national_realizations_for_period(
-                    year, month
-                )
-                if enrichment.get("status") == "ENRICHED":
-                    read_model, region_data_source = _region_read_model(
-                        region_key, year, month, source_upload_id=visible_upload_id
-                    )
-
             if (
                 read_model is None
                 or int(read_model.get("read_model_version") or 0)
