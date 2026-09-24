@@ -79,7 +79,15 @@ class RepresentativeSnapshotRefreshQueue:
         return cutoff
 
     @classmethod
-    def enqueue(cls, year: int, month: int, *, reason: str) -> dict:
+    def enqueue(
+        cls,
+        year: int,
+        month: int,
+        *,
+        reason: str,
+        source_year: int | None = None,
+        source_month: int | None = None,
+    ) -> dict:
         """Atomically keep one newest refresh request per target period.
 
         Reconciliation runs repeatedly while the worker is idle. Reusing an
@@ -100,6 +108,25 @@ class RepresentativeSnapshotRefreshQueue:
                 and int(existing.get("month") or 0) == month
                 and str(existing.get("reason") or "") == str(reason)
             ):
+                # Older queue markers predate source-period priority. Upgrade
+                # them in place so the month that was actually uploaded is
+                # always published before its Q/YTD dependants.
+                source_period = (
+                    source_year is not None
+                    and source_month is not None
+                    and year == int(source_year)
+                    and month == int(source_month)
+                )
+                if (
+                    not existing.get("source_priority_attempted")
+                    and existing.get("source_period") is not source_period
+                ):
+                    existing["source_period"] = source_period
+                    temporary = target.with_suffix(f".json.tmp-{os.getpid()}")
+                    temporary.write_text(
+                        json.dumps(existing, ensure_ascii=False), encoding="utf-8"
+                    )
+                    os.replace(temporary, target)
                 return existing
 
         payload = {
@@ -107,6 +134,12 @@ class RepresentativeSnapshotRefreshQueue:
             "month": month,
             "reason": str(reason),
             "requested_at": datetime.now(timezone.utc).isoformat(),
+            "source_period": bool(
+                source_year is not None
+                and source_month is not None
+                and year == int(source_year)
+                and month == int(source_month)
+            ),
         }
         temporary = target.with_suffix(f".json.tmp-{os.getpid()}")
         temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -152,7 +185,13 @@ class RepresentativeSnapshotRefreshQueue:
         """
         reason = f"production_upload:{int(production_upload_id)}"
         return [
-            cls.enqueue(target_year, target_month, reason=reason)
+            cls.enqueue(
+                target_year,
+                target_month,
+                reason=reason,
+                source_year=year,
+                source_month=month,
+            )
             for target_year, target_month in cls.dependency_periods(year, month)
         ]
 
@@ -319,7 +358,13 @@ class RepresentativeSnapshotRefreshQueue:
                 ):
                     continue
                 queued.append(
-                    cls.enqueue(target_year, target_month, reason=reason)
+                    cls.enqueue(
+                        target_year,
+                        target_month,
+                        reason=reason,
+                        source_year=year,
+                        source_month=month,
+                    )
                 )
         return queued
 
@@ -345,6 +390,7 @@ class RepresentativeSnapshotRefreshQueue:
                 candidates.append(
                     (
                         -cls._production_priority(payload),
+                        0 if payload.get("source_period") else 1,
                         path.stat().st_mtime,
                         path.name,
                         payload,
@@ -354,8 +400,8 @@ class RepresentativeSnapshotRefreshQueue:
                 path.unlink(missing_ok=True)
         if not candidates:
             return None
-        candidates.sort(key=lambda item: item[:3])
-        return candidates[0][3]
+        candidates.sort(key=lambda item: item[:4])
+        return candidates[0][4]
 
     @classmethod
     def defer(cls, item: dict) -> None:
@@ -373,6 +419,14 @@ class RepresentativeSnapshotRefreshQueue:
             and str(current.get("reason") or "")
             == str(item.get("reason") or "")
         ):
+            if current.get("source_period"):
+                current["source_period"] = False
+                current["source_priority_attempted"] = True
+                temporary = path.with_suffix(f".json.tmp-{os.getpid()}")
+                temporary.write_text(
+                    json.dumps(current, ensure_ascii=False), encoding="utf-8"
+                )
+                os.replace(temporary, path)
             os.utime(path, None)
 
     @classmethod
