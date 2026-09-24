@@ -21,7 +21,8 @@ from app.models import (
     Product,
     Representative, 
     Target, 
-    IMSSummary, ProductionResult, ProductionResultUpload, ProductionNationalProductResult, ProductionNationalTotal, ProductionRegionTotal
+    IMSSummary, ProductionResult, ProductionResultUpload, ProductionRepresentativeTotal,
+    ProductionNationalProductResult, ProductionNationalTotal, ProductionRegionTotal
     , IMSRawData
 )
 from app.query.base_query import AggregateBuilder
@@ -153,12 +154,11 @@ class DashboardQuery:
     ) -> Sequence[Row]:
         """Return monthly national ranking from the accepted result source.
 
-        Production workbooks are the final monthly result and may contain
-        returns (negative TL).  Ranking directly from ``IMSSummary`` left the
-        leaderboard stale after a production upload even though every other
-        dashboard metric had moved to P2 > P1 > IMS.  Resolve all target rows
-        in bounded reads so returns reduce the representative total and the
-        generated dashboard snapshot becomes the single read source again.
+        Production workbooks are the final monthly result. Ranking directly
+        from ``IMSSummary`` left the leaderboard stale after a production
+        upload even though every other dashboard metric had moved to the
+        accepted source. Prefer the workbook's authoritative representative
+        total so product-level return rows are not subtracted a second time.
         """
         if not filters or filters.year is None or filters.month is None:
             return []
@@ -197,6 +197,19 @@ class DashboardQuery:
             IMSSummary.representative_id.in_(representative_ids),
         ).group_by(IMSSummary.representative_id).all())
 
+        final_upload = ProductionResultService.final_upload(
+            filters.year, filters.month
+        )
+        official_by_rep = {}
+        if final_upload is not None:
+            official_by_rep = {
+                int(row.representative_id): row
+                for row in self.session.query(ProductionRepresentativeTotal).filter(
+                    ProductionRepresentativeTotal.upload_id == int(final_upload.id),
+                    ProductionRepresentativeTotal.representative_id.in_(representative_ids),
+                ).all()
+            }
+
         totals = {}
         for target in target_rows:
             representative_id = int(target.representative_id)
@@ -218,6 +231,10 @@ class DashboardQuery:
             representative = representatives.get(representative_id)
             if representative is None:
                 continue
+            official = official_by_rep.get(representative_id)
+            if official is not None:
+                actual_tl = Decimal(str(official.actual_tl or 0))
+                target_tl = Decimal(str(official.target_tl or 0))
             rows.append((
                 representative_id,
                 representative.rep_name,
