@@ -54,6 +54,15 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
     prices = ProductUnitPriceService.price_map(product_ids, int(year), int(month))
 
     for item in products:
+        # Healthy regions already have authoritative box values. Keep them
+        # byte-for-byte unchanged; this compatibility path only fills rows
+        # whose unit calculation is incomplete/missing.
+        if (
+            item.get("unit_difference") is not None
+            and item.get("actual_unit") is not None
+            and bool(item.get("unit_complete"))
+        ):
+            continue
         product_id = item.get("product_id")
         if product_id is None:
             continue
