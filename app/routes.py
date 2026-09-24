@@ -1,5 +1,4 @@
-from flask import Blueprint
-from flask import render_template
+from flask import Blueprint, redirect, render_template, url_for
 
 from flask_login import current_user
 from flask_login import login_required
@@ -13,11 +12,7 @@ main_bp = Blueprint(
 @main_bp.route("/")
 @login_required
 def home():
-
-    return render_template(
-        "dashboard.html",
-        user=current_user
-    )
+    return redirect(url_for("dashboard.index"))
 
 
 @main_bp.route("/dashboard")
