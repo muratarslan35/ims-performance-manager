@@ -22,9 +22,12 @@ def test_global_page_loader_tracks_real_navigation_milestones():
 
     assert "show(8)" in source
     assert "render(35)" in source
-    assert "show(70, false)" in source
+    assert "show(Math.max(70, carried), false, 95)" in source
     assert "render(96)" in source
     assert "Math.exp(-elapsed" not in source
+    assert "startPhaseAnimation(68)" in source
+    assert "startPhaseAnimation(cap || 68)" in source
+    assert "current >= phaseCap" in source
 
 
 def test_global_page_loader_does_not_touch_business_calculation_contracts():
