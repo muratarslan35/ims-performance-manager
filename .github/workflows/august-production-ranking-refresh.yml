@@ -19,6 +19,7 @@ jobs:
       IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+      RANKING_LOGIC_COMMIT: 2bef9b1e61098405499ee0a7ac07948747336aca
     steps:
       - name: Configure production SSH
         env:
@@ -31,121 +32,333 @@ jobs:
           chmod 600 ~/.ssh/ims_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Wait for deploy and refresh August September rankings
+      - name: Refresh September and safely finalize August ranking publication
         run: |
           set -Eeuo pipefail
-          for poll in $(seq 1 90); do
-            live=$(ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
-              "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git rev-parse HEAD")
-            [ "$live" = "$GITHUB_SHA" ] && break
-            [ "$poll" -lt 90 ] || { echo "Deploy did not reach $GITHUB_SHA"; exit 1; }
-            sleep 5
-          done
+
+          ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
+            "$IMS_USER@$IMS_HOST" "cd '$IMS_PATH' && git merge-base --is-ancestor '$RANKING_LOGIC_COMMIT' HEAD"
 
           ssh -i ~/.ssh/ims_key -p "$IMS_PORT" -o BatchMode=yes \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+
           from app import create_app
           from app.cache.dashboard_cache import DashboardCache
           from app.constants.dashboard_constants import DashboardConstants
+          from app.extensions import db
+          from app.models import IMSImportJob
           from app.services.dashboard_service import DashboardService
+          from app.services.ims_progress_store import IMSProgressStore
           from app.services.ims_publication_service import IMSPublicationService
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService,
+              representative_snapshots,
+          )
           from app.services.production_result_service import ProductionResultService
+
+          def source_label(year, month):
+              ims_id, _production_id = PersistentDashboardSnapshotService.source_identity(
+                  year, month
+              )
+              final_upload = ProductionResultService.final_upload(year, month)
+              if final_upload is not None:
+                  return f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
+              if ims_id:
+                  return f"IMS#{int(ims_id)}"
+              return "NONE"
+
+          def build_and_publish_dashboard(year, month):
+              ims_id, production_id = PersistentDashboardSnapshotService.source_identity(
+                  year, month
+              )
+              if not ims_id:
+                  raise RuntimeError(
+                      f"No completed IMS source for required period {year}-{month:02d}"
+                  )
+
+              cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
+                  year=year, month=month, rep_id=None
+              )
+              DashboardCache().invalidate(cache_key)
+              payload = DashboardService(year=year, month=month).run()
+
+              assert int(payload.get("top_representative_ranking_version") or 0) >= 3
+              representatives = payload.get("top_representatives") or []
+              assert 0 < len(representatives) <= 10
+
+              ytd = payload.get("ytd_product_rankings") or {}
+              products = ytd.get("products") or []
+              assert int(ytd.get("year") or 0) == year
+              assert int(ytd.get("through_month") or 0) == month
+              assert products
+
+              PersistentDashboardSnapshotService.publish(year, month, payload)
+              assert PersistentDashboardSnapshotService.generation_ready(
+                  year, month, ims_id, production_id
+              )
+              return payload, int(ims_id), int(production_id)
+
+          def finalize_completed_pending_generation(year, month, pending, ims_id, production_id):
+              progress = IMSProgressStore.read(int(pending.id)) or {}
+              try:
+                  summary = json.loads(pending.result_summary or "{}")
+              except (TypeError, ValueError, json.JSONDecodeError):
+                  summary = {}
+
+              print(
+                  "PUBLICATION_AUDIT|period={period}|job_id={job_id}|job_status={job_status}|"
+                  "progress_status={progress_status}|stage={stage}|percent={percent}|"
+                  "publication_ready={ready}|job_upload={job_upload}|source_ims={source_ims}|"
+                  "source_production={source_production}".format(
+                      period=f"{year}-{month:02d}",
+                      job_id=int(pending.id),
+                      job_status=pending.status,
+                      progress_status=progress.get("status"),
+                      stage=progress.get("stage"),
+                      percent=int(progress.get("percent") or 0),
+                      ready=int(summary.get("publication_ready") is True),
+                      job_upload=int(pending.ims_upload_id or 0),
+                      source_ims=ims_id,
+                      source_production=production_id,
+                  )
+              )
+
+              if (
+                  pending.status != IMSImportJob.STATUS_COMPLETED
+                  or progress.get("status") != IMSImportJob.STATUS_COMPLETED
+                  or progress.get("stage") != "completed"
+                  or int(progress.get("percent") or 0) != 100
+              ):
+                  raise RuntimeError(
+                      f"August pending publication is not a completed stale gate: job={pending.id}"
+                  )
+              if int(pending.ims_upload_id or 0) != int(ims_id):
+                  raise RuntimeError(
+                      "August pending publication points to a different IMS generation: "
+                      f"job_upload={pending.ims_upload_id} source_ims={ims_id}"
+                  )
+
+              other_active = IMSImportJob.query.filter(
+                  IMSImportJob.id != int(pending.id),
+                  IMSImportJob.status.in_(
+                      (IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING)
+                  ),
+              ).first()
+              if other_active is not None:
+                  raise RuntimeError(
+                      f"Another IMS job is active; publication finalization refused: {other_active.id}"
+                  )
+
+              if not PersistentDashboardSnapshotService.generation_ready(
+                  year, month, ims_id, production_id
+              ):
+                  raise RuntimeError("August dashboard generation is not ready.")
+
+              region_set = PersistentRegionSnapshotService._existing_set(
+                  year, month, ims_id, production_id
+              )
+              expected_regions = len(
+                  PersistentRegionSnapshotService.region_keys(year, month)
+              )
+              region_rows = (
+                  PersistentRegionSnapshotService._payloads_from_set(region_set.id)
+                  if region_set is not None
+                  else {}
+              )
+              if (
+                  region_set is None
+                  or region_set.status != PersistentRegionSnapshotService.STATUS_ACTIVE
+                  or expected_regions <= 0
+                  or len(region_rows) != expected_regions
+                  or not all(
+                      int((payload or {}).get("read_model_version") or 0)
+                      >= PersistentRegionSnapshotService.READ_MODEL_VERSION
+                      for payload in region_rows.values()
+                  )
+              ):
+                  raise RuntimeError(
+                      "August region generation is not fully ready: "
+                      f"status={getattr(region_set, 'status', None)} "
+                      f"rows={len(region_rows)} expected={expected_regions}"
+                  )
+
+              expected_representatives = (
+                  PersistentRepresentativeSnapshotService.representative_ids(
+                      year, month, ims_id
+                  )
+              )
+              representative_set = (
+                  PersistentRepresentativeSnapshotService._latest_exact_active(
+                      year, month, ims_id, production_id
+                  )
+              )
+              representative_rows = (
+                  int(
+                      db.session.execute(
+                          sa.select(sa.func.count())
+                          .select_from(representative_snapshots)
+                          .where(
+                              representative_snapshots.c.set_id
+                              == int(representative_set.id)
+                          )
+                      ).scalar()
+                      or 0
+                  )
+                  if representative_set is not None
+                  else 0
+              )
+              if (
+                  representative_set is None
+                  or not expected_representatives
+                  or representative_rows != len(expected_representatives)
+                  or int(representative_set.representative_count or 0)
+                  != len(expected_representatives)
+              ):
+                  raise RuntimeError(
+                      "August representative generation is not fully ready: "
+                      f"rows={representative_rows} expected={len(expected_representatives)}"
+                  )
+
+              attached = db.session.get(IMSImportJob, int(pending.id))
+              if attached is None:
+                  raise RuntimeError("August publication job disappeared.")
+              try:
+                  attached_summary = json.loads(attached.result_summary or "{}")
+              except (TypeError, ValueError, json.JSONDecodeError):
+                  attached_summary = {}
+              attached_summary["publication_ready"] = True
+              attached_summary["publication_ready_upload_id"] = int(ims_id)
+              attached_summary["publication_ready_source"] = (
+                  "verified_dashboard_ranking_refresh"
+              )
+              attached.result_summary = json.dumps(
+                  attached_summary, ensure_ascii=False
+              )
+              attached.error_message = None
+              db.session.commit()
+
+              IMSProgressStore.write(
+                  int(attached.id),
+                  percent=100,
+                  stage="completed",
+                  message="IMS yüklemesi ve tüm ekran snapshotları hazır",
+                  detail=(
+                      f"Dashboard hazır · Bölge {expected_regions}/{expected_regions} · "
+                      f"Temsilci {len(expected_representatives)}/"
+                      f"{len(expected_representatives)}"
+                  ),
+                  status=IMSImportJob.STATUS_COMPLETED,
+              )
+              if IMSPublicationService.pending_job(year, month) is not None:
+                  raise RuntimeError("August publication gate remained pending after verified finalization.")
+
+              print(
+                  "PUBLICATION_FINALIZE|PASS|period={period}|job_id={job_id}|"
+                  "regions={regions}|representatives={representatives}".format(
+                      period=f"{year}-{month:02d}",
+                      job_id=int(attached.id),
+                      regions=expected_regions,
+                      representatives=len(expected_representatives),
+                  )
+              )
 
           app = create_app()
           with app.app_context():
               year = 2026
-
-              chain = []
-              for source_month in range(1, 10):
-                  ims_id, _production_id = PersistentDashboardSnapshotService.source_identity(
-                      year, source_month
+              print(
+                  "YTD_SOURCE_CHAIN|"
+                  + ",".join(
+                      f"{month:02d}:{source_label(year, month)}"
+                      for month in range(1, 10)
                   )
-                  final_upload = ProductionResultService.final_upload(year, source_month)
-                  if final_upload is not None:
-                      source = f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
-                  elif ims_id:
-                      source = f"IMS#{int(ims_id)}"
-                  else:
-                      source = "NONE"
-                  chain.append(f"{source_month:02d}:{source}")
-              print("YTD_SOURCE_CHAIN|" + ",".join(chain))
+              )
 
-              refreshed = []
-              for month in (8, 9):
-                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(
-                      year, month
+              # September is the currently selected live month. Publish it first:
+              # its upper table is Jan-Sep YTD while the lower table is September only.
+              september_payload, sep_ims, sep_production = build_and_publish_dashboard(
+                  year, 9
+              )
+              sep_pending = IMSPublicationService.pending_job(year, 9)
+              if sep_pending is not None:
+                  raise RuntimeError(
+                      f"September publication is unexpectedly pending: job={sep_pending.id}"
                   )
-                  if not ims_id:
-                      raise RuntimeError(
-                          f"No completed IMS source for required period {year}-{month:02d}"
-                      )
-
-                  pending = IMSPublicationService.pending_job(year, month)
-                  if pending is not None:
-                      raise RuntimeError(
-                          "Pending publication blocks required period "
-                          f"{year}-{month:02d}|job_id={int(pending.id)}"
-                      )
-
-                  cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
-                      year=year, month=month, rep_id=None
+              september_active = (
+                  PersistentDashboardSnapshotService.get_active(year, 9) or {}
+              )
+              assert (
+                  september_active.get("top_representatives")
+                  == september_payload.get("top_representatives")
+              )
+              assert (
+                  september_active.get("ytd_product_rankings")
+                  == september_payload.get("ytd_product_rankings")
+              )
+              print(
+                  "RANKING_REFRESH|PASS|period=2026-09|source={source}|"
+                  "ims={ims}|production={production}|rep_rows={rep_rows}|product_tabs={tabs}".format(
+                      source=source_label(year, 9),
+                      ims=sep_ims,
+                      production=sep_production,
+                      rep_rows=len(september_payload.get("top_representatives") or []),
+                      tabs=len(
+                          (september_payload.get("ytd_product_rankings") or {}).get(
+                              "products"
+                          )
+                          or []
+                      ),
                   )
-                  DashboardCache().invalidate(cache_key)
-                  payload = DashboardService(year=year, month=month).run()
+              )
 
-                  assert int(payload.get("top_representative_ranking_version") or 0) >= 3
-                  representatives = payload.get("top_representatives") or []
-                  assert 0 < len(representatives) <= 10
-
-                  ytd = payload.get("ytd_product_rankings") or {}
-                  products = ytd.get("products") or []
-                  assert int(ytd.get("year") or 0) == year
-                  assert int(ytd.get("through_month") or 0) == month
-                  assert products
-
-                  PersistentDashboardSnapshotService.publish(year, month, payload)
-                  verified = PersistentDashboardSnapshotService.get_active(year, month) or {}
-                  assert verified.get("top_representatives") == representatives
-                  assert verified.get("ytd_product_rankings") == ytd
-
-                  final_upload = ProductionResultService.final_upload(year, month)
-                  selected_source = (
-                      f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
-                      if final_upload is not None
-                      else f"IMS#{int(ims_id)}"
+              # August has a historical completed publication gate. Build the exact
+              # new dashboard generation first, then open visibility only if every
+              # other exact read model is already fully ready.
+              august_payload, aug_ims, aug_production = build_and_publish_dashboard(
+                  year, 8
+              )
+              aug_pending = IMSPublicationService.pending_job(year, 8)
+              if aug_pending is not None:
+                  finalize_completed_pending_generation(
+                      year, 8, aug_pending, aug_ims, aug_production
                   )
-                  top_rep = representatives[0]
-                  print(
-                      "RANKING_REFRESH|PASS|period={period}|source={source}|"
-                      "ims={ims}|production={production}|rep_rows={rep_rows}|"
-                      "product_tabs={product_tabs}|top_rep={top_rep}|top_percent={top_percent}".format(
-                          period=f"{year}-{month:02d}",
-                          source=selected_source,
-                          ims=int(ims_id),
-                          production=int(production_id),
-                          rep_rows=len(representatives),
-                          product_tabs=len(products),
-                          top_rep=top_rep.get("rep_name"),
-                          top_percent=top_rep.get("realization_percent"),
-                      )
-                  )
-                  refreshed.append(month)
 
-              assert refreshed == [8, 9]
-              september = PersistentDashboardSnapshotService.get_active(2026, 9) or {}
-              september_ytd = september.get("ytd_product_rankings") or {}
-              assert int(september_ytd.get("through_month") or 0) == 9
-              assert september.get("top_representatives")
+              august_active = (
+                  PersistentDashboardSnapshotService.get_active(year, 8) or {}
+              )
+              assert (
+                  august_active.get("top_representatives")
+                  == august_payload.get("top_representatives")
+              )
+              assert (
+                  august_active.get("ytd_product_rankings")
+                  == august_payload.get("ytd_product_rankings")
+              )
+              print(
+                  "RANKING_REFRESH|PASS|period=2026-08|source={source}|"
+                  "ims={ims}|production={production}|rep_rows={rep_rows}|product_tabs={tabs}".format(
+                      source=source_label(year, 8),
+                      ims=aug_ims,
+                      production=aug_production,
+                      rep_rows=len(august_payload.get("top_representatives") or []),
+                      tabs=len(
+                          (august_payload.get("ytd_product_rankings") or {}).get(
+                              "products"
+                          )
+                          or []
+                      ),
+                  )
+              )
+
               print(
                   "RANKING_REFRESH_FINAL|PASS|months=08,09|"
-                  "september_rep_rows={rep_rows}|september_product_tabs={product_tabs}".format(
-                      rep_rows=len(september.get("top_representatives") or []),
-                      product_tabs=len(september_ytd.get("products") or []),
-                  )
+                  "lower_table=monthly_tl_realization|upper_table=ytd_product_units"
               )
           PY
           REMOTE
