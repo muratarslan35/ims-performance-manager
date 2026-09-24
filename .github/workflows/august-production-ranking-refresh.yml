@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/ims_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Wait for deploy and refresh 2026 dashboard rankings
+      - name: Wait for deploy and refresh August September rankings
         run: |
           set -Eeuo pipefail
           for poll in $(seq 1 90); do
@@ -58,17 +58,37 @@ jobs:
           app = create_app()
           with app.app_context():
               year = 2026
-              refreshed = 0
-              for month in range(1, 10):
-                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(year, month)
+
+              chain = []
+              for source_month in range(1, 10):
+                  ims_id, _production_id = PersistentDashboardSnapshotService.source_identity(
+                      year, source_month
+                  )
+                  final_upload = ProductionResultService.final_upload(year, source_month)
+                  if final_upload is not None:
+                      source = f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
+                  elif ims_id:
+                      source = f"IMS#{int(ims_id)}"
+                  else:
+                      source = "NONE"
+                  chain.append(f"{source_month:02d}:{source}")
+              print("YTD_SOURCE_CHAIN|" + ",".join(chain))
+
+              refreshed = []
+              for month in (8, 9):
+                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(
+                      year, month
+                  )
                   if not ims_id:
-                      print(f"RANKING_REFRESH|SKIP|period={year}-{month:02d}|reason=no_completed_ims")
-                      continue
+                      raise RuntimeError(
+                          f"No completed IMS source for required period {year}-{month:02d}"
+                      )
 
                   pending = IMSPublicationService.pending_job(year, month)
                   if pending is not None:
                       raise RuntimeError(
-                          f"Pending publication blocks dashboard refresh for {year}-{month:02d}"
+                          "Pending publication blocks required period "
+                          f"{year}-{month:02d}|job_id={int(pending.id)}"
                       )
 
                   cache_key = DashboardConstants.CACHE_KEY_TEMPLATE.format(
@@ -87,13 +107,13 @@ jobs:
                   assert int(ytd.get("through_month") or 0) == month
                   assert products
 
-                  result = PersistentDashboardSnapshotService.publish(year, month, payload)
+                  PersistentDashboardSnapshotService.publish(year, month, payload)
                   verified = PersistentDashboardSnapshotService.get_active(year, month) or {}
                   assert verified.get("top_representatives") == representatives
                   assert verified.get("ytd_product_rankings") == ytd
 
                   final_upload = ProductionResultService.final_upload(year, month)
-                  source = (
+                  selected_source = (
                       f"P{int(final_upload.production_stage)}#{int(final_upload.id)}"
                       if final_upload is not None
                       else f"IMS#{int(ims_id)}"
@@ -104,7 +124,7 @@ jobs:
                       "ims={ims}|production={production}|rep_rows={rep_rows}|"
                       "product_tabs={product_tabs}|top_rep={top_rep}|top_percent={top_percent}".format(
                           period=f"{year}-{month:02d}",
-                          source=source,
+                          source=selected_source,
                           ims=int(ims_id),
                           production=int(production_id),
                           rep_rows=len(representatives),
@@ -113,17 +133,16 @@ jobs:
                           top_percent=top_rep.get("realization_percent"),
                       )
                   )
-                  refreshed += 1
+                  refreshed.append(month)
 
-              assert refreshed >= 1
+              assert refreshed == [8, 9]
               september = PersistentDashboardSnapshotService.get_active(2026, 9) or {}
               september_ytd = september.get("ytd_product_rankings") or {}
               assert int(september_ytd.get("through_month") or 0) == 9
               assert september.get("top_representatives")
               print(
-                  "RANKING_REFRESH_FINAL|PASS|months={months}|"
+                  "RANKING_REFRESH_FINAL|PASS|months=08,09|"
                   "september_rep_rows={rep_rows}|september_product_tabs={product_tabs}".format(
-                      months=refreshed,
                       rep_rows=len(september.get("top_representatives") or []),
                       product_tabs=len(september_ytd.get("products") or []),
                   )
