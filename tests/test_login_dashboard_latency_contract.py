@@ -22,6 +22,8 @@ def test_page_loader_uses_document_milestones_not_elapsed_fake_progress():
     assert "ims-page-navigation-active" in source
     assert "beforeunload" in source
     assert "sessionStorage.getItem(navigationKey)" in source
+    assert "ims-page-navigation-progress" in source
+    assert "startPhaseAnimation" in source
     assert "window.addEventListener('load'" in source
     assert "Math.exp(-elapsed" not in source
 
