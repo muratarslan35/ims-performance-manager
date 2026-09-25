@@ -1,0 +1,111 @@
+name: Detach Legacy BIST From IMS Host
+
+on:
+  push:
+    branches:
+      - "ops/bist-detach-20260925"
+    paths:
+      - ".github/workflows/detach-legacy-bist.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  detach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+
+    steps:
+      - name: Configure IMS SSH
+        env:
+          KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/ims_key
+          chmod 600 ~/.ssh/ims_key
+
+      - name: Remove only dormant BIST runtime from IMS host
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_key -p "$IMS_PORT"             -o BatchMode=yes -o IdentitiesOnly=yes             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null             "$IMS_USER@$IMS_HOST" 'bash -se' <<'REMOTE'
+          set -Eeuo pipefail
+
+          BIST=/home/ubuntu/bistbot
+          IMS=/home/ubuntu/ims_system
+
+          test "$BIST" = "/home/ubuntu/bistbot"
+          test "$IMS" = "/home/ubuntu/ims_system"
+          test -d "$IMS"
+
+          web_before=$(sudo systemctl is-active ims-performance-manager.service || true)
+          worker_before=$(sudo systemctl is-active ims-import-worker.service || true)
+          report_before=$(sudo systemctl is-active ims-report-worker.service || true)
+
+          echo "IMS_WEB_BEFORE=$web_before"
+          echo "IMS_WORKER_BEFORE=$worker_before"
+          echo "IMS_REPORT_BEFORE=$report_before"
+
+          test "$web_before" = "active"
+
+          echo "=== VERIFY LEGACY BIST IS DORMANT ==="
+          if [ -d "$BIST" ]; then
+            origin=$(git -C "$BIST" remote get-url origin 2>/dev/null || true)
+            case "$origin" in
+              *muratarslan35/bisthissetarayici-v2*) ;;
+              *)
+                echo "Refusing delete: unexpected BIST origin: $origin" >&2
+                exit 1
+                ;;
+            esac
+
+            if ps -eo pid=,args= | grep -F "$BIST/" | grep -v grep >/dev/null; then
+              echo "Refusing delete: BIST process still references $BIST" >&2
+              ps -eo pid,user,args | grep -F "$BIST/" | grep -v grep || true
+              exit 1
+            fi
+          fi
+
+          echo "=== REMOVE BIST-ONLY SYSTEMD ARTIFACTS IF PRESENT ==="
+          for svc in bist-trading-web.service bist-trading-worker.service; do
+            if systemctl list-unit-files "$svc" --no-legend 2>/dev/null | grep -q "^$svc"; then
+              sudo systemctl disable --now "$svc" || true
+              sudo rm -f "/etc/systemd/system/$svc"
+            fi
+          done
+          if systemctl list-unit-files bist-trading.slice --no-legend 2>/dev/null | grep -q '^bist-trading.slice'; then
+            sudo systemctl stop bist-trading.slice || true
+            sudo rm -f /etc/systemd/system/bist-trading.slice
+          fi
+          sudo rm -f /etc/bist-trading.env
+          sudo systemctl daemon-reload
+
+          echo "=== REMOVE LEGACY BIST DIRECTORY ONLY ==="
+          if [ -d "$BIST" ]; then
+            rm -rf --one-file-system "$BIST"
+          fi
+          test ! -e "$BIST"
+
+          if [ -f /home/ubuntu/bist.sh ] && grep -q 'bistbot' /home/ubuntu/bist.sh; then
+            rm -f /home/ubuntu/bist.sh
+          fi
+
+          echo "=== VERIFY IMS UNTOUCHED AND ACTIVE ==="
+          test -d "$IMS"
+          web_after=$(sudo systemctl is-active ims-performance-manager.service || true)
+          worker_after=$(sudo systemctl is-active ims-import-worker.service || true)
+          report_after=$(sudo systemctl is-active ims-report-worker.service || true)
+
+          echo "IMS_WEB_AFTER=$web_after"
+          echo "IMS_WORKER_AFTER=$worker_after"
+          echo "IMS_REPORT_AFTER=$report_after"
+          test "$web_after" = "active"
+
+          echo "BIST_PATH_PRESENT=$(test -e "$BIST" && echo yes || echo no)"
+          echo "BIST_DETACH_FROM_IMS_HOST=PASS"
+          REMOTE
