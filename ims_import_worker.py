@@ -546,6 +546,19 @@ def _process_representative_refresh_queue(app):
     # earlier-month production result can change this period's Q/YTD values even
     # when this period's own IMS/production identity did not change.
     dashboard_result = _warm_dashboard_snapshot(app, year, month, force=True)
+    if (
+        dashboard_result.get("status") in {"ACTIVE", "REUSED"}
+        and _queued_production_refresh_is_fresh(item, year, month)
+    ):
+        RepresentativeSnapshotRefreshQueue.complete(item)
+        app.logger.info(
+            "representative_refresh_queue_skipped year=%s month=%s reason=%s "
+            "already_fresh_after_dashboard=1 dashboard_status=%s",
+            year, month, reason, dashboard_result.get("status"),
+        )
+        db.session.remove()
+        return True
+
     representative_result = _warm_representative_snapshots(
         app, year, month, force=True
     )

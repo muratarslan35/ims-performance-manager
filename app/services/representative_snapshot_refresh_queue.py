@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from flask import current_app
 
 from app.extensions import db
-from app.models import IMSUpload, ProductionResultUpload
+from app.models import IMSUpload, ProductionResultUpload, Target
 
 
 class RepresentativeSnapshotRefreshQueue:
@@ -196,6 +196,53 @@ class RepresentativeSnapshotRefreshQueue:
         ]
 
     @classmethod
+    def _dashboard_quota_is_current(cls, year: int, month: int, payload: dict) -> bool:
+        """Verify persisted national quota rows against current allocated targets."""
+        from app.services.production_result_service import ProductionResultService
+
+        quota = ProductionResultService.quota_product_months([(int(year), int(month))])
+        quota_ids = {
+            int(product_id)
+            for product_id, periods in quota.items()
+            if (int(year), int(month)) in periods
+        }
+        if not quota_ids:
+            return True
+
+        allocated = dict(
+            db.session.query(
+                Target.product_id,
+                sa.func.coalesce(sa.func.sum(Target.tl_target), 0.0),
+            )
+            .filter(
+                Target.year == int(year),
+                Target.month == int(month),
+                Target.product_id.in_(quota_ids),
+            )
+            .group_by(Target.product_id)
+            .all()
+        )
+        rows = ((payload or {}).get("executive_metrics") or {}).get("products") or []
+        by_product = {
+            int(row.get("product_id") or 0): row
+            for row in rows
+            if int(row.get("product_id") or 0) in quota_ids
+        }
+        for product_id in quota_ids:
+            expected = round(float(allocated.get(product_id) or 0), 2)
+            if expected <= 0:
+                continue
+            row = by_product.get(product_id)
+            if row is None:
+                return False
+            if (
+                round(float(row.get("target_tl") or 0), 2) != expected
+                or round(float(row.get("actual_tl") or 0), 2) != expected
+            ):
+                return False
+        return True
+
+    @classmethod
     def _period_is_fresh_for_production(
         cls, year: int, month: int, *, cutoff
     ) -> bool:
@@ -230,6 +277,9 @@ class RepresentativeSnapshotRefreshQueue:
                 ).read_text(encoding="utf-8")
             )
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+            return False
+        dashboard_payload = envelope.get("payload") or {}
+        if not cls._dashboard_quota_is_current(year, month, dashboard_payload):
             return False
         dashboard_created = cls._naive_utc(envelope.get("created_at"))
 
