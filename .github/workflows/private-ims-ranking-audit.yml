@@ -1,4 +1,4 @@
-name: Private IMS ranking query comparison
+name: Private IMS ranking query comparison with representative filter
 on:
   push:
     branches:
@@ -64,7 +64,12 @@ jobs:
                   expected[k]=item.get("rankings") or []
               rows=DashboardQuery().load_ytd_product_rankings(2026,9)
               groups=defaultdict(list)
+              def vacant(name):
+                  text=str(name or "").upper().replace("Ş","S").replace("Ö","O")
+                  tokens={token for token in text.replace("-"," ").split() if token}
+                  return bool({"BOS","KADRO"} & tokens)
               for r in rows:
+                  if vacant(r.representative_name): continue
                   k="".join(ch for ch in str(r.product_name or "").upper() if ch.isalnum())
                   groups[k].append(r)
               for key,screen_rows in expected.items():
