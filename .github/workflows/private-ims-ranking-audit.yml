@@ -1,4 +1,4 @@
-name: Private IMS Acnemix monthly reconciliation v3
+name: Private IMS Acnemix monthly reconciliation v4
 on:
   push:
     branches:
@@ -51,6 +51,7 @@ jobs:
           from sqlalchemy import desc
           from openpyxl import load_workbook
           from app import create_app
+          from app.extensions import db
           from app.models import IMSUpload,IMSSummary,Product,Representative,ProductionResultUpload,ProductionResult
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.production_result_import_service import ProductionResultImportService
