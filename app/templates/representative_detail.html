@@ -46,7 +46,8 @@
 <div class="row g-3 mb-4" id="repKpiRow">
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam TL hedefi</div><div class="h2 mb-1" id="repKpiTarget">{{ '{:,.0f}'.format(active_snapshot.totals.target_tl) }} ₺</div><div class="small text-secondary">Ürün hedefleri toplamı</div></div></div></div>
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Gerçekleşen TL</div><div class="h2 mb-1" id="repKpiActual">{{ '{:,.0f}'.format(active_snapshot.totals.actual_tl) }} ₺</div><div class="small text-secondary" id="repKpiSource">{{ active_snapshot.result_source_label }}</div></div></div></div>
-  <div class="col-sm-6 col-xl-3"><div class="card h-100" aria-label="Hedef - Gerçekleşen TL; Açık ürün hedefleri toplamı yerine net toplam fark"><div class="card-body"><div class="text-secondary small">Hedef - Gerçekleşen TL</div><div class="h2 mb-1" id="repKpiRemaining">{{ '{:,.0f}'.format((active_snapshot.totals.target_tl | default(0, true)) - (active_snapshot.totals.actual_tl | default(0, true))) }} ₺</div><div class="small text-secondary">Toplam hedef - gerçekleşen</div></div></div></div>
+  {% set rep_gap_tl = (active_snapshot.totals.actual_tl | default(0, true)) - (active_snapshot.totals.target_tl | default(0, true)) %}
+  <div class="col-sm-6 col-xl-3"><div class="card h-100" aria-label="Kalan ₺ Açığı; negatif değer hedefe kalan tutarı, pozitif değer hedef aşımını gösterir"><div class="card-body"><div class="text-secondary small">Kalan ₺ Açığı</div><div class="h2 mb-1 {% if rep_gap_tl >= 0 %}text-success{% else %}text-danger{% endif %}" id="repKpiRemaining">{% if rep_gap_tl > 0 %}+{% elif rep_gap_tl < 0 %}-{% endif %}{{ '{:,.0f}'.format(rep_gap_tl | abs) }} ₺</div><div class="small text-secondary">Hedefe kalan / aşan tutar</div></div></div></div>
   <div class="col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-secondary small">Toplam realizasyon</div><div class="h2 mb-1" id="repKpiPercent">%{{ active_snapshot.totals.percent }}</div><div class="small text-secondary">Gerçekleşen / TL hedefi</div></div></div></div>
 </div>
 
@@ -105,7 +106,13 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     if (kpiTarget) kpiTarget.textContent = money(button.dataset.target);
     if (kpiActual) kpiActual.textContent = money(button.dataset.actual);
-    if (kpiRemaining) kpiRemaining.textContent = money(Number(button.dataset.target || 0) - Number(button.dataset.actual || 0));
+    if (kpiRemaining) {
+      const gap = Number(button.dataset.actual || 0) - Number(button.dataset.target || 0);
+      const sign = gap > 0 ? "+" : gap < 0 ? "-" : "";
+      kpiRemaining.textContent = `${sign}${Math.round(Math.abs(gap)).toLocaleString("en-US")} ₺`;
+      kpiRemaining.classList.toggle("text-danger", gap < 0);
+      kpiRemaining.classList.toggle("text-success", gap >= 0);
+    }
     if (kpiPercent) kpiPercent.textContent = `%${button.dataset.realizationPercent || 0}`;
     if (kpiSource) kpiSource.textContent = button.dataset.source || "";
     const url = new URL(window.location.href);
