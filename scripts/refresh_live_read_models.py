@@ -181,7 +181,20 @@ def _refresh_regions(year: int, month: int):
         db.session.rollback()
         raise
 
-    verified = PersistentRegionSnapshotService.get_active_all(year, month)
+    # Publication is intentionally still pending here, so normal readers hide
+    # this generation until the job's publication_ready flag is committed. Verify
+    # the exact current source set directly instead of asking the gated read path.
+    verified_set = PersistentRegionSnapshotService._existing_set(
+        year, month, ims_id, production_id
+    )
+    if (
+        verified_set is None
+        or verified_set.status != PersistentRegionSnapshotService.STATUS_ACTIVE
+    ):
+        raise RuntimeError("published region snapshot set is not active")
+    verified = PersistentRegionSnapshotService._payloads_from_set(
+        int(verified_set.id)
+    )
     if len(verified) != 11:
         raise RuntimeError(f"published region snapshot coverage={len(verified)}/11")
     region901 = next(
