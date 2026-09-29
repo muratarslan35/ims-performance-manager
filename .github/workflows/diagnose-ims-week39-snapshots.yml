@@ -26,7 +26,7 @@ jobs:
           set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
-          printf '%s\\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_week39_key
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_week39_key
           chmod 600 ~/.ssh/ims_week39_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
       - name: Check worker and sanitized refresh trace
@@ -37,7 +37,7 @@ jobs:
           set -Eeuo pipefail
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = main
-          printf 'IMS_WORKER|%s\\n' "$(sudo systemctl is-active ims-import-worker.service || true)"
+          printf 'IMS_WORKER|%s\n' "$(sudo systemctl is-active ims-import-worker.service || true)"
           venv/bin/python - <<'PY'
           import re
           from pathlib import Path
@@ -46,19 +46,15 @@ jobs:
               print("SNAPSHOT_LOG|MISSING")
               raise SystemExit(0)
           lines = path.read_text(errors="replace").splitlines()
-          allowed = {"READ_MODEL_REFRESH_SOURCE", "DASHBOARD_READ_MODEL|PASS",
-                     "MARKET_READ_MODEL|PASS", "REGION_READ_MODEL|PASS",
-                     "REPRESENTATIVE_READ_MODEL|PASS", "LIVE_READ_MODEL_REFRESH|PASS"}
           for line in lines:
-              prefix = line.split("|", 1)[0]
               if line.startswith(("READ_MODEL_REFRESH_SOURCE|", "DASHBOARD_READ_MODEL|PASS",
                                   "MARKET_READ_MODEL|PASS", "REGION_READ_MODEL|PASS",
                                   "REPRESENTATIVE_READ_MODEL|PASS", "LIVE_READ_MODEL_REFRESH|PASS")):
-                  print("SNAPSHOT_STAGE|" + prefix)
+                  print("SNAPSHOT_STAGE|" + line.split("|", 1)[0])
           frames = []
           error_type = "unknown"
           for line in lines:
-              m = re.search(r'File "([^"]+)", line (\\d+), in ([A-Za-z_][A-Za-z0-9_]*)', line)
+              m = re.search(r'File "([^"]+)", line (\d+), in ([A-Za-z_][A-Za-z0-9_]*)', line)
               if m:
                   frames.append(f"{Path(m.group(1)).name}:{m.group(2)}:{m.group(3)}")
               m = re.match(r'([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Failure))(?::.*)?$', line.strip())
