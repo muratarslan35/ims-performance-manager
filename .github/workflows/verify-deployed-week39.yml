@@ -90,4 +90,29 @@ jobs:
                       stale += 1
               print(f"IMS_DEPLOYED|PASS|commit=6a12801|worker=active|upload=52|week=39|dashboard=1|regions={rcount}/11|representatives={repcount}/{expected}|progress=100|unrelated_stale_publications={stale}")
           PY
+          venv/bin/python - <<'PY'
+          import datetime, json
+          from pathlib import Path
+          from sqlalchemy import desc
+          from app import create_app
+          from app.models import IMSImportJob, IMSUpload
+          from app.services.ims_progress_store import IMSProgressStore
+          from config import Config
+          app = create_app(Config)
+          with app.app_context():
+              now = datetime.datetime.utcnow()
+              for job in IMSImportJob.query.filter_by(status=IMSImportJob.STATUS_COMPLETED).order_by(desc(IMSImportJob.completed_at), desc(IMSImportJob.id)).limit(20):
+                  state = IMSProgressStore.read(job.id) or {}
+                  if state.get("status") not in {"QUEUED", "PROCESSING"} or state.get("stage") not in IMSProgressStore.POST_IMPORT_STAGES:
+                      continue
+                  try:
+                      age = int((now - datetime.datetime.fromisoformat(state["updated_at"])).total_seconds() / 60)
+                  except Exception:
+                      age = -1
+                  if age < 15:
+                      continue
+                  upload = db.session.get(IMSUpload, int(job.ims_upload_id or 0))
+                  if upload is not None:
+                      print(f"IMS_STALE_JOB|job={job.id}|upload={upload.id}|period={upload.year:04d}-{upload.month:02d}|week={upload.week_number}|age_min={age}")
+          PY
           REMOTE
