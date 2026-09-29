@@ -95,6 +95,7 @@ jobs:
           from pathlib import Path
           from sqlalchemy import desc
           from app import create_app
+          from app.extensions import db
           from app.models import IMSImportJob, IMSUpload
           from app.services.ims_progress_store import IMSProgressStore
           from config import Config
