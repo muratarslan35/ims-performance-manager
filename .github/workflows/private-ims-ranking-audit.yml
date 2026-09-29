@@ -1,4 +1,4 @@
-name: Private IMS ranking source audit v2
+name: Private IMS ranking source audit v3
 on:
   push:
     branches:
@@ -112,9 +112,10 @@ jobs:
                           continue
                       if int(rep.id) not in rep_by_id:
                           continue
-                      vals=svc._read_metric_values(sheet,rn,layout,"temsilci")
-                      for pid,value in zip(vals["product_ids"],vals["values"]):
-                          extracted[(int(rep.id),int(pid))]=float(value or 0)
+                      for pid,col in zip(layout["product_ids"],layout["actual_columns"]):
+                          value=svc._number(sheet.cell(rn,col).value)
+                          if value is not None:
+                              extracted[(int(rep.id),int(pid))]=float(value)
                   file_rows[uid]=extracted
                   upload_order_by_month[month].append(uid)
                   dbrows=ProductionResult.query.filter_by(upload_id=uid).all()
