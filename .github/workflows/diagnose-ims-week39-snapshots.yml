@@ -38,6 +38,8 @@ jobs:
           cd "$IMS_PATH"
           test "$(git branch --show-current)" = main
           printf 'IMS_WORKER|%s\n' "$(sudo systemctl is-active ims-import-worker.service || true)"
+          ps -eo etimes=,pcpu=,comm= | awk '$3 ~ /python/ {printf "IMS_PYTHON|elapsed=%s|cpu=%s|comm=%s\n", $1, $2, $3}'
+          stat -c 'REFRESH_LOG|bytes=%s|mtime=%y' /tmp/ims-week39-complete-publication.log 2>/dev/null || true
           venv/bin/python - <<'PY'
           import re
           from pathlib import Path
