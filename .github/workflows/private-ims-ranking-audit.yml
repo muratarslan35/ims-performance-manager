@@ -26,7 +26,7 @@ jobs:
           set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
-          printf '%s\\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
           chmod 600 ~/.ssh/ims_audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
       - name: Reconcile source workbooks and rankings
