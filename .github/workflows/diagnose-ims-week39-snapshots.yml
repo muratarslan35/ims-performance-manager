@@ -1,0 +1,71 @@
+name: Diagnose IMS week 39 snapshot retry
+on:
+  push:
+    branches:
+      - ops/diagnose-ims-week39-snapshots-20260929
+    paths:
+      - ".github/workflows/diagnose-ims-week39-snapshots.yml"
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure IMS production SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_week39_key
+          chmod 600 ~/.ssh/ims_week39_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Check worker and sanitized refresh trace
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_week39_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          printf 'IMS_WORKER|%s\\n' "$(sudo systemctl is-active ims-import-worker.service || true)"
+          venv/bin/python - <<'PY'
+          import re
+          from pathlib import Path
+          path = Path("/tmp/ims-week39-snapshot-refresh.log")
+          if not path.exists():
+              print("SNAPSHOT_LOG|MISSING")
+              raise SystemExit(0)
+          lines = path.read_text(errors="replace").splitlines()
+          allowed = {"READ_MODEL_REFRESH_SOURCE", "DASHBOARD_READ_MODEL|PASS",
+                     "MARKET_READ_MODEL|PASS", "REGION_READ_MODEL|PASS",
+                     "REPRESENTATIVE_READ_MODEL|PASS", "LIVE_READ_MODEL_REFRESH|PASS"}
+          for line in lines:
+              prefix = line.split("|", 1)[0]
+              if line.startswith(("READ_MODEL_REFRESH_SOURCE|", "DASHBOARD_READ_MODEL|PASS",
+                                  "MARKET_READ_MODEL|PASS", "REGION_READ_MODEL|PASS",
+                                  "REPRESENTATIVE_READ_MODEL|PASS", "LIVE_READ_MODEL_REFRESH|PASS")):
+                  print("SNAPSHOT_STAGE|" + prefix)
+          frames = []
+          error_type = "unknown"
+          for line in lines:
+              m = re.search(r'File "([^"]+)", line (\\d+), in ([A-Za-z_][A-Za-z0-9_]*)', line)
+              if m:
+                  frames.append(f"{Path(m.group(1)).name}:{m.group(2)}:{m.group(3)}")
+              m = re.match(r'([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Failure))(?::.*)?$', line.strip())
+              if m:
+                  error_type = m.group(1)
+          if frames:
+              print("SNAPSHOT_TRACE|" + "|".join(frames[-4:]))
+          print("SNAPSHOT_EXCEPTION|type=" + error_type)
+          PY
+          REMOTE
