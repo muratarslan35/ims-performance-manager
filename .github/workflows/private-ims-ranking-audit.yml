@@ -1,4 +1,4 @@
-name: Private IMS Acnemix monthly reconciliation v2
+name: Private IMS Acnemix monthly reconciliation v3
 on:
   push:
     branches:
@@ -59,7 +59,6 @@ jobs:
           from app.formatters.dashboard_formatter import DashboardFormatter
           from config import Config
           app=create_app(Config)
-          target_names=("YAKUP CAGIR","MURAT ARSLAN","GULBAHAR KARA")
           def norm(v): return "".join(ch for ch in str(v or "").upper() if ch.isalnum())
           def sha(path):
               h=hashlib.sha256()
@@ -68,13 +67,16 @@ jobs:
               return h.hexdigest()
           with app.app_context():
               output={"product":"ACNEMIX","year":2026,"months":[],"snapshots":[],"errors":[]}
-              reps=Representative.query.filter(Representative.active.is_(True)).all()
-              rep_by_name={norm(r.rep_name):r for r in reps}
+              current=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
+              current_products=(current.get("ytd_product_rankings") or {}).get("products") or []
+              current_acnemix=next((x for x in current_products if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
               chosen={}
-              for name in target_names:
-                  r=rep_by_name.get(name)
-                  if r is None: raise RuntimeError("target_representative_not_found:"+name)
-                  chosen[int(r.id)]=r
+              for item in (current_acnemix or {}).get("rankings",[])[:3]:
+                  rid=int(item["representative_id"])
+                  rep=db.session.get(Representative,rid)
+                  if rep is None: raise RuntimeError("snapshot_representative_missing:"+str(rid))
+                  chosen[rid]=rep
+              if len(chosen)!=3: raise RuntimeError("top_three_snapshot_missing")
               product=Product.query.filter(Product.is_active.is_(True)).all()
               acnemix=[p for p in product if norm(p.product_name)=="ACNEMIX"]
               if len(acnemix)!=1: raise RuntimeError("acnemix_product_mapping_failed")
@@ -158,9 +160,9 @@ jobs:
                   else:
                       rankings=(snapshot.get("ytd_product_rankings") or {}).get("products") or []
                       item=next((x for x in rankings if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
-                      snapvals={norm(x.get("representative_name")):float(x.get("total_unit") or 0) for x in (item or {}).get("rankings",[])}
+                      snapvals={int(x.get("representative_id")):float(x.get("total_unit") or 0) for x in (item or {}).get("rankings",[])}
                       output["snapshots"].append({"month":month,"available":True,
-                          "values":{rep.rep_name:snapvals.get(norm(rep.rep_name)) for rep in chosen.values()}})
+                          "values":{rep.rep_name:snapvals.get(int(rep.id)) for rep in chosen.values()}})
               output["sums"]={rep.rep_name:round(float(sums[rid]),2) for rid,rep in chosen.items()}
               out_payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
               rankings=(out_payload.get("ytd_product_rankings") or {}).get("products") or []
