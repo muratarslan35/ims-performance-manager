@@ -1,0 +1,216 @@
+name: Complete IMS week 39 snapshots and publish
+on:
+  push:
+    branches:
+      - ops/complete-ims-week39-publication-20260929
+    paths:
+      - ".github/workflows/complete-ims-week39-publication.yml"
+permissions:
+  contents: read
+concurrency:
+  group: ims-production-recovery
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure IMS production SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_week39_key
+          chmod 600 ~/.ssh/ims_week39_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Rebuild remaining models, verify full coverage, publish
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_week39_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=50 \
+            "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          if ! venv/bin/python verify_live_ims_gate.py >/tmp/ims-week39-import-gate.log 2>&1; then
+            echo "IMS_DATA_GATE|FAIL"
+            exit 1
+          fi
+          venv/bin/python - <<'PY'
+          from sqlalchemy import desc
+          from app import create_app
+          from app.models import IMSImportJob, IMSUpload
+          from config import Config
+          app = create_app(Config)
+          with app.app_context():
+              upload = (IMSUpload.query
+                  .filter_by(year=2026, month=9, status=IMSUpload.STATUS_COMPLETED)
+                  .order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id))
+                  .first())
+              if upload is None or int(upload.week_number or 0) != 39 or upload.reconciliation_status != "PASSED":
+                  raise SystemExit("IMS_DATA_GATE|REFUSED|unexpected_source")
+              job = IMSImportJob.query.filter_by(ims_upload_id=int(upload.id)).order_by(desc(IMSImportJob.id)).first()
+              if job is None or job.status != IMSImportJob.STATUS_COMPLETED:
+                  raise SystemExit("IMS_JOB|REFUSED|source_not_completed")
+              active = IMSImportJob.query.filter(
+                  IMSImportJob.status.in_((IMSImportJob.STATUS_QUEUED, IMSImportJob.STATUS_PROCESSING))
+              ).count()
+              if active:
+                  raise SystemExit("IMS_JOB|REFUSED|active_import_exists")
+              print(f"IMS_SOURCE|PASS|upload={upload.id}|week=39")
+          PY
+          worker_stopped=0
+          restart_worker() {
+            if [ "$worker_stopped" = 1 ]; then
+              sudo systemctl start ims-import-worker.service >/dev/null
+              worker_stopped=0
+            fi
+          }
+          trap restart_worker EXIT
+          sudo systemctl stop ims-import-worker.service
+          worker_stopped=1
+          test "$(sudo systemctl is-active ims-import-worker.service || true)" != active
+          if ! venv/bin/python - <<'PY' >/tmp/ims-week39-complete-publication.log 2>&1
+          import json
+          import sqlalchemy as sa
+          from sqlalchemy import desc, func
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload
+          from app.services.dashboard_service import DashboardService
+          from app.services.ims_progress_store import IMSProgressStore
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.services.import_roster_sync import IMSRosterSyncService
+          from app.services.market_analysis_service import MarketAnalysisService
+          from app.services.period_service import PeriodService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import (
+              PersistentRegionSnapshotService, region_snapshots,
+          )
+          from app.services.persistent_representative_snapshot_service import (
+              PersistentRepresentativeSnapshotService, representative_snapshots,
+          )
+          from config import Config
+
+          app = create_app(Config)
+          with app.app_context():
+              upload = (IMSUpload.query
+                  .filter_by(year=2026, month=9, status=IMSUpload.STATUS_COMPLETED)
+                  .order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id))
+                  .first())
+              if upload is None or int(upload.week_number or 0) != 39:
+                  raise RuntimeError("wrong source")
+              job = IMSImportJob.query.filter_by(ims_upload_id=int(upload.id)).order_by(desc(IMSImportJob.id)).first()
+              if job is None or job.status != IMSImportJob.STATUS_COMPLETED:
+                  raise RuntimeError("completed import missing")
+
+              # Validate dashboard and market using the exact current IMS/production identity.
+              ims_id, production_id = PersistentDashboardSnapshotService.source_identity(2026, 9)
+              if int(ims_id or 0) != int(upload.id) or not PersistentDashboardSnapshotService.generation_ready(
+                  2026, 9, ims_id, production_id
+              ):
+                  raise RuntimeError("dashboard snapshot is not ready for current source")
+              dashboard = PersistentDashboardSnapshotService.get_active(2026, 9)
+              if not isinstance(dashboard, dict) or not dashboard:
+                  raise RuntimeError("dashboard snapshot payload is missing")
+              market = MarketAnalysisService(2026, 9).build()
+              groups = market.get("groups") or []
+              available = [row for row in groups if row.get("market_available")]
+              if (not market.get("has_competition") or len(groups) != 7 or len(available) != 7
+                      or int(market.get("source_week") or 0) != 39
+                      or float(market.get("market_total_value") or 0) <= 0
+                      or float(market.get("competitor_total_value") or 0) <= 0):
+                  raise RuntimeError("market snapshot validation failed")
+
+              # The pending-publication gate intentionally hides this source from readers.
+              # Validate its complete, exact generation directly before opening that gate.
+              region_set = PersistentRegionSnapshotService._existing_set(
+                  2026, 9, ims_id, production_id
+              )
+              if region_set is None or region_set.status != PersistentRegionSnapshotService.STATUS_ACTIVE:
+                  raise RuntimeError("current region generation is not active")
+              expected_regions = PersistentRegionSnapshotService.region_keys(2026, 9)
+              region_rows = int(db.session.execute(
+                  sa.select(sa.func.count()).select_from(region_snapshots).where(
+                      region_snapshots.c.set_id == int(region_set.id)
+                  )
+              ).scalar() or 0)
+              region_payloads = PersistentRegionSnapshotService._payloads_from_set(int(region_set.id))
+              if region_rows != 11 or len(region_payloads) != 11 or set(region_payloads) != set(expected_regions):
+                  raise RuntimeError("current region generation is incomplete")
+              if not any(str(key).startswith("901") for key in region_payloads):
+                  raise RuntimeError("required region payload is missing")
+
+              # Force a full representative snapshot build from this accepted IMS generation.
+              rep_result = PersistentRepresentativeSnapshotService.build_for_period(
+                  2026, 9, force=True
+              )
+              rep_set = PersistentRepresentativeSnapshotService._latest_exact_active(
+                  2026, 9, ims_id, production_id
+              )
+              expected_reps = len(PersistentRepresentativeSnapshotService.representative_ids(
+                  2026, 9, ims_id
+              ))
+              rep_rows = int(db.session.execute(
+                  sa.select(sa.func.count()).select_from(representative_snapshots).where(
+                      representative_snapshots.c.set_id == int(rep_set.id)
+                  )
+              ).scalar() or 0) if rep_set is not None else 0
+              if (rep_result.get("status") not in {"ACTIVE", "REUSED"} or rep_set is None
+                      or expected_reps != 113 or rep_rows != expected_reps
+                      or int(rep_set.representative_count or 0) != expected_reps):
+                  raise RuntimeError("representative snapshot coverage is incomplete")
+
+              # Only now make the new generation visible and finalize the upload journal.
+              IMSRosterSyncService.sync_latest()
+              IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=int(upload.id))
+              db.session.refresh(job)
+              try:
+                  summary = json.loads(job.result_summary or "{}")
+              except (TypeError, ValueError):
+                  summary = {}
+              summary["publication_ready"] = True
+              summary["publication_ready_source"] = "verified_live_read_model_refresh"
+              summary["publication_ready_upload_id"] = int(upload.id)
+              job.result_summary = json.dumps(summary, ensure_ascii=False, default=str)
+              db.session.commit()
+              IMSProgressStore.write(
+                  job.id, percent=100, stage="completed",
+                  message="IMS yüklemesi ve ekran güncellemeleri tamamlandı",
+                  detail="39. hafta canlı yayında",
+                  status=IMSImportJob.STATUS_COMPLETED,
+              )
+
+              # Verify public read paths after the publication gate is open.
+              visible_regions = PersistentRegionSnapshotService.get_active_all(2026, 9)
+              if len(visible_regions) != 11:
+                  raise RuntimeError("published region generation is not visible")
+              period = PeriodService.get_active_period()
+              if int(period.get("upload_id") or 0) != int(upload.id) or int(period.get("week_number") or 0) != 39:
+                  raise RuntimeError("active period did not advance to week 39")
+              print(
+                  f"IMS_PUBLICATION|PASS|upload={upload.id}|week=39|dashboard=1|"
+                  f"market=7/7|regions={region_rows}/11|representatives={rep_rows}/{expected_reps}|progress=100"
+              )
+          PY
+          then
+            echo "IMS_FINALIZATION|FAIL"
+            exit 1
+          fi
+          restart_worker
+          trap - EXIT
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
+          cat /tmp/ims-week39-complete-publication.log
+          REMOTE
