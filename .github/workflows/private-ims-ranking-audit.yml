@@ -44,135 +44,79 @@ jobs:
           cd "$IMS_PATH"
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           venv/bin/python - <<'PYTHON'
-          import hashlib,json,math
+          import json
           from collections import defaultdict
           from decimal import Decimal
-          from pathlib import Path
           from sqlalchemy import desc
-          from openpyxl import load_workbook
           from app import create_app
           from app.extensions import db
           from app.models import IMSUpload,IMSSummary,Product,Representative,ProductionResultUpload,ProductionResult
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.production_result_import_service import ProductionResultImportService
-          from app.query.dashboard_query import DashboardQuery
-          from app.query.filters import DashboardFilterParams
-          from app.formatters.dashboard_formatter import DashboardFormatter
           from config import Config
           app=create_app(Config)
           def norm(v): return "".join(ch for ch in str(v or "").upper() if ch.isalnum())
-          def sha(path):
-              h=hashlib.sha256()
-              with Path(path).open("rb") as f:
-                  for c in iter(lambda:f.read(1024*1024),b""): h.update(c)
-              return h.hexdigest()
           with app.app_context():
-              output={"product":"ACNEMIX","year":2026,"months":[],"snapshots":[],"errors":[]}
-              current=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
-              current_products=(current.get("ytd_product_rankings") or {}).get("products") or []
-              current_acnemix=next((x for x in current_products if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
+              output={"product":"ACNEMIX","year":2026,"months":[],"snapshots":[]}
+              latest=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
+              products=(latest.get("ytd_product_rankings") or {}).get("products") or []
+              acnemix=next((x for x in products if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
               chosen={}
-              for item in (current_acnemix or {}).get("rankings",[])[:3]:
+              for item in (acnemix or {}).get("rankings",[])[:3]:
                   rid=int(item["representative_id"])
                   rep=db.session.get(Representative,rid)
                   if rep is None: raise RuntimeError("snapshot_representative_missing:"+str(rid))
                   chosen[rid]=rep
               if len(chosen)!=3: raise RuntimeError("top_three_snapshot_missing")
-              product=Product.query.filter(Product.is_active.is_(True)).all()
-              acnemix=[p for p in product if norm(p.product_name)=="ACNEMIX"]
-              if len(acnemix)!=1: raise RuntimeError("acnemix_product_mapping_failed")
-              pid=int(acnemix[0].id)
-              uploads=ProductionResultUpload.query.filter(
-                  ProductionResultUpload.year==2026,ProductionResultUpload.month.between(1,8),
-                  ProductionResultUpload.status==ProductionResultUpload.STATUS_APPLIED
-              ).order_by(ProductionResultUpload.month.asc(),ProductionResultUpload.production_stage.desc(),
-                         ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()).all()
-              by_month=defaultdict(list)
-              file_values={}
-              root=Path(app.config["UPLOAD_FOLDER"])/"production_results"
-              db_rows={}
-              for pu in uploads:
-                  month,uid=int(pu.month),int(pu.id)
-                  by_month[month].append(pu)
-                  path=root/str(pu.stored_file_name or "")
-                  if not path.is_file() or sha(path)!=str(pu.source_hash or ""):
-                      raise RuntimeError("locked_workbook_hash_mismatch_month_"+str(month))
-                  svc=ProductionResultImportService(path,pu.year,pu.month,production_stage=pu.production_stage)
-                  svc._load_master_maps()
-                  wb=load_workbook(path,read_only=False,data_only=True)
-                  sheet=svc._find_sheet(wb,"KUTU")
-                  layout=svc._layout(sheet,"KUTU")
-                  values={}
-                  for rn in range(layout["header_row"]+1,sheet.max_row+1):
-                      raw_name=sheet.cell(rn,layout["name_column"]).value
-                      raw_region=sheet.cell(rn,layout["region_column"]).value
-                      rep=svc._match_representative(raw_name,raw_region)
-                      if rep is None or int(rep.id) not in chosen: continue
-                      cols=layout["actual_columns"]
-                      pids=layout["product_ids"]
-                      col=next((c for p,c in zip(pids,cols) if int(p)==pid),None)
-                      if col is not None:
-                          value=svc._number(sheet.cell(rn,col).value)
-                          if value is not None: values[int(rep.id)]=float(value)
-                  wb.close()
-                  file_values[uid]=values
-                  for row in ProductionResult.query.filter_by(upload_id=uid).filter(
-                      ProductionResult.representative_id.in_(list(chosen)),
-                      ProductionResult.product_id==pid
-                  ).all():
-                      db_rows[(uid,int(row.representative_id))]=float(row.actual_unit or 0)
-              ims_rows=IMSSummary.query.filter(
-                  IMSSummary.year==2026,IMSSummary.month.between(1,9),
-                  IMSSummary.representative_id.in_(list(chosen)),IMSSummary.product_id==pid
-              ).order_by(desc(IMSSummary.upload_id),desc(IMSSummary.id)).all()
-              ims={}
-              for row in ims_rows: ims.setdefault((int(row.month),int(row.representative_id)),float(row.unit or 0))
+              prod=next((p for p in Product.query.filter(Product.is_active.is_(True)).all() if norm(p.product_name)=="ACNEMIX"),None)
+              if prod is None: raise RuntimeError("acnemix_product_mapping_failed")
+              pid=int(prod.id)
               sums={rid:Decimal("0") for rid in chosen}
               for month in range(1,10):
+                  uploads=ProductionResultUpload.query.filter_by(
+                      year=2026,month=month,status=ProductionResultUpload.STATUS_APPLIED
+                  ).order_by(ProductionResultUpload.production_stage.desc(),
+                      ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()).all()
+                  chosen_upload=uploads[0] if uploads else None
                   month_item={"month":month,"source_by_person":{}}
                   for rid,rep in chosen.items():
-                      source=None; value=None; matching_upload=None
-                      if month<=8:
-                          for pu in by_month.get(month,[]):
-                              uid=int(pu.id)
-                              if rid in file_values.get(uid,{}):
-                                  value=file_values[uid][rid]
-                                  source=f"Üretim {pu.production_stage}. aşama"
-                                  matching_upload=pu
-                                  stored=db_rows.get((uid,rid))
-                                  month_item.setdefault("workbook_db_checks",[]).append({
-                                      "representative":rep.rep_name,"file_id":uid,
-                                      "matches_loaded_row":stored is not None and abs(float(value)-stored)<=0.005
-                                  })
-                                  break
+                      value=None; source="IMS fallback"; file_name=None; upload_id=None
+                      if chosen_upload is not None:
+                          row=ProductionResult.query.filter_by(
+                              upload_id=chosen_upload.id,representative_id=rid,product_id=pid
+                          ).first()
+                          if row is not None and row.actual_unit is not None:
+                              value=Decimal(str(row.actual_unit))
+                              source=f"Üretim {chosen_upload.production_stage}. aşama"
+                              file_name=chosen_upload.file_name
+                              upload_id=int(chosen_upload.id)
                       if value is None:
-                          value=ims.get((month,rid),0.0)
-                          source="IMS"+(" #52 / 39. hafta" if month==9 else " fallback")
-                      sums[rid]+=Decimal(str(value or 0))
+                          imsrow=IMSSummary.query.filter_by(
+                              year=2026,month=month,representative_id=rid,product_id=pid
+                          ).order_by(desc(IMSSummary.upload_id),desc(IMSSummary.id)).first()
+                          value=Decimal(str((imsrow.unit if imsrow else 0) or 0))
+                          source=("IMS #"+str(imsrow.upload_id) if imsrow else "IMS kaydı yok; 0")
+                      sums[rid]+=value
                       month_item["source_by_person"][rep.rep_name]={
-                          "boxes":round(float(value or 0),2),"source":source,
-                          "file":matching_upload.file_name if matching_upload else None
+                          "boxes":round(float(value),2),"source":source,"file":file_name,"upload_id":upload_id
                       }
                   output["months"].append(month_item)
                   ims_id,production_id=PersistentDashboardSnapshotService.source_identity(2026,month)
-                  snapshot=PersistentDashboardSnapshotService.get_generation_for_source(2026,month,ims_id,production_id)
-                  if snapshot is None:
-                      output["snapshots"].append({"month":month,"available":False,"ims_upload_id":ims_id,"production_upload_id":production_id})
+                  snap=PersistentDashboardSnapshotService.get_generation_for_source(2026,month,ims_id,production_id)
+                  if snap is None:
+                      output["snapshots"].append({"month":month,"available":False})
                   else:
-                      rankings=(snapshot.get("ytd_product_rankings") or {}).get("products") or []
-                      item=next((x for x in rankings if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
-                      snapvals={int(x.get("representative_id")):float(x.get("total_unit") or 0) for x in (item or {}).get("rankings",[])}
-                      output["snapshots"].append({"month":month,"available":True,
-                          "values":{rep.rep_name:snapvals.get(int(rep.id)) for rep in chosen.values()}})
-              output["sums"]={rep.rep_name:round(float(sums[rid]),2) for rid,rep in chosen.items()}
-              out_payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
-              rankings=(out_payload.get("ytd_product_rankings") or {}).get("products") or []
-              item=next((x for x in rankings if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
-              output["sep_snapshot_top3"]=[{"rank":x.get("rank"),"representative":x.get("representative_name"),"boxes":x.get("total_unit")}
-                    for x in (item or {}).get("rankings",[])[:3]]
-              rows=DashboardQuery().load_ytd_product_rankings(2026,9)
-              filtered=[r for r in rows if norm(r.product_name)=="ACNEMIX" and int(r.representative_id) in chosen]
-              output["reconstructed_source_totals"]={r.representative_name:round(float(r.total_unit),2) for r in filtered}
+                      ranking_products=(snap.get("ytd_product_rankings") or {}).get("products") or []
+                      p=next((x for x in ranking_products if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
+                      values={int(x.get("representative_id")):float(x.get("total_unit") or 0) for x in (p or {}).get("rankings",[]) if x.get("representative_id") is not None}
+                      cumulative={rep.rep_name:round(float(sums[rid]),2) for rid,rep in chosen.items()}
+                      in_snapshot={rep.rep_name:values.get(rid) for rid,rep in chosen.items()}
+                      match={name:(None if in_snapshot[name] is None else abs(cumulative[name]-in_snapshot[name])<=0.01) for name in cumulative}
+                      output["snapshots"].append({"month":month,"available":True,"cumulative":cumulative,"snapshot_ytd":in_snapshot,"matches":match})
+              output["monthly_sum_ytd"]={rep.rep_name:round(float(sums[rid]),2) for rid,rep in chosen.items()}
+              output["snapshot_top3"]=[{"rank":x.get("rank"),"representative":x.get("representative_name"),"boxes":x.get("total_unit")} for x in (acnemix or {}).get("rankings",[])[:3]]
+              reconstructed=sorted([{"representative":rep.rep_name,"boxes":round(float(sums[rid]),2)} for rid,rep in chosen.items()],key=lambda x:x["boxes"],reverse=True)
+              output["reconstructed_order"]=[x["representative"] for x in reconstructed]
+              output["order_matches_snapshot"]=output["reconstructed_order"]==[x["representative"] for x in output["snapshot_top3"]]
           print(json.dumps(output,ensure_ascii=False,separators=(",",":")))
           PYTHON
           REMOTE
