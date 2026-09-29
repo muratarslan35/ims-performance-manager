@@ -4,7 +4,7 @@ on:
     branches:
       - audit/ims-top10-source-20260929
     paths:
-      - ".github/workflows/private-ims-ranking-audit.yml"
+      - ".github/workflows/private-ims-top10-audit.yml"
 permissions:
   contents: read
 jobs:
