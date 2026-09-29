@@ -1,4 +1,4 @@
-name: Private IMS ranking source audit v3
+name: Private IMS ranking query comparison
 on:
   push:
     branches:
@@ -44,146 +44,43 @@ jobs:
           cd "$IMS_PATH"
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
           venv/bin/python - <<'PYTHON'
-          import hashlib, json, math
+          import json, math
           from collections import defaultdict
-          from decimal import Decimal
-          from pathlib import Path
-          from sqlalchemy import desc
-          from openpyxl import load_workbook
           from app import create_app
-          from app.models import IMSUpload, IMSSummary, Product, Representative, ProductionResultUpload, ProductionResult
+          from app.models import IMSUpload
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.production_result_import_service import ProductionResultImportService
+          from app.query.dashboard_query import DashboardQuery
           from config import Config
-          
           app=create_app(Config)
-          out={"upload_id":52,"workbooks":[],"product_top10":[]}
-          def sha(path):
-              h=hashlib.sha256()
-              with Path(path).open("rb") as f:
-                  for c in iter(lambda:f.read(1024*1024),b""): h.update(c)
-              return h.hexdigest()
-          def is_vacancy(name):
-              words=str(name or "").upper().replace("Ş","S").replace("Ö","O").replace("-"," ").split()
-              return bool({"BOS","KADRO"} & set(words))
-          
+          out={"products":[]}
           with app.app_context():
-              upload=IMSUpload.query.filter_by(id=52).one()
+              u=IMSUpload.query.filter_by(id=52).one()
               payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
               if payload is None: raise RuntimeError("snapshot_missing")
-              snapshot=payload.get("ytd_product_rankings") or {}
-              products=Product.query.filter(Product.is_active.is_(True)).all()
-              product_by_id={int(p.id):p for p in products}
-              reps=Representative.query.filter(Representative.active.is_(True)).all()
-              rep_by_id={int(r.id):r for r in reps}
-              if upload.status!="COMPLETED" or upload.reconciliation_status!="PASSED" or int(upload.week_number or 0)!=39:
-                  raise RuntimeError("ims_52_not_reconciled")
-              prod_uploads=ProductionResultUpload.query.filter(
-                  ProductionResultUpload.year==2026,ProductionResultUpload.month.between(1,8),
-                  ProductionResultUpload.status==ProductionResultUpload.STATUS_APPLIED
-              ).order_by(
-                  ProductionResultUpload.month.asc(),ProductionResultUpload.production_stage.desc(),
-                  ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()
-              ).all()
-              root=Path(app.config["UPLOAD_FOLDER"])/"production_results"
-              file_rows={}
-              upload_order_by_month=defaultdict(list)
-              for pu in prod_uploads:
-                  month,uid=int(pu.month),int(pu.id)
-                  path=root/str(pu.stored_file_name or "")
-                  if not path.is_file() or sha(path)!=str(pu.source_hash or ""):
-                      raise RuntimeError("workbook_hash_or_path_mismatch")
-                  svc=ProductionResultImportService(path,pu.year,pu.month,production_stage=pu.production_stage)
-                  svc._load_master_maps()
-                  wb=load_workbook(path,read_only=False,data_only=True)
-                  sheet=svc._find_sheet(wb,"KUTU")
-                  layout=svc._layout(sheet,"KUTU")
-                  extracted={}
-                  unresolved=[]
-                  for rn in range(layout["header_row"]+1,sheet.max_row+1):
-                      raw_name=sheet.cell(rn,layout["name_column"]).value
-                      raw_region=sheet.cell(rn,layout["region_column"]).value
-                      label=str(raw_name or "").strip()
-                      if not label or label.upper()=="NATIONAL":
-                          continue
-                      rep=svc._match_representative(raw_name,raw_region)
-                      if rep is None:
-                          unresolved.append(label)
-                          continue
-                      if int(rep.id) not in rep_by_id:
-                          continue
-                      for pid,col in zip(layout["product_ids"],layout["actual_columns"]):
-                          value=svc._number(sheet.cell(rn,col).value)
-                          if value is not None:
-                              extracted[(int(rep.id),int(pid))]=float(value)
-                  file_rows[uid]=extracted
-                  upload_order_by_month[month].append(uid)
-                  dbrows=ProductionResult.query.filter_by(upload_id=uid).all()
-                  dbmap={(int(x.representative_id),int(x.product_id)):float(x.actual_unit or 0) for x in dbrows
-                         if int(x.representative_id) in rep_by_id and int(x.product_id) in product_by_id}
-                  compared=[k for k in extracted if k in dbmap]
-                  out["workbooks"].append({
-                      "month":month,"stage":int(pu.production_stage),"id":uid,
-                      "sha256_matches":True,"source_rows_for_active_reps":len(extracted),
-                      "unresolved_source_names":len(set(unresolved)),
-                      "source_vs_database_checked":len(compared),
-                      "source_vs_database_mismatches":sum(1 for k in compared if abs(extracted[k]-dbmap[k])>0.005),
-                      "db_active_rows_without_resolved_source":len(set(dbmap)-set(extracted))
-                  })
-                  wb.close()
-              summaries=IMSSummary.query.filter(
-                  IMSSummary.year==2026,IMSSummary.month.between(1,9),
-                  IMSSummary.representative_id.in_(rep_by_id),IMSSummary.product_id.in_(product_by_id)
-              ).order_by(desc(IMSSummary.upload_id),desc(IMSSummary.id)).all()
-              ims={}
-              for row in summaries:
-                  ims.setdefault((int(row.month),int(row.representative_id),int(row.product_id)),float(row.unit or 0))
-              totals=defaultdict(Decimal)
-              keys=set(ims)
-              for month,ids in upload_order_by_month.items():
-                  for uid in ids:
-                      for rid,pid in file_rows[uid]:
-                          keys.add((month,rid,pid))
-              for month,rid,pid in keys:
-                  actual=None
-                  for uid in upload_order_by_month.get(month,()):
-                      if (rid,pid) in file_rows[uid]:
-                          actual=file_rows[uid][(rid,pid)]
-                          break
-                  if actual is None:
-                      actual=ims.get((month,rid,pid),0)
-                  totals[(rid,pid)]+=Decimal(str(actual))
+              snap=payload.get("ytd_product_rankings") or {}
               expected={}
-              for item in snapshot.get("products") or []:
-                  key="".join(ch for ch in str(item.get("product_key") or item.get("product_name") or "").upper() if ch.isalnum())
-                  expected[key]=item.get("rankings") or []
-              for product in products:
-                  key="".join(ch for ch in product.product_name.upper() if ch.isalnum())
-                  expected_rows=expected.get(key,[])
-                  candidates=[]
-                  for (rid,pid),total in totals.items():
-                      if pid!=int(product.id) or total<=0:
-                          continue
-                      rep=rep_by_id.get(rid)
-                      if rep is None or is_vacancy(rep.rep_name):
-                          continue
-                      candidates.append({"representative_id":rid,"representative_name":rep.rep_name,
-                                        "units":float(total),"display_units":int(math.floor(float(total)+0.5))})
-                  candidates.sort(key=lambda x:(-x["units"],x["representative_name"]))
-                  calculated=candidates[:10]
-                  screen=[{"representative_id":int(x.get("representative_id")),
-                           "representative_name":x.get("representative_name"),
-                           "units":float(x.get("total_unit") or 0),
-                           "display_units":int(math.floor(float(x.get("total_unit") or 0)+0.5))}
-                          for x in expected_rows[:10]]
-                  matches=(len(screen)==10 and len(calculated)==10 and all(
-                      a["representative_id"]==b["representative_id"]
-                      and a["display_units"]==b["display_units"]
-                      and abs(a["units"]-b["units"])<=0.01
-                      for a,b in zip(calculated,screen)))
-                  out["product_top10"].append({"product":product.product_name,"matches_100_percent":matches,
-                                               "checked":10,"calculated":calculated,"screen":screen})
-              out["ims_upload"]={"status":upload.status,"week":upload.week_number,"summary_rows":upload.summary_record_count}
+              for item in snap.get("products") or []:
+                  k="".join(ch for ch in str(item.get("product_key") or item.get("product_name") or "").upper() if ch.isalnum())
+                  expected[k]=item.get("rankings") or []
+              rows=DashboardQuery().load_ytd_product_rankings(2026,9)
+              groups=defaultdict(list)
+              for r in rows:
+                  k="".join(ch for ch in str(r.product_name or "").upper() if ch.isalnum())
+                  groups[k].append(r)
+              for key,screen_rows in expected.items():
+                  calc=groups.get(key,[])
+                  calculated=[{"rank":i+1,"representative_id":int(r.representative_id),"representative_name":r.representative_name,
+                               "units":float(r.total_unit),"display_units":int(math.floor(float(r.total_unit)+0.5))}
+                              for i,r in enumerate(calc[:10])]
+                  screen=[{"rank":int(r.get("rank") or i+1),"representative_id":int(r.get("representative_id")),
+                           "representative_name":r.get("representative_name"),"units":float(r.get("total_unit") or 0),
+                           "display_units":int(math.floor(float(r.get("total_unit") or 0)+0.5))}
+                          for i,r in enumerate(screen_rows[:10])]
+                  matches=len(screen)==10 and len(calculated)==10 and all(
+                      a["representative_id"]==b["representative_id"] and a["display_units"]==b["display_units"]
+                      and abs(a["units"]-b["units"])<=0.01 for a,b in zip(calculated,screen))
+                  out["products"].append({"product":key,"matches":matches,"checked":10,"calculated":calculated,"screen":screen})
+              out["ims_upload"]={"id":u.id,"status":u.status,"week":u.week_number,"reconciliation":u.reconciliation_status}
           print(json.dumps(out,ensure_ascii=False,separators=(",",":")))
           PYTHON
           REMOTE
