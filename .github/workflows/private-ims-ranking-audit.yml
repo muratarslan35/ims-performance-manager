@@ -1,0 +1,194 @@
+name: Private IMS Acnemix top-three monthly reconciliation
+on:
+  push:
+    branches:
+      - audit/ims-ranking-source-20260929
+    paths:
+      - ".github/workflows/private-ims-ranking-audit.yml"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure read-only IMS SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
+          chmod 600 ~/.ssh/ims_audit_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile three representatives and monthly sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/audit_public.b64" <<'PUBLIC_KEY'
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAzpO8jXdfv5S7jyb+/0hpmX1X/+0jzj6OXS11tHBoZvS5W21OvsEVNLNrSNY86PmxhCGIkvCd375/k5bNpwpGeQ0hRFefM39G4/iKc7MCEa2ZHznzmm/o/uvkhldOWQZsvGCZdI6EymZjcRz/VYytlPBAf5/o80eawxaVxMQHgiLcXP2cYMr6IpcKloxgdMxZjT1IQp27ua7KRH0uE1jsV04Z3jnvqf7mhYkEbqaPU3W/n0KITo3VhMzwoksmgLdWlqx8dGd4/vO4TLGf8cRC4JyXw77R/sKzB7R3FcX4cPlHJp/DngErVzCrLiOtDww0Bh+4uW3ZOnerW5zne5t5Fzu7XmSWjsGzekRsWitt4xGyBh5dcZW0Bmt9JoMAG/l2NvSVMZbVyXKYzSw7LK4MwXkwArY9n79e56nWL5WTxeGNK8YA0vUosOW13LKHBat2U6S1b1+XzdewVPtTAkCMGgshiyFoNdYNBahbltiaiRTzZdteO+I5VrOLGXy2wDzPAgMBAAE=
+          PUBLIC_KEY
+          openssl base64 -d -A -in "$RUNNER_TEMP/audit_public.b64" -out "$RUNNER_TEMP/audit_public.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/audit_public.der" -out "$RUNNER_TEMP/audit_public.pem"
+          set +e
+          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=60 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/report.json" 2> "$RUNNER_TEMP/remote.err" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          venv/bin/python - <<'PYTHON'
+          import hashlib,json,math
+          from collections import defaultdict
+          from decimal import Decimal
+          from pathlib import Path
+          from sqlalchemy import desc
+          from openpyxl import load_workbook
+          from app import create_app
+          from app.models import IMSUpload,IMSSummary,Product,Representative,ProductionResultUpload,ProductionResult
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.production_result_import_service import ProductionResultImportService
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.formatters.dashboard_formatter import DashboardFormatter
+          from config import Config
+          app=create_app(Config)
+          target_names=("YAKUP CAGIR","MURAT ARSLAN","GULBAHAR KARA")
+          def norm(v): return "".join(ch for ch in str(v or "").upper() if ch.isalnum())
+          def sha(path):
+              h=hashlib.sha256()
+              with Path(path).open("rb") as f:
+                  for c in iter(lambda:f.read(1024*1024),b""): h.update(c)
+              return h.hexdigest()
+          with app.app_context():
+              output={"product":"ACNEMIX","year":2026,"months":[],"snapshots":[],"errors":[]}
+              reps=Representative.query.filter(Representative.active.is_(True)).all()
+              rep_by_name={norm(r.rep_name):r for r in reps}
+              chosen={}
+              for name in target_names:
+                  r=rep_by_name.get(name)
+                  if r is None: raise RuntimeError("target_representative_not_found:"+name)
+                  chosen[int(r.id)]=r
+              product=Product.query.filter(Product.is_active.is_(True)).all()
+              acnemix=[p for p in product if norm(p.product_name)=="ACNEMIX"]
+              if len(acnemix)!=1: raise RuntimeError("acnemix_product_mapping_failed")
+              pid=int(acnemix[0].id)
+              uploads=ProductionResultUpload.query.filter(
+                  ProductionResultUpload.year==2026,ProductionResultUpload.month.between(1,8),
+                  ProductionResultUpload.status==ProductionResultUpload.STATUS_APPLIED
+              ).order_by(ProductionResultUpload.month.asc(),ProductionResultUpload.production_stage.desc(),
+                         ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()).all()
+              by_month=defaultdict(list)
+              file_values={}
+              root=Path(app.config["UPLOAD_FOLDER"])/"production_results"
+              db_rows={}
+              for pu in uploads:
+                  month,uid=int(pu.month),int(pu.id)
+                  by_month[month].append(pu)
+                  path=root/str(pu.stored_file_name or "")
+                  if not path.is_file() or sha(path)!=str(pu.source_hash or ""):
+                      raise RuntimeError("locked_workbook_hash_mismatch_month_"+str(month))
+                  svc=ProductionResultImportService(path,pu.year,pu.month,production_stage=pu.production_stage)
+                  svc._load_master_maps()
+                  wb=load_workbook(path,read_only=False,data_only=True)
+                  sheet=svc._find_sheet(wb,"KUTU")
+                  layout=svc._layout(sheet,"KUTU")
+                  values={}
+                  for rn in range(layout["header_row"]+1,sheet.max_row+1):
+                      raw_name=sheet.cell(rn,layout["name_column"]).value
+                      raw_region=sheet.cell(rn,layout["region_column"]).value
+                      rep=svc._match_representative(raw_name,raw_region)
+                      if rep is None or int(rep.id) not in chosen: continue
+                      cols=layout["actual_columns"]
+                      pids=layout["product_ids"]
+                      col=next((c for p,c in zip(pids,cols) if int(p)==pid),None)
+                      if col is not None:
+                          value=svc._number(sheet.cell(rn,col).value)
+                          if value is not None: values[int(rep.id)]=float(value)
+                  wb.close()
+                  file_values[uid]=values
+                  for row in ProductionResult.query.filter_by(upload_id=uid).filter(
+                      ProductionResult.representative_id.in_(list(chosen)),
+                      ProductionResult.product_id==pid
+                  ).all():
+                      db_rows[(uid,int(row.representative_id))]=float(row.actual_unit or 0)
+              ims_rows=IMSSummary.query.filter(
+                  IMSSummary.year==2026,IMSSummary.month.between(1,9),
+                  IMSSummary.representative_id.in_(list(chosen)),IMSSummary.product_id==pid
+              ).order_by(desc(IMSSummary.upload_id),desc(IMSSummary.id)).all()
+              ims={}
+              for row in ims_rows: ims.setdefault((int(row.month),int(row.representative_id)),float(row.unit or 0))
+              sums={rid:Decimal("0") for rid in chosen}
+              for month in range(1,10):
+                  month_item={"month":month,"source_by_person":{}}
+                  for rid,rep in chosen.items():
+                      source=None; value=None; matching_upload=None
+                      if month<=8:
+                          for pu in by_month.get(month,[]):
+                              uid=int(pu.id)
+                              if rid in file_values.get(uid,{}):
+                                  value=file_values[uid][rid]
+                                  source=f"Üretim {pu.production_stage}. aşama"
+                                  matching_upload=pu
+                                  stored=db_rows.get((uid,rid))
+                                  month_item.setdefault("workbook_db_checks",[]).append({
+                                      "representative":rep.rep_name,"file_id":uid,
+                                      "matches_loaded_row":stored is not None and abs(float(value)-stored)<=0.005
+                                  })
+                                  break
+                      if value is None:
+                          value=ims.get((month,rid),0.0)
+                          source="IMS"+(" #52 / 39. hafta" if month==9 else " fallback")
+                      sums[rid]+=Decimal(str(value or 0))
+                      month_item["source_by_person"][rep.rep_name]={
+                          "boxes":round(float(value or 0),2),"source":source,
+                          "file":matching_upload.file_name if matching_upload else None
+                      }
+                  output["months"].append(month_item)
+                  ims_id,production_id=PersistentDashboardSnapshotService.source_identity(2026,month)
+                  snapshot=PersistentDashboardSnapshotService.get_generation_for_source(2026,month,ims_id,production_id)
+                  if snapshot is None:
+                      output["snapshots"].append({"month":month,"available":False,"ims_upload_id":ims_id,"production_upload_id":production_id})
+                  else:
+                      rankings=(snapshot.get("ytd_product_rankings") or {}).get("products") or []
+                      item=next((x for x in rankings if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
+                      snapvals={norm(x.get("representative_name")):float(x.get("total_unit") or 0) for x in (item or {}).get("rankings",[])}
+                      output["snapshots"].append({"month":month,"available":True,
+                          "values":{rep.rep_name:snapvals.get(norm(rep.rep_name)) for rep in chosen.values()}})
+              output["sums"]={rep.rep_name:round(float(sums[rid]),2) for rid,rep in chosen.items()}
+              out_payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
+              rankings=(out_payload.get("ytd_product_rankings") or {}).get("products") or []
+              item=next((x for x in rankings if norm(x.get("product_key") or x.get("product_name"))=="ACNEMIX"),None)
+              output["sep_snapshot_top3"]=[{"rank":x.get("rank"),"representative":x.get("representative_name"),"boxes":x.get("total_unit")}
+                    for x in (item or {}).get("rankings",[])[:3]]
+              rows=DashboardQuery().load_ytd_product_rankings(2026,9)
+              filtered=[r for r in rows if norm(r.product_name)=="ACNEMIX" and int(r.representative_id) in chosen]
+              output["reconstructed_source_totals"]={r.representative_name:round(float(r.total_unit),2) for r in filtered}
+          print(json.dumps(output,ensure_ascii=False,separators=(",",":")))
+          PYTHON
+          REMOTE
+          SSH_STATUS=$?
+          set -e
+          if [ "$SSH_STATUS" -ne 0 ]; then
+            python3 - "$RUNNER_TEMP/report.json" "$RUNNER_TEMP/remote.err" "$SSH_STATUS" <<'ERRPY'
+          import base64,json,sys
+          from pathlib import Path
+          json.dump({"remote_exit":int(sys.argv[3]),"stdout_b64":base64.b64encode(Path(sys.argv[1]).read_bytes()).decode(),"stderr_b64":base64.b64encode(Path(sys.argv[2]).read_bytes()).decode()},open(sys.argv[1],"w"))
+          ERRPY
+          fi
+          AES_KEY=$(openssl rand -hex 32)
+          MAC_KEY=$(openssl rand -hex 32)
+          IV=$(openssl rand -hex 16)
+          openssl enc -aes-256-cbc -K "$AES_KEY" -iv "$IV" -in "$RUNNER_TEMP/report.json" -out "$RUNNER_TEMP/report.enc"
+          printf '%s%s' "$AES_KEY" "$MAC_KEY" | xxd -r -p > "$RUNNER_TEMP/key.bin"
+          openssl pkeyutl -encrypt -pubin -inkey "$RUNNER_TEMP/audit_public.pem" -in "$RUNNER_TEMP/key.bin" -out "$RUNNER_TEMP/key.enc" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256
+          HMAC=$(openssl dgst -sha256 -mac HMAC -macopt hexkey:"$MAC_KEY" -binary "$RUNNER_TEMP/report.enc" | openssl base64 -A)
+          WRAPPED_KEY=$(openssl base64 -A < "$RUNNER_TEMP/key.enc")
+          CIPHERTEXT=$(openssl base64 -A < "$RUNNER_TEMP/report.enc")
+          echo "AUDIT_CIPHER|iv=$IV|wrapped_key=$WRAPPED_KEY|hmac=$HMAC|ciphertext=$CIPHERTEXT"
