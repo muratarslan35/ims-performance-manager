@@ -173,6 +173,10 @@ jobs:
                       or int(rep_set.representative_count or 0) != expected_reps):
                   raise RuntimeError("representative snapshot coverage is incomplete")
 
+              enrichment = PersistentRegionSnapshotService.enrich_for_period(2026, 9)
+              if enrichment.get("status") not in {"ENRICHED", "REUSED"}:
+                  raise RuntimeError("region snapshot enrichment is incomplete")
+
               # Only now make the new generation visible and finalize the upload journal.
               IMSRosterSyncService.sync_latest()
               IMSUploadLifecycleService.seal_snapshot_master_state(upload_id=int(upload.id))
@@ -202,7 +206,8 @@ jobs:
                   raise RuntimeError("active period did not advance to week 39")
               print(
                   f"IMS_PUBLICATION|PASS|upload={upload.id}|week=39|dashboard=1|"
-                  f"market=7/7|regions={region_rows}/11|representatives={rep_rows}/{expected_reps}|progress=100"
+                  f"market=7/7|regions={region_rows}/11|representatives={rep_rows}/{expected_reps}|"
+                  f"enrichment={enrichment.get('status')}|progress=100"
               )
           PY
           then
