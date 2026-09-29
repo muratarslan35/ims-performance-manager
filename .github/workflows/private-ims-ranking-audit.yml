@@ -138,7 +138,7 @@ jobs:
                       audited.append({
                           "id":pu.id,"month":pu.month,"stage":pu.production_stage,
                           "file":pu.file_name,"source_hash":"FAIL" if "hash" in str(exc) or "source" in str(exc) else "CHECK",
-                          "excel_db_reconciliation":"FAIL","failure_type":type(exc).__name__
+                          "excel_db_reconciliation":"FAIL","failure_type":type(exc).__name__,"failure_detail":str(exc)[:600]
                       })
               output["production_source_audits"]=audited
 
