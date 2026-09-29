@@ -426,6 +426,50 @@ def _prepare_and_publish(app, completed):
     return True
 
 
+def _attempt_publication_with_retry(app, job):
+    """Keep the durable publication job retryable if snapshot code raises."""
+    job_id = int(job.id)
+    year, month = int(job.year), int(job.month)
+    try:
+        return _prepare_and_publish(app, job)
+    except Exception:
+        # A snapshot/cache/DB exception must not terminate the worker loop. The
+        # accepted IMS remains intact and _retryable_publication_job will pick
+        # this same unpublished job up again on the next retry interval.
+        try:
+            db.session.rollback()
+            refreshed = db.session.get(IMSImportJob, job_id)
+            if refreshed is not None:
+                refreshed.error_message = (
+                    "IMS başarıyla işlendi; snapshot üretimi hata verdi ve otomatik yeniden denenecek."
+                )
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception(
+                "ims_snapshot_retry_state_failed job_id=%s", job_id
+            )
+
+        try:
+            IMSProgressStore.write(
+                job_id,
+                percent=98,
+                stage="snapshot_retry",
+                message="IMS yüklendi · snapshotlar otomatik yeniden denenecek",
+                detail="Snapshot üretimi tamamlanamadı; IMS verileri korunuyor.",
+                status=IMSImportJob.STATUS_PROCESSING,
+            )
+        except Exception:
+            app.logger.exception(
+                "ims_snapshot_retry_progress_failed job_id=%s", job_id
+            )
+        app.logger.exception(
+            "ims_snapshot_publication_attempt_failed job_id=%s year=%s month=%s",
+            job_id, year, month,
+        )
+        return False
+
+
 def _retryable_publication_job():
     # Repair only the currently active IMS when an older deployment completed
     # the business import without sealing/publishing it. Never seal a historical
@@ -618,7 +662,7 @@ def main():
                 if now >= next_publication_retry:
                     retry_job = _retryable_publication_job()
                     if retry_job is not None:
-                        _prepare_and_publish(app, retry_job)
+                        _attempt_publication_with_retry(app, retry_job)
                     next_publication_retry = now + 60
                 if now >= next_production_reconcile:
                     try:
@@ -658,7 +702,7 @@ def main():
             IMSImportQueue.process(job)
             completed = db.session.get(IMSImportJob, job_id)
             if completed is not None and completed.status == IMSImportJob.STATUS_COMPLETED:
-                _prepare_and_publish(app, completed)
+                _attempt_publication_with_retry(app, completed)
             db.session.remove()
 
 

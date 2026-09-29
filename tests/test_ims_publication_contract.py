@@ -156,3 +156,17 @@ def test_only_newest_job_can_hold_publication_gate():
     assert "Older interrupted" in pending
     assert "job = query.order_by" in pending
 
+
+def test_snapshot_publication_exceptions_remain_retryable():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+    retry = worker[
+        worker.index("def _attempt_publication_with_retry"):
+        worker.index("def _retryable_publication_job")
+    ]
+    loop = worker[worker.index("def main()"):]
+
+    assert "except Exception:" in retry
+    assert 'stage="snapshot_retry"' in retry
+    assert "IMSImportQueue.process(job)" not in retry
+    assert "_attempt_publication_with_retry(app, retry_job)" in loop
+    assert "_attempt_publication_with_retry(app, completed)" in loop
