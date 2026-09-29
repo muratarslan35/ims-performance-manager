@@ -1,0 +1,93 @@
+name: Verify deployed IMS week 39 and retry worker
+on:
+  push:
+    branches:
+      - ops/diagnose-ims-week39-snapshots-20260929
+    paths:
+      - ".github/workflows/verify-deployed-week39.yml"
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure IMS production SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_week39_key
+          chmod 600 ~/.ssh/ims_week39_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Verify deployed source, publication, and worker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/ims_week39_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          test "$(git branch --show-current)" = main
+          export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          test "$(git rev-parse HEAD)" = "6a12801f6eaf7590212c99679b1d056155d7b7a8"
+          test "$(sudo systemctl is-active ims-import-worker.service)" = active
+          venv/bin/python - <<'PY'
+          import json
+          import sqlalchemy as sa
+          from sqlalchemy import desc
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload
+          from app.services.ims_progress_store import IMSProgressStore
+          from app.services.period_service import PeriodService
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService, region_snapshots
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService, representative_snapshots
+          from config import Config
+          app = create_app(Config)
+          with app.app_context():
+              upload = IMSUpload.query.filter_by(year=2026, month=9, status=IMSUpload.STATUS_COMPLETED).order_by(
+                  desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id)
+              ).first()
+              if upload is None or int(upload.id) != 52 or int(upload.week_number or 0) != 39:
+                  raise RuntimeError("latest IMS source is not upload 52 week 39")
+              job = IMSImportJob.query.filter_by(ims_upload_id=52).order_by(desc(IMSImportJob.id)).first()
+              summary = json.loads(job.result_summary or "{}")
+              progress = IMSProgressStore.read(job.id) or {}
+              ims_id, production_id = PersistentDashboardSnapshotService.source_identity(2026, 9)
+              if int(ims_id or 0) != 52 or not PersistentDashboardSnapshotService.generation_ready(2026, 9, ims_id, production_id):
+                  raise RuntimeError("dashboard source not ready")
+              rset = PersistentRegionSnapshotService._existing_set(2026, 9, ims_id, production_id)
+              rcount = int(db.session.execute(sa.select(sa.func.count()).select_from(region_snapshots).where(region_snapshots.c.set_id == int(rset.id))).scalar() or 0) if rset else 0
+              rep_set = PersistentRepresentativeSnapshotService._latest_exact_active(2026, 9, ims_id, production_id)
+              expected = len(PersistentRepresentativeSnapshotService.representative_ids(2026, 9, ims_id))
+              repcount = int(db.session.execute(sa.select(sa.func.count()).select_from(representative_snapshots).where(representative_snapshots.c.set_id == int(rep_set.id))).scalar() or 0) if rep_set else 0
+              period = PeriodService.get_active_period()
+              if (job.status != IMSImportJob.STATUS_COMPLETED or summary.get("publication_ready") is not True
+                      or progress.get("stage") != "completed" or int(progress.get("percent") or 0) != 100
+                      or rcount != 11 or repcount != 113 or expected != 113
+                      or int(period.get("upload_id") or 0) != 52 or int(period.get("week_number") or 0) != 39):
+                  raise RuntimeError("week 39 publication or coverage check failed")
+              stale = 0
+              import datetime
+              root = app.instance_path
+              for candidate in __import__("pathlib").Path(root, "ims_progress").glob("job-*.json"):
+                  try:
+                      item = json.loads(candidate.read_text(encoding="utf-8"))
+                      age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(item["updated_at"])).total_seconds()
+                  except Exception:
+                      continue
+                  if item.get("status") in {"QUEUED", "PROCESSING"} and item.get("stage") in IMSProgressStore.POST_IMPORT_STAGES and age >= 900:
+                      stale += 1
+              print(f"IMS_DEPLOYED|PASS|commit=6a12801|worker=active|upload=52|week=39|dashboard=1|regions={rcount}/11|representatives={repcount}/{expected}|progress=100|unrelated_stale_publications={stale}")
+          PY
+          REMOTE
