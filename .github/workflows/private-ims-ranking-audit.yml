@@ -1,4 +1,4 @@
-name: Private IMS ranking source audit
+name: Private IMS ranking source audit v2
 on:
   push:
     branches:
