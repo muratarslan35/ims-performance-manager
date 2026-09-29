@@ -46,7 +46,8 @@ jobs:
           Vo3Ab589Y4LrRBlhlXmaa19L3Wgj3w1CHmlu/ilKAgd3AgMBAAE=
           -----END PUBLIC KEY-----
           PUBLIC_KEY
-          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/ims-audit.json" 2> "$RUNNER_TEMP/ims-audit-remote.err" <<'REMOTE'
+          set +e
+          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=60 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/ims-audit.json" 2> "$RUNNER_TEMP/ims-audit-remote.err" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
           export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
@@ -96,7 +97,7 @@ jobs:
                   "summary_rows":upload.summary_record_count,"file_name":upload.file_name
               }
               ims_id, production_id=PersistentDashboardSnapshotService.source_identity(2026,9)
-              payload=PersistentDashboardSnapshotService.get_active(2026,9)
+              payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
               output["snapshot_source"]={"ims_upload_id":ims_id,"production_upload_id":production_id}
               if payload is None: raise RuntimeError("dashboard_snapshot_missing")
               ytd=payload.get("ytd_product_rankings") or {}
@@ -321,6 +322,15 @@ jobs:
           print(json.dumps(output,ensure_ascii=False,separators=(",",":")))
           PYTHON
           REMOTE
+          SSH_STATUS=$?
+          set -e
+          if [ "$SSH_STATUS" -ne 0 ]; then
+            python3 - "$RUNNER_TEMP/ims-audit.json" "$RUNNER_TEMP/ims-audit-remote.err" "$SSH_STATUS" <<'ERRPY'
+          import base64,json,sys
+          from pathlib import Path
+          json.dump({"remote_exit":int(sys.argv[3]),"stdout_b64":base64.b64encode(Path(sys.argv[1]).read_bytes()).decode(),"stderr_b64":base64.b64encode(Path(sys.argv[2]).read_bytes()).decode()},open(sys.argv[1],"w"))
+          ERRPY
+          fi
           AES_KEY=$(openssl rand -hex 32)
           MAC_KEY=$(openssl rand -hex 32)
           IV=$(openssl rand -hex 16)
