@@ -33,19 +33,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cat > "$RUNNER_TEMP/audit_public.pem" <<'PUBLIC_KEY'
-          -----BEGIN PUBLIC KEY-----
-          MIIBojANBgkqhkiG9w0BAQEFAAOCAYEAwZraieXc+k4w/37bfuyx
-          X/mOZDp35K+LfAf9LhuLdrGrUn4FME664h75j/HzltvD0Q8Fcl/oaeQZRwLvstA/
-          P5sGtlH++B+8rub2XwxwH63FnliC2LuJq4SJmdhRtgerYLjX92HjUKD0lqXBsIWU
-          FezBQKqEEQI4463nvzUmz4muy3LjvanXhy+17aumwX/6o67ry10j+DJwTwMr4N1D
-          bs3PPBE9rBo/1QmHrXN58gJRfBJ31mkmD4nnzl4aXt27KDXwjlG2fXdQ62YpYwRg
-          viIY4iN823v+fg14V+6sH/qxwvK9ICoYqiSxKOUmVEwLUpeXYLTVnnYMikQIOxEX
-          UM6r5BdvcVyTu2DW7j1NFVNORr7mMVSWs8BTAxmzXDtgVPDxiB2U9cUO70LBROtr
-          tcj+uUhmgyZnl84R2wg06bpVKFU9P+0KsyGsg2nXPE8CzoehPoBRMFN1w4B/xqPy
-          Vo3Ab589Y4LrRBlhlXmaa19L3Wgj3w1CHmlu/ilKAgd3AgMBAAE=
-          -----END PUBLIC KEY-----
+          cat > "$RUNNER_TEMP/audit_public.b64" <<'PUBLIC_KEY'
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAwZraieXc+k4w/37bfuyxX/mOZDp35K+LfAf9LhuLdrGrUn4FME664h75j/HzltvD0Q8Fcl/oaeQZRwLvstA/P5sGtlH++B+8rub2XwxwH63FnliC2LuJq4SJmdhRtgerYLjX92HjUKD0lqXBsIWUFezBQKqEEQI4463nvzUmz4muy3LjvanXhy+17aumwX/6o67ry10j+DJwTwMr4N1Dbs3PPBE9rBo/1QmHrXN58gJRfBJ31mkmD4nnzl4aXt27KDXwjlG2fXdQ62YpYwRgviIY4iN823v+fg14V+6sH/qxwvK9ICoYqiSxKOUmVEwLUpeXYLTVnnYMikQIOxEXUM6r5BdvcVyTu2DW7j1NFVNORr7mMVSWs8BTAxmzXDtgVPDxiB2U9cUO70LBROtrtcj+uUhmgyZnl84R2wg06bpVKFU9P+0KsyGsg2nXPE8CzoehPoBRMFN1w4B/xqPyVo3Ab589Y4LrRBlhlXmaa19L3Wgj3w1CHmlu/ilKAgd3AgMBAAE=
           PUBLIC_KEY
+          openssl base64 -d -A -in "$RUNNER_TEMP/audit_public.b64" -out "$RUNNER_TEMP/audit_public.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/audit_public.der" -out "$RUNNER_TEMP/audit_public.pem"
           set +e
           ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=60 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/ims-audit.json" 2> "$RUNNER_TEMP/ims-audit-remote.err" <<'REMOTE'
           set -Eeuo pipefail
