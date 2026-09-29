@@ -1,0 +1,207 @@
+name: Private IMS top-10 source verification
+on:
+  push:
+    branches:
+      - audit/ims-top10-source-20260929
+    paths:
+      - ".github/workflows/private-ims-ranking-audit.yml"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    env:
+      IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
+      IMS_PORT: ${{ vars.IMS_SERVER_PORT || '22' }}
+      IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
+      IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
+    steps:
+      - name: Configure IMS read-only SSH
+        shell: bash
+        env:
+          IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$IMS_DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_audit_key
+          chmod 600 ~/.ssh/ims_audit_key
+          ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
+      - name: Reconcile source workbooks and rankings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/audit_public.b64" <<'PUBLIC_KEY'
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA0uYZizqdNFGtoI+2yELfTv3e4DeNYFjt+brFHBgqFESS75bP7v2N7mSVJRYXuL+YCv844REuiyVcKpj5A+1fC/GkRuQ2iNEeewpRMzcIw5EtcdrgFLeUSM5zVT9savERhizyYR/pIEuBnFMAG6km7X1VjuhJ3SZAxwAObCzje70eV7jXKsrEq51vfYPbMrU+4lBiUUMz8wmTVzqkR2cZoc0yO/BRKpCx0xaVfuK8qmIboGauOy7ZOZd7RCvFd9ZHwhRNw6MkvSKlX1keudvbBesZRX03hdQI8Xn90vn9wr4R0kqD8rfj+wlejRboYgPEEPJjtSiU1CSdR+toCGODj6a0Cb7uBE7MxRzeSipSOjVKYg6tg+qfzAXMRsrK37Xot9TUcrPKAshihqq2Yzwx8wVN14m1hkBI4qrybM60PkQq0HLj0CjqA8x53+UPvs8JVvXF/majjQytm0x/X4EtdzbVSnN9MZClXKOLRPV6oO5b9+f5DAsNV5OLyD4lnC4LAgMBAAE=
+          PUBLIC_KEY
+          openssl base64 -d -A -in "$RUNNER_TEMP/audit_public.b64" -out "$RUNNER_TEMP/audit_public.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/audit_public.der" -out "$RUNNER_TEMP/audit_public.pem"
+          set +e
+          ssh -i ~/.ssh/ims_audit_key -p "$IMS_PORT" -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=60 "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" > "$RUNNER_TEMP/ims-audit.json" 2> "$RUNNER_TEMP/ims-audit-remote.err" <<'REMOTE'
+          set -Eeuo pipefail
+          cd "$IMS_PATH"
+          export PYTHONPATH="$IMS_PATH${PYTHONPATH:+:$PYTHONPATH}"
+          venv/bin/python - <<'PYTHON'
+          import hashlib, json, math
+          from collections import defaultdict
+          from decimal import Decimal
+          from pathlib import Path
+          from sqlalchemy import desc
+          from openpyxl import load_workbook
+          from app import create_app
+          from app.models import IMSUpload, IMSSummary, Product, Representative, ProductionResultUpload, ProductionResult
+          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+          from app.services.production_result_import_service import ProductionResultImportService
+          from config import Config
+          
+          app=create_app(Config)
+          out={"upload_id":52,"workbooks":[],"product_top10":[]}
+          def sha(path):
+              h=hashlib.sha256()
+              with Path(path).open("rb") as f:
+                  for c in iter(lambda:f.read(1024*1024),b""): h.update(c)
+              return h.hexdigest()
+          def is_vacancy(name):
+              words=str(name or "").upper().replace("Ş","S").replace("Ö","O").replace("-"," ").split()
+              return bool({"BOS","KADRO"} & set(words))
+          
+          with app.app_context():
+              upload=IMSUpload.query.filter_by(id=52).one()
+              payload=PersistentDashboardSnapshotService.get_generation_for_upload(2026,9,52)
+              if payload is None: raise RuntimeError("snapshot_missing")
+              snapshot=payload.get("ytd_product_rankings") or {}
+              products=Product.query.filter(Product.is_active.is_(True)).all()
+              product_by_id={int(p.id):p for p in products}
+              reps=Representative.query.filter(Representative.active.is_(True)).all()
+              rep_by_id={int(r.id):r for r in reps}
+              if upload.status!="COMPLETED" or upload.reconciliation_status!="PASSED" or int(upload.week_number or 0)!=39:
+                  raise RuntimeError("ims_52_not_reconciled")
+              prod_uploads=ProductionResultUpload.query.filter(
+                  ProductionResultUpload.year==2026,ProductionResultUpload.month.between(1,8),
+                  ProductionResultUpload.status==ProductionResultUpload.STATUS_APPLIED
+              ).order_by(
+                  ProductionResultUpload.month.asc(),ProductionResultUpload.production_stage.desc(),
+                  ProductionResultUpload.applied_at.desc(),ProductionResultUpload.id.desc()
+              ).all()
+              root=Path(app.config["UPLOAD_FOLDER"])/"production_results"
+              file_rows={}
+              upload_order_by_month=defaultdict(list)
+              for pu in prod_uploads:
+                  month,uid=int(pu.month),int(pu.id)
+                  path=root/str(pu.stored_file_name or "")
+                  if not path.is_file() or sha(path)!=str(pu.source_hash or ""):
+                      raise RuntimeError("workbook_hash_or_path_mismatch")
+                  svc=ProductionResultImportService(path,pu.year,pu.month,production_stage=pu.production_stage)
+                  svc._load_master_maps()
+                  wb=load_workbook(path,read_only=False,data_only=True)
+                  sheet=svc._find_sheet(wb,"KUTU")
+                  layout=svc._layout(sheet,"KUTU")
+                  extracted={}
+                  unresolved=[]
+                  for rn in range(layout["header_row"]+1,sheet.max_row+1):
+                      raw_name=sheet.cell(rn,layout["name_column"]).value
+                      raw_region=sheet.cell(rn,layout["region_column"]).value
+                      label=str(raw_name or "").strip()
+                      if not label or label.upper()=="NATIONAL":
+                          continue
+                      rep=svc._match_representative(raw_name,raw_region)
+                      if rep is None:
+                          unresolved.append(label)
+                          continue
+                      if int(rep.id) not in rep_by_id:
+                          continue
+                      vals=svc._read_metric_values(sheet,rn,layout,"temsilci")
+                      for pid,value in zip(vals["product_ids"],vals["values"]):
+                          extracted[(int(rep.id),int(pid))]=float(value or 0)
+                  file_rows[uid]=extracted
+                  upload_order_by_month[month].append(uid)
+                  dbrows=ProductionResult.query.filter_by(upload_id=uid).all()
+                  dbmap={(int(x.representative_id),int(x.product_id)):float(x.actual_unit or 0) for x in dbrows
+                         if int(x.representative_id) in rep_by_id and int(x.product_id) in product_by_id}
+                  compared=[k for k in extracted if k in dbmap]
+                  out["workbooks"].append({
+                      "month":month,"stage":int(pu.production_stage),"id":uid,
+                      "sha256_matches":True,"source_rows_for_active_reps":len(extracted),
+                      "unresolved_source_names":len(set(unresolved)),
+                      "source_vs_database_checked":len(compared),
+                      "source_vs_database_mismatches":sum(1 for k in compared if abs(extracted[k]-dbmap[k])>0.005),
+                      "db_active_rows_without_resolved_source":len(set(dbmap)-set(extracted))
+                  })
+                  wb.close()
+              summaries=IMSSummary.query.filter(
+                  IMSSummary.year==2026,IMSSummary.month.between(1,9),
+                  IMSSummary.representative_id.in_(rep_by_id),IMSSummary.product_id.in_(product_by_id)
+              ).order_by(desc(IMSSummary.upload_id),desc(IMSSummary.id)).all()
+              ims={}
+              for row in summaries:
+                  ims.setdefault((int(row.month),int(row.representative_id),int(row.product_id)),float(row.unit or 0))
+              totals=defaultdict(Decimal)
+              keys=set(ims)
+              for month,ids in upload_order_by_month.items():
+                  for uid in ids:
+                      for rid,pid in file_rows[uid]:
+                          keys.add((month,rid,pid))
+              for month,rid,pid in keys:
+                  actual=None
+                  for uid in upload_order_by_month.get(month,()):
+                      if (rid,pid) in file_rows[uid]:
+                          actual=file_rows[uid][(rid,pid)]
+                          break
+                  if actual is None:
+                      actual=ims.get((month,rid,pid),0)
+                  totals[(rid,pid)]+=Decimal(str(actual))
+              expected={}
+              for item in snapshot.get("products") or []:
+                  key="".join(ch for ch in str(item.get("product_key") or item.get("product_name") or "").upper() if ch.isalnum())
+                  expected[key]=item.get("rankings") or []
+              for product in products:
+                  key="".join(ch for ch in product.product_name.upper() if ch.isalnum())
+                  expected_rows=expected.get(key,[])
+                  candidates=[]
+                  for (rid,pid),total in totals.items():
+                      if pid!=int(product.id) or total<=0:
+                          continue
+                      rep=rep_by_id.get(rid)
+                      if rep is None or is_vacancy(rep.rep_name):
+                          continue
+                      candidates.append({"representative_id":rid,"representative_name":rep.rep_name,
+                                        "units":float(total),"display_units":int(math.floor(float(total)+0.5))})
+                  candidates.sort(key=lambda x:(-x["units"],x["representative_name"]))
+                  calculated=candidates[:10]
+                  screen=[{"representative_id":int(x.get("representative_id")),
+                           "representative_name":x.get("representative_name"),
+                           "units":float(x.get("total_unit") or 0),
+                           "display_units":int(math.floor(float(x.get("total_unit") or 0)+0.5))}
+                          for x in expected_rows[:10]]
+                  matches=(len(screen)==10 and len(calculated)==10 and all(
+                      a["representative_id"]==b["representative_id"]
+                      and a["display_units"]==b["display_units"]
+                      and abs(a["units"]-b["units"])<=0.01
+                      for a,b in zip(calculated,screen)))
+                  out["product_top10"].append({"product":product.product_name,"matches_100_percent":matches,
+                                               "checked":10,"calculated":calculated,"screen":screen})
+              out["ims_upload"]={"status":upload.status,"week":upload.week_number,"summary_rows":upload.summary_record_count}
+          print(json.dumps(out,ensure_ascii=False,separators=(",",":")))
+          PYTHON
+          REMOTE
+          SSH_STATUS=$?
+          set -e
+          if [ "$SSH_STATUS" -ne 0 ]; then
+            python3 - "$RUNNER_TEMP/ims-audit.json" "$RUNNER_TEMP/ims-audit-remote.err" "$SSH_STATUS" <<'ERRPY'
+          import base64,json,sys
+          from pathlib import Path
+          json.dump({"remote_exit":int(sys.argv[3]),"stdout_b64":base64.b64encode(Path(sys.argv[1]).read_bytes()).decode(),"stderr_b64":base64.b64encode(Path(sys.argv[2]).read_bytes()).decode()},open(sys.argv[1],"w"))
+          ERRPY
+          fi
+          AES_KEY=$(openssl rand -hex 32)
+          MAC_KEY=$(openssl rand -hex 32)
+          IV=$(openssl rand -hex 16)
+          openssl enc -aes-256-cbc -K "$AES_KEY" -iv "$IV" -in "$RUNNER_TEMP/ims-audit.json" -out "$RUNNER_TEMP/ims-audit.enc"
+          printf '%s%s' "$AES_KEY" "$MAC_KEY" | xxd -r -p > "$RUNNER_TEMP/ims-audit-key.bin"
+          openssl pkeyutl -encrypt -pubin -inkey "$RUNNER_TEMP/audit_public.pem" -in "$RUNNER_TEMP/ims-audit-key.bin" -out "$RUNNER_TEMP/ims-audit-key.enc" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256
+          HMAC=$(openssl dgst -sha256 -mac HMAC -macopt hexkey:"$MAC_KEY" -binary "$RUNNER_TEMP/ims-audit.enc" | openssl base64 -A)
+          WRAPPED_KEY=$(openssl base64 -A < "$RUNNER_TEMP/ims-audit-key.enc")
+          CIPHERTEXT=$(openssl base64 -A < "$RUNNER_TEMP/ims-audit.enc")
+          echo "AUDIT_CIPHER|iv=$IV|wrapped_key=$WRAPPED_KEY|hmac=$HMAC|ciphertext=$CIPHERTEXT"
