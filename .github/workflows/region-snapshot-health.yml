@@ -518,9 +518,16 @@ jobs:
 
 
 
-          echo "RECENT_REGION_SNAPSHOT_ERRORS_BEGIN"
-          sudo journalctl -u ims-import-worker.service --since "2026-09-19 16:00:00" --no-pager \
-            | grep -E 'region_snapshot|manager_region_snapshots|UNIQUE constraint|IntegrityError' \
+          echo "REPRESENTATIVE_SNAPSHOT_TIMING_BEGIN"
+          sudo journalctl -u ims-import-worker.service --since "30 days ago" --no-pager \
+            | grep -E 'representative_snapshot_warm_progress|representative_snapshot_warm status=' \
+            | sed -E 's/representative=[^ ]+/representative=<redacted>/' \
+            | tail -n 160 || true
+          echo "REPRESENTATIVE_SNAPSHOT_TIMING_END"
+
+          echo "RECENT_SNAPSHOT_PUBLICATION_ERRORS_BEGIN"
+          sudo journalctl -u ims-import-worker.service --since "30 days ago" --no-pager \
+            | grep -E 'ims_snapshot_publication_attempt_failed|ims_snapshot_retry_state_failed|ims_snapshot_retry_progress_failed|ims_rollback_master_journal_failed|dashboard_snapshot_warm_failed|region_snapshot_warm_failed|representative_snapshot_warm_failed|region_snapshot_enrichment status=|region_snapshot_acceptance status=' \
             | tail -n 200 || true
-          echo "RECENT_REGION_SNAPSHOT_ERRORS_END"
+          echo "RECENT_SNAPSHOT_PUBLICATION_ERRORS_END"
           REMOTE
