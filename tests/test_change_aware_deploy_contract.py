@@ -94,8 +94,17 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'WEB_ACTIVE|' in text
     assert 'WORKER_ACTIVE|' in text
     assert 'scripts/finalize_latest_snapshot_publication.py' in text
-    assert text.index('scripts/finalize_latest_snapshot_publication.py') < text.index('venv/bin/python verify_region_manager_production.py')
     assert 'venv/bin/python verify_region_manager_production.py' in text
+    assert 'RELEASE_MODE" != "import"' in text
+    assert text.index('deploy/install_systemd_service.sh') < text.index(
+        'verify_production_snapshot_finalization.py --latest-source-only'
+    )
+    assert text.rindex('venv/bin/python verify_region_manager_production.py') > text.index(
+        'verify_production_snapshot_finalization.py --latest-source-only'
+    )
+    assert 'representative_snapshot_warm_progress' in text
+    assert 'representative_snapshot_warm status=' in text
+    assert 'representative=<redacted>' in text
     assert 'verify_production_snapshot_finalization.py --latest-source-only' in text
     finalizer = Path('verify_production_snapshot_finalization.py').read_text(encoding='utf-8')
     assert 'source_period_only=bool(args.latest_source_only)' in finalizer
