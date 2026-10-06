@@ -56,6 +56,10 @@ def test_worker_validates_its_exact_region_generation_while_publication_is_pendi
     assert "get_active_set_all" in worker
     assert "get_active_set_all" in service
     assert "get_active_all(year, month)" not in worker
+    assert 'representative_snapshot_warm_progress done={done}' in worker
+    assert 'representative_snapshot_warm status={result.get(\'status\')}' in worker
+    assert 'flush=True' in worker
+    assert 'representative={name}' not in worker
 
 
 def test_snapshot_progress_is_measured_not_random_or_timer_driven():
