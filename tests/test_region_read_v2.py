@@ -585,3 +585,44 @@ def test_direct_monthly_region_box_repair_keeps_healthy_rows_unchanged(monkeypat
     result = _apply_direct_monthly_box_authority(Service(), payload, 2026, 9)
 
     assert result["products"][0] == original
+
+
+def test_direct_monthly_region_box_repair_fixes_complete_but_contradictory_rows(monkeypatch):
+    from app.services.region_box_authority_guard import (
+        _apply_direct_monthly_box_authority,
+    )
+    from app.services.product_unit_price_service import ProductUnitPriceService
+
+    class Service:
+        @staticmethod
+        def _official_ims_region_month(year, month):
+            assert (year, month) == (2026, 9)
+            return {
+                1: [Decimal("520276.0971187282"), Decimal("524834.73"), True],
+            }
+
+    monkeypatch.setattr(
+        ProductUnitPriceService,
+        "price_map",
+        classmethod(lambda cls, product_ids, year, month: {1: 97}),
+    )
+    payload = {
+        "products": [{
+            "product_id": 1,
+            "target_tl": Decimal("520276.0971187282"),
+            "actual_tl": Decimal("524834.73"),
+            "target_unit": Decimal("5364"),
+            "actual_unit": Decimal("5290"),
+            "unit_complete": True,
+            "unit_difference": Decimal("-74"),
+        }]
+    }
+
+    result = _apply_direct_monthly_box_authority(Service(), payload, 2026, 9)
+
+    repaired = result["products"][0]
+    assert repaired["target_unit"] == Decimal("5364")
+    assert repaired["actual_unit"] == Decimal("5411")
+    assert repaired["unit_difference"] == Decimal("47")
+    assert repaired["box_authority"] == "REGION_TL_PERIOD_PRICE"
+
