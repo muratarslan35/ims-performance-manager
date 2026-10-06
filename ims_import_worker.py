@@ -146,7 +146,9 @@ def _warm_region_snapshots(app, year, month, *, force=False):
             raise RuntimeError(f"region snapshot warm-up is not ready: status={status}")
 
         read_started = time.perf_counter()
-        verified = PersistentRegionSnapshotService.get_active_all(year, month)
+        verified = PersistentRegionSnapshotService.get_active_set_all(
+            result.get("set_id")
+        )
         read_seconds = time.perf_counter() - read_started
         expected_regions = int(result.get("regions") or 0)
         if not isinstance(verified, dict) or not verified:
@@ -211,21 +213,20 @@ def _warm_representative_snapshots(app, year, month, *, force=False, job_id=None
                 )
 
             if done == 1 or done == total or done % 10 == 0:
-                app.logger.info(
-                    "representative_snapshot_warm_progress done=%s total=%s representative=%s "
-                    "elapsed=%.3f rate_per_second=%.3f eta_seconds=%s",
-                    done, total, name, elapsed, rate, eta_seconds,
+                print(
+                    f"representative_snapshot_warm_progress done={done} total={total} "
+                    f"elapsed={elapsed:.3f} rate_per_second={rate:.3f} eta_seconds={eta_seconds}",
+                    flush=True,
                 )
 
         result = PersistentRepresentativeSnapshotService.build_for_period(
             year, month, force=force, progress=progress
         )
-        app.logger.info(
-            "representative_snapshot_warm status=%s year=%s month=%s representatives=%s "
-            "set_id=%s seconds=%.3f force=%s",
-            result.get("status"), year, month,
-            result.get("representatives", 0), result.get("set_id", 0),
-            time.monotonic() - started, int(force),
+        print(
+            f"representative_snapshot_warm status={result.get('status')} year={year} month={month} "
+            f"representatives={result.get('representatives', 0)} set_id={result.get('set_id', 0)} "
+            f"seconds={time.monotonic() - started:.3f} force={int(force)}",
+            flush=True,
         )
         return result
     except Exception:

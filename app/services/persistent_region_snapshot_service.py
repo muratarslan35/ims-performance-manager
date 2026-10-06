@@ -309,6 +309,25 @@ class PersistentRegionSnapshotService:
         return cls._payloads_from_set(set_id) if set_id else {}
 
     @classmethod
+    def get_active_set_all(cls, set_id):
+        """Read an exact ACTIVE generation for worker-side readiness checks.
+
+        Unlike user-facing readers, this deliberately does not apply the
+        publication visibility gate. Workers must validate the generation they
+        just built before they can mark its publication ready.
+        """
+        if not set_id:
+            return {}
+        status = db.session.execute(
+            sa.select(region_snapshot_sets.c.status).where(
+                region_snapshot_sets.c.id == int(set_id)
+            )
+        ).scalar()
+        if status != cls.STATUS_ACTIVE:
+            return {}
+        return cls._payloads_from_set(int(set_id))
+
+    @classmethod
     def visible_generation_id(cls, year, month):
         """Return the exact generation readers currently see, including gates."""
         return int(cls._visible_set_id(year, month) or 0)
