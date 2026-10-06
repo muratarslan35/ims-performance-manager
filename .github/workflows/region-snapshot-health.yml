@@ -526,8 +526,8 @@ jobs:
           echo "REPRESENTATIVE_SNAPSHOT_TIMING_END"
 
           echo "RECENT_SNAPSHOT_PUBLICATION_ERRORS_BEGIN"
-          sudo journalctl -u ims-import-worker.service --since "30 days ago" --no-pager \
-            | grep -E 'ims_snapshot_publication_attempt_failed|ims_snapshot_retry_state_failed|ims_snapshot_retry_progress_failed|ims_rollback_master_journal_failed|dashboard_snapshot_warm_failed|region_snapshot_warm_failed|representative_snapshot_warm_failed|region_snapshot_enrichment status=|region_snapshot_acceptance status=' \
-            | tail -n 200 || true
+          sudo journalctl -u ims-import-worker.service --since "4 hours ago" --no-pager \
+            | grep -A 18 -B 2 -E 'ims_snapshot_publication_attempt_failed|ims_rollback_master_journal_failed|dashboard_snapshot_warm_failed|region_snapshot_warm_failed|representative_snapshot_warm_failed' \
+            | tail -n 500 || true
           echo "RECENT_SNAPSHOT_PUBLICATION_ERRORS_END"
           REMOTE
