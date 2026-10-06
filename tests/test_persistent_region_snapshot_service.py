@@ -112,6 +112,27 @@ def test_complete_set_is_persisted_and_reused(monkeypatch):
         assert reused["set_id"] == result["set_id"]
 
 
+def test_exact_active_generation_is_worker_readable_during_publication_pending(monkeypatch):
+    from app.services.ims_publication_service import IMSPublicationService
+
+    app = _app()
+    with app.app_context():
+        _patch_sources(monkeypatch, (17, 0))
+        result = PersistentRegionSnapshotService.build_for_period(2026, 4)
+        assert result["status"] == "ACTIVE"
+
+        monkeypatch.setattr(
+            IMSPublicationService,
+            "pending_job",
+            classmethod(lambda cls, year=None, month=None: object()),
+        )
+        # User-facing visibility remains gated while publication is pending.
+        assert PersistentRegionSnapshotService.get_active_all(2026, 4) == {}
+        # The worker can validate exactly the ACTIVE set it created.
+        exact = PersistentRegionSnapshotService.get_active_set_all(result["set_id"])
+        assert set(exact) == {"101", "102"}
+
+
 def test_previous_active_stays_visible_while_new_generation_is_building(monkeypatch):
     app = _app()
     with app.app_context():

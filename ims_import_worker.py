@@ -146,7 +146,9 @@ def _warm_region_snapshots(app, year, month, *, force=False):
             raise RuntimeError(f"region snapshot warm-up is not ready: status={status}")
 
         read_started = time.perf_counter()
-        verified = PersistentRegionSnapshotService.get_active_all(year, month)
+        verified = PersistentRegionSnapshotService.get_active_set_all(
+            result.get("set_id")
+        )
         read_seconds = time.perf_counter() - read_started
         expected_regions = int(result.get("regions") or 0)
         if not isinstance(verified, dict) or not verified:

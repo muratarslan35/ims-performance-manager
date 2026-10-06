@@ -50,6 +50,14 @@ def test_snapshot_failure_blocks_publication_but_preserves_imported_data():
     assert 'completed.status = IMSImportJob.STATUS_FAILED' not in worker
 
 
+def test_worker_validates_its_exact_region_generation_while_publication_is_pending():
+    worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
+    service = (ROOT / "app/services/persistent_region_snapshot_service.py").read_text(encoding="utf-8")
+    assert "get_active_set_all" in worker
+    assert "get_active_set_all" in service
+    assert "get_active_all(year, month)" not in worker
+
+
 def test_snapshot_progress_is_measured_not_random_or_timer_driven():
     worker = (ROOT / "ims_import_worker.py").read_text(encoding="utf-8")
     ui = (ROOT / "app/static/js/layout.js").read_text(encoding="utf-8")
