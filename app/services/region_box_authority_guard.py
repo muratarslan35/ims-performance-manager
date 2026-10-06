@@ -54,15 +54,6 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
     prices = ProductUnitPriceService.price_map(product_ids, int(year), int(month))
 
     for item in products:
-        # Healthy regions already have authoritative box values. Keep them
-        # byte-for-byte unchanged; this compatibility path only fills rows
-        # whose unit calculation is incomplete/missing.
-        if (
-            item.get("unit_difference") is not None
-            and item.get("actual_unit") is not None
-            and bool(item.get("unit_complete"))
-        ):
-            continue
         product_id = item.get("product_id")
         if product_id is None:
             continue
@@ -74,6 +65,24 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
         target_tl, actual_tl, complete = values
         if not complete or actual_tl is None:
             continue
+
+        # Preserve already-correct rows. Repair complete-but-contradictory rows
+        # too: official TL and box realization must move in the same direction.
+        if (
+            item.get("unit_difference") is not None
+            and item.get("actual_unit") is not None
+            and bool(item.get("unit_complete"))
+        ):
+            tl_direction = (_d(actual_tl) > _d(target_tl)) - (
+                _d(actual_tl) < _d(target_tl)
+            )
+            current_actual_unit = _d(item.get("actual_unit"))
+            current_target_unit = _d(item.get("target_unit"))
+            unit_direction = (current_actual_unit > current_target_unit) - (
+                current_actual_unit < current_target_unit
+            )
+            if tl_direction == unit_direction:
+                continue
 
         target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, price)
         actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
