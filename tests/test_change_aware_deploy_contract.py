@@ -79,6 +79,11 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert '"region_snapshots"' in text
     assert '"representative_snapshots"' in text
     assert '"snapshot_retry"' in text
+    assert 'progress_stage == "snapshot_retry"' in text
+    assert 'publication_retry_pending += 1' in text
+    assert 'publication_retry_pending=' in text
+    assert 'resume_on_new_worker=1' in text
+    assert '.github/workflows/deploy.yml)' in text
     assert 'Active IMS import or snapshot publication detected' in text
     assert 'PRAGMA quick_check(1)' in text
     assert 'SQLITE_RUNTIME|' in text

@@ -68,6 +68,11 @@ jobs:
             case "$file" in
               PROJECT_WORK_PROGRESS.md|CODEX_HANDOFF_CURRENT.md|docs/*|*.md)
                 ;;
+              .github/workflows/deploy.yml)
+                # Deploy-guard changes must activate the import worker so durable
+                # snapshot retries can be resumed under the updated safety gate.
+                if [ "$mode" != "heavy" ]; then mode="import"; fi
+                ;;
               .github/workflows/*|.github/CODEOWNERS|scripts/run_production_maintenance.sh|tests/*)
                 if [ "$mode" = "docs" ]; then mode="ops"; fi
                 ;;
@@ -279,12 +284,12 @@ jobs:
           )
           publication_processing = 0
           publication_stale = 0
+          publication_retry_pending = 0
           active_stages = {
               "read_models",
               "dashboard_snapshot",
               "region_snapshots",
               "representative_snapshots",
-              "snapshot_retry",
           }
           progress_root = Path("instance/ims_progress")
           now = datetime.utcnow()
@@ -296,10 +301,18 @@ jobs:
                   payload = json.loads(path.read_text(encoding="utf-8"))
               except (OSError, ValueError, TypeError, json.JSONDecodeError):
                   continue
-              if not (
-                  str(payload.get("status") or "") in {"QUEUED", "PROCESSING"}
-                  and str(payload.get("stage") or "") in active_stages
-              ):
+              progress_status = str(payload.get("status") or "")
+              progress_stage = str(payload.get("stage") or "")
+              if progress_status not in {"QUEUED", "PROCESSING"}:
+                  continue
+
+              # snapshot_retry is a durable wait marker between attempts. The
+              # completed IMS job is safe to hand to the newly activated worker.
+              if progress_stage == "snapshot_retry":
+                  if str(job_status) == "COMPLETED":
+                      publication_retry_pending += 1
+                  continue
+              if progress_stage not in active_stages:
                   continue
 
               is_stale = False
@@ -322,7 +335,8 @@ jobs:
           print(
               f"IMS_WORKER_IDLE|processing={db_active}|"
               f"publication_processing={publication_processing}|"
-              f"publication_stale={publication_stale}"
+              f"publication_stale={publication_stale}|"
+              f"publication_retry_pending={publication_retry_pending}"
           )
           if db_active or publication_processing:
               raise SystemExit(
@@ -333,6 +347,11 @@ jobs:
               print(
                   "IMS_WORKER_RECOVERY|stale_publication_detected|"
                   f"count={publication_stale}|resume_on_new_worker=1"
+              )
+          if publication_retry_pending:
+              print(
+                  "IMS_WORKER_RECOVERY|publication_retry_pending|"
+                  f"count={publication_retry_pending}|resume_on_new_worker=1"
               )
           PY
           }
