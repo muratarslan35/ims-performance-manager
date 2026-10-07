@@ -206,7 +206,7 @@ class PersistentRepresentativeSnapshotService:
                 sa.select(representative_snapshot_sets.c.id).where(
                     representative_snapshot_sets.c.year == year,
                     representative_snapshot_sets.c.month == month,
-                    representative_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                    representative_snapshot_sets.c.status.in_((cls.STATUS_ACTIVE, cls.STATUS_SUPERSEDED)),
                     representative_snapshot_sets.c.source_upload_id != int(ims_id),
                 ).order_by(desc(representative_snapshot_sets.c.activated_at), desc(representative_snapshot_sets.c.id)).limit(1)
             ).scalar()

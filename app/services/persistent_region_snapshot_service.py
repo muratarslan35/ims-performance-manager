@@ -189,7 +189,7 @@ class PersistentRegionSnapshotService:
                 sa.select(region_snapshot_sets.c.id).where(
                     region_snapshot_sets.c.year == year,
                     region_snapshot_sets.c.month == month,
-                    region_snapshot_sets.c.status == cls.STATUS_ACTIVE,
+                    region_snapshot_sets.c.status.in_((cls.STATUS_ACTIVE, cls.STATUS_SUPERSEDED)),
                     region_snapshot_sets.c.source_upload_id != int(ims_id),
                 ).order_by(desc(region_snapshot_sets.c.activated_at), desc(region_snapshot_sets.c.id)).limit(1)
             ).scalar()
