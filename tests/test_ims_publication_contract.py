@@ -178,3 +178,7 @@ def test_pending_publication_keeps_previous_superseded_snapshots_visible():
 
     assert "region_snapshot_sets.c.status.in_((cls.STATUS_ACTIVE, cls.STATUS_SUPERSEDED))" in regions
     assert "representative_snapshot_sets.c.status.in_((cls.STATUS_ACTIVE, cls.STATUS_SUPERSEDED))" in representatives
+    assert "region_snapshot_sets.c.source_upload_id != int(ims_id)" in regions
+    assert "representative_snapshot_sets.c.source_upload_id != int(ims_id)" in representatives
+    assert "desc(region_snapshot_sets.c.activated_at)" in regions
+    assert "desc(representative_snapshot_sets.c.activated_at)" in representatives
