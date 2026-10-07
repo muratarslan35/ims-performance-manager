@@ -313,11 +313,12 @@ class CompetitionQueryBuilder:
         """Fetch distinct filter options utilizing a unified helper method."""
         start_time = time.time()
 
+        pending_upload_id = CompetitionQueryBuilder._pending_upload_id({})
+
         def _get_distinct_col(column_attr: Any) -> List[Any]:
             col_q = db.session.query(distinct(column_attr)).filter(
                 CompetitionData.upload.has(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
             )
-            pending_upload_id = CompetitionQueryBuilder._pending_upload_id({})
             if pending_upload_id is not None:
                 col_q = col_q.filter(CompetitionData.upload_id != pending_upload_id)
             if upload_id is not None:
