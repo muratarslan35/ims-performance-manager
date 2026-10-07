@@ -597,8 +597,11 @@ class PersistentRepresentativeSnapshotService:
             db.session.commit()
 
         # Import lazily to avoid changing the existing calculator installation order.
+        from app.services.annual_realization_service import AnnualRealizationService
         from app.services.representative_period_workspace import build_representative_workspace_payload
         from app.services.representative_query_optimizer import use_snapshot_upload_ids
+
+        annual_snapshot_inputs = AnnualRealizationService.build_snapshot_inputs(year)
 
         try:
             total = len(ids)
@@ -636,7 +639,10 @@ class PersistentRepresentativeSnapshotService:
                     if representative is None:
                         return None
                     name = str(representative.rep_name or representative_id)
-                    workspace = build_representative_workspace_payload(representative, year, month)
+                    workspace = build_representative_workspace_payload(
+                        representative, year, month,
+                        annual_snapshot_inputs=annual_snapshot_inputs,
+                    )
                     payload = json.dumps(
                         cls._json_ready(workspace),
                         ensure_ascii=False,
