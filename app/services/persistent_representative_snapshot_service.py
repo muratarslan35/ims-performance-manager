@@ -601,9 +601,8 @@ class PersistentRepresentativeSnapshotService:
         from app.services.representative_period_workspace import build_representative_workspace_payload
         from app.services.representative_query_optimizer import use_snapshot_upload_ids
 
-        annual_snapshot_inputs = AnnualRealizationService.build_snapshot_inputs(year)
-
         try:
+            annual_snapshot_inputs = AnnualRealizationService.build_snapshot_inputs(year)
             total = len(ids)
             app = current_app._get_current_object()
             batch_size = max(1, int(app.config.get("REPRESENTATIVE_SNAPSHOT_BATCH_SIZE", cls.BUILD_BATCH_SIZE)))
