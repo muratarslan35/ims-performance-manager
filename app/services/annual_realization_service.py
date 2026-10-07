@@ -79,19 +79,15 @@ class AnnualRealizationService:
     def build_snapshot_inputs(cls, year):
         """Load year-wide immutable production inputs once per representative snapshot."""
         year = int(year)
-        uploads = (
-            list(snapshot_inputs.get("uploads") or ())
-            if snapshot_inputs is not None
-            else ProductionResultUpload.query.filter(
-                ProductionResultUpload.year == year,
-                ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
-            ).order_by(
-                ProductionResultUpload.month.asc(),
-                ProductionResultUpload.production_stage.desc(),
-                ProductionResultUpload.applied_at.desc(),
-                ProductionResultUpload.id.desc(),
-            ).all()
-        )
+        uploads = ProductionResultUpload.query.filter(
+            ProductionResultUpload.year == year,
+            ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+        ).order_by(
+            ProductionResultUpload.month.asc(),
+            ProductionResultUpload.production_stage.desc(),
+            ProductionResultUpload.applied_at.desc(),
+            ProductionResultUpload.id.desc(),
+        ).all()
         upload_rows = tuple(
             SimpleNamespace(
                 id=int(upload.id),
@@ -141,15 +137,19 @@ class AnnualRealizationService:
         ).all()
         summary_by_key = {(int(item.month), int(item.product_id)): item for item in summaries}
 
-        uploads = ProductionResultUpload.query.filter(
-            ProductionResultUpload.year == year,
-            ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
-        ).order_by(
-            ProductionResultUpload.month.asc(),
-            ProductionResultUpload.production_stage.desc(),
-            ProductionResultUpload.applied_at.desc(),
-            ProductionResultUpload.id.desc(),
-        ).all()
+        uploads = (
+            list(snapshot_inputs.get("uploads") or ())
+            if snapshot_inputs is not None
+            else ProductionResultUpload.query.filter(
+                ProductionResultUpload.year == year,
+                ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+            ).order_by(
+                ProductionResultUpload.month.asc(),
+                ProductionResultUpload.production_stage.desc(),
+                ProductionResultUpload.applied_at.desc(),
+                ProductionResultUpload.id.desc(),
+            ).all()
+        )
         uploads_by_month = defaultdict(list)
         for upload in uploads:
             uploads_by_month[int(upload.month)].append(upload)
