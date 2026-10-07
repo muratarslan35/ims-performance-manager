@@ -447,7 +447,7 @@ def _source_label(months, sources):
     return "Seçili IMS dönemine kadar"
 
 
-def build_representative_workspace_payload(representative, year, month):
+def build_representative_workspace_payload(representative, year, month, *, annual_snapshot_inputs=None):
     """Build the exact existing representative read model once.
 
     This function intentionally contains the same calculation path the route used
@@ -460,7 +460,9 @@ def build_representative_workspace_payload(representative, year, month):
     competitive_intelligence = CompetitiveIntelligenceService(
         representative.id, year, month
     ).build()
-    annual_realization = AnnualRealizationService.build(year, [representative.id])
+    annual_realization = AnnualRealizationService.build(
+        year, [representative.id], snapshot_inputs=annual_snapshot_inputs
+    )
     snapshots = {}
 
     for key, label, _kind in PERIOD_OPTIONS:

@@ -87,6 +87,11 @@ def test_representative_annual_chart_prefers_production_then_ims_and_never_tl_fa
         db.session.commit()
 
         rows = AnnualRealizationService.build(2026, [rep.id])
+        snapshot_inputs = AnnualRealizationService.build_snapshot_inputs(2026)
+        cached_rows = AnnualRealizationService.build(
+            2026, [rep.id], snapshot_inputs=snapshot_inputs
+        )
+        assert cached_rows == rows
 
         assert rows[0]["actual_tl"] == 1200.0 and rows[0]["percent"] == 120.0
         assert rows[0]["source"] == "PRODUCTION_2"

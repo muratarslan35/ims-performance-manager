@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import func
 
@@ -17,12 +18,14 @@ class AnnualRealizationService:
     )
 
     @classmethod
-    def build(cls, year, representative_ids):
+    def build(cls, year, representative_ids, *, snapshot_inputs=None):
         """Use the production-aware path for one representative; keep region aggregate unchanged."""
         year = int(year)
         representative_ids = [int(item) for item in representative_ids]
         if len(representative_ids) == 1:
-            return cls.build_representative(year, representative_ids[0])
+            return cls.build_representative(
+                year, representative_ids[0], snapshot_inputs=snapshot_inputs
+            )
 
         totals = defaultdict(lambda: {
             "target": 0.0, "target_actual": 0.0,
@@ -73,7 +76,44 @@ class AnnualRealizationService:
         return rows
 
     @classmethod
-    def build_representative(cls, year, representative_id):
+    def build_snapshot_inputs(cls, year):
+        """Load year-wide immutable production inputs once per representative snapshot."""
+        year = int(year)
+        uploads = ProductionResultUpload.query.filter(
+            ProductionResultUpload.year == year,
+            ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+        ).order_by(
+            ProductionResultUpload.month.asc(),
+            ProductionResultUpload.production_stage.desc(),
+            ProductionResultUpload.applied_at.desc(),
+            ProductionResultUpload.id.desc(),
+        ).all()
+        upload_rows = tuple(
+            SimpleNamespace(
+                id=int(upload.id),
+                month=int(upload.month),
+                production_stage=int(upload.production_stage),
+            )
+            for upload in uploads
+        )
+        months = sorted({int(upload.month) for upload in upload_rows})
+        quota_periods = set()
+        if months:
+            for product_id, periods in ProductionResultService.quota_product_months(
+                [(year, month) for month in months]
+            ).items():
+                quota_periods.update(
+                    (int(quota_month), int(product_id))
+                    for quota_year, quota_month in periods
+                    if int(quota_year) == year
+                )
+        return {
+            "uploads": upload_rows,
+            "quota_periods": frozenset(quota_periods),
+        }
+
+    @classmethod
+    def build_representative(cls, year, representative_id, *, snapshot_inputs=None):
         """Build one representative's chart from authoritative product/month sources.
 
         Source authority is product scoped and automatic: P2 > P1 > IMS.
@@ -97,15 +137,19 @@ class AnnualRealizationService:
         ).all()
         summary_by_key = {(int(item.month), int(item.product_id)): item for item in summaries}
 
-        uploads = ProductionResultUpload.query.filter(
-            ProductionResultUpload.year == year,
-            ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
-        ).order_by(
-            ProductionResultUpload.month.asc(),
-            ProductionResultUpload.production_stage.desc(),
-            ProductionResultUpload.applied_at.desc(),
-            ProductionResultUpload.id.desc(),
-        ).all()
+        uploads = (
+            list(snapshot_inputs.get("uploads") or ())
+            if snapshot_inputs is not None
+            else ProductionResultUpload.query.filter(
+                ProductionResultUpload.year == year,
+                ProductionResultUpload.status == ProductionResultUpload.STATUS_APPLIED,
+            ).order_by(
+                ProductionResultUpload.month.asc(),
+                ProductionResultUpload.production_stage.desc(),
+                ProductionResultUpload.applied_at.desc(),
+                ProductionResultUpload.id.desc(),
+            ).all()
+        )
         uploads_by_month = defaultdict(list)
         for upload in uploads:
             uploads_by_month[int(upload.month)].append(upload)
@@ -118,13 +162,17 @@ class AnnualRealizationService:
         ).all() if upload_ids else []
         production_by_key = {(int(item.upload_id), int(item.product_id)): item for item in production_rows}
 
-        quota_periods = {
-            (quota_month, int(product_id))
-            for product_id, periods in ProductionResultService.quota_product_months(
-                [(year, month) for month in uploads_by_month]
-            ).items()
-            for quota_year, quota_month in periods if quota_year == year
-        }
+        quota_periods = (
+            set(snapshot_inputs["quota_periods"])
+            if snapshot_inputs is not None
+            else {
+                (quota_month, int(product_id))
+                for product_id, periods in ProductionResultService.quota_product_months(
+                    [(year, month) for month in uploads_by_month]
+                ).items()
+                for quota_year, quota_month in periods if quota_year == year
+            }
+        )
         month_totals = defaultdict(lambda: {"target": Decimal("0"), "actual": Decimal("0"), "sources": set()})
         for target in targets:
             month = int(target.month)
