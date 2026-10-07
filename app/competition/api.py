@@ -106,6 +106,17 @@ class CompetitionQueryBuilder:
         }
 
     @staticmethod
+    def _pending_upload_id(filters: Dict[str, Any]) -> Optional[int]:
+        """Hide a completed IMS while its full snapshot publication is pending."""
+        from app.services.ims_publication_service import IMSPublicationService
+
+        pending = IMSPublicationService.pending_job(
+            filters.get("year"), filters.get("month")
+        )
+        upload_id = getattr(pending, "ims_upload_id", None)
+        return int(upload_id) if upload_id is not None else None
+
+    @staticmethod
     def apply_filters(query: Any, filters: Dict[str, Any]) -> Any:
         """Apply optional standard filters dynamically."""
         # Rolled-back/failed upload generations are retained for audit and
@@ -113,6 +124,9 @@ class CompetitionQueryBuilder:
         query = query.filter(
             CompetitionData.upload.has(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
         )
+        pending_upload_id = CompetitionQueryBuilder._pending_upload_id(filters)
+        if pending_upload_id is not None:
+            query = query.filter(CompetitionData.upload_id != pending_upload_id)
         if filters.get("year") is not None:
             query = query.filter(CompetitionData.year == filters["year"])
         if filters.get("month") is not None:
@@ -154,6 +168,9 @@ class CompetitionQueryBuilder:
         try:
             if hasattr(IMSUpload, "competition_imported") and hasattr(IMSUpload, "competition_imported_at"):
                 upload_q = db.session.query(IMSUpload).filter(IMSUpload.competition_imported.is_(True))
+                pending_upload_id = cls._pending_upload_id(filters)
+                if pending_upload_id is not None:
+                    upload_q = upload_q.filter(IMSUpload.id != pending_upload_id)
                 if filters.get("upload_id") is not None:
                     upload_q = upload_q.filter(IMSUpload.id == filters["upload_id"])
                 last_upload = upload_q.order_by(desc(IMSUpload.competition_imported_at)).first()
@@ -300,6 +317,9 @@ class CompetitionQueryBuilder:
             col_q = db.session.query(distinct(column_attr)).filter(
                 CompetitionData.upload.has(IMSUpload.status == IMSUpload.STATUS_COMPLETED)
             )
+            pending_upload_id = CompetitionQueryBuilder._pending_upload_id({})
+            if pending_upload_id is not None:
+                col_q = col_q.filter(CompetitionData.upload_id != pending_upload_id)
             if upload_id is not None:
                 col_q = col_q.filter(CompetitionData.upload_id == upload_id)
             return [r[0] for r in col_q.order_by(column_attr).all()]

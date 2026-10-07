@@ -182,3 +182,13 @@ def test_pending_publication_keeps_previous_superseded_snapshots_visible():
     assert "representative_snapshot_sets.c.source_upload_id != int(ims_id)" in representatives
     assert "desc(region_snapshot_sets.c.activated_at)" in regions
     assert "desc(representative_snapshot_sets.c.activated_at)" in representatives
+
+
+def test_competition_api_keeps_pending_ims_hidden_until_publication():
+    api = (ROOT / "app/competition/api.py").read_text(encoding="utf-8")
+    filter_builder = api[api.index("def apply_filters"):api.index("@classmethod", api.index("def apply_filters"))]
+    filter_options = api[api.index("def get_distinct_filter_options"):api.index("# =====", api.index("def get_distinct_filter_options"))]
+
+    assert "IMSPublicationService.pending_job(" in api
+    assert "query = query.filter(CompetitionData.upload_id != pending_upload_id)" in filter_builder
+    assert "col_q = col_q.filter(CompetitionData.upload_id != pending_upload_id)" in filter_options
