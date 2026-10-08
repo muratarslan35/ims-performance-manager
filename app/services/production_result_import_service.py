@@ -504,13 +504,19 @@ class ProductionResultImportService:
             for representative_id, row in tl_rows.items()
             for product_id in row["product_ids"]
         }
-        if source_keys != set(targets):
+        expected_keys = set(targets)
+        missing_source_keys = expected_keys - source_keys
+        globally_empty_ids = tl_empty & unit_empty
+        out_of_scope_product_ids = {
+            product_id for _representative_id, product_id in source_keys - expected_keys
+        }
+        if missing_source_keys or not out_of_scope_product_ids.issubset(globally_empty_ids):
             raise ProductionWorkbookValidationError(
                 f"Üretim dosyası kapsamı dönem hedefleriyle eşit değil "
-                f"(eksik={len(set(targets)-source_keys)}, fazlalık={len(source_keys-set(targets))})."
+                f"(eksik={len(missing_source_keys)}, fazlalık={len(source_keys-expected_keys)})."
             )
 
-        globally_empty = sorted(tl_empty & unit_empty)
+        globally_empty = sorted(globally_empty_ids)
         report = ProductionImportReport(
             rows_seen=len(tl_rows),
             matched_rows=len(tl_rows),
@@ -521,6 +527,8 @@ class ProductionResultImportService:
             ],
         )
         for tl_index, product_id in enumerate(national_tl["product_ids"]):
+            if product_id in out_of_scope_product_ids:
+                continue
             unit_index = self._product_position(national_unit, product_id)
             report.national_product_results.append({
                 "product_id": product_id,
@@ -556,6 +564,8 @@ class ProductionResultImportService:
                 "source_row": tl_row["row_number"],
             })
             for tl_index, product_id in enumerate(tl_row["product_ids"]):
+                if product_id in out_of_scope_product_ids:
+                    continue
                 unit_index = self._product_position(unit_row, product_id)
                 report.region_product_results.append({
                     "region_code": region_code,
@@ -573,6 +583,8 @@ class ProductionResultImportService:
         for representative_id, tl_row in tl_rows.items():
             unit_row = unit_rows[representative_id]
             for tl_index, product_id in enumerate(tl_row["product_ids"]):
+                if product_id in out_of_scope_product_ids:
+                    continue
                 unit_index = self._product_position(unit_row, product_id)
                 database_target = targets[(representative_id, product_id)]
                 actual_tl = tl_row["values"][tl_index]

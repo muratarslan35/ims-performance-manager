@@ -250,6 +250,11 @@ class ProductionResultService:
             for row in upload_rows:
                 by_product.setdefault(int(row.product_id), []).append(row)
             for product_id in set(by_product) | empty_by_period[period]:
+                # The current IMS target is the inclusion contract for this
+                # month. Production workbook quota markers cannot add a product
+                # that IMS deliberately omitted from the period.
+                if cls._d(target_amounts.get((year, month, product_id))) <= 0:
+                    continue
                 if product_id in empty_by_period[period]:
                     result.setdefault(product_id, []).append(period)
                     continue
