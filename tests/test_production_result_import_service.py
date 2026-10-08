@@ -195,6 +195,19 @@ def test_globally_empty_product_is_accepted_but_single_blank_is_rejected(tmp_pat
         assert fentivag_row["actual_tl"] == 0
         assert fentivag_row["actual_unit"] == 0
 
+        # If a later IMS month omits this product entirely, its globally
+        # empty production columns remain readable but are excluded from the
+        # month's product calculations.
+        db.session.query(Target).filter_by(
+            year=2026, month=4, product_id=fentivag_id,
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        omitted_report = ProductionResultImportService(path, 2026, 4, production_stage=2).parse()
+        assert all(row["product_id"] != fentivag_id for row in omitted_report.product_results)
+        assert all(row["product_id"] != fentivag_id for row in omitted_report.region_product_results)
+        assert all(row["product_id"] != fentivag_id for row in omitted_report.national_product_results)
+        assert len(omitted_report.product_results) == 6
+
         # The same blank is invalid unless the product is globally empty for all representatives.
         parsed_tl = service._find_sheet(load_workbook(path, data_only=True), "TL")
         parsed_layout = service._layout(parsed_tl, "TL")
