@@ -68,6 +68,12 @@ P1/P2 ile kapanan dönemlerin final kutu/TL sonuçları sonradan formül değiş
 
 Üretim otoritesine göre ulusal düzeyde gerçek satış bulunmayan ürün/ay kota çıkış kabul edildiğinde ilgili ürünün TL hedefi %100 kapanmış sayılır. Bu sonuç temsilci, bölge, dashboard ve Q tüketicilerinde aynı authority üzerinden okunur. Aynı kural için ekran bazlı alternatif hesap üretilemez.
 
+Ürün/ay kapsama koşulu:
+- Ürünün ilgili aya dahil olup olmadığı yalnız o aya ait kabul edilmiş IMS hedeflerinden belirlenir; ürün için temsilciler toplamında pozitif TL hedefi yoksa ürün o ay kapsam dışıdır. Ürün kimliği sabitlenmez; koşul her ürün için dinamik uygulanır.
+- Kapsam dışı ürün, üretim dosyasında sıfır/hedefsiz satır veya kota dosya adı işareti bulunsa dahi o ayın ürün hesabına ya da kota çıkış listesine eklenmez. Üretim importu bu satırları ancak tüm temsilcilerde TL ve kutu hedef/çıkışlarının boş veya sıfır olduğu doğrulanırsa kapsam dışı bırakabilir; aktif satış veya beklenen hedef satırı eksikliği doğrulamayı fail-closed tutar.
+- Ürünün IMS hedefi varsa mevcut ulusal üretim koşulları uygulanır: üretim yüklemesi tamamlanmış olmalı, satış yokluğu ulusal sonuçta doğrulanmalı, küçük münferit hareketler mevcut toleranslara göre değerlendirilmelidir; anlamlı gerçek satış kota çıkışını engeller.
+- IMS hedefleri ve üretim kaynak satırları değiştirilmez. Bu kural yeni import ve türetilmiş hesaplamalarda uygulanır; geçmiş IMS verileri veya yayınlanmış snapshotlar geriye dönük olarak yeniden yazılmaz.
+
 ## 4. Kalıcı okuma mimarisi
 
 ### Dashboard
