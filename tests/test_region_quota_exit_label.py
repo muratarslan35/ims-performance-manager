@@ -38,7 +38,8 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
         )
         monurol = Product(product_code="Q-MON", product_name="Monurol", is_active=True)
         travazol = Product(product_code="Q-TRA", product_name="Travazol", is_active=True)
-        db.session.add_all([representative, monurol, travazol])
+        stiler = Product(product_code="Q-STI", product_name="Stiler", is_active=True)
+        db.session.add_all([representative, monurol, travazol, stiler])
         db.session.flush()
         for product in (monurol, travazol):
             db.session.add(Target(
@@ -46,7 +47,7 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
                 product_id=product.id, tl_target=1000, unit_target=10,
             ))
         upload = ProductionResultUpload(
-            file_name="Mart_2_Uretim_KOTA_SATIS_Monurol-Fentivag.xlsx",
+            file_name="Mart_2_Uretim_KOTA_SATIS_Monurol-Fentivag-Stiler.xlsx",
             stored_file_name="2044-03-p2.xlsx",
             source_hash="q" * 64, year=2044, month=3, production_stage=2,
             status=ProductionResultUpload.STATUS_APPLIED,
@@ -70,6 +71,13 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
                 target_unit=10, actual_unit=8, realization_percent=travazol_percent,
                 unit_realization_percent=80,
             ))
+            # Production may still carry an explicit marker for a product that
+            # the current IMS omitted. It must not enter this month's quota.
+            db.session.add(ProductionRegionProductResult(
+                upload_id=upload.id, region_code=region_code, product_id=stiler.id,
+                target_tl=0, actual_tl=0, target_unit=0, actual_unit=0,
+                realization_percent=100, unit_realization_percent=0,
+            ))
         db.session.commit()
 
         rows = {
@@ -80,6 +88,7 @@ def test_region_marks_only_all_region_hundred_percent_product_as_quota_exit(tmp_
         assert rows[monurol.product_name]["quota_exit_months"] == ["03/2044"]
         assert rows[travazol.product_name]["quota_exit"] is False
         assert rows[travazol.product_name]["quota_exit_months"] == []
+        assert stiler.id not in ProductionResultService.quota_product_months([(2044, 3)])
 
 
 
