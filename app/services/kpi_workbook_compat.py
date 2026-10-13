@@ -336,27 +336,26 @@ def validate_product_kpi_sheets(workbook, canonical):
             )
             if not any(key):
                 continue
-            # Some exports repeat identity labels below the PAZAR header.
-            # Detect this from the canonical identity-field semantics rather
-            # than literal Turkish header spellings. Only skip when the first
-            # two cells are the identity labels and the remaining identity
-            # cells are empty/NATIONAL placeholders; real NATIONAL controls
-            # still go through the canonical-row and numeric validations.
-            normalized_key = tuple(_norm(value) for value in key)
-            normalized_identity = tuple(_norm(value) for value in key_columns)
-            if (
-                normalized_key[:2] == normalized_identity[:2]
-                and all(value in {"", "NATIONAL"} for value in normalized_key[2:])
-                and "NATIONAL" in normalized_key[2:]
-            ):
-                continue
             # KPI detail rows can use a different commercial brick allocation
             # from the TTS matrix. They are extra analytical data, not a source
             # for representative sales. Only the common NATIONAL control has
             # identical business meaning in both layouts.
             if _norm(key[2]) != "NATIONAL":
                 continue
-            if canonical_rows.get(key) is None:
+            canonical_row = canonical_rows.get(key)
+            if canonical_row is None:
+                # Some exports repeat identity labels below the PAZAR header.
+                # Treat that row as a placeholder only when it does not exist
+                # in the canonical matrix. If the key is canonical, retain all
+                # existing NATIONAL numeric checks.
+                normalized_key = tuple(_norm(value) for value in key)
+                normalized_identity = tuple(_norm(value) for value in key_columns)
+                if (
+                    normalized_key[:2] == normalized_identity[:2]
+                    and all(value in {"", "NATIONAL"} for value in normalized_key[2:])
+                    and "NATIONAL" in normalized_key[2:]
+                ):
+                    continue
                 raise ValueError(f"{sheet_name}: KPI satırı ana brick matrisinde bulunamadı: {key}")
             kpi_value = pd.to_numeric(pd.Series([values.iloc[product_column]]), errors="coerce").iloc[0]
             market_value = pd.to_numeric(pd.Series([values.iloc[market_column]]), errors="coerce").iloc[0]
