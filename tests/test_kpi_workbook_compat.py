@@ -174,9 +174,9 @@ def test_kpi_validation_skips_semantically_repeated_identity_labels_before_natio
         "2-TTS-BRİCK TL-REA%": _matrix("tl"),
         "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
     })
-    # The source KPI repeats the field labels as if they were a NATIONAL row,
-    # but that exact identity does not exist in the canonical matrix. Preserve
-    # a distinct canonical NATIONAL control to ensure it is still validated.
+    # The source KPI repeats field labels in a NATIONAL-shaped row. The
+    # placeholder identity is absent from the canonical matrix, while the
+    # separate real NATIONAL control must still pass canonical validation.
     canonical = canonical[canonical["IAM BRICK"] != "NATIONAL"].copy()
     canonical.loc[len(canonical)] = ["", "", "NATIONAL", "NATIONAL", "", 0, 0]
     kpi = pd.DataFrame([
