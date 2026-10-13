@@ -189,6 +189,24 @@ def test_kpi_validation_skips_semantically_repeated_identity_labels_before_natio
     assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
 
 
+def test_kpi_validation_accepts_numeric_repeated_identity_national_control_without_canonical_match():
+    canonical, _ = build_canonical_brick_frame({
+        "2-TTS-BRİCK TL-REA%": _matrix("tl"),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
+    })
+    # This export repeats the identity labels in its only NATIONAL-shaped
+    # KPI row. The measure cells are numeric, so it is the source control row
+    # even though its identity tuple is not a canonical brick key.
+    canonical = canonical[canonical["IAM BRICK"] != "NATIONAL"].copy()
+    kpi = pd.DataFrame([
+        [None] * 9, [None] * 9, [None] * 9,
+        [None, None, None, None, None, "PAZAR", "PP", "RANK", "TRAVAZOL"],
+        ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, 31],
+        ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 30, 1, 3],
+    ])
+    assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
+
+
 def test_kpi_validation_rejects_non_numeric_national_market_value():
     canonical, _ = build_canonical_brick_frame({
         "2-TTS-BRİCK TL-REA%": _matrix("tl"),
