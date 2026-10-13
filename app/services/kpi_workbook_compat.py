@@ -48,7 +48,7 @@ def _matrix_plan(frame, metric):
     for header_row in range(min(12, len(frame))):
         row = [_norm(value) for value in frame.iloc[header_row].tolist()]
         # Keep the existing numbered-header contract unchanged, while also
-        # accepting the newer semantic pair: "TTS / BRICK" + "TTS".
+        # accepting the newer semantic header pair: "TTS / BRICK" + "TTS".
         # The latter means the brick identity is in the first column and the
         # representative identity is in the immediately following column.
         if "1 TTS" in row:
