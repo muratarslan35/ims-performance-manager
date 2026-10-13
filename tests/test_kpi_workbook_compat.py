@@ -169,6 +169,21 @@ def test_kpi_validation_keeps_market_tab_independent_from_company_sales_matrix()
     assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
 
 
+def test_kpi_validation_skips_repeated_column_label_row_before_national_control():
+    canonical, _ = build_canonical_brick_frame({
+        "2-TTS-BRİCK TL-REA%": _matrix("tl"),
+        "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
+    })
+    kpi = pd.DataFrame([
+        [None] * 9, [None] * 9, [None] * 9,
+        [None, None, None, None, None, "PAZAR", "PP", "RANK", "TRAVAZOL"],
+        ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, 31],
+        ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", "", 10, 30, 1, 3],
+        ["", "NATIONAL", "NATIONAL", "NATIONAL", "", 100, None, None, 31],
+    ])
+    assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
+
+
 def test_kpi_validation_rejects_non_numeric_national_market_value():
     canonical, _ = build_canonical_brick_frame({
         "2-TTS-BRİCK TL-REA%": _matrix("tl"),
