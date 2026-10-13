@@ -336,6 +336,10 @@ def validate_product_kpi_sheets(workbook, canonical):
             )
             if not any(key):
                 continue
+            # Some exports repeat the KPI column labels as the first row below
+            # the PAZAR header. Do not mistake that label row for NATIONAL data.
+            if _norm(key[0]) == "BOLGE" and _norm(key[1]) == "IL":
+                continue
             # KPI detail rows can use a different commercial brick allocation
             # from the TTS matrix. They are extra analytical data, not a source
             # for representative sales. Only the common NATIONAL control has
