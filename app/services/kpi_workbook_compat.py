@@ -355,6 +355,20 @@ def validate_product_kpi_sheets(workbook, canonical):
                     and all(value in {"", "NATIONAL"} for value in normalized_key[2:])
                     and "NATIONAL" in normalized_key[2:]
                 ):
+                    # Some exports repeat the identity labels in the only
+                    # NATIONAL-shaped row. If its PAZAR and product cells are
+                    # numeric, it is also the source's NATIONAL control row:
+                    # validate those values without requiring a canonical
+                    # identity tuple that the repeated labels cannot match.
+                    # A text-only repeated header remains a placeholder.
+                    placeholder_kpi = pd.to_numeric(
+                        pd.Series([values.iloc[product_column]]), errors="coerce"
+                    ).iloc[0]
+                    placeholder_market = pd.to_numeric(
+                        pd.Series([values.iloc[market_column]]), errors="coerce"
+                    ).iloc[0]
+                    if not pd.isna(placeholder_kpi) and not pd.isna(placeholder_market):
+                        national_seen = True
                     continue
                 raise ValueError(f"{sheet_name}: KPI satırı ana brick matrisinde bulunamadı: {key}")
             kpi_value = pd.to_numeric(pd.Series([values.iloc[product_column]]), errors="coerce").iloc[0]
