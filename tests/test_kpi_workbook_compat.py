@@ -56,6 +56,30 @@ def test_numbered_sheet_group_with_one_rep_column_reads_all_bricks():
     assert frame.iloc[1]["TRAVAZOL TL ÇIKIŞ"] == 300
 
 
+def test_semantic_tts_brick_headers_are_supported_without_changing_identity_mapping():
+    tl = _matrix("tl", single_rep=True)
+    unit = _matrix("unit", single_rep=True)
+    for frame in (tl, unit):
+        frame.iloc[2, 2] = "TTS / BRICK"
+        frame.iloc[2, 3] = "TTS"
+
+    workbook = {
+        "2-TTS-BRİCK HEDEF REAL-TL V2": tl,
+        "2-TTS-BRİCK HEDEF REAL-KUTU V2": unit,
+    }
+    frame, consumed = build_canonical_brick_frame(workbook)
+
+    assert consumed == set(workbook)
+    assert len(frame) == 2
+    assert frame.iloc[1]["BÖLGE"] == "101 ISTANBUL"
+    assert frame.iloc[1]["İL"] == "EDİRNE"
+    assert frame.iloc[1]["IAM BRICK"] == "EDİRNE MERKEZ"
+    assert frame.iloc[1]["1 TTS ISMI"] == "AYŞE TEST"
+    assert frame.iloc[1]["2 TTS ISMI"] == ""
+    assert frame.iloc[1]["TRAVAZOL KUTU ÇIKIŞ"] == 3
+    assert frame.iloc[1]["TRAVAZOL TL ÇIKIŞ"] == 300
+
+
 def test_new_kpi_layout_fails_closed_when_paired_rows_differ():
     unit = _matrix("unit")
     unit.iloc[4, 2] = "BAŞKA BRICK"
