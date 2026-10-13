@@ -47,10 +47,26 @@ def is_product_kpi_sheet(sheet_name):
 def _matrix_plan(frame, metric):
     for header_row in range(min(12, len(frame))):
         row = [_norm(value) for value in frame.iloc[header_row].tolist()]
-        # The numeric prefixes in ``1-TTS`` and ``2-TTS-BRICK`` identify
-        # workbook sections. They do not require two rep identity columns.
-        if "1 TTS" not in row:
-            continue
+        # Keep the existing numbered-header contract unchanged, while also
+        # accepting the newer semantic pair: "TTS / BRICK" + "TTS".
+        # The latter means the brick identity is in the first column and the
+        # representative identity is in the immediately following column.
+        if "1 TTS" in row:
+            brick_column = row.index("1 TTS") - 1
+            primary_rep_column = row.index("1 TTS")
+            secondary_rep_column = row.index("2 TTS") if "2 TTS" in row else None
+        else:
+            brick_columns = [i for i, label in enumerate(row) if label == "TTS BRICK"]
+            semantic_rep_columns = [
+                i for i, label in enumerate(row)
+                if label == "TTS" and brick_columns and i == brick_columns[0] + 1
+            ]
+            if len(brick_columns) != 1 or len(semantic_rep_columns) != 1:
+                continue
+            brick_column = brick_columns[0]
+            primary_rep_column = semantic_rep_columns[0]
+            secondary_rep_column = None
+
         group_row = header_row - 1
         if group_row < 0:
             continue
@@ -70,9 +86,9 @@ def _matrix_plan(frame, metric):
             "data_start": header_row + 1,
             "region": 0,
             "province": 1,
-            "brick": row.index("1 TTS") - 1,
-            "primary_rep": row.index("1 TTS"),
-            "secondary_rep": row.index("2 TTS") if "2 TTS" in row else None,
+            "brick": brick_column,
+            "primary_rep": primary_rep_column,
+            "secondary_rep": secondary_rep_column,
             "products": products,
             "metric": metric,
         }
