@@ -336,9 +336,19 @@ def validate_product_kpi_sheets(workbook, canonical):
             )
             if not any(key):
                 continue
-            # Some exports repeat the KPI column labels as the first row below
-            # the PAZAR header. Do not mistake that label row for NATIONAL data.
-            if _norm(key[0]) == "BOLGE" and _norm(key[1]) == "IL":
+            # Some exports repeat identity labels below the PAZAR header.
+            # Detect this from the canonical identity-field semantics rather
+            # than literal Turkish header spellings. Only skip when the first
+            # two cells are the identity labels and the remaining identity
+            # cells are empty/NATIONAL placeholders; real NATIONAL controls
+            # still go through the canonical-row and numeric validations.
+            normalized_key = tuple(_norm(value) for value in key)
+            normalized_identity = tuple(_norm(value) for value in key_columns)
+            if (
+                normalized_key[:2] == normalized_identity[:2]
+                and all(value in {"", "NATIONAL"} for value in normalized_key[2:])
+                and "NATIONAL" in normalized_key[2:]
+            ):
                 continue
             # KPI detail rows can use a different commercial brick allocation
             # from the TTS matrix. They are extra analytical data, not a source
