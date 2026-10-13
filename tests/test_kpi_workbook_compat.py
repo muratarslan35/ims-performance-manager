@@ -169,7 +169,7 @@ def test_kpi_validation_keeps_market_tab_independent_from_company_sales_matrix()
     assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
 
 
-def test_kpi_validation_skips_repeated_column_label_row_before_national_control():
+def test_kpi_validation_skips_semantically_repeated_identity_labels_before_national_control():
     canonical, _ = build_canonical_brick_frame({
         "2-TTS-BRİCK TL-REA%": _matrix("tl"),
         "2-TTS-BRİCK KUTU-REA%": _matrix("unit"),
