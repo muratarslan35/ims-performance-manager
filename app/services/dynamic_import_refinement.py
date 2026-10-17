@@ -335,7 +335,7 @@ def refined_competition_structure(service, sheet_name):
             populated += 1
             if (
                 " " in raw
-                and not re.search(r"\\d", raw)
+                and not re.search(r"\d", raw)
                 and not any(token in normalized for token in ("SUBTOTAL", "TOTAL", "TOPLAM"))
             ):
                 names.append(normalized)
