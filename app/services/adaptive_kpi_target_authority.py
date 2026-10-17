@@ -155,6 +155,8 @@ def _source_rows(frame, plan):
     products = sorted(plan["products"])
     aggregates = []
     reps = {}
+    v2_summaries = []
+    v2_layout_seen = False
     for source_index in range(plan["data_start"], len(frame)):
         row = frame.iloc[source_index]
 
@@ -195,16 +197,17 @@ def _source_rows(frame, plan):
             territory_norm
             and province_norm.endswith(" SUBTOTAL")
             and rep_norm == territory_norm
-            and re.match(r"^\\d{3}\\b", territory_norm)
+            and re.match(r"^\d{3}\b", territory_norm)
         )
         v2_region_total = bool(
             territory_norm
             and not province_norm
             and brick_norm == territory_norm
             and not rep_norm
-            and re.match(r"^\\d{3}\\b", territory_norm)
+            and re.match(r"^\d{3}\b", territory_norm)
         )
         if legacy_subtotal or v2_region_total:
+            v2_layout_seen = v2_layout_seen or v2_region_total
             aggregates.append((territory_norm.split()[0], territory, values))
             continue
 
@@ -214,6 +217,8 @@ def _source_rows(frame, plan):
             territory_norm and not province_norm and brick_norm and brick_norm == rep_norm
         )
         if v2_tts_summary:
+            v2_layout_seen = True
+            v2_summaries.append((territory, representative, values, source_index + 1))
             continue
 
         if representative and rep_norm not in {"NATIONAL", territory_norm, "TURKIYE TOPLAM"}:
@@ -222,6 +227,47 @@ def _source_rows(frame, plan):
             for product in products:
                 bucket[product]["target"] += values[product]["target"]
                 bucket[product]["actual"] += values[product]["actual"]
+    if v2_layout_seen:
+        # Each V2 summary must reconcile to its own detailed brick rows. This
+        # proves the workbook was read completely and prevents silent undercounts.
+        for territory, representative, summary_values, source_row in v2_summaries:
+            detail_values = reps.get((territory, representative))
+            if detail_values is None:
+                raise ValueError(
+                    f"Adaptive IMS: V2 TTS özeti için brick satırı bulunamadı "
+                    f"(satır={source_row}, bölge={territory}, TTS={representative})."
+                )
+            for product in products:
+                for metric in ("target", "actual"):
+                    expected = float(summary_values[product][metric] or 0)
+                    actual = float(detail_values[product][metric] or 0)
+                    if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
+                        raise ValueError(
+                            "Adaptive IMS: V2 TTS özeti brick detaylarıyla uyuşmuyor "
+                            f"(satır={source_row}, bölge={territory}, TTS={representative}, "
+                            f"ürün={product}, metrik={metric}, özet={expected}, detay={actual})."
+                        )
+
+        # V2 explicitly supplies national and region aggregates. Check product
+        # target/actual columns against the sum of the region totals.
+        national_rows = [values for territory, _representative, values in aggregates if territory == "NATIONAL"]
+        region_rows = [values for territory, _representative, values in aggregates if territory != "NATIONAL"]
+        if len(national_rows) != 1:
+            raise ValueError(
+                f"Adaptive IMS: V2 matriste tek Türkiye toplamı bekleniyordu; bulundu={len(national_rows)}."
+            )
+        region_keys = [territory for territory, _representative, _values in aggregates if territory != "NATIONAL"]
+        if len(region_keys) != len(set(region_keys)):
+            raise ValueError("Adaptive IMS: V2 matriste yinelenen bölge toplamı bulundu.")
+        for product in products:
+            for metric in ("target", "actual"):
+                expected = float(national_rows[0][product][metric] or 0)
+                actual = sum(float(values[product][metric] or 0) for values in region_rows)
+                if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
+                    raise ValueError(
+                        "Adaptive IMS: V2 Türkiye toplamı bölge toplamlarıyla uyuşmuyor "
+                        f"(ürün={product}, metrik={metric}, Türkiye={expected}, bölgeler={actual})."
+                    )
     return products, aggregates, reps
 
 def _pair_views(importer):
