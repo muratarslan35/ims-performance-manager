@@ -27,17 +27,17 @@ jobs:
           set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
-          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          printf '%s\\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Read production result failure evidence
+      - name: Read week 41 import failure evidence (read-only)
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \\
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \\
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \\
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -45,31 +45,81 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
           venv/bin/python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          from openpyxl.utils import get_column_letter
           from app import create_app
-          from app.extensions import db
-          from app.models import ProductionResultUpload
+          from app.models import IMSUpload, IMSImportJob
 
           app = create_app()
           with app.app_context():
-              rows = (
-                  ProductionResultUpload.query
-                  .filter_by(year=2026, month=2, production_stage=2)
-                  .order_by(ProductionResultUpload.uploaded_at.desc(), ProductionResultUpload.id.desc())
-                  .limit(5)
+              upload = IMSUpload.query.filter_by(id=54).first()
+              if upload:
+                  print(
+                      "IMS_UPLOAD_54|"
+                      f"status={upload.status}|file={upload.file_name}|year={upload.year}|"
+                      f"month={upload.month}|week={upload.week_number}|uploaded_at={upload.uploaded_at}|"
+                      f"error={upload.error_message or ''}|warning={upload.warning_message or ''}"
+                  )
+              else:
+                  print("IMS_UPLOAD_54|not_found")
+
+              jobs = (
+                  IMSImportJob.query
+                  .filter_by(year=2026, month=10)
+                  .order_by(IMSImportJob.id.desc())
+                  .limit(12)
                   .all()
               )
-              print(f"PRODUCTION_RESULT_MATCH_COUNT|{len(rows)}")
-              for item in rows:
+              print(f"IMS_IMPORT_JOBS_OCT2026|count={len(jobs)}")
+              for job in jobs:
                   print(
-                      "PRODUCTION_RESULT|"
-                      f"id={item.id}|status={item.status}|year={item.year}|month={item.month}|stage={item.production_stage}|"
-                      f"file={item.file_name}|uploaded_at={item.uploaded_at}|"
-                      f"error={item.error_message or ''}|warning={item.warning_message or ''}"
+                      "IMS_IMPORT_JOB|"
+                      f"id={job.id}|status={job.status}|upload_id={job.ims_upload_id}|"
+                      f"file={job.file_name}|stored={job.stored_file_name}|queued={job.queued_at}|"
+                      f"started={job.started_at}|completed={job.completed_at}|error={job.error_message or ''}"
                   )
+
+              candidates = []
+              if upload:
+                  candidates.extend([job for job in jobs if job.ims_upload_id == upload.id])
+              candidates.extend(job for job in jobs if "41" in job.file_name or "Ekim" in job.file_name or "October" in job.file_name)
+              seen = set()
+              for job in candidates:
+                  if job.id in seen:
+                      continue
+                  seen.add(job.id)
+                  matches = list(Path("instance").rglob(job.stored_file_name))
+                  print(f"WORKBOOK_LOCATE|job_id={job.id}|matches={len(matches)}")
+                  if not matches:
+                      continue
+                  path = matches[0]
+                  print(f"WORKBOOK_FOUND|job_id={job.id}|file={path.name}")
+                  try:
+                      wb = load_workbook(path, read_only=True, data_only=True)
+                      sheet = next((s for s in wb.sheetnames if s.strip().upper() == "TTS-KUTU ÇIKIŞ"), None)
+                      if sheet is None:
+                          print("TARGET_SHEET|not_found|sheets=" + ",".join(wb.sheetnames[:30]))
+                          wb.close()
+                          continue
+                      ws = wb[sheet]
+                      print(f"TARGET_SHEET|{sheet}|max_row={ws.max_row}|max_column={ws.max_column}")
+                      for row_number in (68, 73):
+                          cells = []
+                          for col in range(1, ws.max_column + 1):
+                              value = ws.cell(row=row_number, column=col).value
+                              if value is not None and str(value).strip():
+                                  cells.append(f"{get_column_letter(col)}={str(value)[:180]}")
+                          print(f"WORKBOOK_ROW|{row_number}|" + "|".join(cells))
+                      wb.close()
+                  except Exception as exc:
+                      print(f"WORKBOOK_READ_ERROR|job_id={job.id}|type={type(exc).__name__}|message={exc}")
           PY
-          echo '--- WEB LOG WINDOW 13:10-13:18 UTC ---'
-          sudo journalctl -u ims-performance-manager.service \
-            --since '2026-08-30 13:10:00 UTC' --until '2026-08-30 13:18:30 UTC' \
-            --no-pager | tail -n 200 || true
+          echo '--- RECENT IMPORT WORKER ERRORS ---'
+          sudo journalctl -u ims-import-worker.service --since '2026-10-14 00:00:00 UTC' --no-pager \\
+            | grep -Ei '1124|1624|conflict|çelişen|week.?41|TTS-KUTU' | tail -n 100 || true
+          echo '--- RECENT WEB IMPORT ERRORS ---'
+          sudo journalctl -u ims-performance-manager.service --since '2026-10-14 00:00:00 UTC' --no-pager \\
+            | grep -Ei '1124|1624|conflict|çelişen|week.?41|TTS-KUTU' | tail -n 100 || true
           echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
