@@ -118,3 +118,15 @@ def test_v2_tts_summary_mismatch_fails_closed():
         assert "TTS özeti brick detaylarıyla uyuşmuyor" in str(exc)
     else:
         raise AssertionError("V2 summary mismatch must fail closed")
+
+
+def test_v2_national_total_must_reconcile_to_region_totals():
+    frame = _v2_matrix("tl")
+    frame.iloc[4, 5] = 99.0
+    plan = _matrix_plan(frame)
+    try:
+        _source_rows(frame, plan)
+    except ValueError as exc:
+        assert "Türkiye toplamı bölge toplamlarıyla uyuşmuyor" in str(exc)
+    else:
+        raise AssertionError("V2 national/region mismatch must fail closed")
