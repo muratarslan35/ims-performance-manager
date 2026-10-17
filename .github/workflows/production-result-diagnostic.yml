@@ -27,7 +27,7 @@ jobs:
           set -Eeuo pipefail
           test -n "$IMS_DEPLOY_SSH_KEY"
           mkdir -p ~/.ssh
-          printf '%s\\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
+          printf '%s\n' "$IMS_DEPLOY_SSH_KEY" > ~/.ssh/ims_diag_key
           chmod 600 ~/.ssh/ims_diag_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
@@ -35,9 +35,9 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \\
-            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \\
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \\
+          ssh -i ~/.ssh/ims_diag_key -p "$IMS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ConnectionAttempts=3 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
             "$IMS_USER@$IMS_HOST" "IMS_PATH='$IMS_PATH' bash -se" <<'REMOTE'
           set -Eeuo pipefail
           cd "$IMS_PATH"
@@ -116,10 +116,10 @@ jobs:
                       print(f"WORKBOOK_READ_ERROR|job_id={job.id}|type={type(exc).__name__}|message={exc}")
           PY
           echo '--- RECENT IMPORT WORKER ERRORS ---'
-          sudo journalctl -u ims-import-worker.service --since '2026-10-14 00:00:00 UTC' --no-pager \\
+          sudo journalctl -u ims-import-worker.service --since '2026-10-14 00:00:00 UTC' --no-pager \
             | grep -Ei '1124|1624|conflict|çelişen|week.?41|TTS-KUTU' | tail -n 100 || true
           echo '--- RECENT WEB IMPORT ERRORS ---'
-          sudo journalctl -u ims-performance-manager.service --since '2026-10-14 00:00:00 UTC' --no-pager \\
+          sudo journalctl -u ims-performance-manager.service --since '2026-10-14 00:00:00 UTC' --no-pager \
             | grep -Ei '1124|1624|conflict|çelişen|week.?41|TTS-KUTU' | tail -n 100 || true
           echo '--- DIAGNOSTIC_COMPLETE ---'
           REMOTE
