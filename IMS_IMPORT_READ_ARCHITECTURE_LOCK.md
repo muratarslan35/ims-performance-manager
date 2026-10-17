@@ -147,6 +147,17 @@ Publication öncesi:
 - National/region official aggregate varsa temsilci toplamı onun yerine alternatif authority olarak kullanılamaz.
 - Aynı ürün/ay/temsilci için iki farklı kaynak aynı anda final katkı yapamaz.
 
+## 8.1 Adaptive IMS semantik matris sözleşmesi (40. ve 41. hafta)
+
+- Eylül/40. hafta legacy düzeni korunur: 1.TTS/2.TTS kimlik başlıkları, NATIONAL satırı ve `<bölge> Subtotal` bölge toplamı kabul edilir.
+- Ekim/41. hafta V2 düzeni de kabul edilir: `TTS / BRICK` + bitişik `TTS` başlıkları, `TÜRKİYE TOPLAM` ulusal satırı ve `İL`/TTS boşken brick sütununda bölge adı bulunan bölge toplamı.
+- V2'de il/brick satırlarından önce gelen, il alanı boş ve TTS/brick kimlikleri aynı olan TTS özet satırı temsilci toplamına ikinci kez eklenmez.
+- Her V2 TTS özetindeki ürün hedef/gerçekleşen değerleri o TTS'nin detay brick satırlarıyla; ulusal ürün hedef/gerçekleşen değerleri de bölge toplamlarıyla uzlaştırılır. Eksik veya tutarsız kapsam sessizce kabul edilmez; import fail-closed hata verir.
+- TL ve KUTU sayfaları aynı ürün, temsilci ve aggregate kapsamını sağlamalıdır. Başlık çözümlenemediğinde hata tanısı sayfa adını ve ilk satırlardaki semantik başlık ipuçlarını içermelidir.
+- `app/services/adaptive_kpi_target_authority.py` veya deploy sınıflandırıcısı değiştiğinde import worker yeniden başlatılır; bu, çalışan process'te eski parser kodunun kalmasını önler.
+
+Bu sözleşme yeni V2 formatını ekler, legacy formatın kurallarını kaldırmaz. Workbook'un hedef/gerçekleşen kaynak değerleri değiştirilmez.
+
 ## 9. 22–24 Eylül 2026 son stabilizasyon değişiklikleri
 
 - **PR #973** — yarım kalan Temmuz P2 temsilci snapshot işi resumable hale getirildi; production/historical refresh zinciri korunarak tamamlandı.

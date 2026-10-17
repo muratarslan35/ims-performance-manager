@@ -40,6 +40,9 @@ stopping = False
 # when the production-publication pipeline changes.
 PRODUCTION_PUBLICATION_PIPELINE_VERSION = 2
 
+# Semantic IMS matrix layout contract; bumping this version requires a worker restart.
+ADAPTIVE_IMS_LAYOUT_VERSION = 2
+
 
 def _stop(*_args):
     global stopping

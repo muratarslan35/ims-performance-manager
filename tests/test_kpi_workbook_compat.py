@@ -232,3 +232,68 @@ def test_kpi_validation_accepts_negative_return_correction():
         ["BÖLGE", "İL", "NATIONAL", "NATIONAL", "", 100, None, None, -1],
     ])
     assert validate_product_kpi_sheets({"2-KUTU-TRAVAZOL KPI": kpi}, canonical) == 1
+
+
+def _v2_matrix(metric, *, mismatch_summary=False):
+    summary_target = 101 if mismatch_summary else 100
+    return pd.DataFrame([
+        ["1-11 EKİM", None, None, None, None, None, None, None, None, None, None],
+        [None, None, None, None, None, "TOPLAM", None, None, "TRAVAZOL", None, None],
+        ["BÖLGE", "İL", "TTS / BRICK", "TTS", "EKİP HEDEF", "EKİP ÇIKIŞ", "EKİP REAL", None, "ÜRÜN HEDEF", "ÜRÜN ÇIKIŞ", "REAL"],
+        ["TÜRKİYE TOPLAM", None, None, None, 100, 40, 40, None, 100, 40, 40],
+        ["101 ISTANBUL", "", "101 ISTANBUL", "", 100, 40, 40, None, 100, 40, 40],
+        ["101 ISTANBUL", "", "AYŞE TEST", "AYŞE TEST", summary_target, 40, 40, None, summary_target, 40, 40],
+        ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", 60, 20, 33.3, None, 60, 20, 33.3],
+        ["101 ISTANBUL", "TEKİRDAĞ", "TEKİRDAĞ MERKEZ", "AYŞE TEST", 40, 20, 50, None, 40, 20, 50],
+    ])
+
+
+def test_v2_canonical_sales_excludes_national_region_and_tts_summary_rows():
+    workbook = {
+        "2-TTS-BRİCK HEDEF REAL-TL V2": _v2_matrix("tl"),
+        "2-TTS-BRİCK HEDEF REAL-KUTU V2": _v2_matrix("unit"),
+    }
+    canonical, consumed = build_canonical_brick_frame(workbook)
+
+    assert consumed == set(workbook)
+    assert len(canonical) == 2
+    assert set(canonical["IAM BRICK"]) == {"EDİRNE MERKEZ", "TEKİRDAĞ MERKEZ"}
+    assert set(canonical["1 TTS ISMI"]) == {"AYŞE TEST"}
+
+
+def test_v2_compat_summary_preserves_official_totals_without_double_counting():
+    workbook = {
+        "2-TTS-BRİCK HEDEF REAL-TL V2": _v2_matrix("tl"),
+        "2-TTS-BRİCK HEDEF REAL-KUTU V2": _v2_matrix("unit"),
+    }
+    frames = build_legacy_summary_frames(workbook)
+    balance = frames["IMS COMPAT BAKIYE"]
+    weekly = frames["IMS COMPAT HAFTALIK CIKIS"]
+
+    # National, region, and representative are distinct summary identities.
+    assert balance.iloc[2, 1] == "NATIONAL"
+    assert balance.iloc[3, 0] == "101 ISTANBUL"
+    assert balance.iloc[4, 1] == "AYŞE TEST"
+    assert balance.iloc[4, 2] == 100
+    assert weekly.iloc[4, 2] == 40
+    assert weekly.iloc[4, 3] == 40
+
+
+def test_v2_compat_summary_fails_closed_when_tts_summary_does_not_match_details():
+    workbook = {
+        "2-TTS-BRİCK HEDEF REAL-TL V2": _v2_matrix("tl", mismatch_summary=True),
+        "2-TTS-BRİCK HEDEF REAL-KUTU V2": _v2_matrix("unit"),
+    }
+    with pytest.raises(ValueError, match="TTS özeti brick detaylarıyla uyuşmuyor"):
+        build_legacy_summary_frames(workbook)
+
+
+def test_v2_compat_summary_fails_closed_when_national_does_not_match_region_totals():
+    tl = _v2_matrix("tl")
+    unit = _v2_matrix("unit")
+    tl.iloc[4, 8] = 99
+    with pytest.raises(ValueError, match="Türkiye toplamı bölge toplamlarıyla uyuşmuyor"):
+        build_legacy_summary_frames({
+            "2-TTS-BRİCK HEDEF REAL-TL V2": tl,
+            "2-TTS-BRİCK HEDEF REAL-KUTU V2": unit,
+        })
