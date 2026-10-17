@@ -153,6 +153,22 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
         headers.extend((f"{product} KUTU ÇIKIŞ", f"{product} TL ÇIKIŞ"))
     output = []
     for key, tl_values in tl_rows.items():
+        # The V2 workbook carries official total rows and TTS summary rows in
+        # the same sheet as brick detail. Keep them available to the summary
+        # adapter, but do not turn them into fake brick-sales facts.
+        territory, province, brick, representative = key[:4]
+        territory_norm, province_norm = _norm(territory), _norm(province)
+        brick_norm, rep_norm = _norm(brick), _norm(representative)
+        is_v2_national = territory_norm == "TURKIYE TOPLAM"
+        is_v2_region_total = bool(
+            territory_norm and not province_norm and brick_norm == territory_norm
+            and not rep_norm and re.match(r"^\\d{3}\\b", territory_norm)
+        )
+        is_v2_tts_summary = bool(
+            territory_norm and not province_norm and brick_norm and brick_norm == rep_norm
+        )
+        if is_v2_national or is_v2_region_total or is_v2_tts_summary:
+            continue
         unit_values = unit_rows[key]
         row = list(key)
         for product in shared_products:
@@ -165,39 +181,114 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
 
 
 def _summary_rows(frame, plan):
-    """Return source-authoritative national/region rows plus rep brick sums."""
+    """Read V2/legacy official totals and representative detail without double counting."""
     products = sorted(plan["products"])
     records = []
     representative_totals = {}
+    v2_summaries = []
+    v2_layout_seen = False
     for source_index in range(plan["data_start"], len(frame)):
         row = frame.iloc[source_index]
-        territory = "" if pd.isna(row.iloc[plan["region"]]) else str(row.iloc[plan["region"]]).strip()
-        brick = "" if pd.isna(row.iloc[plan["brick"]]) else str(row.iloc[plan["brick"]]).strip()
-        representative = "" if pd.isna(row.iloc[plan["primary_rep"]]) else str(row.iloc[plan["primary_rep"]]).strip()
-        normalized_brick = _norm(brick)
-        normalized_rep = _norm(representative)
+
+        def cell(column):
+            value = row.iloc[column]
+            return "" if column is None or pd.isna(value) else str(value).strip()
+
+        territory = cell(plan["region"])
+        province = cell(plan["province"])
+        brick = cell(plan["brick"])
+        representative = cell(plan["primary_rep"])
+        territory_norm, province_norm = _norm(territory), _norm(province)
+        normalized_brick, normalized_rep = _norm(brick), _norm(representative)
+        if not any((territory_norm, province_norm, normalized_brick, normalized_rep)):
+            continue
         values = {
             product: {
-                "target": pd.to_numeric(pd.Series([row.iloc[plan["products"][product] - 1]]), errors="coerce").fillna(0).iloc[0],
-                "actual": pd.to_numeric(pd.Series([row.iloc[plan["products"][product]]]), errors="coerce").fillna(0).iloc[0],
+                "target": float(pd.to_numeric(pd.Series([row.iloc[plan["products"][product] - 1]]), errors="coerce").fillna(0).iloc[0]),
+                "actual": float(pd.to_numeric(pd.Series([row.iloc[plan["products"][product]]]), errors="coerce").fillna(0).iloc[0]),
             }
             for product in products
         }
-        if normalized_brick == "NATIONAL":
+
+        if (
+            territory_norm == "TURKIYE TOPLAM"
+            or normalized_brick == "NATIONAL"
+            or normalized_rep == "NATIONAL"
+        ):
             records.append(("", "NATIONAL", values))
-        elif "SUBTOTAL" in normalized_brick and normalized_rep == _norm(territory):
-            records.append((territory, representative, values))
-        elif representative and normalized_rep not in {"NATIONAL", _norm(territory)}:
+            continue
+
+        legacy_subtotal = bool(
+            territory_norm and province_norm.endswith(" SUBTOTAL")
+            and normalized_rep == territory_norm
+        )
+        v2_region_total = bool(
+            territory_norm and not province_norm and normalized_brick == territory_norm
+            and not normalized_rep and re.match(r"^\\d{3}\\b", territory_norm)
+        )
+        if legacy_subtotal or v2_region_total:
+            v2_layout_seen = v2_layout_seen or v2_region_total
+            records.append((territory, representative or territory, values))
+            continue
+
+        v2_tts_summary = bool(
+            territory_norm and not province_norm and normalized_brick and normalized_brick == normalized_rep
+        )
+        if v2_tts_summary:
+            v2_layout_seen = True
+            v2_summaries.append((territory, representative, values, source_index + 1))
+            continue
+
+        if representative and normalized_rep not in {"NATIONAL", territory_norm, "TURKIYE TOPLAM"}:
             key = (territory, representative)
             bucket = representative_totals.setdefault(
                 key, {product: {"target": 0.0, "actual": 0.0} for product in products}
             )
             for product in products:
-                bucket[product]["target"] += float(values[product]["target"] or 0)
-                bucket[product]["actual"] += float(values[product]["actual"] or 0)
-    records.extend((territory, representative, values) for (territory, representative), values in representative_totals.items())
-    return products, records
+                bucket[product]["target"] += values[product]["target"]
+                bucket[product]["actual"] += values[product]["actual"]
 
+    if v2_layout_seen:
+        for territory, representative, summary_values, source_row in v2_summaries:
+            detail_values = representative_totals.get((territory, representative))
+            if detail_values is None:
+                raise ValueError(
+                    f"Yeni IMS V2 TTS özeti için brick detayı bulunamadı "
+                    f"(satır={source_row}, bölge={territory}, TTS={representative})."
+                )
+            for product in products:
+                for metric in ("target", "actual"):
+                    expected = summary_values[product][metric]
+                    actual = detail_values[product][metric]
+                    if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
+                        raise ValueError(
+                            "Yeni IMS V2 TTS özeti brick detaylarıyla uyuşmuyor "
+                            f"(satır={source_row}, bölge={territory}, TTS={representative}, "
+                            f"ürün={product}, metrik={metric}, özet={expected}, detay={actual})."
+                        )
+
+        national = [values for territory, representative, values in records if representative == "NATIONAL"]
+        regions = [values for territory, representative, values in records if representative != "NATIONAL"]
+        if len(national) != 1:
+            raise ValueError(f"Yeni IMS V2 tek Türkiye toplamı bekleniyordu; bulundu={len(national)}.")
+        region_names = [territory for territory, representative, _values in records if representative != "NATIONAL"]
+        if len(region_names) != len(set(region_names)):
+            raise ValueError("Yeni IMS V2 yinelenen bölge toplamı bulundu.")
+        for product in products:
+            for metric in ("target", "actual"):
+                expected = national[0][product][metric]
+                actual = sum(values[product][metric] for values in regions)
+                if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
+                    raise ValueError(
+                        "Yeni IMS V2 Türkiye toplamı bölge toplamlarıyla uyuşmuyor "
+                        f"(ürün={product}, metrik={metric}, Türkiye={expected}, bölgeler={actual})."
+                    )
+
+    records.extend(
+        (territory, representative, values)
+        for (territory, representative), values in representative_totals.items()
+    )
+    return products, records
 
 def build_legacy_summary_frames(workbook, *, file_path=None):
     """Build the legacy BAKIYE/TTS views consumed by existing KPI services."""
