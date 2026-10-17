@@ -89,11 +89,17 @@ jobs:
                   if job.id in seen:
                       continue
                   seen.add(job.id)
-                  matches = list(Path("instance").rglob(job.stored_file_name))
-                  print(f"WORKBOOK_LOCATE|job_id={job.id}|matches={len(matches)}")
-                  if not matches:
+                  upload_root = Path(app.config["UPLOAD_FOLDER"])
+                  suffix = Path(job.stored_file_name).suffix or ".xlsx"
+                  paths = [
+                      upload_root / "ims_queue" / job.stored_file_name,
+                      upload_root / "ims_archive" / f"failed-job-{job.id}{suffix}",
+                      upload_root / "ims_archive" / f"pending-job-{job.id}{suffix}",
+                  ]
+                  path = next((candidate for candidate in paths if candidate.is_file()), None)
+                  print(f"WORKBOOK_LOCATE|job_id={job.id}|found={int(path is not None)}|checked=" + ",".join(str(p.relative_to(upload_root)) for p in paths))
+                  if path is None:
                       continue
-                  path = matches[0]
                   print(f"WORKBOOK_FOUND|job_id={job.id}|file={path.name}")
                   try:
                       wb = load_workbook(path, read_only=True, data_only=True)
