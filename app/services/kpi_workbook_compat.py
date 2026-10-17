@@ -162,7 +162,7 @@ def build_canonical_brick_frame(workbook, *, file_path=None):
         is_v2_national = territory_norm == "TURKIYE TOPLAM"
         is_v2_region_total = bool(
             territory_norm and not province_norm and brick_norm == territory_norm
-            and not rep_norm and re.match(r"^\\d{3}\\b", territory_norm)
+            and not rep_norm and re.match(r"^\d{3}\b", territory_norm)
         )
         is_v2_tts_summary = bool(
             territory_norm and not province_norm and brick_norm and brick_norm == rep_norm
@@ -224,7 +224,7 @@ def _summary_rows(frame, plan):
         )
         v2_region_total = bool(
             territory_norm and not province_norm and normalized_brick == territory_norm
-            and not normalized_rep and re.match(r"^\\d{3}\\b", territory_norm)
+            and not normalized_rep and re.match(r"^\d{3}\b", territory_norm)
         )
         if legacy_subtotal or v2_region_total:
             v2_layout_seen = v2_layout_seen or v2_region_total
