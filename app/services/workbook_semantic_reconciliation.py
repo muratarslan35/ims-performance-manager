@@ -170,20 +170,39 @@ class WorkbookSemanticReconciler:
             return "actual"
         return "market"
 
+    @staticmethod
+    def _is_week_period_label(part):
+        # Real IMS trend workbooks encode periods as e.g.
+        # "WEEK 26/40 (28.09.26-04.10.26)". Alias normalization strips
+        # punctuation, so match the normalized label rather than the raw cell.
+        normalized = str(part or "").upper().strip()
+        return bool(re.match(r"^WEEK\s+\d{1,2}(?:\s+\d{1,2})?(?:\s+\d{1,2}){0,6}$", normalized))
+
+    @classmethod
+    def _is_period_part(cls, part):
+        normalized = cls._norm(part)
+        if normalized in {"HAFTA", "WEEK", "WEEKLY", "AY", "MONTH", "MONTHLY"} or normalized in cls.MONTH_TOKENS:
+            return True
+        return cls._is_week_period_label(normalized)
+
     def _period_scope(self, raw_parts, carried_parts, sheet_type):
         def explicit_scope(parts):
-            # Read the nearest/local header first. Horizontally carried pivot
-            # labels can contain both a parent WEEK label and a later MONTH
-            # sub-group; merging all text would incorrectly collapse those
-            # two physical measures into one semantic key.
+            # Keep each explicit week distinct: "weekly" alone makes two
+            # weeks of the same product collide inside one trend pivot.
             for part in reversed(parts):
                 normalized = self._norm(part)
+                if self._is_week_period_label(normalized):
+                    return "weekly:" + normalized
                 if normalized in {"HAFTA", "WEEK", "WEEKLY"}:
                     return "weekly"
                 if normalized in {"AY", "MONTH", "MONTHLY"} or normalized in self.MONTH_TOKENS:
                     return "monthly"
             return None
 
+        # A subtotal header spans more than the adjacent carried week label.
+        # Do not falsely assign it to the last weekly column group.
+        if any("SUBTOTAL" in self._norm(part) or "ARA TOPLAM" in self._norm(part) for part in raw_parts):
+            return "aggregate"
         local_scope = explicit_scope(raw_parts)
         if local_scope:
             return local_scope
@@ -196,6 +215,8 @@ class WorkbookSemanticReconciler:
 
     def _is_metadata_part(self, part):
         if not part:
+            return True
+        if self._is_period_part(part):
             return True
         if part.startswith("PIVOTTABLE") or part.startswith("GROUPTABLE"):
             return True
@@ -217,7 +238,8 @@ class WorkbookSemanticReconciler:
             return "__TOTAL__"
         subtotal = [p for p in all_parts if "SUBTOTAL" in p or "ARA TOPLAM" in p]
         if subtotal:
-            return re.sub(r"\b(SUBTOTAL|ARA TOPLAM|TOPLAM|TOTAL)\b", "", subtotal[-1]).strip() or "__TOTAL__"
+            label = re.sub(r"\b(SUBTOTAL|ARA TOPLAM|TOPLAM|TOTAL)\b", "", subtotal[-1]).strip()
+            return "__SUBTOTAL__:" + label if label else "__TOTAL__"
         for part in reversed(raw_parts):
             if self._is_metadata_part(part) or any(dim in part for dim in self.DIMENSION_TOKENS):
                 continue
