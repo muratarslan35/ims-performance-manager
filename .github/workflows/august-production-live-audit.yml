@@ -51,13 +51,70 @@ jobs:
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, ProductionResult, ProductionResultUpload
+          from app.models import IMSImportJob, IMSUpload, ProductionResult, ProductionResultUpload
+          from pathlib import Path
+          from openpyxl import load_workbook
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
           from app.services.persistent_region_snapshot_service import region_snapshot_sets
           from app.services.persistent_representative_snapshot_service import representative_snapshot_sets
 
           app = create_app()
           with app.app_context():
+              job = db.session.get(IMSImportJob, 44)
+              upload = db.session.get(IMSUpload, 54)
+              if job is None:
+                  print("WEEK41_JOB|id=44|missing=1")
+              else:
+                  print(
+                      "WEEK41_JOB|"
+                      f"id={job.id}|status={job.status}|ims_upload_id={job.ims_upload_id}|"
+                      f"queued_at={job.queued_at}|started_at={job.started_at}|completed_at={job.completed_at}|"
+                      f"heartbeat_at={job.heartbeat_at}|error={str(job.error_message or '')[:1800]}"
+                  )
+                  progress_path = Path("instance/ims_progress") / f"job-{job.id}.json"
+                  if progress_path.exists():
+                      print("WEEK41_PROGRESS|" + progress_path.read_text(encoding="utf-8")[:3500])
+              if upload is None:
+                  print("WEEK41_UPLOAD|id=54|missing=1")
+              else:
+                  print(
+                      "WEEK41_UPLOAD|"
+                      f"id={upload.id}|status={upload.status}|reconciliation={upload.reconciliation_status}|"
+                      f"week={upload.week_number}|month={upload.month}|sheets={upload.sheet_count}|"
+                      f"error={str(upload.error_message or '')[:1800]}"
+                  )
+
+              workbook_candidates = [
+                  Path("uploads/ims_archive/failed-job-44.xlsx"),
+                  Path("instance/uploads/ims_archive/failed-job-44.xlsx"),
+                  Path("uploads/ims_queue") / (job.stored_file_name if job else "__missing__"),
+              ]
+              workbook_path = next((path for path in workbook_candidates if path.is_file()), None)
+              if workbook_path is None:
+                  print("WEEK41_WORKBOOK|preserved_copy=not_found_in_known_paths")
+              else:
+                  print(f"WEEK41_WORKBOOK|path={workbook_path}|bytes={workbook_path.stat().st_size}")
+                  workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+                  try:
+                      target_name = next(
+                          (name for name in workbook.sheetnames if name.strip() == "5-EKİP HAFTALIK TREND"),
+                          None,
+                      )
+                      print("WEEK41_SHEETS|" + "|".join(workbook.sheetnames))
+                      if target_name:
+                          sheet = workbook[target_name]
+                          print(f"WEEK41_TREND_DIMENSIONS|rows={sheet.max_row}|columns={sheet.max_column}")
+                          for row_index in range(1, min(4, sheet.max_row) + 1):
+                              values = [
+                                  sheet.cell(row=row_index, column=column).value
+                                  for column in range(1, min(20, sheet.max_column) + 1)
+                              ]
+                              print(f"WEEK41_TREND_HEADER|row={row_index}|values={values!r}")
+                      else:
+                          print("WEEK41_TREND_SHEET|not_found")
+                  finally:
+                      workbook.close()
+
               uploads = (ProductionResultUpload.query
                   .filter_by(year=2026, month=8)
                   .order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc())
