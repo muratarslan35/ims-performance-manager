@@ -286,3 +286,14 @@ def test_v2_compat_summary_fails_closed_when_tts_summary_does_not_match_details(
     }
     with pytest.raises(ValueError, match="TTS özeti brick detaylarıyla uyuşmuyor"):
         build_legacy_summary_frames(workbook)
+
+
+def test_v2_compat_summary_fails_closed_when_national_does_not_match_region_totals():
+    tl = _v2_matrix("tl")
+    unit = _v2_matrix("unit")
+    tl.iloc[4, 8] = 99
+    with pytest.raises(ValueError, match="Türkiye toplamı bölge toplamlarıyla uyuşmuyor"):
+        build_legacy_summary_frames({
+            "2-TTS-BRİCK HEDEF REAL-TL V2": tl,
+            "2-TTS-BRİCK HEDEF REAL-KUTU V2": unit,
+        })
