@@ -340,7 +340,7 @@ def refined_competition_structure(service, sheet_name):
             ):
                 names.append(normalized)
         unique_names = len(set(names))
-        ratio = unique_names / populated if populated else 0.0
+        ratio = len(names) / populated if populated else 0.0
         return len(names), unique_names, ratio
 
     # A few V2 TTS exports have a trailing numeric summary column whose header
