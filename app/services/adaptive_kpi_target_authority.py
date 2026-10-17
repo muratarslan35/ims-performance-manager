@@ -109,7 +109,17 @@ def _find_pair(workbook):
             tl_plan = _matrix_plan(tl_frame)
             unit_plan = _matrix_plan(unit_frame)
             if tl_plan is None or unit_plan is None:
-                raise ValueError("Adaptive IMS: kabul edilen TL/KUTU matrisi semantik olarak çözümlenemedi.")
+                def hint(name, frame):
+                    header_hints = []
+                    for row_index in range(min(5, len(frame))):
+                        labels = [_norm(value) for value in frame.iloc[row_index].tolist() if _norm(value)]
+                        if labels:
+                            header_hints.append(f"r{row_index + 1}=" + "/".join(labels[:8]))
+                    return f"{name}[{'; '.join(header_hints)}]"
+                raise ValueError(
+                    "Adaptive IMS: kabul edilen TL/KUTU matrisi semantik olarak çözümlenemedi. "
+                    f"TL={hint(tl_name, tl_frame)}; KUTU={hint(unit_name, unit_frame)}"
+                )
             candidates = {
                 "tl": [(tl_name, tl_frame, tl_plan)],
                 "unit": [(unit_name, unit_frame, unit_plan)],
@@ -135,17 +145,34 @@ def _find_pair(workbook):
 
 
 def _source_rows(frame, plan):
+    """Read official aggregates and detail rows without counting V2 summaries twice.
+
+    Legacy sheets use NATIONAL and region Subtotal rows. Week-41 V2 sheets
+    use TÜRKİYE TOPLAM, a region row with an empty TTS cell, and one summary
+    row per TTS where brick and TTS labels are identical and province is empty.
+    TTS summaries are context only; representative totals come from detail rows.
+    """
     products = sorted(plan["products"])
     aggregates = []
     reps = {}
     for source_index in range(plan["data_start"], len(frame)):
         row = frame.iloc[source_index]
-        territory = "" if pd.isna(row.iloc[plan["region"]]) else str(row.iloc[plan["region"]]).strip()
-        representative = "" if pd.isna(row.iloc[plan["primary_rep"]]) else str(row.iloc[plan["primary_rep"]]).strip()
-        brick = "" if pd.isna(row.iloc[plan["brick"]]) else str(row.iloc[plan["brick"]]).strip()
+
+        def cell(column):
+            value = row.iloc[column]
+            return "" if pd.isna(value) else str(value).strip()
+
+        territory = cell(plan["region"])
+        province = cell(plan["province"])
+        representative = cell(plan["primary_rep"])
+        brick = cell(plan["brick"])
         territory_norm = _norm(territory)
+        province_norm = _norm(province)
         rep_norm = _norm(representative)
         brick_norm = _norm(brick)
+        if not any((territory_norm, province_norm, rep_norm, brick_norm)):
+            continue
+
         values = {
             product: {
                 "target": float(pd.to_numeric(pd.Series([row.iloc[plan["products"][product] - 1]]), errors="coerce").fillna(0).iloc[0]),
@@ -153,20 +180,49 @@ def _source_rows(frame, plan):
             }
             for product in products
         }
-        if rep_norm == "NATIONAL" or brick_norm == "NATIONAL":
+
+        # National identity moved from legacy C/D columns to the V2 region label.
+        if any(label in {"NATIONAL", "TURKIYE TOPLAM"} for label in (
+            territory_norm, province_norm, rep_norm, brick_norm
+        )):
             aggregates.append(("NATIONAL", "NATIONAL", values))
             continue
-        if territory_norm and rep_norm == territory_norm and re.match(r"^\d{3}\b", territory_norm):
-            aggregates.append((territory_norm.split()[0], representative, values))
+
+        # Legacy region totals use a named Subtotal province and repeat the
+        # region in the representative column. V2 region totals have blank
+        # province/TTS cells and repeat the region in the brick column.
+        legacy_subtotal = bool(
+            territory_norm
+            and province_norm.endswith(" SUBTOTAL")
+            and rep_norm == territory_norm
+            and re.match(r"^\\d{3}\\b", territory_norm)
+        )
+        v2_region_total = bool(
+            territory_norm
+            and not province_norm
+            and brick_norm == territory_norm
+            and not rep_norm
+            and re.match(r"^\\d{3}\\b", territory_norm)
+        )
+        if legacy_subtotal or v2_region_total:
+            aggregates.append((territory_norm.split()[0], territory, values))
             continue
-        if representative and rep_norm not in {"NATIONAL", territory_norm}:
+
+        # V2 repeats each TTS total before its brick rows. Skip that summary
+        # to prevent adding the same target/actual twice to the representative.
+        v2_tts_summary = bool(
+            territory_norm and not province_norm and brick_norm and brick_norm == rep_norm
+        )
+        if v2_tts_summary:
+            continue
+
+        if representative and rep_norm not in {"NATIONAL", territory_norm, "TURKIYE TOPLAM"}:
             key = (territory, representative)
             bucket = reps.setdefault(key, {product: {"target": 0.0, "actual": 0.0} for product in products})
             for product in products:
                 bucket[product]["target"] += values[product]["target"]
                 bucket[product]["actual"] += values[product]["actual"]
     return products, aggregates, reps
-
 
 def _pair_views(importer):
     pair = _find_pair(importer.workbook or {})
