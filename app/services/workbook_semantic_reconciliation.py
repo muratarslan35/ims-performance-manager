@@ -170,6 +170,17 @@ class WorkbookSemanticReconciler:
             return "actual"
         return "market"
 
+    def _uses_period_grouped_product_headers(self, frame, header_row, matrix):
+        """Detect the newer product × week × metric trend layout by content."""
+        week_labels, metric_labels, subtotal_count = set(), set(), 0
+        for column in range(frame.shape[1]):
+            raw_parts, _carried_parts = self._column_context(matrix, column)
+            week_labels.update(part for part in raw_parts if self._is_week_period_label(part))
+            metric_labels.update(part for part in raw_parts if part in {"UNITS REPORT", "VALUES REPORT"})
+            if any("SUBTOTAL" in part or "ARA TOPLAM" in part for part in raw_parts):
+                subtotal_count += 1
+        return len(week_labels) >= 2 and subtotal_count >= 1 and metric_labels == {"UNITS REPORT", "VALUES REPORT"}
+
     @staticmethod
     def _is_week_period_label(part):
         # Real IMS trend workbooks encode periods as e.g.
@@ -185,13 +196,13 @@ class WorkbookSemanticReconciler:
             return True
         return cls._is_week_period_label(normalized)
 
-    def _period_scope(self, raw_parts, carried_parts, sheet_type):
+    def _period_scope(self, raw_parts, carried_parts, sheet_type, period_grouped=False):
         def explicit_scope(parts):
             # Keep each explicit week distinct: "weekly" alone makes two
             # weeks of the same product collide inside one trend pivot.
             for part in reversed(parts):
                 normalized = self._norm(part)
-                if self._is_week_period_label(normalized):
+                if period_grouped and self._is_week_period_label(normalized):
                     return "weekly:" + normalized
                 if normalized in {"HAFTA", "WEEK", "WEEKLY"}:
                     return "weekly"
@@ -201,7 +212,7 @@ class WorkbookSemanticReconciler:
 
         # A subtotal header spans more than the adjacent carried week label.
         # Do not falsely assign it to the last weekly column group.
-        if any("SUBTOTAL" in self._norm(part) or "ARA TOPLAM" in self._norm(part) for part in raw_parts):
+        if period_grouped and any("SUBTOTAL" in self._norm(part) or "ARA TOPLAM" in self._norm(part) for part in raw_parts):
             return "aggregate"
         local_scope = explicit_scope(raw_parts)
         if local_scope:
@@ -213,10 +224,10 @@ class WorkbookSemanticReconciler:
             return "monthly"
         return "unspecified"
 
-    def _is_metadata_part(self, part):
+    def _is_metadata_part(self, part, period_grouped=False):
         if not part:
             return True
-        if self._is_period_part(part):
+        if period_grouped and self._is_period_part(part):
             return True
         if part.startswith("PIVOTTABLE") or part.startswith("GROUPTABLE"):
             return True
@@ -231,7 +242,7 @@ class WorkbookSemanticReconciler:
         }
         return not tokens or tokens <= generic or tokens <= self.MONTH_TOKENS
 
-    def _product_key(self, raw_parts, carried_parts):
+    def _product_key(self, raw_parts, carried_parts, period_grouped=False):
         all_parts = raw_parts + [part for part in carried_parts if part not in raw_parts]
         joined = " ".join(all_parts)
         if "GRAND TOTAL" in joined or "GENEL TOPLAM" in joined:
@@ -239,9 +250,11 @@ class WorkbookSemanticReconciler:
         subtotal = [p for p in all_parts if "SUBTOTAL" in p or "ARA TOPLAM" in p]
         if subtotal:
             label = re.sub(r"\b(SUBTOTAL|ARA TOPLAM|TOPLAM|TOTAL)\b", "", subtotal[-1]).strip()
-            return "__SUBTOTAL__:" + label if label else "__TOTAL__"
+            if period_grouped:
+                return "__SUBTOTAL__:" + label if label else "__TOTAL__"
+            return label or "__TOTAL__"
         for part in reversed(raw_parts):
-            if self._is_metadata_part(part) or any(dim in part for dim in self.DIMENSION_TOKENS):
+            if self._is_metadata_part(part, period_grouped=period_grouped) or any(dim in part for dim in self.DIMENSION_TOKENS):
                 continue
             cleaned = re.sub(r"\b(VALUES?|UNITS?|REPORT|TL|KUTU|BOX|ADET)\b", " ", part)
             cleaned = " ".join(cleaned.split()).strip()
@@ -273,6 +286,7 @@ class WorkbookSemanticReconciler:
             sheet_type = item.get("sheet_type")
             header_row = self._header_row(sheet_name, frame)
             matrix = self._header_matrix(frame, header_row)
+            period_grouped = self._uses_period_grouped_product_headers(frame, header_row, matrix)
             dims = self._dimension_columns(frame, header_row, matrix)
             pivot_candidate = self._is_pivot_candidate(frame, sheet_type)
             profiles[str(sheet_name)] = {"pivot_candidate": pivot_candidate, "header_row": header_row, "dimension_columns": dims}
@@ -294,8 +308,8 @@ class WorkbookSemanticReconciler:
                         "sheet_name": str(sheet_name), "row": row + 1, "column": col + 1,
                         "value": value, "row_key": row_key, "metric_family": family,
                         "phase": self._phase(raw_parts, carried_parts),
-                        "period_scope": self._period_scope(raw_parts, carried_parts, sheet_type),
-                        "product_key": self._product_key(raw_parts, carried_parts),
+                        "period_scope": self._period_scope(raw_parts, carried_parts, sheet_type, period_grouped=period_grouped),
+                        "product_key": self._product_key(raw_parts, carried_parts, period_grouped=period_grouped),
                         "pivot_candidate": pivot_candidate,
                     }
                     obs["semantic_key"] = (obs["row_key"], obs["metric_family"], obs["phase"], obs["period_scope"], obs["product_key"])
