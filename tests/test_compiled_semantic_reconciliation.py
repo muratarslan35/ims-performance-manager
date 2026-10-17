@@ -101,6 +101,10 @@ def test_weekly_trend_headers_keep_products_weeks_and_subtotals_distinct():
     assert fast_observations == base_observations
     assert len({item["semantic_key"] for item in fast_observations}) == len(fast_observations)
 
+    result = CompiledWorkbookSemanticReconciler(importer).reconcile()
+    assert result["conflicts"] == 0
+    assert importer.statistics["duplicate_conflict"] == 0
+
     by_coordinate = {(item["row"], item["column"]): item for item in fast_observations}
     week40_travazol = by_coordinate[(5, 3)]
     week41_travazol = by_coordinate[(5, 5)]
