@@ -74,3 +74,47 @@ def test_pair_accepts_semantic_tts_brick_header_for_week_41():
     assert pair[0][2]["secondary_rep"] is None
     assert pair[1][2]["secondary_rep"] is None
 
+
+
+def _v2_matrix(metric, *, mismatch_summary=False):
+    national_target, national_actual = 100.0, 40.0
+    summary_target = 101.0 if mismatch_summary else 100.0
+    return pd.DataFrame([
+        ["1-11 EKİM", None, None, None, None, None, None, None],
+        [None, None, None, None, None, "TRAVAZOL", None, None],
+        ["BÖLGE", "İL", "TTS / BRICK", "TTS", None, "ÜRÜN HEDEF", "ÜRÜN ÇIKIŞ", "REAL"],
+        ["TÜRKİYE TOPLAM", None, None, None, None, national_target, national_actual, 40.0],
+        ["101 ISTANBUL", "", "101 ISTANBUL", "", None, national_target, national_actual, 40.0],
+        ["101 ISTANBUL", "", "AYŞE TEST", "AYŞE TEST", None, summary_target, 40.0, 40.0],
+        ["101 ISTANBUL", "EDİRNE", "EDİRNE MERKEZ", "AYŞE TEST", None, 60.0, 20.0, 33.3],
+        ["101 ISTANBUL", "TEKİRDAĞ", "TEKİRDAĞ MERKEZ", "AYŞE TEST", None, 40.0, 20.0, 50.0],
+    ])
+
+
+def test_v2_turkiye_region_and_tts_summary_rows_are_semantic_and_not_double_counted():
+    tl = _v2_matrix("tl")
+    unit = _v2_matrix("unit")
+    pair = _find_pair({
+        "2-TTS-BRİCK HEDEF REAL-TL V2": tl,
+        "2-TTS-BRİCK HEDEF REAL-KUTU V2": unit,
+    })
+    assert pair is not None
+    plan = pair[0][2]
+    products, aggregates, reps = _source_rows(tl, plan)
+
+    assert products == ["TRAVAZOL"]
+    aggregate_map = {(territory, representative): values for territory, representative, values in aggregates}
+    assert aggregate_map[("NATIONAL", "NATIONAL")]["TRAVAZOL"] == {"target": 100.0, "actual": 40.0}
+    assert aggregate_map[("101", "101 ISTANBUL")]["TRAVAZOL"] == {"target": 100.0, "actual": 40.0}
+    assert reps[("101 ISTANBUL", "AYŞE TEST")]["TRAVAZOL"] == {"target": 100.0, "actual": 40.0}
+
+
+def test_v2_tts_summary_mismatch_fails_closed():
+    frame = _v2_matrix("tl", mismatch_summary=True)
+    plan = _matrix_plan(frame)
+    try:
+        _source_rows(frame, plan)
+    except ValueError as exc:
+        assert "TTS özeti brick detaylarıyla uyuşmuyor" in str(exc)
+    else:
+        raise AssertionError("V2 summary mismatch must fail closed")
