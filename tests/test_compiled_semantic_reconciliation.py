@@ -40,6 +40,9 @@ def test_compiled_observation_scan_matches_base_semantics_and_preserves_zero():
     assert fast_profiles == base_profiles
     assert fast_observations == base_observations
     assert any(item["value"] == 0.0 for item in fast_observations)
+    # Legacy single-row product headers retain their previous product identity.
+    assert {item["product_key"] for item in fast_observations} == {"TRAVAZOL", "MONUROL"}
+    assert {item["period_scope"] for item in fast_observations} == {"monthly"}
 
 
 def test_compiled_scan_column_context_cost_does_not_scale_with_data_rows(monkeypatch):
