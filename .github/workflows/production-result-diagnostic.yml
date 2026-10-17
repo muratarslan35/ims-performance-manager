@@ -112,8 +112,8 @@ jobs:
                       print(f"TARGET_SHEET|{sheet}|max_row={ws.max_row}|max_column={ws.max_column}")
                       for row_number in (68, 73):
                           cells = []
-                          for col in range(1, ws.max_column + 1):
-                              value = ws.cell(row=row_number, column=col).value
+                          row_values = next(ws.iter_rows(min_row=row_number, max_row=row_number, values_only=True))
+                          for col, value in enumerate(row_values, 1):
                               if value is not None and str(value).strip():
                                   cells.append(f"{get_column_letter(col)}={str(value)[:180]}")
                           print(f"WORKBOOK_ROW|{row_number}|" + "|".join(cells))
