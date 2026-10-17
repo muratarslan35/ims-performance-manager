@@ -55,3 +55,22 @@ def test_pair_detection_does_not_guess_metric_without_semantic_hint():
         "Rapor A": _matrix("tl"),
         "Rapor B": _matrix("unit"),
     }) is None
+
+def test_pair_accepts_semantic_tts_brick_header_for_week_41():
+    tl = _matrix("tl", single_rep=True)
+    unit = _matrix("unit", single_rep=True)
+    for frame in (tl, unit):
+        frame.iloc[2, 2] = "TTS / BRICK"
+        frame.iloc[2, 3] = "TTS"
+
+    pair = _find_pair({
+        "2-TTS-BRİCK TL-REA%": tl,
+        "2-TTS-BRİCK KUTU-REA%": unit,
+    })
+
+    assert pair is not None
+    assert pair[0][2]["brick"] == 2
+    assert pair[0][2]["primary_rep"] == 3
+    assert pair[0][2]["secondary_rep"] is None
+    assert pair[1][2]["secondary_rep"] is None
+
