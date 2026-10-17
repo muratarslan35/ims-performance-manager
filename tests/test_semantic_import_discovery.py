@@ -430,3 +430,4 @@ def test_representative_names_beat_trailing_tts_total_column():
 
     assert structure["territory_column"] == 1
     assert structure["subterritory_column"] == 2
+    assert structure["data_rows"] == [2, 3, 4]
