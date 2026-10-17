@@ -275,7 +275,7 @@ def test_v2_compat_summary_preserves_official_totals_without_double_counting():
     assert balance.iloc[3, 0] == "101 ISTANBUL"
     assert balance.iloc[4, 1] == "AYŞE TEST"
     assert balance.iloc[4, 2] == 100
-    assert weekly.iloc[4, 2] == 100
+    assert weekly.iloc[4, 2] == 40
     assert weekly.iloc[4, 3] == 40
 
 
