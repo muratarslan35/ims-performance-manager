@@ -399,3 +399,35 @@ def test_competition_data_end_ignores_distant_numeric_without_dimensions():
 
     assert structure["data_end_row"] == 2
     assert structure["data_rows"] == [2]
+
+
+
+def test_representative_names_beat_trailing_tts_total_column():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "TTS-KUTU ÇIKIŞ"
+    products = [f"RIVAL {index}" for index in range(1, 21)]
+    # The last column's header is misleading/repeated; its body contains
+    # summary totals, while column B contains the actual representative names.
+    sheet.append(["BÖLGE", None, *products, "TTS ISMI"])
+    sheet.append(["501 ANKARA", "HASENE ZEHRA KAYIRAN", *([1124] * len(products)), 6641])
+    sheet.append(["501 ANKARA", "YUSUF ENES CORTEBASI", *([1624] * len(products)), 6641])
+    sheet.append(["501 ANKARA", "501 ANKARA Subtotal", *([2748] * len(products)), 76035])
+
+    service = CompetitionImportService(upload_id=54, year=2026, month=10, week_number=41)
+    service._workbook = workbook
+    groups = {"MARKET": [(name, column) for column, name in enumerate(products, start=3)]}
+    with (
+        mock.patch.object(service, "_discover_metadata", return_value=("MONTHLY", 2026, 10)),
+        mock.patch.object(service, "_extract_product_groups", return_value=groups),
+        mock.patch.object(
+            service,
+            "get_sheet_type",
+            return_value=SheetType.MONTHLY_COMPETITION_UNITS.value,
+        ),
+    ):
+        structure = refined_competition_structure(service, sheet.title)
+
+    assert structure["territory_column"] == 1
+    assert structure["subterritory_column"] == 2
+    assert structure["data_rows"] == [2, 3, 4]

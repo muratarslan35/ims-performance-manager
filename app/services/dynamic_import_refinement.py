@@ -322,6 +322,41 @@ def refined_competition_structure(service, sheet_name):
         item for item in sub_candidates
         if any(token in dimension_labels[item[0]] for token in ("TTS ISMI", "TTS İSMİ", "TEMSILCI", "TEMSİLCİ", "REPRESENTATIVE"))
     ]
+
+    def representative_content_score(item):
+        """Score actual representative names, not a misleading repeated total column."""
+        names = []
+        populated = 0
+        for data_row in range(header_row + 1, min(max_row, header_row + 500) + 1):
+            raw = str(service._get_cell_value(sheet, data_row, item[0]) or "").strip()
+            normalized = service._normalize_turkish_text(raw)
+            if not normalized or normalized == "NATIONAL":
+                continue
+            populated += 1
+            if (
+                " " in raw
+                and not re.search(r"\d", raw)
+                and not any(token in normalized for token in ("SUBTOTAL", "TOTAL", "TOPLAM"))
+            ):
+                names.append(normalized)
+        unique_names = len(set(names))
+        ratio = len(names) / populated if populated else 0.0
+        return len(names), unique_names, ratio
+
+    # A few V2 TTS exports have a trailing numeric summary column whose header
+    # is repeated/merged as "TTS ISMI". Header text alone is not enough:
+    # representative identity must be supported by person-like body values.
+    representative_semantic = [
+        item for item in representative_semantic
+        if representative_content_score(item)[0] > 0
+        and representative_content_score(item)[2] >= 0.5
+    ]
+    content_representatives = [
+        item for item in sub_candidates
+        if representative_content_score(item)[0] >= 2
+        and representative_content_score(item)[2] >= 0.5
+    ]
+
     def semantic_grain(item):
         column = item[0]
         values = []
@@ -349,7 +384,14 @@ def refined_competition_structure(service, sheet_name):
         )
         if best_grain[0] > parent_grain[0]:
             content_finest = [best_item]
-    sub_pool = brick_semantic or representative_semantic or content_finest or subterritory_semantic or sub_candidates
+    sub_pool = (
+        brick_semantic
+        or representative_semantic
+        or content_representatives
+        or content_finest
+        or subterritory_semantic
+        or sub_candidates
+    )
     subterritory_column = (
         max(sub_pool, key=lambda item: (item[2], -item[1]))[0]
         if sub_pool else territory_column
