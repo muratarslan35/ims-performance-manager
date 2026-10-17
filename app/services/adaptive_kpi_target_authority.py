@@ -23,8 +23,24 @@ def _norm(value):
 def _matrix_plan(frame):
     for header_row in range(min(20, len(frame))):
         row = [_norm(value) for value in frame.iloc[header_row].tolist()]
-        if "1 TTS" not in row:
-            continue
+        # Preserve the legacy numbered header while accepting the newer
+        # semantic identity pair used by week 41 exports: "TTS / BRICK" + "TTS".
+        if "1 TTS" in row:
+            primary_rep = row.index("1 TTS")
+            brick_column = primary_rep - 1
+            secondary_rep = row.index("2 TTS") if "2 TTS" in row else None
+        else:
+            brick_columns = [i for i, label in enumerate(row) if label == "TTS BRICK"]
+            semantic_rep_columns = [
+                i for i, label in enumerate(row)
+                if label == "TTS" and brick_columns and i == brick_columns[0] + 1
+            ]
+            if len(brick_columns) != 1 or len(semantic_rep_columns) != 1:
+                continue
+            brick_column = brick_columns[0]
+            primary_rep = semantic_rep_columns[0]
+            secondary_rep = None
+
         group_row = header_row - 1
         if group_row < 0:
             continue
@@ -39,8 +55,6 @@ def _matrix_plan(frame):
                 products[current_product] = column
         if not products:
             continue
-        primary_rep = row.index("1 TTS")
-        secondary_rep = row.index("2 TTS") if "2 TTS" in row else None
         if primary_rep < 3:
             continue
         return {
@@ -48,7 +62,7 @@ def _matrix_plan(frame):
             "data_start": header_row + 1,
             "region": 0,
             "province": 1,
-            "brick": primary_rep - 1,
+            "brick": brick_column,
             "primary_rep": primary_rep,
             "secondary_rep": secondary_rep,
             "products": products,
