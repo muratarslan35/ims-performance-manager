@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/production-result-diagnostic.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
