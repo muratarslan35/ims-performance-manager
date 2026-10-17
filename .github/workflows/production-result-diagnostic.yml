@@ -119,6 +119,63 @@ jobs:
                                   cells.append(f"{get_column_letter(col)}={str(value)[:180]}")
                           print(f"WORKBOOK_ROW|{row_number}|" + "|".join(cells))
                       wb.close()
+
+                      # Rebuild the same sanitized dataframe view used by the IMS pipeline.
+                      # The competition importer may report prepared-frame row indices,
+                      # which are not necessarily physical Excel row numbers.
+                      from app.services.ims_import_service import IMSImportService
+                      from app.services.competition_import_service import CompetitionImportService
+                      ims_service = IMSImportService(str(path))
+                      frames = ims_service.load_workbook()
+                      for frame_name, frame in frames.items():
+                          normalized_name = str(frame_name).strip().upper()
+                          if "TTS" not in normalized_name or "KUTU" not in normalized_name:
+                              continue
+                          print(f"PREPARED_FRAME|{frame_name}|rows={len(frame)}|cols={len(frame.columns)}")
+                          for frame_index in (67, 72, 68, 73):
+                              if frame_index < len(frame):
+                                  cells = []
+                                  values = frame.iloc[frame_index]
+                                  for col, value in enumerate(values.tolist(), 1):
+                                      if value is not None and str(value).strip() and str(value).lower() != "nan":
+                                          cells.append(f"{get_column_letter(col)}={str(value)[:100]}")
+                                  print(f"PREPARED_ROW|{frame_name}|index={frame_index}|excel_like_row={frame_index + 1}|" + "|".join(cells))
+                      competition = CompetitionImportService(
+                          file_path=str(path), upload_id=54, year=2026, month=10,
+                          week_number=41, workbook=frames,
+                      )
+                      supported = competition.get_supported_sheets()
+                      print("COMPETITION_SUPPORTED_SHEETS|" + "|".join(supported))
+                      for candidate in supported:
+                          try:
+                              info = competition._parse_sheet_structure(candidate)
+                              print(
+                                  "COMPETITION_STRUCTURE|"
+                                  f"sheet={candidate}|header={info.get('header_row')}|"
+                                  f"start={info.get('data_start_row')}|end={info.get('data_end_row')}|"
+                                  f"territory_col={info.get('territory_column')}|"
+                                  f"subterritory_col={info.get('subterritory_column')}|"
+                                  f"groups={list(info.get('product_groups', {}).keys())[:12]}"
+                              )
+                              if "TTS-KUTU" in str(candidate).upper():
+                                  target_sheet = competition._workbook[info["sheet_name"]]
+                                  for row_number in (68, 73):
+                                      dims = [
+                                          info.get("territory_column"),
+                                          info.get("subterritory_column"),
+                                      ]
+                                      product_cols = [
+                                          int(col) for products in info.get("product_groups", {}).values()
+                                          for _name, col in products
+                                      ]
+                                      selected_cols = list(dict.fromkeys([col for col in dims + product_cols if col is not None]))
+                                      values = [
+                                          f"col{col}={str(competition._get_cell_value(target_sheet, row_number, int(col)))[:100]}"
+                                          for col in selected_cols[:20]
+                                      ]
+                                      print(f"COMPETITION_PREPARED_ROW|sheet={candidate}|row={row_number}|" + "|".join(values))
+                          except Exception as parse_exc:
+                              print(f"COMPETITION_STRUCTURE_ERROR|sheet={candidate}|{type(parse_exc).__name__}|{parse_exc}")
                   except Exception as exc:
                       print(f"WORKBOOK_READ_ERROR|job_id={job.id}|type={type(exc).__name__}|message={exc}")
           PY
