@@ -261,6 +261,10 @@ class WorkbookSemanticReconciler:
     def _is_metadata_part(self, part, period_grouped=False):
         if not part:
             return True
+        # Treat MARKET SHARE as a complete metric caption without making
+        # MARKET a generic token in other legacy product identities.
+        if part == "MARKET SHARE":
+            return True
         if period_grouped and self._is_period_part(part):
             return True
         if part.startswith("PIVOTTABLE") or part.startswith("GROUPTABLE"):
@@ -272,7 +276,7 @@ class WorkbookSemanticReconciler:
             "REPORT", "VALUES", "VALUE", "UNITS", "UNIT", "TL", "KUTU", "BOX", "ADET",
             "CIRO", "TUTAR", "MONTH", "MONTHS", "WEEK", "WEEKS", "HAFTA", "AY",
             "PRODUCTS", "MARKETPRODUCTS", "MKT", "NONE", "CIKIS", "ÇIKIŞ", "HEDEF",
-            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "MARKET", "PAY", "SHARE", "PP", "METRIK", "METRİK",
+            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP", "METRIK", "METRİK",
         }
         return not tokens or tokens <= generic or tokens <= self.MONTH_TOKENS
 
