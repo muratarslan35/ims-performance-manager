@@ -1,7 +1,5 @@
 from types import SimpleNamespace
 
-import pandas as pd
-
 from app.services.workbook_semantic_reconciliation import WorkbookSemanticReconciler
 from app.services.compiled_import_semantic_reconciliation import CompiledWorkbookSemanticReconciler
 
