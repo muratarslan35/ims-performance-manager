@@ -209,15 +209,15 @@ class WorkbookSemanticReconciler:
         if not normalized:
             return False
         tokens = normalized.split()
-        has_year = any(re.fullmatch(r"(?:19|20)\\d{2}", token) for token in tokens)
+        has_year = any(re.fullmatch(r"(?:19|20)\d{2}", token) for token in tokens)
         if has_year and (
             any(token in cls.MONTH_TOKENS for token in tokens)
-            or sum(bool(re.fullmatch(r"\\d{1,2}", token)) for token in tokens) >= 1
+            or sum(bool(re.fullmatch(r"\d{1,2}", token)) for token in tokens) >= 1
         ):
             return True
         # Normalized dates/date ranges: DD MM YYYY, YYYY MM DD, or two dates.
         return bool(re.fullmatch(
-            r"(?:\\d{1,4}\\s+){2,5}\\d{2,4}(?:\\s+(?:\\d{1,4}\\s+){2,5}\\d{2,4})?",
+            r"(?:\d{1,4}\s+){2,5}\d{2,4}(?:\s+(?:\d{1,4}\s+){2,5}\d{2,4})?",
             normalized,
         ))
 
