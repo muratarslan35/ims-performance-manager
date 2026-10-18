@@ -272,7 +272,7 @@ class WorkbookSemanticReconciler:
             "REPORT", "VALUES", "VALUE", "UNITS", "UNIT", "TL", "KUTU", "BOX", "ADET",
             "CIRO", "TUTAR", "MONTH", "MONTHS", "WEEK", "WEEKS", "HAFTA", "AY",
             "PRODUCTS", "MARKETPRODUCTS", "MKT", "NONE", "CIKIS", "ÇIKIŞ", "HEDEF",
-            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "PAY", "SHARE", "PP", "METRIK", "METRİK",
+            "TARGET", "REAL", "REALIZASYON", "REALİZASYON", "MARKET", "PAY", "SHARE", "PP", "METRIK", "METRİK",
         }
         return not tokens or tokens <= generic or tokens <= self.MONTH_TOKENS
 
