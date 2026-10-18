@@ -18,6 +18,7 @@ def test_market_share_is_a_metric_header_not_a_product_name():
     # Newer workbook exports may put the metric caption after the product
     # header. The product identity must come from the actual product label.
     assert reconciler._is_metadata_part("MARKET SHARE") is True
+    assert reconciler._metric_family(["MARKET SHARE"], ["MARKET SHARE"]) == "share"
     assert reconciler._product_key(
         ["TRAVAZOL KREM", "MARKET SHARE"],
         ["TRAVAZOL KREM", "MARKET SHARE"],
