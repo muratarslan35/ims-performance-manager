@@ -173,12 +173,19 @@ class WorkbookSemanticReconciler:
     def _uses_period_grouped_product_headers(self, frame, header_row, matrix):
         """Detect the newer product × week × metric trend layout by content."""
         week_labels, metric_labels, subtotal_count = set(), set(), 0
-        for column in range(frame.shape[1]):
-            raw_parts, _carried_parts = self._column_context(matrix, column)
-            week_labels.update(part for part in raw_parts if self._is_week_period_label(part))
-            metric_labels.update(part for part in raw_parts if part in {"UNITS REPORT", "VALUES REPORT"})
-            if any("SUBTOTAL" in part or "ARA TOPLAM" in part for part in raw_parts):
-                subtotal_count += 1
+        # Header layout detection must not add another per-column context scan:
+        # the compiled reconciler deliberately builds that context once.
+        for row in range(min(header_row + 1, len(frame))):
+            for value in frame.iloc[row].tolist():
+                if not self._meaningful(value):
+                    continue
+                normalized = self._norm(value)
+                if self._is_week_period_label(normalized):
+                    week_labels.add(normalized)
+                if normalized in {"UNITS REPORT", "VALUES REPORT"}:
+                    metric_labels.add(normalized)
+                if "SUBTOTAL" in normalized or "ARA TOPLAM" in normalized:
+                    subtotal_count += 1
         return len(week_labels) >= 2 and subtotal_count >= 1 and metric_labels == {"UNITS REPORT", "VALUES REPORT"}
 
     @staticmethod
@@ -258,10 +265,10 @@ class WorkbookSemanticReconciler:
                 continue
             cleaned = re.sub(r"\b(VALUES?|UNITS?|REPORT|TL|KUTU|BOX|ADET)\b", " ", part)
             cleaned = " ".join(cleaned.split()).strip()
-            if cleaned and not self._is_metadata_part(cleaned):
+            if cleaned and not self._is_metadata_part(cleaned, period_grouped=period_grouped):
                 return cleaned
         for part in reversed(carried_parts):
-            if self._is_metadata_part(part) or any(dim in part for dim in self.DIMENSION_TOKENS):
+            if self._is_metadata_part(part, period_grouped=period_grouped) or any(dim in part for dim in self.DIMENSION_TOKENS):
                 continue
             cleaned = re.sub(r"\b(VALUES?|UNITS?|REPORT|TL|KUTU|BOX|ADET)\b", " ", part)
             cleaned = " ".join(cleaned.split()).strip()
