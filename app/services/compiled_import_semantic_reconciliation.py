@@ -23,7 +23,7 @@ class CompiledWorkbookSemanticReconciler(WorkbookSemanticReconciler):
                 parts.append(value)
         return tuple(parts)
 
-    def _column_plan(self, frame, matrix, dimension_columns, sheet_type):
+    def _column_plan(self, frame, matrix, dimension_columns, sheet_type, period_grouped=False):
         dimensions = set(dimension_columns)
         plan = []
         for column in range(frame.shape[1]):
@@ -38,8 +38,8 @@ class CompiledWorkbookSemanticReconciler(WorkbookSemanticReconciler):
                     column,
                     metric_family,
                     self._phase(raw_parts, carried_parts),
-                    self._period_scope(raw_parts, carried_parts, sheet_type),
-                    self._product_key(raw_parts, carried_parts),
+                    self._period_scope(raw_parts, carried_parts, sheet_type, period_grouped=period_grouped),
+                    self._product_key(raw_parts, carried_parts, period_grouped=period_grouped),
                 )
             )
         return plan
@@ -53,6 +53,7 @@ class CompiledWorkbookSemanticReconciler(WorkbookSemanticReconciler):
             sheet_type = item.get("sheet_type")
             header_row = self._header_row(sheet_name, frame)
             matrix = self._header_matrix(frame, header_row)
+            period_grouped = self._uses_period_grouped_product_headers(frame, header_row, matrix)
             dimensions = self._dimension_columns(frame, header_row, matrix)
             pivot_candidate = self._is_pivot_candidate(frame, sheet_type)
             profiles[str(sheet_name)] = {
@@ -61,7 +62,7 @@ class CompiledWorkbookSemanticReconciler(WorkbookSemanticReconciler):
                 "dimension_columns": dimensions,
             }
 
-            column_plan = self._column_plan(frame, matrix, dimensions, sheet_type)
+            column_plan = self._column_plan(frame, matrix, dimensions, sheet_type, period_grouped=period_grouped)
             if not column_plan:
                 continue
 
