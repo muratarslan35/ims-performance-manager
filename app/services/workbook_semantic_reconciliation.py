@@ -197,11 +197,36 @@ class WorkbookSemanticReconciler:
         return bool(re.match(r"^WEEK\s+\d{1,2}(?:\s+\d{1,2})?(?:\s+\d{1,2}){0,6}$", normalized))
 
     @classmethod
+    def _is_calendar_period_label(cls, part):
+        """Recognize explicit month/year and date-range headers in newer layouts.
+
+        Older workbooks often use a bare month or a WEEK label. Newer exports
+        may put dates (or month + year) directly above otherwise generic metric
+        columns. Keep that exact period in the semantic key so those columns
+        cannot collapse into one unspecified MARKET SHARE identity.
+        """
+        normalized = cls._norm(part)
+        if not normalized:
+            return False
+        tokens = normalized.split()
+        has_year = any(re.fullmatch(r"(?:19|20)\d{2}", token) for token in tokens)
+        if has_year and (
+            any(token in cls.MONTH_TOKENS for token in tokens)
+            or sum(bool(re.fullmatch(r"\d{1,2}", token)) for token in tokens) >= 1
+        ):
+            return True
+        # Normalized dates/date ranges: DD MM YYYY, YYYY MM DD, or two dates.
+        return bool(re.fullmatch(
+            r"(?:\d{1,4}\s+){2,5}\d{2,4}(?:\s+(?:\d{1,4}\s+){2,5}\d{2,4})?",
+            normalized,
+        ))
+
+    @classmethod
     def _is_period_part(cls, part):
         normalized = cls._norm(part)
         if normalized in {"HAFTA", "WEEK", "WEEKLY", "AY", "MONTH", "MONTHLY"} or normalized in cls.MONTH_TOKENS:
             return True
-        return cls._is_week_period_label(normalized)
+        return cls._is_week_period_label(normalized) or cls._is_calendar_period_label(normalized)
 
     def _period_scope(self, raw_parts, carried_parts, sheet_type, period_grouped=False):
         def explicit_scope(parts):
@@ -211,6 +236,8 @@ class WorkbookSemanticReconciler:
                 normalized = self._norm(part)
                 if period_grouped and self._is_week_period_label(normalized):
                     return "weekly:" + normalized
+                if self._is_calendar_period_label(normalized):
+                    return "calendar:" + normalized
                 if normalized in {"HAFTA", "WEEK", "WEEKLY"}:
                     return "weekly"
                 if normalized in {"AY", "MONTH", "MONTHLY"} or normalized in self.MONTH_TOKENS:
@@ -233,6 +260,10 @@ class WorkbookSemanticReconciler:
 
     def _is_metadata_part(self, part, period_grouped=False):
         if not part:
+            return True
+        # Treat MARKET SHARE as a complete metric caption without making
+        # MARKET a generic token in other legacy product identities.
+        if part == "MARKET SHARE":
             return True
         if period_grouped and self._is_period_part(part):
             return True
