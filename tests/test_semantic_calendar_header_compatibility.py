@@ -76,6 +76,11 @@ def test_week41_unit_market_share_headers_keep_each_product_identity():
 
     for reconciler_class in (WorkbookSemanticReconciler, CompiledWorkbookSemanticReconciler):
         reconciler = _reconciler(reconciler_class, frame)
+        for caption in (
+            "MARKET SHARE", "UNIT MARKET SHARE", "UNITS MARKET SHARE",
+            "VALUE MARKET SHARE", "VALUES MARKET SHARE", "UNIT SHARE", "VALUE SHARE",
+        ):
+            assert reconciler._is_metadata_part(caption) is True
         observations, _profiles = reconciler._observations()
         representative_row = [obs for obs in observations if obs["row_key"] == ("ENGIN YAPAK",)]
         assert [obs["product_key"] for obs in representative_row] == [
