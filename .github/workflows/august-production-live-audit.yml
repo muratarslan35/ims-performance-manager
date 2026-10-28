@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/august-production-live-audit.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -112,6 +113,22 @@ jobs:
                               print(f"WEEK41_TREND_HEADER|row={row_index}|values={values!r}")
                       else:
                           print("WEEK41_TREND_SHEET|not_found")
+
+                      pp_name = next(
+                          (name for name in workbook.sheetnames if name.strip() == "TTS-KUTU PP"),
+                          None,
+                      )
+                      if pp_name:
+                          sheet = workbook[pp_name]
+                          print(f"WEEK41_PP_DIMENSIONS|rows={sheet.max_row}|columns={sheet.max_column}")
+                          for row_index in range(1, min(5, sheet.max_row) + 1):
+                              values = [
+                                  sheet.cell(row=row_index, column=column).value
+                                  for column in range(1, min(16, sheet.max_column) + 1)
+                              ]
+                              print(f"WEEK41_PP_HEADER|row={row_index}|values={values!r}")
+                      else:
+                          print("WEEK41_PP_SHEET|not_found")
                   finally:
                       workbook.close()
 
