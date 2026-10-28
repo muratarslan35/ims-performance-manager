@@ -72,6 +72,7 @@ jobs:
                   print(
                       "WEEK41_JOB|"
                       f"id={job.id}|status={job.status}|ims_upload_id={job.ims_upload_id}|"
+                      f"file_name={job.file_name}|stored_file_name={job.stored_file_name}|"
                       f"queued_at={job.queued_at}|started_at={job.started_at}|completed_at={job.completed_at}|"
                       f"heartbeat_at={job.heartbeat_at}|error={str(job.error_message or '')[:1800]}"
                   )
@@ -88,10 +89,24 @@ jobs:
                       f"error={str(upload.error_message or '')[:1800]}"
                   )
 
+              print("WEEK41_XLSX_FILES_BEGIN")
+              for base in (Path("uploads"), Path("instance")):
+                  if base.exists():
+                      for candidate in sorted(base.rglob("*.xlsx"), key=lambda item: item.stat().st_mtime, reverse=True)[:80]:
+                          try:
+                              print(f"WEEK41_XLSX_FILE|mtime={candidate.stat().st_mtime}|bytes={candidate.stat().st_size}|path={candidate}")
+                          except OSError:
+                              pass
+              print("WEEK41_XLSX_FILES_END")
               workbook_candidates = [
                   Path("uploads/ims_archive/failed-job-44.xlsx"),
+                  Path("uploads/ims_archive/completed-job-44.xlsx"),
+                  Path("uploads/ims_archive/successful-job-44.xlsx"),
                   Path("instance/uploads/ims_archive/failed-job-44.xlsx"),
+                  Path("instance/uploads/ims_archive/completed-job-44.xlsx"),
+                  Path("instance/uploads/ims_archive/successful-job-44.xlsx"),
                   Path("uploads/ims_queue") / (job.stored_file_name if job else "__missing__"),
+                  Path("instance/uploads/ims_queue") / (job.stored_file_name if job else "__missing__"),
               ]
               workbook_path = next((path for path in workbook_candidates if path.is_file()), None)
               if workbook_path is None:
