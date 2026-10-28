@@ -261,9 +261,20 @@ class WorkbookSemanticReconciler:
     def _is_metadata_part(self, part, period_grouped=False):
         if not part:
             return True
-        # Treat MARKET SHARE as a complete metric caption without making
-        # MARKET a generic token in other legacy product identities.
-        if part == "MARKET SHARE":
+        # These are metric captions in the Week-41 TTS-KUTU PP matrix,
+        # not product identities. The actual product is on the preceding
+        # header row (e.g. TRAVAZOL KREM / TRAVOCORT KREM). Keep this list
+        # exact so "MARKET" does not become a generic token in real product
+        # names in legacy workbooks.
+        if part in {
+            "MARKET SHARE",
+            "UNIT MARKET SHARE",
+            "UNITS MARKET SHARE",
+            "VALUE MARKET SHARE",
+            "VALUES MARKET SHARE",
+            "UNIT SHARE",
+            "VALUE SHARE",
+        }:
             return True
         if period_grouped and self._is_period_part(part):
             return True
