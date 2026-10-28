@@ -1,5 +1,4 @@
-name: August Production Live Read-Only Audit
-
+name: Week 41 Production Read-Only Comparison
 on:
   push:
     branches: [main]
@@ -32,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Inspect August production and downstream snapshots
+      - name: Compare only requested week-41 region values
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/audit_key -p "$IMS_PORT" \
@@ -43,228 +42,90 @@ jobs:
           echo "LIVE_COMMIT|$(git rev-parse HEAD)"
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
-          echo "WORKER_PROCESS|$(pgrep -af 'ims_import_worker.py' | tr '\n' ';' || true)"
-          echo "REFRESH_QUEUE_BEGIN"
-          find instance/representative_refresh_queue -maxdepth 1 -type f -name '*.json' -print -exec cat {} \; 2>/dev/null || true
-          echo "REFRESH_QUEUE_END"
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import sqlalchemy as sa
-          from app import create_app
-          from app.extensions import db
-          from app.models import (
-              IMSImportJob, IMSUpload, IMSRawData, IMSFact, IMSSummary, Target,
-              Representative, ProductionResult, ProductionResultUpload, ProductionRegionTotal,
-          )
           from pathlib import Path
           from openpyxl import load_workbook
-          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
-          from app.services.persistent_region_snapshot_service import region_snapshot_sets
-          from app.services.persistent_representative_snapshot_service import representative_snapshot_sets
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob, IMSUpload, IMSFact, Target, Representative
 
           app = create_app()
           with app.app_context():
               job = db.session.get(IMSImportJob, 44)
               upload = db.session.get(IMSUpload, 54)
-              if job is None:
-                  print("WEEK41_JOB|id=44|missing=1")
-              else:
-                  print(
-                      "WEEK41_JOB|"
-                      f"id={job.id}|status={job.status}|ims_upload_id={job.ims_upload_id}|"
-                      f"file_name={job.file_name}|stored_file_name={job.stored_file_name}|"
-                      f"queued_at={job.queued_at}|started_at={job.started_at}|completed_at={job.completed_at}|"
-                      f"heartbeat_at={job.heartbeat_at}|error={str(job.error_message or '')[:1800]}"
-                  )
-                  progress_path = Path("instance/ims_progress") / f"job-{job.id}.json"
-                  if progress_path.exists():
-                      print("WEEK41_PROGRESS|" + progress_path.read_text(encoding="utf-8")[:3500])
-              if upload is None:
-                  print("WEEK41_UPLOAD|id=54|missing=1")
-              else:
-                  print(
-                      "WEEK41_UPLOAD|"
-                      f"id={upload.id}|status={upload.status}|reconciliation={upload.reconciliation_status}|"
-                      f"week={upload.week_number}|month={upload.month}|sheets={upload.sheet_count}|"
-                      f"error={str(upload.error_message or '')[:1800]}"
-                  )
+              print(f"WEEK41_JOB|id=44|status={getattr(job, 'status', None)}|upload_id={getattr(job, 'ims_upload_id', None)}")
+              print(f"WEEK41_UPLOAD|id=54|status={getattr(upload, 'status', None)}|reconciliation={getattr(upload, 'reconciliation_status', None)}|year=2026|month=10|week=41")
 
-              print("WEEK41_XLSX_FILES_BEGIN")
-              for base in (Path("uploads"), Path("instance")):
-                  if base.exists():
-                      for candidate in sorted(base.rglob("*.xlsx"), key=lambda item: item.stat().st_mtime, reverse=True)[:80]:
-                          try:
-                              print(f"WEEK41_XLSX_FILE|mtime={candidate.stat().st_mtime}|bytes={candidate.stat().st_size}|path={candidate}")
-                          except OSError:
-                              pass
-              print("WEEK41_XLSX_FILES_END")
-              workbook_candidates = [
-                  Path("uploads/ims_archive/upload-54.xlsx"),
-                  Path("uploads/ims_archive/failed-job-44.xlsx"),
-                  Path("uploads/ims_archive/completed-job-44.xlsx"),
-                  Path("uploads/ims_archive/successful-job-44.xlsx"),
-                  Path("instance/uploads/ims_archive/failed-job-44.xlsx"),
-                  Path("instance/uploads/ims_archive/completed-job-44.xlsx"),
-                  Path("instance/uploads/ims_archive/successful-job-44.xlsx"),
-                  Path("uploads/ims_queue") / (job.stored_file_name if job else "__missing__"),
-                  Path("instance/uploads/ims_queue") / (job.stored_file_name if job else "__missing__"),
-              ]
-              workbook_path = next((path for path in workbook_candidates if path.is_file()), None)
-              if workbook_path is None:
-                  print("WEEK41_WORKBOOK|preserved_copy=not_found_in_known_paths")
-              else:
-                  print(f"WEEK41_WORKBOOK|path={workbook_path}|bytes={workbook_path.stat().st_size}")
-                  workbook = load_workbook(workbook_path, read_only=True, data_only=True)
-                  try:
-                      target_name = next(
-                          (name for name in workbook.sheetnames if name.strip() == "5-EKİP HAFTALIK TREND"),
-                          None,
-                      )
-                      print("WEEK41_SHEETS|" + "|".join(workbook.sheetnames))
-                      if target_name:
-                          sheet = workbook[target_name]
-                          print(f"WEEK41_TREND_DIMENSIONS|rows={sheet.max_row}|columns={sheet.max_column}")
-                          for row_index in range(1, min(4, sheet.max_row) + 1):
-                              values = [
-                                  sheet.cell(row=row_index, column=column).value
-                                  for column in range(1, min(20, sheet.max_column) + 1)
-                              ]
-                              print(f"WEEK41_TREND_HEADER|row={row_index}|values={values!r}")
-                      else:
-                          print("WEEK41_TREND_SHEET|not_found")
+              workbook_path = Path("uploads/ims_archive/upload-54.xlsx")
+              if not workbook_path.is_file():
+                  raise FileNotFoundError(f"Week-41 archived workbook not found: {workbook_path}")
+              print(f"EXCEL_SOURCE|{workbook_path}|bytes={workbook_path.stat().st_size}")
 
-                      pp_name = next(
-                          (name for name in workbook.sheetnames if name.strip() == "TTS-KUTU PP"),
-                          None,
-                      )
-                      if pp_name:
-                          sheet = workbook[pp_name]
-                          print(f"WEEK41_PP_DIMENSIONS|rows={sheet.max_row}|columns={sheet.max_column}")
-                          for row_index in range(1, min(5, sheet.max_row) + 1):
-                              values = [
-                                  sheet.cell(row=row_index, column=column).value
-                                  for column in range(1, min(16, sheet.max_column) + 1)
-                              ]
-                              print(f"WEEK41_PP_HEADER|row={row_index}|values={values!r}")
-                      else:
-                          print("WEEK41_PP_SHEET|not_found")
-                  finally:
-                      workbook.close()
+              # Read only the four regional summary sheets and at most the first 15 rows.
+              wanted_sheets = (
+                  "1-TTS TL-REA%",
+                  "1-TTS KUTU-REA%",
+                  "2-TTS-BRİCK HEDEF REAL-TL V2",
+                  "2-TTS-BRİCK HEDEF REAL-KUTU V2",
+              )
+              wb = load_workbook(workbook_path, read_only=True, data_only=True)
+              try:
+                  for wanted in wanted_sheets:
+                      actual = next((n for n in wb.sheetnames if n.strip() == wanted), None)
+                      if not actual:
+                          print(f"EXCEL_SHEET_MISSING|{wanted}")
+                          continue
+                      ws = wb[actual]
+                      print(f"EXCEL_SHEET|{actual}")
+                      for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=min(15, ws.max_row), max_col=min(7, ws.max_column), values_only=True), 1):
+                          if any(v is not None and str(v).strip() for v in row):
+                              print(f"EXCEL_REGION_ROW|sheet={actual}|row={idx}|values={row!r}")
+              finally:
+                  wb.close()
 
-                  # Reopen and read only the regional summary rows; do not scan detail sheets.
-                  workbook = load_workbook(workbook_path, read_only=True, data_only=True)
-                  try:
-                      for sheet_name in ("1-TTS TL-REA%", "1-TTS KUTU-REA%", "2-TTS-BRİCK HEDEF REAL-TL V2", "2-TTS-BRİCK HEDEF REAL-KUTU V2"):
-                          actual_name = next((name for name in workbook.sheetnames if name.strip() == sheet_name), None)
-                          if not actual_name:
-                              print(f"WEEK41_REGION_SHEET|name={sheet_name}|missing=1")
-                              continue
-                          sheet = workbook[actual_name]
-                          print(f"WEEK41_REGION_SHEET|name={actual_name}|rows={sheet.max_row}|columns={sheet.max_column}")
-                          # Summary sheets: first 15 rows contain national and region totals.
-                          for row_index, values in enumerate(sheet.iter_rows(min_row=1, max_row=min(15, sheet.max_row), max_col=min(7, sheet.max_column), values_only=True), start=1):
-                              nonempty = [value for value in values if value is not None and str(value).strip()]
-                              if nonempty:
-                                  print(f"WEEK41_REGION_EXCEL|sheet={actual_name}|row={row_index}|values={values!r}")
-                  finally:
-                      workbook.close()
-
-              # Database state for the failed week-41 upload and any pre-existing week-41 IMS rows.
-              raw_count = IMSRawData.query.filter_by(upload_id=54).count()
-              fact_count = IMSFact.query.filter_by(upload_id=54).count()
-              summary_count = IMSSummary.query.filter_by(upload_id=54).count()
-              print(f"WEEK41_DB_COUNTS|upload_id=54|raw={raw_count}|facts={fact_count}|summary={summary_count}")
-              week_facts = db.session.query(
+              # DB: aggregate only regional week-41 TL/box facts; keep report_type visible
+              # so distinct metric/report categories cannot silently be double-counted.
+              facts = db.session.query(
                   Representative.region,
+                  IMSFact.report_type,
                   sa.func.count(IMSFact.id),
                   sa.func.coalesce(sa.func.sum(IMSFact.tl), 0),
                   sa.func.coalesce(sa.func.sum(IMSFact.unit), 0),
               ).outerjoin(Representative, Representative.id == IMSFact.representative_id).filter(
-                  IMSFact.year == 2026, IMSFact.week_number == 41
-              ).group_by(Representative.region).order_by(Representative.region).all()
-              print(f"WEEK41_DB_FACT_REGION_GROUPS|count={len(week_facts)}")
-              for region, rows, tl, unit in week_facts:
-                  print(f"WEEK41_DB_FACT_REGION|region={region}|rows={rows}|tl={tl}|unit={unit}")
-              october_targets = db.session.query(
+                  IMSFact.year == 2026,
+                  IMSFact.month == 10,
+                  IMSFact.week_number == 41,
+              ).group_by(Representative.region, IMSFact.report_type).order_by(Representative.region, IMSFact.report_type).all()
+              print(f"DB_WEEK41_FACT_GROUPS|count={len(facts)}")
+              for region, report_type, count, tl, unit in facts:
+                  print(f"DB_WEEK41_FACT|region={region}|report_type={report_type}|rows={count}|tl={tl}|unit={unit}")
+
+              # DB: October target values, aggregated by region only.
+              targets = db.session.query(
                   Representative.region,
                   sa.func.count(Target.id),
                   sa.func.coalesce(sa.func.sum(Target.tl_target), 0),
                   sa.func.coalesce(sa.func.sum(Target.unit_target), 0),
               ).join(Representative, Representative.id == Target.representative_id).filter(
-                  Target.year == 2026, Target.month == 10
+                  Target.year == 2026,
+                  Target.month == 10,
               ).group_by(Representative.region).order_by(Representative.region).all()
-              print(f"OCTOBER_DB_TARGET_REGION_GROUPS|count={len(october_targets)}")
-              for region, rows, tl, unit in october_targets:
-                  print(f"OCTOBER_DB_TARGET_REGION|region={region}|rows={rows}|target_tl={tl}|target_unit={unit}")
-              october_summaries = db.session.query(
-                  Representative.region,
-                  sa.func.count(IMSSummary.id),
-                  sa.func.coalesce(sa.func.sum(IMSSummary.tl), 0),
-                  sa.func.coalesce(sa.func.sum(IMSSummary.unit), 0),
-                  sa.func.coalesce(sa.func.sum(IMSSummary.target_tl), 0),
-                  sa.func.coalesce(sa.func.sum(IMSSummary.target_unit), 0),
-              ).join(Representative, Representative.id == IMSSummary.representative_id).filter(
-                  IMSSummary.year == 2026, IMSSummary.month == 10
-              ).group_by(Representative.region).order_by(Representative.region).all()
-              print(f"OCTOBER_DB_SUMMARY_REGION_GROUPS|count={len(october_summaries)}")
-              for region, rows, tl, unit, target_tl, target_unit in october_summaries:
-                  print(f"OCTOBER_DB_SUMMARY_REGION|region={region}|rows={rows}|tl={tl}|unit={unit}|target_tl={target_tl}|target_unit={target_unit}")
-              production_uploads_october = ProductionResultUpload.query.filter_by(year=2026, month=10).order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc()).all()
-              print(f"OCTOBER_PRODUCTION_UPLOAD_COUNT|{len(production_uploads_october)}")
-              for production_upload in production_uploads_october:
-                  region_totals = ProductionRegionTotal.query.filter_by(upload_id=production_upload.id).order_by(ProductionRegionTotal.region_code).all()
-                  print(f"OCTOBER_PRODUCTION_UPLOAD|id={production_upload.id}|stage={production_upload.production_stage}|status={production_upload.status}|regions={len(region_totals)}|file={production_upload.file_name}")
-                  for item in region_totals:
-                      print(f"OCTOBER_PRODUCTION_REGION|upload_id={production_upload.id}|region={item.region_code}|target_tl={item.target_tl}|target_unit={item.target_unit}|actual_tl={item.actual_tl}|actual_unit={item.actual_unit}")
+              print(f"DB_OCTOBER_TARGET_GROUPS|count={len(targets)}")
+              for region, count, tl, unit in targets:
+                  print(f"DB_OCTOBER_TARGET|region={region}|rows={count}|tl_target={tl}|unit_target={unit}")
 
-              uploads = (ProductionResultUpload.query
-                  .filter_by(year=2026, month=8)
-                  .order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc())
-                  .all())
-              print(f"AUGUST_UPLOAD_COUNT|{len(uploads)}")
-              for item in uploads:
-                  count = db.session.query(sa.func.count(ProductionResult.id)).filter_by(upload_id=item.id).scalar() or 0
-                  print(
-                      "AUGUST_UPLOAD|"
-                      f"id={item.id}|stage={item.production_stage}|status={item.status}|rows={item.row_count}|"
-                      f"matched={item.matched_row_count}|results={count}|file={item.file_name}|"
-                      f"uploaded={item.uploaded_at}|validated={item.validated_at}|applied={item.applied_at}|"
-                      f"warning={item.warning_message or ''}|error={item.error_message or ''}"
-                  )
-
-              for month in range(8, 10):
-                  ims_id, production_id = PersistentDashboardSnapshotService.source_identity(2026, month)
-                  ready = bool(ims_id and PersistentDashboardSnapshotService.generation_ready(2026, month, ims_id, production_id))
-                  rep_rows = db.session.execute(sa.select(
-                      representative_snapshot_sets.c.id,
-                      representative_snapshot_sets.c.status,
-                      representative_snapshot_sets.c.production_upload_id,
-                      representative_snapshot_sets.c.representative_count,
-                      representative_snapshot_sets.c.created_at,
-                      representative_snapshot_sets.c.activated_at,
-                  ).where(
-                      representative_snapshot_sets.c.year == 2026,
-                      representative_snapshot_sets.c.month == month,
-                  ).order_by(representative_snapshot_sets.c.id.desc()).limit(3)).all()
-                  region_rows = db.session.execute(sa.select(
-                      region_snapshot_sets.c.id,
-                      region_snapshot_sets.c.status,
-                      region_snapshot_sets.c.production_upload_id,
-                      region_snapshot_sets.c.region_count,
-                      region_snapshot_sets.c.created_at,
-                      region_snapshot_sets.c.activated_at,
-                  ).where(
-                      region_snapshot_sets.c.year == 2026,
-                      region_snapshot_sets.c.month == month,
-                  ).order_by(region_snapshot_sets.c.id.desc()).limit(3)).all()
-                  print(f"PERIOD|2026-{month:02d}|ims={ims_id}|production={production_id}|dashboard_ready={ready}")
-                  for row in rep_rows:
-                      print(f"REP_SET|month={month}|id={row.id}|status={row.status}|production={row.production_upload_id}|count={row.representative_count}|created={row.created_at}|active={row.activated_at}")
-                  for row in region_rows:
-                      print(f"REGION_SET|month={month}|id={row.id}|status={row.status}|production={row.production_upload_id}|count={row.region_count}|created={row.created_at}|active={row.activated_at}")
+              # Production workbook's persisted regional totals are an independent cross-check.
+              from app.models import ProductionResultUpload, ProductionRegionTotal
+              pu = (ProductionResultUpload.query.filter_by(year=2026, month=10)
+                    .order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc()).first())
+              if pu is None:
+                  print("DB_PRODUCTION_TOTALS|none")
+              else:
+                  print(f"DB_PRODUCTION_TOTALS_SOURCE|upload_id={pu.id}|stage={pu.production_stage}|status={pu.status}|file={pu.file_name}")
+                  totals = ProductionRegionTotal.query.filter_by(upload_id=pu.id).order_by(ProductionRegionTotal.region_code).all()
+                  for item in totals:
+                      print(f"DB_PRODUCTION_REGION|region={item.region_code}|target_tl={item.target_tl}|target_unit={item.target_unit}|actual_tl={item.actual_tl}|actual_unit={item.actual_unit}")
           PY
-          echo "RECENT_PRODUCTION_LOGS_BEGIN"
-          sudo journalctl -u ims-performance-manager.service -u ims-import-worker.service --since '90 minutes ago' --no-pager \
-            | grep -Ei 'production|refresh|snapshot|error|failed|traceback' | tail -n 160 || true
-          echo "RECENT_PRODUCTION_LOGS_END"
           REMOTE
