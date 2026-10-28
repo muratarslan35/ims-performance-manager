@@ -57,3 +57,31 @@ def test_compiled_reconciler_inherits_expanded_header_semantics():
     assert reconciler._period_scope(
         ["OCTOBER 2026"], ["OCTOBER 2026"], None
     ) == "calendar:OCTOBER 2026"
+
+
+def test_week41_unit_market_share_headers_keep_each_product_identity():
+    import pandas as pd
+
+    # Minimal reproduction of the real TTS-KUTU PP header stack:
+    # product group -> product -> UNIT MARKET SHARE -> representative values.
+    frame = pd.DataFrame([
+        [None, None, None, None],
+        [None, None, None, None],
+        [None, None, "TRAVAZOL GRUBU (KREM PAZARI)", None],
+        [None, None, "TRAVAZOL KREM", "TRAVOCORT KREM"],
+        ["AREAS", "SUBTERRITORIES", "UNIT MARKET SHARE", "UNIT MARKET SHARE"],
+        ["101 ISTANBUL", "ENGIN YAPAK", 37.5697865353038, 6.00985221674877],
+        ["101 ISTANBUL", "ZERO TEST", 0, 1.25],
+    ])
+
+    for reconciler_class in (WorkbookSemanticReconciler, CompiledWorkbookSemanticReconciler):
+        reconciler = _reconciler(reconciler_class, frame)
+        observations, _profiles = reconciler._observations()
+        representative_row = [obs for obs in observations if obs["row_key"] == ("ENGIN YAPAK",)]
+        assert [obs["product_key"] for obs in representative_row] == [
+            "TRAVAZOL KREM", "TRAVOCORT KREM"
+        ]
+        assert len({obs["semantic_key"] for obs in representative_row}) == 2
+
+        zero_row = [obs for obs in observations if obs["row_key"] == ("ZERO TEST",)]
+        assert any(obs["value"] == 0 and obs["product_key"] == "TRAVAZOL KREM" for obs in zero_row)
