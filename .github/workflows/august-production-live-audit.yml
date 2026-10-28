@@ -52,7 +52,10 @@ jobs:
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import IMSImportJob, IMSUpload, ProductionResult, ProductionResultUpload
+          from app.models import (
+              IMSImportJob, IMSUpload, IMSRawData, IMSFact, IMSSummary, Target,
+              Representative, ProductionResult, ProductionResultUpload, ProductionRegionTotal,
+          )
           from pathlib import Path
           from openpyxl import load_workbook
           from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
@@ -131,6 +134,78 @@ jobs:
                           print("WEEK41_PP_SHEET|not_found")
                   finally:
                       workbook.close()
+
+                  # Read-only workbook values for the regional target / realization comparison.
+                  for sheet_name in (
+                      "1-TTS TL-REA%", "1-TTS KUTU-REA%",
+                      "2-TTS-BRİCK HEDEF REAL-TL V2", "2-TTS-BRİCK HEDEF REAL-KUTU V2",
+                      "TTS-KUTU ÇIKIŞ",
+                  ):
+                      actual_name = next((name for name in workbook.sheetnames if name.strip() == sheet_name), None)
+                      if not actual_name:
+                          print(f"WEEK41_REGION_SHEET|name={sheet_name}|missing=1")
+                          continue
+                      sheet = workbook[actual_name]
+                      print(f"WEEK41_REGION_SHEET|name={actual_name}|rows={sheet.max_row}|columns={sheet.max_column}")
+                      emitted = 0
+                      for row_index in range(1, sheet.max_row + 1):
+                          values = [sheet.cell(row=row_index, column=column).value for column in range(1, min(sheet.max_column, 39) + 1)]
+                          nonempty = [value for value in values if value is not None and str(value).strip()]
+                          label_text = " ".join(str(value).upper() for value in values[:5] if value is not None)
+                          is_total = any(token in label_text for token in ("TÜRKİYE TOPLAM", "NATIONAL", "SUBTOTAL", "TOPLAM"))
+                          if (row_index <= 8 and nonempty) or (is_total and nonempty):
+                              print(f"WEEK41_REGION_EXCEL|sheet={actual_name}|row={row_index}|values={values!r}")
+                              emitted += 1
+                              if emitted >= 30:
+                                  break
+
+              # Database state for the failed week-41 upload and any pre-existing week-41 IMS rows.
+              raw_count = IMSRawData.query.filter_by(upload_id=54).count()
+              fact_count = IMSFact.query.filter_by(upload_id=54).count()
+              summary_count = IMSSummary.query.filter_by(upload_id=54).count()
+              print(f"WEEK41_DB_COUNTS|upload_id=54|raw={raw_count}|facts={fact_count}|summary={summary_count}")
+              week_facts = db.session.query(
+                  Representative.region,
+                  sa.func.count(IMSFact.id),
+                  sa.func.coalesce(sa.func.sum(IMSFact.tl), 0),
+                  sa.func.coalesce(sa.func.sum(IMSFact.unit), 0),
+              ).outerjoin(Representative, Representative.id == IMSFact.representative_id).filter(
+                  IMSFact.year == 2026, IMSFact.week_number == 41
+              ).group_by(Representative.region).order_by(Representative.region).all()
+              print(f"WEEK41_DB_FACT_REGION_GROUPS|count={len(week_facts)}")
+              for region, rows, tl, unit in week_facts:
+                  print(f"WEEK41_DB_FACT_REGION|region={region}|rows={rows}|tl={tl}|unit={unit}")
+              october_targets = db.session.query(
+                  Representative.region,
+                  sa.func.count(Target.id),
+                  sa.func.coalesce(sa.func.sum(Target.tl_target), 0),
+                  sa.func.coalesce(sa.func.sum(Target.unit_target), 0),
+              ).join(Representative, Representative.id == Target.representative_id).filter(
+                  Target.year == 2026, Target.month == 10
+              ).group_by(Representative.region).order_by(Representative.region).all()
+              print(f"OCTOBER_DB_TARGET_REGION_GROUPS|count={len(october_targets)}")
+              for region, rows, tl, unit in october_targets:
+                  print(f"OCTOBER_DB_TARGET_REGION|region={region}|rows={rows}|target_tl={tl}|target_unit={unit}")
+              october_summaries = db.session.query(
+                  Representative.region,
+                  sa.func.count(IMSSummary.id),
+                  sa.func.coalesce(sa.func.sum(IMSSummary.tl), 0),
+                  sa.func.coalesce(sa.func.sum(IMSSummary.unit), 0),
+                  sa.func.coalesce(sa.func.sum(IMSSummary.target_tl), 0),
+                  sa.func.coalesce(sa.func.sum(IMSSummary.target_unit), 0),
+              ).join(Representative, Representative.id == IMSSummary.representative_id).filter(
+                  IMSSummary.year == 2026, IMSSummary.month == 10
+              ).group_by(Representative.region).order_by(Representative.region).all()
+              print(f"OCTOBER_DB_SUMMARY_REGION_GROUPS|count={len(october_summaries)}")
+              for region, rows, tl, unit, target_tl, target_unit in october_summaries:
+                  print(f"OCTOBER_DB_SUMMARY_REGION|region={region}|rows={rows}|tl={tl}|unit={unit}|target_tl={target_tl}|target_unit={target_unit}")
+              production_uploads_october = ProductionResultUpload.query.filter_by(year=2026, month=10).order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc()).all()
+              print(f"OCTOBER_PRODUCTION_UPLOAD_COUNT|{len(production_uploads_october)}")
+              for production_upload in production_uploads_october:
+                  region_totals = ProductionRegionTotal.query.filter_by(upload_id=production_upload.id).order_by(ProductionRegionTotal.region_code).all()
+                  print(f"OCTOBER_PRODUCTION_UPLOAD|id={production_upload.id}|stage={production_upload.production_stage}|status={production_upload.status}|regions={len(region_totals)}|file={production_upload.file_name}")
+                  for item in region_totals:
+                      print(f"OCTOBER_PRODUCTION_REGION|upload_id={production_upload.id}|region={item.region_code}|target_tl={item.target_tl}|target_unit={item.target_unit}|actual_tl={item.actual_tl}|actual_unit={item.actual_unit}")
 
               uploads = (ProductionResultUpload.query
                   .filter_by(year=2026, month=8)
