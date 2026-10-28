@@ -63,7 +63,8 @@ jobs:
                   raise FileNotFoundError(f"Week-41 archived workbook not found: {workbook_path}")
               print(f"EXCEL_SOURCE|{workbook_path}|bytes={workbook_path.stat().st_size}")
 
-              # Read only the four regional summary sheets and at most the first 15 rows.
+              # Scan only regional subtotal rows on the four requested sheets.
+              # Do not print representative/brick details or national total rows.
               wanted_sheets = (
                   "1-TTS TL-REA%",
                   "1-TTS KUTU-REA%",
@@ -78,10 +79,24 @@ jobs:
                           print(f"EXCEL_SHEET_MISSING|{wanted}")
                           continue
                       ws = wb[actual]
-                      print(f"EXCEL_SHEET|{actual}")
-                      for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=min(15, ws.max_row), max_col=min(7, ws.max_column), values_only=True), 1):
-                          if any(v is not None and str(v).strip() for v in row):
-                              print(f"EXCEL_REGION_ROW|sheet={actual}|row={idx}|values={row!r}")
+                      print(f"EXCEL_SHEET|{actual}|rows={ws.max_row}")
+                      is_tts_layout = actual.strip().startswith("1-TTS")
+                      for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=min(7, ws.max_column), values_only=True), 1):
+                          vals = tuple(row) + (None,) * max(0, 7-len(row))
+                          a, b, c, d, target, actual_value, rate = vals[:7]
+                          if is_tts_layout:
+                              # Region subtotal rows use serial 0 and repeat region in B and C.
+                              if a != 0 or not isinstance(b, str) or not b.strip() or str(c).strip() != b.strip():
+                                  continue
+                              region = b.strip()
+                          else:
+                              # V2 region rows have region in A, blank B, repeated in C, blank D.
+                              if not isinstance(a, str) or not a.strip() or a.strip() == "TÜRKİYE TOPLAM":
+                                  continue
+                              if str(b or "").strip() or str(c or "").strip() != a.strip() or str(d or "").strip():
+                                  continue
+                              region = a.strip()
+                          print(f"EXCEL_REGION|sheet={actual.strip()}|region={region}|target={target}|actual={actual_value}|rate={rate}|row={idx}")
               finally:
                   wb.close()
 
