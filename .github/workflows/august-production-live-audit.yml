@@ -151,32 +151,21 @@ jobs:
                   finally:
                       workbook.close()
 
-                  # Reopen after the header probe closed the initial read-only workbook.
+                  # Reopen and read only the regional summary rows; do not scan detail sheets.
                   workbook = load_workbook(workbook_path, read_only=True, data_only=True)
                   try:
-                      # Read-only workbook values for the regional target / realization comparison.
-                      for sheet_name in (
-                          "1-TTS TL-REA%", "1-TTS KUTU-REA%",
-                          "2-TTS-BRİCK HEDEF REAL-TL V2", "2-TTS-BRİCK HEDEF REAL-KUTU V2",
-                          "TTS-KUTU ÇIKIŞ",
-                      ):
+                      for sheet_name in ("1-TTS TL-REA%", "1-TTS KUTU-REA%", "2-TTS-BRİCK HEDEF REAL-TL V2", "2-TTS-BRİCK HEDEF REAL-KUTU V2"):
                           actual_name = next((name for name in workbook.sheetnames if name.strip() == sheet_name), None)
                           if not actual_name:
                               print(f"WEEK41_REGION_SHEET|name={sheet_name}|missing=1")
                               continue
                           sheet = workbook[actual_name]
                           print(f"WEEK41_REGION_SHEET|name={actual_name}|rows={sheet.max_row}|columns={sheet.max_column}")
-                          emitted = 0
-                          for row_index in range(1, sheet.max_row + 1):
-                              values = [sheet.cell(row=row_index, column=column).value for column in range(1, min(sheet.max_column, 39) + 1)]
+                          # Summary sheets: first 15 rows contain national and region totals.
+                          for row_index, values in enumerate(sheet.iter_rows(min_row=1, max_row=min(15, sheet.max_row), max_col=min(7, sheet.max_column), values_only=True), start=1):
                               nonempty = [value for value in values if value is not None and str(value).strip()]
-                              label_text = " ".join(str(value).upper() for value in values[:5] if value is not None)
-                              is_total = any(token in label_text for token in ("TÜRKİYE TOPLAM", "NATIONAL", "SUBTOTAL", "TOPLAM"))
-                              if (row_index <= 8 and nonempty) or (is_total and nonempty):
+                              if nonempty:
                                   print(f"WEEK41_REGION_EXCEL|sheet={actual_name}|row={row_index}|values={values!r}")
-                                  emitted += 1
-                                  if emitted >= 30:
-                                      break
                   finally:
                       workbook.close()
 
