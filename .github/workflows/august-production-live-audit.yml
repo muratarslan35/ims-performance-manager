@@ -99,6 +99,7 @@ jobs:
                               pass
               print("WEEK41_XLSX_FILES_END")
               workbook_candidates = [
+                  Path("uploads/ims_archive/upload-54.xlsx"),
                   Path("uploads/ims_archive/failed-job-44.xlsx"),
                   Path("uploads/ims_archive/completed-job-44.xlsx"),
                   Path("uploads/ims_archive/successful-job-44.xlsx"),
