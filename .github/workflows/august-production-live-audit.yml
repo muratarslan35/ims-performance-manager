@@ -180,9 +180,87 @@ jobs:
                       if 'year' in columns and 'month' in columns: sql += ' WHERE year=2026 AND month=10'
                       sql += ' ORDER BY id DESC LIMIT 4' if 'id' in columns else ' LIMIT 4'
                       print('READ_MODEL_STATE|' + table + '|' + json.dumps([dict(r._mapping) for r in db.session.execute(sa.text(sql))],default=str))
+              import pandas as pd
+              from types import SimpleNamespace
+              from app.services.adaptive_kpi_target_authority import _pair_views
+              from app.services.kpi_workbook_compat import build_canonical_brick_frame, build_legacy_summary_frames
+              from app.services.ims_import_service import IMSImportService
+              from app.services.alias_service import AliasService
+              from app.services.official_aggregate_service import _aggregate_key
+              norm = AliasService.normalize
+              for week in (40,41):
+                  upload = IMSUpload.query.filter_by(year=2026,week_number=week,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+                  assert upload, f'Missing completed week {week}'
+                  path = Path(f'uploads/ims_archive/upload-{upload.id}.xlsx')
+                  if not path.is_file(): path = Path('uploads') / upload.file_name
+                  assert path.is_file(), f'Missing source week {week}'
+                  job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  assert job is not None and job.source_hash == digest, f'Archive hash mismatch week {week}'
+                  workbook = pd.read_excel(path,sheet_name=None,header=None)
+                  adapter = IMSImportService(str(path))
+                  adapter.workbook = workbook
+                  views = _pair_views(adapter)
+                  assert views is not None, f'No paired source matrices week {week}'
+                  canonical, consumed = build_canonical_brick_frame(workbook,file_path=path)
+                  legacy = build_legacy_summary_frames(workbook,file_path=path)
+                  problems = []
+                  product_ids = {}
+                  for product in views['products']:
+                      match = adapter.resolve_product_match(product)
+                      assert match['matched'], f'Unresolved source product {product}'
+                      product_ids[product] = match['object'].id
+                  official = {(r.sheet_type,r.territory,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==upload.id,IMSRawData.sheet_type.in_(('official_target_aggregate','official_actual_aggregate')))}
+                  checked_aggregates = 0
+                  for identity,tl_values in views['tl_aggregates'].items():
+                      territory,representative = identity
+                      aggregate_key = _aggregate_key(territory,representative)
+                      # Adaptive source marks NATIONAL in the territory field.
+                      aggregate_key = 'NATIONAL' if territory == 'NATIONAL' else aggregate_key
+                      for product,pid in product_ids.items():
+                          for metric,kind in (('target','official_target_aggregate'),('actual','official_actual_aggregate')):
+                              candidates = [r for (t,_region,p),r in official.items() if t==kind and p==pid and _aggregate_key(r.territory,r.representative)==aggregate_key]
+                              if len(candidates)!=1:
+                                  problems.append({'type':'aggregate_identity','week':week,'region':aggregate_key,'product':product,'kind':kind,'count':len(candidates)})
+                                  continue
+                              row=candidates[0]
+                              for field,expected in (('tl',tl_values[product][metric]),('unit',views['unit_aggregates'][identity][product][metric])):
+                                  if abs(float(getattr(row,field))-float(expected))>max(.01,abs(float(expected))*1e-6):
+                                      problems.append({'type':'aggregate_value','region':aggregate_key,'product':product,'field':field,'kind':kind})
+                              checked_aggregates += 1
+                  checked_reps = 0
+                  facts = {(r.representative_id,r.product_id):r for r in IMSFact.query.filter_by(upload_id=upload.id,report_type='brick_sales')}
+                  targets = {(r.representative_id,r.product_id):r for r in Target.query.filter_by(year=upload.year,month=upload.month)}
+                  expected_fact_keys = set()
+                  for identity,tl_values in views['tl_reps'].items():
+                      territory,name = identity
+                      if adapter._is_vacancy_representative(name):
+                          region = adapter._parse_region_city(territory)[0] if hasattr(adapter,'_parse_region_city') else territory.split()[0]
+                          rep = Representative.query.filter_by(rep_code=adapter._vacancy_code(region,name)).first()
+                      else:
+                          match=adapter.resolve_representative_match(name)
+                          rep=match.get('object') if match.get('matched') else None
+                      if rep is None:
+                          problems.append({'type':'representative_identity','week':week,'identity_hash':hashlib.sha256(name.encode()).hexdigest()[:12]})
+                          continue
+                      for product,pid in product_ids.items():
+                          key=(rep.id,pid); expected_fact_keys.add(key)
+                          fact=facts.get(key); target=targets.get(key)
+                          for field,actual,expected in (
+                              ('actual_tl',getattr(fact,'tl',None),tl_values[product]['actual']),
+                              ('actual_unit',getattr(fact,'unit',None),views['unit_reps'][identity][product]['actual']),
+                              ('target_tl',getattr(target,'tl_target',None),tl_values[product]['target']),
+                          ):
+                              if actual is None or abs(float(actual)-float(expected))>max(.01,abs(float(expected))*1e-6):
+                                  problems.append({'type':'representative_value','week':week,'rep_id':rep.id,'product':product,'field':field,'actual':actual,'expected':expected})
+                          checked_reps += 1
+                  if set(facts)!=expected_fact_keys: problems.append({'type':'fact_coverage','missing':len(expected_fact_keys-set(facts)),'extra':len(set(facts)-expected_fact_keys)})
+                  print('SOURCE_DB_CHECK|' + json.dumps({'week':week,'upload_id':upload.id,'sheets':len(workbook),'sha256':digest,'canonical_rows':len(canonical),'source_representatives':len(views['tl_reps']),'aggregate_records_checked':checked_aggregates,'representative_products_checked':checked_reps,'failures':problems},default=str))
+                  assert not problems, f'Source/DB comparison week {week} failed: {len(problems)}'
+
               db.session.rollback()
           PY
           PYTHONPATH="$IMS_PATH" venv/bin/python verify_live_ims_gate.py
 
           REMOTE
-
+
