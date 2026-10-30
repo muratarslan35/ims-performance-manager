@@ -43,40 +43,23 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          test "$(git rev-parse HEAD)" = 'cdbe9f7c2caf475217fab2fa044808fc9502da9a'
-          test -f instance/official-region-history-before-week41.json
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          from decimal import Decimal
+          import json
+          from pathlib import Path
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.models import IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
           app=create_app()
           with app.app_context():
               db.session.execute(sa.text("PRAGMA query_only=ON"))
-              failures=[]
-              checked=0
-              for region in PersistentRegionSnapshotService.region_keys(2026,10):
-                  service=RegionPerformanceService(region,2026,10)
-                  report=service.report()
-                  monthly={}
-                  for key,period in report["periods"].items():
-                      spans=[(int(m["year"]),int(m["month"])) for m in period.get("months",[])]
-                      if not any(service._uses_official_region_only(*ym) for ym in spans):continue
-                      for ym in spans:
-                          if ym not in monthly:monthly[ym]={int(r["product_id"]):r for r in service.aggregate([ym]).get("products",[])}
-                      for row in period.get("products",[]):
-                          pid=int(row["product_id"])
-                          for field in ("target_tl","actual_tl","target_unit","actual_unit"):
-                              values=[monthly[ym][pid].get(field) for ym in spans if pid in monthly[ym]]
-                              if any(v is None for v in values):continue
-                              expected=sum((Decimal(str(v)) for v in values),Decimal(0))
-                              if row.get(field) is None or abs(Decimal(str(row[field]))-expected)>Decimal("0.011"):failures.append((region,key,pid,field,str(row.get(field)),str(expected)))
-                          checked+=1
-              print("REGION_REPLAY_PREFLIGHT|"+str({"checked":checked,"failures":failures}),flush=True)
-              assert not failures
+              marker=json.loads(Path("instance/official-region-replay-54.json").read_text())
+              job=db.session.get(IMSImportJob,int(marker["job_id"]))
+              summary=json.loads(job.result_summary or "{}")
+              progress=IMSProgressStore.read(job.id) or {}
+              result={"job_id":job.id,"status":job.status,"upload_id":job.ims_upload_id,"publication_ready":summary.get("publication_ready"),"percent":progress.get("percent"),"stage":progress.get("stage"),"detail":progress.get("detail"),"error":job.error_message}
+              print("WEEK41_REPLAY_STATUS|"+json.dumps(result,default=str))
               db.session.rollback()
           PY
-          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/queue_verified_ims_reimport.py --source-upload 54
           REMOTE
