@@ -1,7 +1,7 @@
 name: Week 41 Production Read-Only Comparison
 on:
   push:
-    branches: [main, codex/week41-compat-audit]
+    branches: [codex/week41-compat-audit]
     paths:
       - ".github/workflows/august-production-live-audit.yml"
   workflow_dispatch:
@@ -44,229 +44,57 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import sqlalchemy as sa
+          import json,hashlib
           from pathlib import Path
-          from openpyxl import load_workbook
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSImportJob, IMSUpload, IMSFact, Target, Representative
-
-          app = create_app()
-          with app.app_context():
-              job = db.session.get(IMSImportJob, 44)
-              upload = db.session.get(IMSUpload, 54)
-              print(f"WEEK41_JOB|id=44|status={getattr(job, 'status', None)}|upload_id={getattr(job, 'ims_upload_id', None)}")
-              print(f"WEEK41_UPLOAD|id=54|status={getattr(upload, 'status', None)}|reconciliation={getattr(upload, 'reconciliation_status', None)}|year=2026|month=10|week=41")
-
-              workbook_path = Path("uploads/ims_archive/upload-54.xlsx")
-              if not workbook_path.is_file():
-                  raise FileNotFoundError(f"Week-41 archived workbook not found: {workbook_path}")
-              print(f"EXCEL_SOURCE|{workbook_path}|bytes={workbook_path.stat().st_size}")
-
-              # Scan only regional subtotal rows on the four requested sheets.
-              # Do not print representative/brick details or national total rows.
-              wanted_sheets = (
-                  "1-TTS TL-REA%",
-                  "1-TTS KUTU-REA%",
-                  "2-TTS-BRİCK HEDEF REAL-TL V2",
-                  "2-TTS-BRİCK HEDEF REAL-KUTU V2",
-              )
-              wb = load_workbook(workbook_path, read_only=True, data_only=True)
-              try:
-                  for wanted in wanted_sheets:
-                      actual = next((n for n in wb.sheetnames if n.strip() == wanted), None)
-                      if not actual:
-                          print(f"EXCEL_SHEET_MISSING|{wanted}")
-                          continue
-                      ws = wb[actual]
-                      print(f"EXCEL_SHEET|{actual}|rows={ws.max_row}")
-                      is_tts_layout = actual.strip().startswith("1-TTS")
-                      for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=min(7, ws.max_column), values_only=True), 1):
-                          vals = tuple(row) + (None,) * max(0, 7-len(row))
-                          a, b, c, d, target, actual_value, rate = vals[:7]
-                          if is_tts_layout:
-                              # Region subtotal rows use serial 0 and repeat region in B and C.
-                              if a != 0 or not isinstance(b, str) or not b.strip() or str(c).strip() != b.strip():
-                                  continue
-                              region = b.strip()
-                          else:
-                              # V2 region rows have region in A, blank B, repeated in C, blank D.
-                              if not isinstance(a, str) or not a.strip() or a.strip() == "TÜRKİYE TOPLAM":
-                                  continue
-                              if str(b or "").strip() or str(c or "").strip() != a.strip() or str(d or "").strip():
-                                  continue
-                              region = a.strip()
-                          print(f"EXCEL_REGION|sheet={actual.strip()}|region={region}|target={target}|actual={actual_value}|rate={rate}|row={idx}")
-              finally:
-                  wb.close()
-
-              # DB: aggregate only regional week-41 TL/box facts; keep report_type visible
-              # so distinct metric/report categories cannot silently be double-counted.
-              facts = db.session.query(
-                  Representative.region,
-                  IMSFact.report_type,
-                  sa.func.count(IMSFact.id),
-                  sa.func.coalesce(sa.func.sum(IMSFact.tl), 0),
-                  sa.func.coalesce(sa.func.sum(IMSFact.unit), 0),
-              ).outerjoin(Representative, Representative.id == IMSFact.representative_id).filter(
-                  IMSFact.year == 2026,
-                  IMSFact.month == 10,
-                  IMSFact.week_number == 41,
-              ).group_by(Representative.region, IMSFact.report_type).order_by(Representative.region, IMSFact.report_type).all()
-              print(f"DB_WEEK41_FACT_GROUPS|count={len(facts)}")
-              for region, report_type, count, tl, unit in facts:
-                  print(f"DB_WEEK41_FACT|region={region}|report_type={report_type}|rows={count}|tl={tl}|unit={unit}")
-
-              # DB: October target values, aggregated by region only.
-              targets = db.session.query(
-                  Representative.region,
-                  sa.func.count(Target.id),
-                  sa.func.coalesce(sa.func.sum(Target.tl_target), 0),
-                  sa.func.coalesce(sa.func.sum(Target.unit_target), 0),
-              ).join(Representative, Representative.id == Target.representative_id).filter(
-                  Target.year == 2026,
-                  Target.month == 10,
-              ).group_by(Representative.region).order_by(Representative.region).all()
-              print(f"DB_OCTOBER_TARGET_GROUPS|count={len(targets)}")
-              for region, count, tl, unit in targets:
-                  print(f"DB_OCTOBER_TARGET|region={region}|rows={count}|tl_target={tl}|unit_target={unit}")
-
-              # Production workbook's persisted regional totals are an independent cross-check.
-              from app.models import ProductionResultUpload, ProductionRegionTotal
-              pu = (ProductionResultUpload.query.filter_by(year=2026, month=10)
-                    .order_by(ProductionResultUpload.production_stage.desc(), ProductionResultUpload.id.desc()).first())
-              if pu is None:
-                  print("DB_PRODUCTION_TOTALS|none")
-              else:
-                  print(f"DB_PRODUCTION_TOTALS_SOURCE|upload_id={pu.id}|stage={pu.production_stage}|status={pu.status}|file={pu.file_name}")
-                  totals = ProductionRegionTotal.query.filter_by(upload_id=pu.id).order_by(ProductionRegionTotal.region_code).all()
-                  for item in totals:
-                      print(f"DB_PRODUCTION_REGION|region={item.region_code}|target_tl={item.target_tl}|target_unit={item.target_unit}|actual_tl={item.actual_tl}|actual_unit={item.actual_unit}")
-          PY
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import hashlib, json
-          from pathlib import Path
+          import pandas as pd
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload, IMSImportJob, IMSFact, IMSRawData, IMSSummary, Target, Representative
-          from app.services.import_result_report import latest_import_report
-          from app.services.period_service import PeriodService
-          from app.services.ims_publication_service import IMSPublicationService
-          app = create_app()
+          from app.models import IMSUpload,IMSImportJob,IMSRawData,IMSFact,Target,Representative
+          from app.services.ims_import_service import IMSImportService
+          from app.services.adaptive_kpi_target_authority import _pair_views
+          from app.services.official_aggregate_service import TARGET_TYPE,ACTUAL_TYPE
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          app=create_app()
           with app.app_context():
               db.session.execute(sa.text('PRAGMA query_only=ON'))
-              for upload in IMSUpload.query.filter_by(year=2026, month=10).order_by(IMSUpload.id.desc()).limit(5):
-                  print('UPLOAD_EVIDENCE|' + json.dumps({c.name:getattr(upload,c.name) for c in upload.__table__.columns}, default=str))
-                  job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()
-                  if job:
-                      print('JOB_EVIDENCE|' + json.dumps({'id':job.id,'upload_id':upload.id,'hash':job.source_hash,'result':json.loads(job.result_summary or '{}')},default=str))
-                  print('IMPORT_REPORT|' + json.dumps(latest_import_report(upload.id),default=str))
-                  path = Path(f'uploads/ims_archive/upload-{upload.id}.xlsx')
-                  if path.is_file():
-                      print(f'ARCHIVE_HASH|upload={upload.id}|bytes={path.stat().st_size}|sha256={hashlib.sha256(path.read_bytes()).hexdigest()}')
-              print('ACTIVE_PERIOD|' + json.dumps(PeriodService.get_active_period(),default=str))
-              for row in db.session.query(IMSFact.upload_id, sa.func.count(IMSFact.id),sa.func.sum(IMSFact.tl),sa.func.sum(IMSFact.unit)).filter_by(year=2026,month=10,week_number=41).group_by(IMSFact.upload_id):
-                  print('FACT_PARTITION|' + json.dumps(list(row),default=str))
-              rows = db.session.query(IMSFact.upload_id,IMSRawData.territory,Representative.region,sa.func.count(IMSFact.id),sa.func.sum(IMSFact.tl),sa.func.sum(IMSFact.unit)).join(IMSRawData,IMSRawData.id==IMSFact.raw_data_id).outerjoin(Representative,Representative.id==IMSFact.representative_id).filter(IMSFact.year==2026,IMSFact.month==10,IMSFact.week_number==41).group_by(IMSFact.upload_id,IMSRawData.territory,Representative.region).all()
-              for row in rows:
-                  print('FACT_SOURCE_REGION|' + json.dumps(list(row),default=str))
-              for table in sa.inspect(db.engine).get_table_names():
-                  if any(t in table for t in ('snapshot_sets','refresh_jobs','publication')):
-                      columns = {c['name'] for c in sa.inspect(db.engine).get_columns(table)}
-                      wanted = [c for c in ('id','status','year','month','source_upload_id','ims_upload_id','production_upload_id','region_count','representative_count','error_message') if c in columns]
-                      if not wanted: continue
-                      sql = 'SELECT '+','.join(wanted)+' FROM '+table
-                      if 'year' in columns and 'month' in columns: sql += ' WHERE year=2026 AND month=10'
-                      sql += ' ORDER BY id DESC LIMIT 4' if 'id' in columns else ' LIMIT 4'
-                      print('READ_MODEL_STATE|' + table + '|' + json.dumps([dict(r._mapping) for r in db.session.execute(sa.text(sql))],default=str))
-              import pandas as pd
-              from types import SimpleNamespace
-              from app.services.adaptive_kpi_target_authority import _pair_views
-              from app.services.kpi_workbook_compat import build_canonical_brick_frame, build_legacy_summary_frames
-              from app.services.ims_import_service import IMSImportService
-              from app.services.alias_service import AliasService
-              from app.services.official_aggregate_service import _aggregate_key
-              norm = AliasService.normalize
-              for week in (40,41):
-                  upload = IMSUpload.query.filter_by(year=2026,week_number=week,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-                  assert upload, f'Missing completed week {week}'
-                  path = Path(f'uploads/ims_archive/upload-{upload.id}.xlsx')
-                  if not path.is_file(): path = Path('uploads') / upload.file_name
-                  assert path.is_file(), f'Missing source week {week}'
-                  job = IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()
-                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                  assert job is not None and job.source_hash == digest, f'Archive hash mismatch week {week}'
-                  workbook = pd.read_excel(path,sheet_name=None,header=None)
-                  adapter = IMSImportService(str(path))
-                  adapter.workbook = workbook
-                  views = _pair_views(adapter)
-                  assert views is not None, f'No paired source matrices week {week}'
-                  canonical, consumed = build_canonical_brick_frame(workbook,file_path=path)
-                  legacy = build_legacy_summary_frames(workbook,file_path=path)
-                  problems = []
-                  product_ids = {}
-                  for product in views['products']:
-                      match = adapter.resolve_product_match(product)
-                      assert match['matched'], f'Unresolved source product {product}'
-                      product_ids[product] = match['object'].id
-                  official = {(r.sheet_type,r.territory,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==upload.id,IMSRawData.sheet_type.in_(('official_target_aggregate','official_actual_aggregate')))}
-                  checked_aggregates = 0
-                  for identity,tl_values in views['tl_aggregates'].items():
-                      territory,representative = identity
-                      aggregate_key = territory
-                      # Adaptive source marks NATIONAL in the territory field.
-                      aggregate_key = 'NATIONAL' if territory == 'NATIONAL' else aggregate_key
-                      for product,pid in product_ids.items():
-                          for metric,kind in (('target','official_target_aggregate'),('actual','official_actual_aggregate')):
-                              candidates = [r for (t,_region,p),r in official.items() if t==kind and p==pid and ('NATIONAL' if r.territory == 'NATIONAL' or r.representative == 'NATIONAL' else r.territory.split()[0])==aggregate_key]
-                              if len(candidates)!=1:
-                                  problems.append({'type':'aggregate_identity','week':week,'region':aggregate_key,'product':product,'kind':kind,'count':len(candidates)})
-                                  continue
-                              row=candidates[0]
-                              for field,expected in (('tl',tl_values[product][metric]),('unit',views['unit_aggregates'][identity][product][metric])):
-                                  if abs(float(getattr(row,field))-float(expected))>max(.01,abs(float(expected))*1e-6):
-                                      problems.append({'type':'aggregate_value','region':aggregate_key,'product':product,'field':field,'kind':kind})
-                              checked_aggregates += 1
-                  checked_reps = 0
-                  facts = {(r.representative_id,r.product_id):r for r in IMSFact.query.filter_by(upload_id=upload.id,report_type='brick_sales')}
-                  targets = {(r.representative_id,r.product_id):r for r in Target.query.filter_by(year=upload.year,month=upload.month)}
-                  expected_fact_keys = set()
-                  from app.services.vacancy_matching import canonical_vacancy_text
-                  raw_reps = {}
-                  for raw in IMSRawData.query.filter_by(upload_id=upload.id,sheet_type='brick_sales'):
-                      raw_reps.setdefault(canonical_vacancy_text(raw.representative),set()).add(raw.representative_id)
-                  for identity,tl_values in views['tl_reps'].items():
-                      territory,name = identity
-                      if adapter._is_vacancy_representative(name):
-                          region = adapter._parse_region_city(territory)[0] if hasattr(adapter,'_parse_region_city') else territory.split()[0]
-                          rep = Representative.query.filter_by(rep_code=adapter._vacancy_code(region,name)).first()
-                      else:
-                          match=adapter.resolve_representative_match(name)
-                          rep=match.get('object') if match.get('matched') else None
-                      raw_ids=raw_reps.get(canonical_vacancy_text(name),set())
-                      if len(raw_ids)==1: rep=db.session.get(Representative,next(iter(raw_ids)))
-                      if rep is None:
-                          problems.append({'type':'representative_identity','week':week,'identity_hash':hashlib.sha256(name.encode()).hexdigest()[:12]})
-                          continue
-                      for product,pid in product_ids.items():
-                          key=(rep.id,pid); expected_fact_keys.add(key)
-                          fact=facts.get(key); target=targets.get(key)
-                          for field,actual,expected in (
-                              ('actual_tl',getattr(fact,'tl',None),tl_values[product]['actual']),
-                              ('actual_unit',getattr(fact,'unit',None),views['unit_reps'][identity][product]['actual']),
-                              ('target_tl',getattr(target,'tl_target',None),tl_values[product]['target']),
-                          ):
-                              if actual is None or abs(float(actual)-float(expected))>max(.01,abs(float(expected))*1e-6):
-                                  problems.append({'type':'representative_value','week':week,'rep_id':rep.id,'product':product,'field':field,'actual':actual,'expected':expected})
-                          checked_reps += 1
-                  if set(facts)!=expected_fact_keys: problems.append({'type':'fact_coverage','missing':len(expected_fact_keys-set(facts)),'extra':len(set(facts)-expected_fact_keys)})
-                  print('SOURCE_DB_CHECK|' + json.dumps({'week':week,'upload_id':upload.id,'sheets':len(workbook),'sha256':digest,'canonical_rows':len(canonical),'source_representatives':len(views['tl_reps']),'aggregate_records_checked':checked_aggregates,'representative_products_checked':checked_reps,'failures':problems},default=str))
-                  if problems: print(f'SOURCE_DB_FAILURE_COUNT|week={week}|count={len(problems)}')
-
+              u=IMSUpload.query.filter_by(year=2026,week_number=41,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
+              assert u and u.id==54
+              p=Path(f'uploads/ims_archive/upload-{u.id}.xlsx')
+              job=IMSImportJob.query.filter_by(ims_upload_id=u.id).order_by(IMSImportJob.id.desc()).first()
+              digest=hashlib.sha256(p.read_bytes()).hexdigest()
+              assert digest==job.source_hash
+              names=['2-TTS-BRİCK HEDEF REAL-TL V2','2-TTS-BRİCK HEDEF REAL-KUTU V2']
+              adapter=IMSImportService(str(p));adapter.workbook=pd.read_excel(p,sheet_name=names,header=None)
+              v=_pair_views(adapter)
+              region_identity=next(k for k in v['tl_aggregates'] if k[0]=='901')
+              reps=[k for k in v['tl_reps'] if k[0].split()[0]=='901']
+              svc=RegionPerformanceService('901',2026,10)
+              official={(r.sheet_type,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==u.id,IMSRawData.territory=='901',IMSRawData.sheet_type.in_((TARGET_TYPE,ACTUAL_TYPE)))}
+              fact={pid:(float(tl or 0),float(unit or 0)) for pid,tl,unit in db.session.query(IMSFact.product_id,sa.func.sum(IMSFact.tl),sa.func.sum(IMSFact.unit)).filter(IMSFact.upload_id==u.id,IMSFact.representative_id.in_(svc.rep_ids)).group_by(IMSFact.product_id)}
+              targets={pid:float(tl or 0) for pid,tl in db.session.query(Target.product_id,sa.func.sum(Target.tl_target)).filter(Target.year==2026,Target.month==10,Target.representative_id.in_(svc.rep_ids)).group_by(Target.product_id)}
+              selected=svc._official_ims_region_month(2026,10)
+              visible=PersistentRegionSnapshotService.get_active('901',2026,10)
+              monthly=(((visible or {}).get('report') or {}).get('periods') or {}).get('monthly') or {}
+              displayed={int(x['product_id']):x for x in monthly.get('products',[])}
+              print('DIYARBAKIR_META|'+json.dumps({'upload_id':u.id,'week':41,'sha256':digest,'source_representatives':len(reps),'db_representatives':len(svc.rep_ids),'snapshot_present':bool(visible),'snapshot_monthly_keys':list(monthly)},default=str))
+              for name in v['products']:
+                  match=adapter.resolve_product_match(name);assert match['matched'];pid=match['object'].id
+                  source=v['tl_aggregates'][region_identity][name]
+                  source_units=v['unit_aggregates'][region_identity][name]
+                  target=official.get((TARGET_TYPE,pid));actual=official.get((ACTUAL_TYPE,pid));assert target and actual
+                  row={'product':name,'excel_region_target_tl':source['target'],'excel_region_actual_tl':source['actual'],'excel_region_target_unit_raw':source_units['target'],'excel_region_actual_unit_raw':source_units['actual'],'db_official_target_tl':target.tl,'db_official_actual_tl':actual.tl,'db_official_target_unit_raw':target.unit,'db_official_actual_unit_raw':actual.unit,'excel_reps_target_tl':sum(v['tl_reps'][k][name]['target'] for k in reps),'excel_reps_actual_tl':sum(v['tl_reps'][k][name]['actual'] for k in reps),'db_reps_target_tl':targets.get(pid),'db_reps_actual_tl':fact.get(pid,(None,None))[0],'selected_region_target_tl':selected[pid][0],'selected_region_actual_tl':selected[pid][1]}
+                  if pid in displayed:
+                      for field in ('target_tl','actual_tl','target_unit','actual_unit','box_authority'):row['snapshot_'+field]=displayed[pid].get(field)
+                  print('DIYARBAKIR_PRODUCT|'+json.dumps(row,default=str))
+              print('DIYARBAKIR_SNAPSHOT_TOTALS|'+json.dumps({k:monthly.get(k) for k in ('target_tl','actual_tl','target_unit','actual_unit','source_by_month')},default=str))
+              for name,frame in adapter.workbook.items():
+                  for index,row in frame.iterrows():
+                      a=str(row.iloc[0] or '').strip();c=str(row.iloc[2] or '').strip();d=str(row.iloc[3] or '').strip()
+                      if a.startswith('901 ') and c==a and not d:
+                          print('DIYARBAKIR_EXCEL_ROW|'+json.dumps({'sheet':name,'row':int(index)+1,'target':row.iloc[4],'actual':row.iloc[5]},default=str))
               db.session.rollback()
           PY
-          PYTHONPATH="$IMS_PATH" venv/bin/python verify_live_ims_gate.py
-
           REMOTE
 
