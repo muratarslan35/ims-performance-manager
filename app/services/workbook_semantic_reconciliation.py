@@ -209,10 +209,13 @@ class WorkbookSemanticReconciler:
         if not normalized:
             return False
         tokens = normalized.split()
-        has_year = any(re.fullmatch(r"(?:19|20)\d{2}", token) for token in tokens)
-        if has_year and (
-            any(token in cls.MONTH_TOKENS for token in tokens)
-            or sum(bool(re.fullmatch(r"\d{1,2}", token)) for token in tokens) >= 1
+        # A pivot filter such as "Months = Jan 2026" is sheet metadata,
+        # not a column period. Treating arbitrary text containing a month/year
+        # as a calendar scope disconnects legacy monthly source/derived pairs
+        # and silently skips their conflict and missing-cell checks.
+        if len(tokens) == 2 and (
+            (tokens[0] in cls.MONTH_TOKENS and re.fullmatch(r"(?:19|20)\d{2}", tokens[1]))
+            or (tokens[1] in cls.MONTH_TOKENS and re.fullmatch(r"(?:19|20)\d{2}", tokens[0]))
         ):
             return True
         # Normalized dates/date ranges: DD MM YYYY, YYYY MM DD, or two dates.

@@ -50,6 +50,15 @@ def test_bare_month_headers_keep_legacy_monthly_scope():
     assert reconciler._period_scope(["OCTOBER"], ["OCTOBER"], None) == "monthly"
 
 
+def test_pivot_filter_is_metadata_without_an_explicit_column_period():
+    for cls in (WorkbookSemanticReconciler, CompiledWorkbookSemanticReconciler):
+        reconciler = _reconciler(cls)
+        assert not reconciler._is_calendar_period_label("Months = Jan 2026")
+        assert reconciler._period_scope([], ["MONTHS JAN 2026", "VALUES REPORT"], None) == "unspecified"
+        assert reconciler._period_scope([], ["MONTHS JAN 2026", "VALUES REPORT"], "competition_tl") == "monthly"
+        assert reconciler._period_scope(["2026 OCTOBER"], [], None) == "calendar:2026 OCTOBER"
+
+
 def test_compiled_reconciler_inherits_expanded_header_semantics():
     reconciler = _reconciler(CompiledWorkbookSemanticReconciler)
 
