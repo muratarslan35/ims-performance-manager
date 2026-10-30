@@ -43,84 +43,59 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json,hashlib
+          nice -n 10 venv/bin/python - --baseline instance/official-region-history-before-week41.json <<'PY'
+          """Fingerprint pre-October business rows and active historical snapshots."""
+          import argparse
+          import hashlib
+          import json
           from pathlib import Path
-          import pandas as pd
-          import sqlalchemy as sa
+          import sqlite3
+          import sys
+          ROOT=Path.cwd()
+          sys.path.insert(0,str(ROOT))
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload,IMSImportJob,IMSRawData,IMSFact,Target,Representative
-          from app.services.ims_import_service import IMSImportService
-          from app.services.adaptive_kpi_target_authority import _pair_views
-          from app.services.official_aggregate_service import TARGET_TYPE,ACTUAL_TYPE
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          app=create_app()
-          with app.app_context():
-              db.session.execute(sa.text('PRAGMA query_only=ON'))
-              u=IMSUpload.query.filter_by(year=2026,week_number=41,status='COMPLETED').order_by(IMSUpload.id.desc()).first()
-              assert u and u.id==54
-              p=Path(f'uploads/ims_archive/upload-{u.id}.xlsx')
-              job=IMSImportJob.query.filter_by(ims_upload_id=u.id).order_by(IMSImportJob.id.desc()).first()
-              digest=hashlib.sha256(p.read_bytes()).hexdigest()
-              assert digest==job.source_hash
-              names=['2-TTS-BRİCK HEDEF REAL-TL V2','2-TTS-BRİCK HEDEF REAL-KUTU V2']
-              adapter=IMSImportService(str(p));adapter.workbook=pd.read_excel(p,sheet_name=names,header=None)
-              v=_pair_views(adapter)
-              region_identity=next(k for k in v['tl_aggregates'] if k[0]=='901')
-              reps=[k for k in v['tl_reps'] if k[0].split()[0]=='901']
-              svc=RegionPerformanceService('901',2026,10)
-              official={(r.sheet_type,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==u.id,IMSRawData.territory=='901',IMSRawData.sheet_type.in_((TARGET_TYPE,ACTUAL_TYPE)))}
-              fact={pid:(float(tl or 0),float(unit or 0)) for pid,tl,unit in db.session.query(IMSFact.product_id,sa.func.sum(IMSFact.tl),sa.func.sum(IMSFact.unit)).filter(IMSFact.upload_id==u.id,IMSFact.representative_id.in_(svc.rep_ids)).group_by(IMSFact.product_id)}
-              targets={pid:float(tl or 0) for pid,tl in db.session.query(Target.product_id,sa.func.sum(Target.tl_target)).filter(Target.year==2026,Target.month==10,Target.representative_id.in_(svc.rep_ids)).group_by(Target.product_id)}
-              selected=svc._official_ims_region_month(2026,10)
-              visible=PersistentRegionSnapshotService.get_active('901',2026,10)
-              monthly=(((visible or {}).get('report') or {}).get('periods') or {}).get('monthly') or {}
-              displayed={int(x['product_id']):x for x in monthly.get('products',[])}
-              print('DIYARBAKIR_META|'+json.dumps({'upload_id':u.id,'week':41,'sha256':digest,'source_representatives':len(reps),'db_representatives':len(svc.rep_ids),'snapshot_present':bool(visible),'snapshot_monthly_keys':list(monthly)},default=str))
-              for name in v['products']:
-                  match=adapter.resolve_product_match(name);assert match['matched'];pid=match['object'].id
-                  source=v['tl_aggregates'][region_identity][name]
-                  source_units=v['unit_aggregates'][region_identity][name]
-                  target=official.get((TARGET_TYPE,pid));actual=official.get((ACTUAL_TYPE,pid));assert target and actual
-                  row={'product':name,'excel_region_target_tl':source['target'],'excel_region_actual_tl':source['actual'],'excel_region_target_unit_raw':source_units['target'],'excel_region_actual_unit_raw':source_units['actual'],'db_official_target_tl':target.tl,'db_official_actual_tl':actual.tl,'db_official_target_unit_raw':target.unit,'db_official_actual_unit_raw':actual.unit,'excel_reps_target_tl':sum(v['tl_reps'][k][name]['target'] for k in reps),'excel_reps_actual_tl':sum(v['tl_reps'][k][name]['actual'] for k in reps),'db_reps_target_tl':targets.get(pid),'db_reps_actual_tl':fact.get(pid,(None,None))[0],'selected_region_target_tl':selected[pid][0],'selected_region_actual_tl':selected[pid][1]}
-                  if pid in displayed:
-                      for field in ('target_tl','actual_tl','target_unit','actual_unit','box_authority'):row['snapshot_'+field]=displayed[pid].get(field)
-                  print('DIYARBAKIR_PRODUCT|'+json.dumps(row,default=str))
-              print('DIYARBAKIR_SNAPSHOT_TOTALS|'+json.dumps({k:monthly.get(k) for k in ('target_tl','actual_tl','target_unit','actual_unit','source_by_month')},default=str))
-              for name,frame in adapter.workbook.items():
-                  for index,row in frame.iterrows():
-                      a=str(row.iloc[0] or '').strip();c=str(row.iloc[2] or '').strip();d=str(row.iloc[3] or '').strip()
-                      if a.startswith('901 ') and c==a and not d:
-                          print('DIYARBAKIR_EXCEL_ROW|'+json.dumps({'sheet':name,'row':int(index)+1,'target':row.iloc[4],'actual':row.iloc[5]},default=str))
-              from app.services.product_unit_price_service import ProductUnitPriceService
-              from app.services.tl_box_calculation_service import TLBoxCalculationService
-              problems=[]
-              for region in PersistentRegionSnapshotService.region_keys(2026,10):
-                  service=RegionPerformanceService(region,2026,10)
-                  selected=service._official_ims_region_month(2026,10)
-                  prices=ProductUnitPriceService.price_map(selected.keys(),2026,10)
-                  payload=PersistentRegionSnapshotService.get_active(region,2026,10)
-                  monthly=(((payload or {}).get('report') or {}).get('periods') or {}).get('monthly') or {}
-                  current=service.aggregate([(2026,10)]) if region=='901' else {}
-                  live_products={int(x['product_id']):x for x in current.get('products',[])}
-                  checked=0
-                  for row in monthly.get('products',[]):
-                      pid=int(row['product_id'])
-                      if pid not in selected:continue
-                      target,actual,complete=selected[pid]
-                      if not complete or not prices.get(pid):continue
-                      et=TLBoxCalculationService.boxes_from_tl(target,prices[pid]);ea=TLBoxCalculationService.boxes_from_tl(actual,prices[pid])
-                      checked+=1
-                      diff=abs(float(row.get('target_unit') or 0)-float(et))>.01 or abs(float(row.get('actual_unit') or 0)-float(ea))>.01
-                      if diff:problems.append({'region':region,'product':row.get('product_name'),'db_target_unit':row.get('target_unit'),'db_actual_unit':row.get('actual_unit'),'expected_target_unit':et,'expected_actual_unit':ea})
-                      if region=='901':
-                          print('DIYARBAKIR_BOX_RULE|'+json.dumps({'product':row.get('product_name'),'price':prices[pid],'expected_target':et,'expected_actual':ea,'snapshot_target':row.get('target_unit'),'snapshot_actual':row.get('actual_unit'),'current_calculation_target':live_products.get(pid,{}).get('target_unit'),'current_calculation_actual':live_products.get(pid,{}).get('actual_unit')},default=str))
-                  print('REGION_BOX_AUDIT|'+json.dumps({'region':region,'checked':checked,'failures':sum(1 for p in problems if p['region']==region)},default=str))
-              print('REGION_BOX_PROBLEMS|'+json.dumps(problems,default=str))
-
-              db.session.rollback()
+          
+          
+          def fingerprint(connection):
+              result={}
+              tables={r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+              for table in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data'):
+                  if table not in tables:continue
+                  digest=hashlib.sha256();count=0
+                  for row in connection.execute(f'SELECT * FROM {table} WHERE year<2026 OR (year=2026 AND month<10) ORDER BY id'):
+                      digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
+                  result[table]={'rows':count,'sha256':digest.hexdigest()}
+              for sets,rows in (('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')):
+                  if sets not in tables or rows not in tables:continue
+                  digest=hashlib.sha256();count=0
+                  sql=f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND (s.year<2026 OR (s.year=2026 AND s.month<10)) ORDER BY r.id"
+                  for row in connection.execute(sql):
+                      digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
+                  result[rows]={'rows':count,'sha256':digest.hexdigest()}
+              return result
+          
+          
+          def main():
+              parser=argparse.ArgumentParser();parser.add_argument('--baseline',type=Path,required=True);parser.add_argument('--compare',action='store_true');args=parser.parse_args()
+              app=create_app()
+              with app.app_context():
+                  path=Path(db.engine.url.database).resolve()
+                  with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as connection:
+                      connection.execute('PRAGMA query_only=ON')
+                      current=fingerprint(connection)
+              if args.compare:
+                  previous=json.loads(args.baseline.read_text())
+                  changed=[table for table in set(previous)|set(current) if previous.get(table)!=current.get(table)]
+                  print('IMS_HISTORY_UNCHANGED|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables=current)))
+                  return 1 if changed else 0
+              if args.baseline.exists():raise RuntimeError('Refusing to overwrite historical baseline')
+              args.baseline.parent.mkdir(parents=True,exist_ok=True)
+              args.baseline.write_text(json.dumps(current),encoding='utf-8')
+              print('IMS_HISTORY_BASELINE|'+json.dumps(current))
+              return 0
+          
+          
+          if __name__=='__main__':raise SystemExit(main())
           PY
           REMOTE
-
