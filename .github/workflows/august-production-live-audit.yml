@@ -43,7 +43,29 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          test -f instance/official-region-history-before-week41.json
-          nohup bash -c 'set +e; nice -n 10 venv/bin/python scripts/ims_region_history_fingerprint.py --baseline instance/official-region-history-before-week41.json --compare > instance/official-region-history-after.log 2>&1; rc=$?; printf "%s\n" "$rc" > instance/official-region-history-after.exit' > instance/official-region-history-launch.log 2>&1 < /dev/null &
-          echo "HISTORY_COMPARE_PID|$!"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          import sqlalchemy as sa
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
+          app=create_app()
+          with app.app_context():
+              db.session.execute(sa.text("PRAGMA query_only=ON"))
+              marker=json.loads(Path("instance/official-region-replay-54.json").read_text())
+              job=db.session.get(IMSImportJob,int(marker["job_id"]))
+              summary=json.loads(job.result_summary or "{}")
+              progress=IMSProgressStore.read(job.id) or {}
+              result={"job_id":job.id,"status":job.status,"upload_id":job.ims_upload_id,"publication_ready":summary.get("publication_ready"),"percent":progress.get("percent"),"stage":progress.get("stage"),"detail":progress.get("detail"),"error":job.error_message}
+              print("WEEK41_REPLAY_STATUS|"+json.dumps(result,default=str))
+              db.session.rollback()
+          PY
+          if test -f instance/official-region-history-after.exit; then
+            echo "HISTORY_COMPARE_EXIT|$(cat instance/official-region-history-after.exit)"
+            cat instance/official-region-history-after.log
+          else
+            echo HISTORY_COMPARE_RUNNING
+          fi
           REMOTE
