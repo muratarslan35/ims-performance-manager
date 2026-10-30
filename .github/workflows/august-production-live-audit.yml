@@ -94,6 +94,32 @@ jobs:
                       a=str(row.iloc[0] or '').strip();c=str(row.iloc[2] or '').strip();d=str(row.iloc[3] or '').strip()
                       if a.startswith('901 ') and c==a and not d:
                           print('DIYARBAKIR_EXCEL_ROW|'+json.dumps({'sheet':name,'row':int(index)+1,'target':row.iloc[4],'actual':row.iloc[5]},default=str))
+              from app.services.product_unit_price_service import ProductUnitPriceService
+              from app.services.tl_box_calculation_service import TLBoxCalculationService
+              problems=[]
+              for region in PersistentRegionSnapshotService.region_keys(2026,10):
+                  service=RegionPerformanceService(region,2026,10)
+                  selected=service._official_ims_region_month(2026,10)
+                  prices=ProductUnitPriceService.price_map(selected.keys(),2026,10)
+                  payload=PersistentRegionSnapshotService.get_active(region,2026,10)
+                  monthly=(((payload or {}).get('report') or {}).get('periods') or {}).get('monthly') or {}
+                  current=service.aggregate([(2026,10)]) if region=='901' else {}
+                  live_products={int(x['product_id']):x for x in current.get('products',[])}
+                  checked=0
+                  for row in monthly.get('products',[]):
+                      pid=int(row['product_id'])
+                      if pid not in selected:continue
+                      target,actual,complete=selected[pid]
+                      if not complete or not prices.get(pid):continue
+                      et=TLBoxCalculationService.boxes_from_tl(target,prices[pid]);ea=TLBoxCalculationService.boxes_from_tl(actual,prices[pid])
+                      checked+=1
+                      diff=abs(float(row.get('target_unit') or 0)-float(et))>.01 or abs(float(row.get('actual_unit') or 0)-float(ea))>.01
+                      if diff:problems.append({'region':region,'product':row.get('product_name'),'db_target_unit':row.get('target_unit'),'db_actual_unit':row.get('actual_unit'),'expected_target_unit':et,'expected_actual_unit':ea})
+                      if region=='901':
+                          print('DIYARBAKIR_BOX_RULE|'+json.dumps({'product':row.get('product_name'),'price':prices[pid],'expected_target':et,'expected_actual':ea,'snapshot_target':row.get('target_unit'),'snapshot_actual':row.get('actual_unit'),'current_calculation_target':live_products.get(pid,{}).get('target_unit'),'current_calculation_actual':live_products.get(pid,{}).get('actual_unit')},default=str))
+                  print('REGION_BOX_AUDIT|'+json.dumps({'region':region,'checked':checked,'failures':sum(1 for p in problems if p['region']==region)},default=str))
+              print('REGION_BOX_PROBLEMS|'+json.dumps(problems,default=str))
+
               db.session.rollback()
           PY
           REMOTE
