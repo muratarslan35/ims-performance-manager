@@ -234,7 +234,7 @@ def install_week8_read_path_repair() -> None:
         payload = original_region_aggregate(self, months)
         corrections = {}
         for year, month, rep_id, product_id, _target_tl, stored_target_unit in self._target_rows(months):
-            if not TLBoxCalculationService.applies(year, month):
+            if not TLBoxCalculationService.applies(year, month) or self._uses_official_region_only(year, month):
                 continue
             effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
             if str(effective.get("source") or "").startswith("PRODUCTION_"):

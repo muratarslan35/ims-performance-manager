@@ -69,7 +69,8 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
         # Preserve already-correct rows. Repair complete-but-contradictory rows
         # too: official TL and box realization must move in the same direction.
         if (
-            item.get("unit_difference") is not None
+            not getattr(service, "_uses_official_region_only", lambda *_: False)(year, month)
+            and item.get("unit_difference") is not None
             and item.get("actual_unit") is not None
             and bool(item.get("unit_complete"))
         ):
@@ -132,6 +133,12 @@ def install_region_box_authority_guard():
                 self, payload, year, month
             )
 
+        if any(self._uses_official_region_only(year, month) for year, month in months):
+            # The new Q/YTD view is the sum of finalized monthly values:
+            # legacy monthly contributions stay unchanged; Week 41+ uses
+            # official region units. No second representative delta applies.
+            return payload
+
         product_ids = {int(item.get("product_id")) for item in products if item.get("product_id") is not None}
         old_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
         target_rows = self._target_rows(april_months)
@@ -154,7 +161,7 @@ def install_region_box_authority_guard():
 
         for year, month in april_months:
             official_tl = self._official_ims_region_month(year, month)
-            if not official_tl:
+            if not official_tl or self._uses_official_region_only(year, month):
                 continue
             prices = ProductUnitPriceService.price_map(official_tl.keys(), year, month)
             for product_id, values in official_tl.items():
@@ -226,20 +233,33 @@ def audit_all_regions(year=None, month=None):
     checked = 0
     for region_key in region_keys:
         try:
-            report = RegionPerformanceService(region_key, year, month).aggregate([(year, month)])
-        except ValueError:
+            service = RegionPerformanceService(region_key, year, month)
+            report = service.aggregate([(year, month)])
+            official = service._official_ims_region_month(year, month)
+            prices = ProductUnitPriceService.price_map(official.keys(), year, month)
+        except ValueError as exc:
+            failures.append({"region": region_key, "reason": str(exc)})
             continue
+        if {int(item["product_id"]) for item in report.get("products", [])} != set(official):
+            failures.append({"region": region_key, "reason": "official_product_coverage_mismatch"})
         for item in report.get("products", []):
             if item.get("actual_tl") is None or item.get("actual_unit") is None:
+                failures.append({"region": region_key, "product_id": item.get("product_id"), "reason": "incomplete_official_result"})
                 continue
             checked += 1
             target_tl = _d(item.get("target_tl"))
             actual_tl = _d(item.get("actual_tl"))
             target_unit = _d(item.get("target_unit"))
             actual_unit = _d(item.get("actual_unit"))
-            tl_cmp = (actual_tl > target_tl) - (actual_tl < target_tl)
-            unit_cmp = (actual_unit > target_unit) - (actual_unit < target_unit)
-            if tl_cmp != unit_cmp:
+            product_id = int(item["product_id"])
+            values = official.get(product_id)
+            price = prices.get(product_id)
+            if values is None or not _valid_price(price):
+                failures.append({"region": region_key, "product_id": product_id, "reason": "missing_official_source_or_price"})
+                continue
+            expected_target = TLBoxCalculationService.boxes_from_tl(values[0], price)
+            expected_actual = TLBoxCalculationService.boxes_from_tl(values[1], price)
+            if target_unit != expected_target or actual_unit != expected_actual:
                 failures.append({
                     "region": region_key,
                     "product": item.get("product_name"),
