@@ -144,7 +144,7 @@ Publication öncesi:
 - BOSTANCI vacancy değildir.
 - Temsilci ayrıldığında tarihsel isim/veri korunur; yeni kişi yeni kimliğiyle bağlanır.
 - Ankara dahil boş/boş kadro kayıtları canonical roster kapsamından keyfi olarak düşürülemez.
-- National/region official aggregate varsa temsilci toplamı onun yerine alternatif authority olarak kullanılamaz.
+- Bölge IMS hedef/çıkışının tek kaynağı Excel'in resmi bölge toplamıdır. Resmi bölge kaynağı yokken temsilci toplamı fallback olarak kullanılamaz; kaynak eksikliği açıkça korunur ve eksik generation yayınlanamaz. Ortak brick temsilci toplamı bölge toplamını artıramaz. Açık dönem bölge kutuları resmi bölge TL / kilitli dönem fiyatıyla, ürün/ay bazında ROUND_HALF_DOWN ile hesaplanır; Q/YTD aylık sonuçları toplar. National official aggregate varsa temsilci toplamı onun yerine alternatif authority olarak kullanılamaz. Kabul edilmiş P2/P1 üretim önceliği ve kapalı dönem kilidi korunur.
 - Aynı ürün/ay/temsilci için iki farklı kaynak aynı anda final katkı yapamaz.
 
 ## 8.1 Adaptive IMS semantik matris sözleşmesi (40. ve 41. hafta)

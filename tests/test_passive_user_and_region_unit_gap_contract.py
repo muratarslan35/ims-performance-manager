@@ -11,11 +11,12 @@ def test_passive_representative_has_red_status_label():
 def test_ims_region_unit_gap_uses_target_minus_mf_siz_kutu_balance():
     source = Path("app/services/region_performance_service.py").read_text()
     segment = source.split("def _official_region_unit_month", 1)[1].split("def aggregate", 1)[0]
-    assert "func.sum(Target.unit_target)" in segment
+    assert "func.sum(Target.unit_target)" not in segment
+    assert "OfficialAggregateService.rows" in segment
+    assert "TLBoxCalculationService.boxes_from_tl" in segment
     assert "region_balance_units(upload_id, self.region_key)" in segment
     assert "target_unit - balances[product_id]" in segment
     assert "actual_rows" not in segment
-    assert "ACTUAL_TYPE" not in segment
 
 
 def test_unit_balance_example_matches_workbook_semantics():

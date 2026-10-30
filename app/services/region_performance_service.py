@@ -10,6 +10,7 @@ from app.services.official_aggregate_service import OfficialAggregateService, TA
 from app.services.production_result_service import ProductionResultService
 from app.services.region_balance_unit_service import region_balance_units
 from app.services.tl_box_calculation_service import TLBoxCalculationService
+from app.services.product_unit_price_service import ProductUnitPriceService
 
 
 class RegionPerformanceService:
@@ -213,11 +214,9 @@ class RegionPerformanceService:
         """Return authoritative region/product box target and actual values.
 
         P2/P1 region-product unit rows remain authoritative when present. For
-        IMS periods the unit target comes from the period's representative
-        Target rows, while the actual unit is derived from the workbook's
-        ``MF SIZ KUTU BAKIYE`` regional balance row: target - remaining balance.
-        This mirrors the TL balance logic and never substitutes TTS competition
-        units, percentage estimates, or TL-to-unit conversions.
+        open April+ IMS periods derive units from official region TL and the
+        locked period price. Older periods retain official workbook region
+        unit/balance values. Representative sums never supply region units.
         """
         production_upload = ProductionResultService.final_upload(year, month)
         if production_upload is not None:
@@ -234,21 +233,26 @@ class RegionPerformanceService:
                     for row in rows
                 }
 
-        # From April 2026 onward IMS boxes are derived per representative from
-        # TL / product unit price. Returning no official unit override lets
-        # aggregate() use those effective rows while TL subtotals remain official.
+        # Region units use the region's official authority, never shared-brick
+        # representative sums. Round each monthly product before Q/YTD addition.
         if TLBoxCalculationService.applies(year, month):
-            return {}
+            official = self._official_ims_region_month(year, month)
+            prices = ProductUnitPriceService.price_map(official.keys(), year, month)
+            result = {}
+            for product_id, (target, actual, complete) in official.items():
+                price = prices.get(product_id)
+                if not price or Decimal(str(price)) <= 0:
+                    raise ValueError(f"Official region period price missing: {self.region_key}/{year}-{month}/{product_id}")
+                result[product_id] = [
+                    TLBoxCalculationService.boxes_from_tl(target, price),
+                    TLBoxCalculationService.boxes_from_tl(actual, price) if complete else Decimal("0"),
+                    complete,
+                ]
+            return result
 
         target_units = {
-            product_id: Decimal(str(value or 0))
-            for product_id, value in db.session.query(
-                Target.product_id, func.coalesce(func.sum(Target.unit_target), 0.0)
-            ).filter(
-                Target.year == year,
-                Target.month == month,
-                Target.representative_id.in_(self.rep_ids),
-            ).group_by(Target.product_id).all()
+            row.product_id: Decimal(str(row.unit or 0))
+            for row in OfficialAggregateService.rows(year, month, self.region_key, TARGET_TYPE)
         }
         if not target_units:
             return {}
@@ -261,8 +265,8 @@ class RegionPerformanceService:
             for product_id, value in region_balance_units(upload_id, self.region_key).items()
         }
         if not balances:
-            # Legacy archives may be unavailable. Fail closed and allow the
-            # aggregate layer to use its existing representative fallback.
+            # Missing official units remain unavailable; representative totals
+            # cannot substitute for a region source.
             return {}
 
         return {
@@ -349,11 +353,10 @@ class RegionPerformanceService:
                 month_source = {(year, month, pid): vals for pid, vals in official.items()}
                 source_by_month[(year, month)] = "OFFICIAL_REGION_SUBTOTAL"
             else:
-                month_source = {
-                    key: vals for key, vals in person_month_product.items()
-                    if key[0] == year and key[1] == month
-                }
-                source_by_month[(year, month)] = "REPRESENTATIVE_AGGREGATE"
+                if any(key[:2] == (year, month) for key in person_month_product):
+                    raise ValueError(f"Official region subtotal missing: {self.region_key}/{year}-{month}")
+                month_source = {}
+                source_by_month[(year, month)] = "MISSING_OFFICIAL_REGION_SUBTOTAL"
             for (_, _, product_id), vals in month_source.items():
                 target, actual, row_complete = vals
                 all_product_ids.add(product_id)
@@ -367,8 +370,8 @@ class RegionPerformanceService:
                 month_unit_source = official_units
             else:
                 month_unit_source = {
-                    key[2]: vals for key, vals in person_month_product_units.items()
-                    if key[0] == year and key[1] == month
+                    pid: [Decimal("0"), Decimal("0"), False]
+                    for pid in official
                 }
             for product_id, vals in month_unit_source.items():
                 target_unit, actual_unit, unit_complete = vals
@@ -489,14 +492,9 @@ class RegionPerformanceService:
 
         Each month first uses the official region subtotal selected by
         ``_official_ims_region_month`` (including P2/P1 precedence). Only months
-        without an official region source fall back to the legacy representative
-        annual series, preserving historical compatibility without allowing a
-        representative aggregate to override an available official subtotal.
+        without an official region source stay unavailable. Representative
+        aggregates cannot substitute for workbook region totals.
         """
-        legacy_rows = {
-            int(row["month"]): row
-            for row in AnnualRealizationService.build(self.year, self.rep_ids)
-        }
         rows = []
         for month, label in enumerate(AnnualRealizationService.MONTHS, start=1):
             official = self._official_ims_region_month(self.year, month)
@@ -516,8 +514,11 @@ class RegionPerformanceService:
                 })
                 continue
 
-            legacy = legacy_rows[month]
-            rows.append({**legacy, "source": "REPRESENTATIVE_AGGREGATE"})
+            rows.append({
+                "month": month, "label": label, "target_tl": 0.0,
+                "actual_tl": 0.0, "percent": None, "has_data": False,
+                "source": "MISSING_OFFICIAL_REGION_SUBTOTAL",
+            })
         return rows
 
     def report(self):

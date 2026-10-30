@@ -4,7 +4,7 @@ import tempfile
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSSummary, IMSUpload, Product, Representative, Target
+from app.models import IMSRawData, IMSSummary, IMSUpload, Product, Representative, Target
 from app.services.production_result_service import ProductionResultService
 from app.services.region_performance_service import RegionPerformanceService
 from app.services.tl_box_calculation_service import TLBoxCalculationService
@@ -94,6 +94,10 @@ def _seed_seven_products():
             unit=legacy_unit,
         )
         db.session.add_all([target, summary])
+        for kind, amount in (("official_target_aggregate", target_tl), ("official_actual_aggregate", actual_tl)):
+            db.session.add(IMSRawData(upload_id=upload.id, year=2026, month=4,
+                sheet_name="official region", sheet_type=kind, territory="901",
+                product_id=product.id, tl=amount, raw_json="{}"))
         targets.append(target)
         products.append(product)
     db.session.commit()
