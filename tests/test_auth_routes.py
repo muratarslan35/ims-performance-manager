@@ -567,6 +567,7 @@ def test_region_totals_include_inactive_vacant_positions(app):
     from app.models import Product, Representative, Target
     from app.services.region_performance_service import RegionPerformanceService
 
+    # Historical contract predates the Week-41 policy activation.
     with app.app_context():
         product = Product(product_code="VACANT-PROD", product_name="Boş Kadro Ürünü", is_active=True)
         employee = Representative(rep_code="REG-EMP", rep_name="Diyarbakır Çalışan", region="901", city="Diyarbakır", active=True)
@@ -575,10 +576,10 @@ def test_region_totals_include_inactive_vacant_positions(app):
         db.session.add_all([product, employee, vacant_a, vacant_b])
         db.session.commit()
         for representative, target in ((employee, 1000), (vacant_a, 2000), (vacant_b, 3000)):
-            db.session.add(Target(year=2033, month=7, quarter="Q3", representative_id=representative.id, product_id=product.id, tl_target=target, unit_target=10))
+            db.session.add(Target(year=2025, month=7, quarter="Q3", representative_id=representative.id, product_id=product.id, tl_target=target, unit_target=10))
         db.session.commit()
 
-        report = RegionPerformanceService("901", 2033, 7).report()
+        report = RegionPerformanceService("901", 2025, 7).report()
         monthly = report["periods"]["monthly"]
 
         assert monthly["target_tl"] == 6000
@@ -597,30 +598,31 @@ def test_region_totals_prefer_official_workbook_subtotal_but_keep_person_allocat
     from app.services.region_performance_service import RegionPerformanceService
     import json
 
+    # Historical contract predates the Week-41 policy activation.
     with app.app_context():
         product = Product(product_code="OFFICIAL-REG", product_name="Resmi Bölge Ürünü", is_active=True)
         rep_a = Representative(rep_code="OFF-A", rep_name="Resmi A", region="901", city="Diyarbakır", active=True)
         rep_b = Representative(rep_code="OFF-B", rep_name="Resmi B", region="901", city="Diyarbakır", active=False)
         db.session.add_all([product, rep_a, rep_b]); db.session.flush()
-        upload = IMSUpload(file_name="official-region.xlsx", year=2035, month=1, quarter="Q1", status="COMPLETED")
+        upload = IMSUpload(file_name="official-region.xlsx", year=2025, month=1, quarter="Q1", status="COMPLETED")
         db.session.add(upload); db.session.flush()
         for rep, target, actual in ((rep_a, 4000, 400), (rep_b, 3000, 300)):
-            db.session.add(Target(year=2035, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
-            db.session.add(IMSSummary(upload_id=upload.id, year=2035, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl=actual, unit=2))
+            db.session.add(Target(year=2025, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
+            db.session.add(IMSSummary(upload_id=upload.id, year=2025, month=1, quarter="Q1", representative_id=rep.id, product_id=product.id, tl=actual, unit=2))
         db.session.add_all([
-            IMSRawData(upload_id=upload.id, year=2035, month=1, quarter="Q1", sheet_name="BAKİYE", sheet_type="dashboard_balance_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=6000, tl=650, raw_json=json.dumps({"target_tl":6000})),
-            IMSRawData(upload_id=upload.id, year=2035, month=1, quarter="Q1", sheet_name="TTS HAFTALIK ÇIKIŞLARI", sheet_type="dashboard_weekly_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=9, tl=650, raw_json=json.dumps({"actual_tl":650,"actual_unit":9})),
+            IMSRawData(upload_id=upload.id, year=2025, month=1, quarter="Q1", sheet_name="BAKİYE", sheet_type="dashboard_balance_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=6000, tl=650, raw_json=json.dumps({"target_tl":6000})),
+            IMSRawData(upload_id=upload.id, year=2025, month=1, quarter="Q1", sheet_name="TTS HAFTALIK ÇIKIŞLARI", sheet_type="dashboard_weekly_region", source_row=0, product_id=product.id, representative="901 DIYARBAKIR", territory="901 DIYARBAKIR", unit=9, tl=650, raw_json=json.dumps({"actual_tl":650,"actual_unit":9})),
         ])
         db.session.commit()
 
-        report = RegionPerformanceService("901", 2035, 1).report()
+        report = RegionPerformanceService("901", 2025, 1).report()
         monthly = report["periods"]["monthly"]
         assert monthly["target_tl"] == 6000
         assert monthly["actual_tl"] == 650
         assert sum(row["target_tl"] for row in monthly["representatives"]) == 7000
         assert monthly["months"][0]["source"] == "OFFICIAL_REGION_SUBTOTAL"
 
-        rows = DashboardQuery().load_region_performance(DashboardFilterParams(year=2035, month=1))
+        rows = DashboardQuery().load_region_performance(DashboardFilterParams(year=2025, month=1))
         row = next(item for item in rows if str(item.region) == "901")
         assert row.tl_target == 6000
         assert row.tl_actual == 650
@@ -673,6 +675,7 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     from app.models import IMSSummary, IMSUpload, Product, Representative, Target
     from app.services.region_performance_service import RegionPerformanceService
 
+    # Historical contract predates the Week-41 policy activation.
     with app.app_context():
         product = Product(product_code="REG-PROD", product_name="Bölge Ürünü", is_active=True)
         rep_a = Representative(rep_code="REG-A", rep_name="Bölge Temsilcisi A", region="901", city="Diyarbakır", active=True)
@@ -680,15 +683,15 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
         db.session.add_all([product, rep_a, rep_b]); db.session.commit()
         for month in range(1, 7):
             quarter = f"Q{((month - 1) // 3) + 1}"
-            upload = IMSUpload(file_name=f"region-{month}.xlsx", year=2032, month=month, quarter=quarter, status="COMPLETED")
+            upload = IMSUpload(file_name=f"region-{month}.xlsx", year=2025, month=month, quarter=quarter, status="COMPLETED")
             db.session.add(upload)
             db.session.flush()
             for rep, target, actual in [(rep_a, 1000, month * 100), (rep_b, 2000, month * 200)]:
-                db.session.add(Target(year=2032, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
-                db.session.add(IMSSummary(upload_id=upload.id, year=2032, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl=actual, unit=1))
+                db.session.add(Target(year=2025, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl_target=target, unit_target=10))
+                db.session.add(IMSSummary(upload_id=upload.id, year=2025, month=month, quarter=quarter, representative_id=rep.id, product_id=product.id, tl=actual, unit=1))
         db.session.commit()
 
-        report = RegionPerformanceService("901", 2032, 6).report()
+        report = RegionPerformanceService("901", 2025, 6).report()
 
         assert report["representative_count"] == 2
         assert report["periods"]["monthly"]["target_tl"] == 3000
@@ -708,13 +711,13 @@ def test_region_performance_aggregates_real_monthly_three_six_and_yearly_data(ap
     with app.app_context():
         from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
         from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
-        assert PersistentRegionSnapshotService.build_for_period(2032, 6)["status"] in {"ACTIVE", "REUSED"}
-        assert PersistentRepresentativeSnapshotService.build_for_period(2032, 6)["status"] in {"ACTIVE", "REUSED"}
-        assert PersistentRegionSnapshotService.enrich_for_period(2032, 6)["status"] in {"ENRICHED", "REUSED"}
+        assert PersistentRegionSnapshotService.build_for_period(2025, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRepresentativeSnapshotService.build_for_period(2025, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRegionSnapshotService.enrich_for_period(2025, 6)["status"] in {"ENRICHED", "REUSED"}
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123"})
-    page = client.get("/regions/901?year=2032&month=6")
+    page = client.get("/regions/901?year=2025&month=6")
     html = page.get_data(as_text=True)
     assert page.status_code == 200
     assert "BÖLGESEL PERFORMANS MERKEZİ" in html
@@ -1555,6 +1558,7 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
     from app.extensions import db
     from app.models import IMSSummary, IMSUpload, Product, Representative, Target, User
 
+    # Historical contract predates the Week-41 policy activation.
     with app.app_context():
         product = Product(product_code="AI-SCOPE", product_name="Kapsam Ürünü", is_active=True)
         own = Representative(
@@ -1567,14 +1571,14 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
         db.session.add_all([product, own, outside])
         db.session.flush()
         for month in range(1, 7):
-            upload = IMSUpload(file_name=f"ai-{month}.xlsx", year=2040, month=month, status="COMPLETED")
+            upload = IMSUpload(file_name=f"ai-{month}.xlsx", year=2025, month=month, status="COMPLETED")
             db.session.add(upload)
             db.session.flush()
             db.session.add_all([
-                Target(year=2040, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl_target=100, unit_target=10),
-                IMSSummary(upload_id=upload.id, year=2040, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl=60, unit=6),
-                Target(year=2040, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl_target=10000, unit_target=1000),
-                IMSSummary(upload_id=upload.id, year=2040, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl=10000, unit=1000),
+                Target(year=2025, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl_target=100, unit_target=10),
+                IMSSummary(upload_id=upload.id, year=2025, month=month, quarter="Q1", representative_id=own.id, product_id=product.id, tl=60, unit=6),
+                Target(year=2025, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl_target=10000, unit_target=1000),
+                IMSSummary(upload_id=upload.id, year=2025, month=month, quarter="Q1", representative_id=outside.id, product_id=product.id, tl=10000, unit=1000),
             ])
         user = User.query.filter_by(email="test@example.com").one()
         user.role = "Representative"
@@ -1583,22 +1587,22 @@ def test_scoped_ai_panels_use_only_region_and_representative_data(app):
 
         from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
         from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService
-        assert PersistentRegionSnapshotService.build_for_period(2040, 6)["status"] in {"ACTIVE", "REUSED"}
-        assert PersistentRepresentativeSnapshotService.build_for_period(2040, 6)["status"] in {"ACTIVE", "REUSED"}
-        assert PersistentRegionSnapshotService.enrich_for_period(2040, 6)["status"] in {"ENRICHED", "REUSED"}
+        assert PersistentRegionSnapshotService.build_for_period(2025, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRepresentativeSnapshotService.build_for_period(2025, 6)["status"] in {"ACTIVE", "REUSED"}
+        assert PersistentRegionSnapshotService.enrich_for_period(2025, 6)["status"] in {"ENRICHED", "REUSED"}
 
     client = app.test_client()
     client.post("/login", data={"email": "test@example.com", "password": "password123", "portal": "representative"})
-    own_html = client.get(f"/representatives/view/{own_id}?year=2040&month=6").get_data(as_text=True)
+    own_html = client.get(f"/representatives/view/{own_id}?year=2025&month=6").get_data(as_text=True)
     assert "AI Performans Rehberi" in own_html
     assert "Aylık" in own_html and "3 Aylık" in own_html and "6 Aylık" in own_html
     assert "%60.0" in own_html
     assert "Başka Temsilci" not in own_html
-    redirected = client.get(f"/representatives/view/{outside_id}?year=2040&month=6", follow_redirects=False)
+    redirected = client.get(f"/representatives/view/{outside_id}?year=2025&month=6", follow_redirects=False)
     assert redirected.status_code in (301, 302)
     assert redirected.headers["Location"].endswith("/dashboard/")
 
-    region_html = client.get("/regions/AI%20B%C3%96LGE?year=2040&month=6").get_data(as_text=True)
+    region_html = client.get("/regions/AI%20B%C3%96LGE?year=2025&month=6").get_data(as_text=True)
     assert "AI Performans Rehberi" in region_html
     assert "AI ŞEHİR" in region_html
     assert "Başka Temsilci" not in region_html

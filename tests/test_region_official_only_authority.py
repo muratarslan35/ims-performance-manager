@@ -52,7 +52,9 @@ def test_shared_brick_representative_sums_never_replace_region_values(region):
     assert sum(r["target_tl"] for r in monthly["representatives"]) == 2000
     assert sum(r["actual_tl"] for r in monthly["representatives"]) == 1200
     combined = service.aggregate([(2026,9),(2026,10)])["products"][0]
-    assert (combined["target_unit"],combined["actual_unit"]) == (Decimal(200),Decimal(100))
+    legacy = service.aggregate([(2026,9)])["products"][0]
+    assert (legacy["target_unit"],legacy["actual_unit"]) == (Decimal(200),Decimal(120))
+    assert (combined["target_unit"],combined["actual_unit"]) == (Decimal(300),Decimal(170))
 
 
 def test_missing_official_region_fails_instead_of_using_shared_bricks(region):
@@ -70,3 +72,12 @@ def test_real_zero_region_total_remains_zero_despite_positive_representatives(re
     IMSRawData.query.update({IMSRawData.tl:0}); db.session.commit()
     row = service.aggregate([(2026,10)])["products"][0]
     assert (row["target_tl"],row["actual_tl"],row["target_unit"],row["actual_unit"]) == (0,0,0,0)
+
+
+def test_pre_week41_period_retains_accepted_legacy_fallback(region):
+    service, _ = region
+    IMSRawData.query.filter_by(year=2026,month=9).delete(); db.session.commit()
+    row=service.aggregate([(2026,9)])["products"][0]
+    assert (row["target_tl"],row["actual_tl"],row["target_unit"],row["actual_unit"]) == (2000,1200,200,120)
+    assert service._uses_official_region_only(2026,9) is False
+    assert service._uses_official_region_only(2026,10) is True

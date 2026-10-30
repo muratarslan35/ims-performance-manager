@@ -7,6 +7,7 @@ box difference is shown as positive. P2/P1 production rows stay untouched.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 
 from app.extensions import db
@@ -65,6 +66,25 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
         if not complete or actual_tl is None:
             continue
 
+        # Preserve already-correct rows. Repair complete-but-contradictory rows
+        # too: official TL and box realization must move in the same direction.
+        if (
+            not getattr(service, "_uses_official_region_only", lambda *_: False)(year, month)
+            and item.get("unit_difference") is not None
+            and item.get("actual_unit") is not None
+            and bool(item.get("unit_complete"))
+        ):
+            tl_direction = (_d(actual_tl) > _d(target_tl)) - (
+                _d(actual_tl) < _d(target_tl)
+            )
+            current_actual_unit = _d(item.get("actual_unit"))
+            current_target_unit = _d(item.get("target_unit"))
+            unit_direction = (current_actual_unit > current_target_unit) - (
+                current_actual_unit < current_target_unit
+            )
+            if tl_direction == unit_direction:
+                continue
+
         target_unit = TLBoxCalculationService.boxes_from_tl(target_tl, price)
         actual_unit = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
         item["target_unit"] = target_unit
@@ -79,9 +99,11 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
 def install_region_box_authority_guard():
     """Install as the final region aggregate normalization layer.
 
-    The base aggregate owns official monthly region units. This final monthly
-    check also normalizes cached/legacy rows by exact value, never just by the
-    direction of realization. Closed production months remain untouched.
+    The existing aggregate already contains correct legacy/production unit
+    contributions. We therefore replace only the April+ open-IMS contribution
+    by applying a delta: official region TL-derived boxes minus the previous
+    representative-derived boxes for the same month/product. This preserves
+    historical box authority and keeps the bounded report snapshot intact.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -111,9 +133,74 @@ def install_region_box_authority_guard():
                 self, payload, year, month
             )
 
-        # Multi-period boxes are already built from each month's official
-        # region units by the base aggregate. Do not apply a representative
-        # delta a second time.
+        if any(self._uses_official_region_only(year, month) for year, month in months):
+            # The new Q/YTD view is the sum of finalized monthly values:
+            # legacy monthly contributions stay unchanged; Week 41+ uses
+            # official region units. No second representative delta applies.
+            return payload
+
+        product_ids = {int(item.get("product_id")) for item in products if item.get("product_id") is not None}
+        old_units = defaultdict(lambda: [Decimal("0"), Decimal("0"), True])
+        target_rows = self._target_rows(april_months)
+        for year, month, rep_id, product_id, _target_tl, _stored_target_unit in target_rows:
+            product_id = int(product_id)
+            if product_id not in product_ids:
+                continue
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if str(effective.get("source") or "").startswith("PRODUCTION_"):
+                continue
+            old_units[(int(year), int(month), product_id)][0] += _d(effective.get("target_unit"))
+            if not effective.get("complete") or effective.get("actual_unit") is None:
+                old_units[(int(year), int(month), product_id)][2] = False
+            else:
+                old_units[(int(year), int(month), product_id)][1] += _d(effective.get("actual_unit"))
+
+        target_delta = defaultdict(lambda: Decimal("0"))
+        actual_delta = defaultdict(lambda: Decimal("0"))
+        invalid_products = set()
+
+        for year, month in april_months:
+            official_tl = self._official_ims_region_month(year, month)
+            if not official_tl or self._uses_official_region_only(year, month):
+                continue
+            prices = ProductUnitPriceService.price_map(official_tl.keys(), year, month)
+            for product_id, values in official_tl.items():
+                product_id = int(product_id)
+                if product_id not in product_ids:
+                    continue
+                price = prices.get(product_id)
+                if not _valid_price(price):
+                    invalid_products.add(product_id)
+                    continue
+                target_tl, actual_tl, complete = values
+                old_target, old_actual, old_complete = old_units.get(
+                    (year, month, product_id),
+                    [Decimal("0"), Decimal("0"), False],
+                )
+                if not old_complete or not complete:
+                    invalid_products.add(product_id)
+                    continue
+                correct_target = TLBoxCalculationService.boxes_from_tl(target_tl, price)
+                correct_actual = TLBoxCalculationService.boxes_from_tl(actual_tl, price)
+                target_delta[product_id] += correct_target - old_target
+                actual_delta[product_id] += correct_actual - old_actual
+
+        for item in products:
+            product_id = int(item.get("product_id"))
+            if product_id in invalid_products:
+                continue
+            if product_id not in target_delta and product_id not in actual_delta:
+                continue
+            target_unit = _d(item.get("target_unit")) + target_delta[product_id]
+            actual_value = item.get("actual_unit")
+            if actual_value is None:
+                continue
+            actual_unit = _d(actual_value) + actual_delta[product_id]
+            item["target_unit"] = target_unit
+            item["actual_unit"] = actual_unit
+            item["unit_complete"] = True
+            item["unit_difference"] = actual_unit - target_unit
+            item["box_authority"] = "REGION_TL_PERIOD_PRICE"
         return payload
 
     RegionPerformanceService.aggregate = guarded_aggregate

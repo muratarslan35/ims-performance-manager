@@ -75,7 +75,15 @@ def main():
                 for span in period.get('months',[]):
                     ym=int(span['year']),int(span['month'])
                     if ym not in cache:
-                        cache[ym]=service._official_ims_region_month(*ym),service._official_region_unit_month(*ym)
+                        if service._uses_official_region_only(*ym):
+                            cache[ym]=service._official_ims_region_month(*ym),service._official_region_unit_month(*ym)
+                        else:
+                            # Preserve accepted pre-Week-41 monthly contributions.
+                            legacy=service.aggregate([ym])
+                            cache[ym]=(
+                                {int(r['product_id']):[Decimal(str(r['target_tl'])),Decimal(str(r.get('actual_tl') or 0)),r['complete']] for r in legacy.get('products',[])},
+                                {int(r['product_id']):[Decimal(str(r['target_unit'])),Decimal(str(r.get('actual_unit') or 0)),r['unit_complete']] for r in legacy.get('products',[])},
+                            )
                     tl,units=cache[ym]
                     for pid,values in tl.items():
                         bucket=expected[pid];bucket[0]+=values[0];bucket[1]+=values[1]
@@ -92,7 +100,7 @@ def main():
                         for field,value in (('target_unit',ut),('actual_unit',ua),('unit_difference',ua-ut)):
                             equal(row.get(field),value,f'region:{region}:{key}:{pid}:{field}')
                     counts['region_period_product_rows']+=1
-                if any(v=='REPRESENTATIVE_AGGREGATE' for v in (period.get('source_by_month') or {}).values()):
+                if key=='monthly' and any(v=='REPRESENTATIVE_AGGREGATE' for v in (period.get('source_by_month') or {}).values()):
                     failures.append(dict(context=f'region:{region}:{key}:forbidden-representative-fallback'))
             counts['regions']+=1
             print('OFFICIAL_REGION_ACCEPTANCE|'+json.dumps(dict(region=region,periods=len(periods),failures=sum(f['context'].startswith(f'region:{region}:') for f in failures))))

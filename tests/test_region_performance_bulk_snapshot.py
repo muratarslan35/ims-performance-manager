@@ -4,7 +4,7 @@ from sqlalchemy import event
 
 from app import create_app
 from app.extensions import db
-from app.models import IMSRawData, IMSUpload, IMSSummary, Product, Representative, Target
+from app.models import IMSSummary, Product, Representative, Target
 from app.services.region_performance_service import RegionPerformanceService
 
 
@@ -40,15 +40,6 @@ def _seed_region():
     db.session.flush()
 
     for month in (1, 2, 3):
-        upload = IMSUpload(file_name=f"official-{month}.xlsx", year=2026, month=month,
-            week_number=month*4, status="COMPLETED")
-        db.session.add(upload)
-        db.session.flush()
-        for product in products:
-            for kind, amount in (("official_target_aggregate",1000), ("official_actual_aggregate",500)):
-                db.session.add(IMSRawData(upload_id=upload.id, year=2026, month=month,
-                    sheet_name="official region", sheet_type=kind, territory="901",
-                    product_id=product.id, tl=amount, unit=amount/10, raw_json="{}"))
         for representative in representatives:
             for product in products:
                 db.session.add(Target(

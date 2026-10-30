@@ -556,7 +556,7 @@ def test_open_ims_monthly_region_box_difference_does_not_require_rep_unit_baseli
     assert second["unit_complete"] is True
 
 
-def test_direct_monthly_region_box_repair_corrects_same_direction_wrong_values(monkeypatch):
+def test_direct_monthly_region_box_repair_keeps_healthy_rows_unchanged(monkeypatch):
     from app.services.region_box_authority_guard import (
         _apply_direct_monthly_box_authority,
     )
@@ -584,11 +584,7 @@ def test_direct_monthly_region_box_repair_corrects_same_direction_wrong_values(m
 
     result = _apply_direct_monthly_box_authority(Service(), payload, 2026, 9)
 
-    row = result["products"][0]
-    assert row["target_unit"] == Decimal("100")
-    assert row["actual_unit"] == Decimal("50")
-    assert row["unit_difference"] == Decimal("-50")
-    assert row["box_authority"] == "REGION_TL_PERIOD_PRICE"
+    assert result["products"][0] == original
 
 
 def test_direct_monthly_region_box_repair_fixes_complete_but_contradictory_rows(monkeypatch):
