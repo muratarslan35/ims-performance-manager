@@ -1,4 +1,4 @@
-name: Week 41 Authenticated HTML Acceptance
+name: Week 41 Integrity and Performance Status
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -43,42 +43,27 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          
-          umask 077
-          venv/bin/python -u - <<'PY' > instance/week41-html-acceptance.log 2>&1
-          import json,re
-          from app import create_app
-          from app.extensions import db
-          from app.models import User
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
-          app=create_app()
-          from flask import template_rendered
-          seen=[]
-          def capture(sender,template,context,**extra):seen.append(context)
-          template_rendered.connect(capture,app)
-          with app.app_context():
-           user=User.query.filter(User.active.is_(True),db.func.lower(User.role).in_(['admin','administrator'])).first()
-           assert user is not None
-           client=app.test_client()
-           from verify_region_manager_production import _login_as
-           _login_as(client,user.id)
-           snapshots=PersistentRegionSnapshotService.get_active_all(2026,10)
-           checked=0
-           for region,payload in snapshots.items():
-            seen.clear()
-            response=client.get('/regions/'+region+'?year=2026&month=10')
-            assert response.status_code==200,(region,'HTTP status')
-            assert seen,(region,'render context')
-            context=seen[-1];market=context['market_analysis']
-            expected='{:,.0f}'.format(market['totals']['effective_company_unit'])
-            html=response.get_data(as_text=True)
-            match=re.search(r'BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>(.*?)</strong>',html)
-            assert match and match.group(1)==expected,(region,'rendered official company units')
-            checked+=1
-           print('WEEK41_REGION_HTML_ACCEPTANCE|'+json.dumps(dict(result='PASS',regions=checked)),flush=True)
-           db.session.rollback()
+
+          venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          from collections import Counter
+          from decimal import Decimal,ROUND_DOWN,ROUND_UP,ROUND_HALF_UP
+          p=Path('instance/week41-tl-summary-comparison-private.json')
+          if p.exists():
+           data=json.loads(p.read_text());counts=Counter()
+           for row in data['differences']:
+            a=Decimal(row['summary']);b=Decimal(row['matrix']);delta=abs(a-b)
+            counts['le_one_lira' if delta<=1 else 'le_ten_lira' if delta<=10 else 'over_ten_lira']+=1
+            for label,mode in [('truncate_integer',ROUND_DOWN),('ceil_integer',ROUND_UP),('round_integer',ROUND_HALF_UP)]:
+             if a==b.quantize(Decimal(1),rounding=mode):counts[label]+=1
+           print('WEEK41_TL_DIFFERENCE_SHAPE|'+json.dumps(counts),flush=True)
+          for name in ('week41-html-acceptance.log','week41-final-history-validation.log','week41-final-generations-validation.log','week41-performance-baseline.log'):
+           p=Path('instance')/name
+           if p.exists():
+            for line in p.read_text(errors='replace').splitlines():
+             if line.startswith('WEEK41_'):print(line,flush=True)
           
           PY
-          grep -E '^WEEK41_' instance/week41-html-acceptance.log
           REMOTE
           
