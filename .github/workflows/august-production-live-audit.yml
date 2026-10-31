@@ -1,4 +1,4 @@
-name: Week 41 Vacancy Identity Audit
+name: Week 41 Direct Unit Replay And Timing
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Audit Week 41 authorities with redacted public evidence
+      - name: Queue Week 41 after completed deployment and attach read-only timing
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/audit_key -p "$IMS_PORT" \
@@ -43,39 +43,139 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json,re
+          test "$(git rev-parse HEAD)" = dcf9ac46c8dba2b7ee612cd6343cc91d0e24f7f2
+          umask 077
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'BACKUP'
+          import json,os,shutil
           from pathlib import Path
-          import pandas as pd
+          import sqlalchemy as sa
           from app import create_app
-          from app.services.ims_import_service import IMSImportService
-          from app.services.adaptive_kpi_target_authority import _pair_views,_norm
-          from app.services.vacancy_matching import vacancy_identity
+          from app.extensions import db
+          from app.models import IMSUpload,IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
+          from app.services.persistent_region_snapshot_service import region_snapshot_sets,region_snapshots
           app=create_app()
-          def key(value):
-           vacancy=vacancy_identity(value)
-           return 'VACANCY:'+vacancy[0] if vacancy else _norm(value)
           with app.app_context():
-           path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/'upload-55.xlsx'
-           importer=IMSImportService(str(path));importer.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
-           views=_pair_views(importer)
-           expected={('REPRESENTATIVE',territory.split()[0],key(name)) for territory,name in views['tl_reps']}
-           expected.update(('AGGREGATE',territory) for territory,_name in views['tl_aggregates'])
-           frame=pd.read_excel(path,sheet_name=list(importer.workbook)[1],header=None)
-           header=next(i for i in range(12) if 'BOLGE' in [_norm(v) for v in frame.iloc[i]] and 'TTS' in [_norm(v) for v in frame.iloc[i]])
-           labels=[_norm(v) for v in frame.iloc[header]];rc=labels.index('BOLGE');tc=labels.index('TTS')
-           actual=set();region=''
-           for i in range(header+1,len(frame)):
-            r=_norm(frame.iloc[i,rc]);name=frame.iloc[i,tc];n=_norm(name)
-            if r:region=r
-            if not n:continue
-            if n in ('NATIONAL','TURKIYE TOPLAM','TURKIYE TOPLAMI'):identity=('AGGREGATE','NATIONAL')
-            elif re.match(r'^\d{3}\b',n):identity=('AGGREGATE',n.split()[0])
-            else:identity=('REPRESENTATIVE',region.split()[0],key(name))
-            if identity in actual:raise RuntimeError('Duplicate accent-sensitive summary identity')
-            actual.add(identity)
-           print('WEEK41_ACCENT_SENSITIVE_ROSTER|'+json.dumps(dict(result='PASS' if actual==expected else 'FAIL',expected=len(expected),summary=len(actual),extra=len(actual-expected),missing=len(expected-actual))),flush=True)
-           if actual!=expected:raise SystemExit(1)
+           source=db.session.get(IMSUpload,55)
+           latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
+           if latest.id!=55 or (source.year,source.month,source.week_number)!=(2026,10,41):raise RuntimeError('Week 41 source changed')
+           if IMSImportJob.query.filter(IMSImportJob.status.in_(('QUEUED','PROCESSING'))).count():raise RuntimeError('Active import prevents replay')
+           job=IMSImportJob.query.filter_by(ims_upload_id=55).order_by(IMSImportJob.id.desc()).first()
+           progress=IMSProgressStore.read(job.id) or {}
+           if json.loads(job.result_summary or '{}').get('publication_ready') is not True or progress.get('percent')!=100:raise RuntimeError('Current publication is not idle/ready')
+           root=Path(app.instance_path);backup=root/'week41-direct-units-before-55';backup.mkdir(exist_ok=True)
+           manifest=backup/'regions-and-job.json'
+           if not manifest.exists():
+            sets=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshot_sets).where(region_snapshot_sets.c.source_upload_id==55,region_snapshot_sets.c.status=='ACTIVE'))]
+            ids=[s['id'] for s in sets]
+            rows=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshots).where(region_snapshots.c.set_id.in_(ids)))]
+            manifest.write_text(json.dumps(dict(sets=sets,rows=rows,job_id=job.id,summary=job.result_summary,progress=progress),default=str),encoding='utf-8')
+            for path in (root/'dashboard_snapshots').glob('dashboard-2026-10*.json'):shutil.copy2(path,backup/path.name)
+           print('WEEK41_READ_MODELS_BACKUP|READY',flush=True)
           
-          PY
+          BACKUP
+          cat > instance/week41-publication-timing-observer.py <<'OBSERVER'
+          import json,os,re,sqlite3,sys,time
+          from datetime import datetime,timezone
+          from pathlib import Path
+          os.umask(0o077)
+          metadata=json.loads(Path(sys.argv[1]).read_text())
+          job_id=int(metadata['job_id']);database=Path(metadata['database']);root=Path(metadata['root']);worker_pid=int(metadata['worker_pid'])
+          timeline=root/f'week41-job-{job_id}-timing.jsonl';final=root/f'week41-job-{job_id}-timing-summary.json'
+          conn=sqlite3.connect('file:'+str(database)+'?mode=ro',uri=True,isolation_level=None,timeout=5)
+          conn.row_factory=sqlite3.Row
+          deadline=time.monotonic()+14400
+          import fcntl
+          lock=(root/f'week41-job-{job_id}-timing.lock').open('a')
+          try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+          except BlockingIOError:raise SystemExit(0)
+          samples=[];transitions=[];last_signature=None
+          last_cpu=None;last_monotonic=None
+          def stamp(value):
+           if not value:return None
+           return datetime.fromisoformat(str(value).replace('Z','+00:00')).replace(tzinfo=timezone.utc)
+          def seconds(start,end):
+           return round((stamp(end)-stamp(start)).total_seconds(),3) if start and end else None
+          def resources():
+           result={}
+           try:
+            result['system_load1']=os.getloadavg()[0]
+            mem={}
+            for line in Path('/proc/meminfo').read_text().splitlines():
+             label,value=line.split(':',1);mem[label]=int(value.split()[0])*1024
+            result['available_memory_bytes']=mem['MemAvailable'];result['free_swap_bytes']=mem['SwapFree']
+            status=Path(f'/proc/{worker_pid}/status').read_text()
+            match=re.search(r'^VmRSS:\s+(\d+)\s+kB',status,re.M)
+            result['worker_rss_bytes']=int(match.group(1))*1024 if match else None
+            stat=Path(f'/proc/{worker_pid}/stat').read_text()
+            fields=stat[stat.rfind(')')+2:].split()
+            result['worker_cpu_seconds']=(int(fields[11])+int(fields[12]))/os.sysconf('SC_CLK_TCK')
+            for line in Path(f'/proc/{worker_pid}/io').read_text().splitlines():
+             key,value=line.split(':',1)
+             if key in ('read_bytes','write_bytes'):result['worker_'+key]=int(value.strip())
+           except (OSError,ValueError,KeyError):result['resource_sample_incomplete']=True
+           return result
+          with timeline.open('a',encoding='utf-8',buffering=1) as output:
+           while time.monotonic()<deadline:
+            row=conn.execute('SELECT status,ims_upload_id,queued_at,started_at,completed_at,result_summary FROM ims_import_jobs WHERE id=?',(job_id,)).fetchone()
+            if row is None:raise RuntimeError('Monitored queue job disappeared')
+            try:summary=json.loads(row['result_summary'] or '{}')
+            except ValueError:summary={}
+            try:progress=json.loads((root/'ims_progress'/f'job-{job_id}.json').read_text())
+            except (OSError,ValueError):progress={}
+            stage=str(progress.get('stage') or row['status'].lower())
+            if not re.fullmatch('[a-z_]{1,48}',stage):stage='other_stage'
+            observed=datetime.now(timezone.utc).isoformat()
+            entry=dict(observed_at=observed,job_id=job_id,status=row['status'],upload_id=row['ims_upload_id'],
+             queued_at=row['queued_at'],started_at=row['started_at'],import_completed_at=row['completed_at'],
+             publication_ready=summary.get('publication_ready') is True,stage=stage,percent=progress.get('percent'),
+             progress_updated_at=progress.get('updated_at'),**resources())
+            now=time.monotonic()
+            cpu=entry.get('worker_cpu_seconds')
+            if cpu is not None and last_cpu is not None:entry['worker_cpu_percent']=round(100*(cpu-last_cpu)/max(now-last_monotonic,.001),2)
+            last_cpu=cpu;last_monotonic=now
+            samples.append(entry)
+            signature=(stage,row['status'])
+            if signature!=last_signature:
+             transitions.append(dict(stage=stage,status=row['status'],observed_at=observed,progress_updated_at=progress.get('updated_at')))
+             last_signature=signature
+            output.write(json.dumps(entry)+'\n')
+            ready=(row['status']=='COMPLETED' and summary.get('publication_ready') is True and progress.get('stage')=='completed' and progress.get('percent')==100 and progress.get('status')=='COMPLETED')
+            failed=row['status']=='FAILED'
+            if ready or failed:
+             ready_at=progress.get('updated_at') if ready else None
+             result=dict(result='PASS' if ready else 'FAILED',job_id=job_id,upload_id=row['ims_upload_id'],
+              queued_at=row['queued_at'],started_at=row['started_at'],import_completed_at=row['completed_at'],publication_ready_at=ready_at,
+              queue_wait_seconds=seconds(row['queued_at'],row['started_at']),import_seconds=seconds(row['started_at'],row['completed_at']),
+              publication_after_import_seconds=seconds(row['completed_at'],ready_at),total_queue_to_live_seconds=seconds(row['queued_at'],ready_at),
+              stage_telemetry=summary.get('stage_telemetry'),stage_transitions=transitions,samples=len(samples),
+              peak_worker_rss_bytes=max((s.get('worker_rss_bytes') or 0) for s in samples),
+              minimum_available_memory_bytes=min((s['available_memory_bytes'] for s in samples if 'available_memory_bytes' in s),default=None),
+              maximum_system_load1=max((s.get('system_load1') or 0) for s in samples),
+              mean_sampled_worker_cpu_percent=round(sum(s.get('worker_cpu_percent',0) for s in samples)/max(1,len(samples)-1),2))
+             temp=final.with_suffix('.tmp');temp.write_text(json.dumps(result),encoding='utf-8');os.replace(temp,final)
+             print('IMS_TIMING_OBSERVER_FINISHED|'+json.dumps({k:v for k,v in result.items() if k not in ('stage_telemetry','stage_transitions')}),flush=True)
+             raise SystemExit(0 if ready else 1)
+            time.sleep(5)
+          raise RuntimeError('Publication timing monitor reached its four-hour limit')
+          
+          OBSERVER
+          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/queue_verified_ims_reimport.py --source-upload 55 > instance/week41-direct-unit-queue-private.log 2>&1
+          export IMS_TIMING_WORKER_PID="$(sudo systemctl show ims-import-worker.service --property MainPID --value)"
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'META'
+          import json,os
+          from pathlib import Path
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          app=create_app()
+          with app.app_context():
+              marker=json.loads(Path('instance/official-region-replay-55.json').read_text())
+              job=db.session.get(IMSImportJob,int(marker['job_id']))
+              meta=dict(job_id=job.id,database=str(Path(db.engine.url.database).resolve()),root=str(Path(app.instance_path).resolve()),worker_pid=int(os.environ['IMS_TIMING_WORKER_PID']))
+              Path('instance/week41-unit-timing-session.json').write_text(json.dumps(meta),encoding='utf-8')
+              print('WEEK41_QUEUED_WITH_TIMING|'+json.dumps(dict(job_id=job.id,queued_at=job.queued_at.isoformat(),started_at=job.started_at.isoformat() if job.started_at else None,source_upload_id=55,week=41)),flush=True)
+          META
+          nohup nice -n 10 venv/bin/python instance/week41-publication-timing-observer.py instance/week41-unit-timing-session.json > instance/week41-publication-timing-observer.log 2>&1 < /dev/null &
+          echo "WEEK41_TIMING_OBSERVER|STARTED|interval_seconds=5"
           REMOTE
