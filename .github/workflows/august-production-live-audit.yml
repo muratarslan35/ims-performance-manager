@@ -1,4 +1,4 @@
-name: Week 41 Shadow Roster Progress
+name: Week 41 Paired Canonical Recalculation
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -43,21 +43,90 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-
-          venv/bin/python - <<'PY'
-          import json,re
+          
+          umask 077
+          cat > instance/week41-paired-recalc.py <<'PY'
+          import os,sys,json,time,hashlib,inspect
           from pathlib import Path
-          from datetime import datetime,timezone
-          p=Path('instance/week41-performance-candidate.log')
-          if p.exists():
-           lines=p.read_text(errors='replace').splitlines()
-           for line in lines:
-            if re.match(r'^WEEK41_(SHARED_SOURCE_SETUP|PROFILE_CANDIDATE|PROFILE_EQUIVALENCE|PROFILE_DIFFERENCE_PATHS|SHADOW_ROSTER_PROGRESS|SHADOW_ROSTER_ACCEPTANCE)\|',line):print(line,flush=True)
-           if lines:
-            match=re.match(r'^([A-Za-z.]+(?:Error|Exception))(?::|$)',lines[-1])
-            if match:print('WEEK41_SHADOW_ERROR_TYPE|'+match.group(1),flush=True)
-          print('WEEK41_STATUS_TIME|'+datetime.now(timezone.utc).isoformat(),flush=True)
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          live=Path.cwd()
+          import config as live_config
+          meta=json.loads((live/'instance/week41-unit-timing-session.json').read_text())
+          shadow=os.environ.get('IMS_SHADOW_PATH')
+          if shadow:sys.path.insert(0,shadow)
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(live_config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.representative_period_workspace import build_representative_workspace_payload
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
+          from app.services.annual_realization_service import AnnualRealizationService
+          from app.services.representative_query_optimizer import use_snapshot_upload_ids
+          from app.services.kpi_market_single_source import _upload_has_authority
+          from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
+          RepresentativeAnalysisCache.enabled=classmethod(lambda cls:False)
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          with app.app_context():
+           pin={}
+           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
+            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
+           annual=AnnualRealizationService.build_snapshot_inputs(2026)
+           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
+          ids=[r['id'] for r in json.loads((live/'instance/week41-shadow-roster-results-private.json').read_text()) if not r['same']]
+          label='candidate' if shadow else 'reference'
+          def member(rid):
+           with app.app_context():
+            options={'authority_by_upload':authority} if 'authority_by_upload' in inspect.signature(use_snapshot_upload_ids).parameters else {}
+            with use_snapshot_upload_ids(pin,**options):
+             workspace=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual)
+             payload=Snap._json_ready(workspace)
+             encoded=json.dumps(payload,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+             (live/'instance'/f'week41-{label}-member-{rid}-private.json').write_text(encoded)
+             db.session.rollback()
+             return hashlib.sha256(encoded.encode()).hexdigest()
+          started=time.perf_counter()
+          with ThreadPoolExecutor(max_workers=3) as pool:hashes=list(pool.map(member,ids))
+          print('WEEK41_PAIRED_RECALCULATION|'+json.dumps(dict(stage=label,members=len(ids),seconds=round(time.perf_counter()-started,3))),flush=True)
+          if shadow:
+           same=0;categories={};paths={}
+           def walk(a,b,path='root'):
+            if a==b:return
+            if isinstance(a,dict) and isinstance(b,dict):
+             for key in set(a)|set(b):
+              if key not in a or key not in b:
+               categories['presence']=categories.get('presence',0)+1;continue
+              walk(a[key],b[key],path+'.'+str(key))
+            elif isinstance(a,list) and isinstance(b,list):
+             if len(a)!=len(b):categories['length']=categories.get('length',0)+1
+             for i,(x,y) in enumerate(zip(a,b)):walk(x,y,path+'.'+str(i))
+            else:
+             kind='numeric' if type(a) in (int,float) and type(b) in (int,float) else 'other'
+             if kind=='numeric' and abs(a-b)<1e-7:kind='numeric_epsilon'
+             categories[kind]=categories.get(kind,0)+1
+             prefix='.'.join(path.split('.')[:5]);paths[prefix]=paths.get(prefix,0)+1
+           for rid in ids:
+            a=json.loads((live/'instance'/f'week41-reference-member-{rid}-private.json').read_text())
+            b=json.loads((live/'instance'/f'week41-candidate-member-{rid}-private.json').read_text())
+            if a==b:same+=1
+            else:walk(a,b)
+           print('WEEK41_PAIRED_CANONICAL_EQUIVALENCE|'+json.dumps(dict(result='PASS' if same==len(ids) else 'FAIL',members=len(ids),identical=same,difference_categories=categories,paths=paths)),flush=True)
+           if same!=len(ids):raise SystemExit(1)
           
           PY
+          unset IMS_SHADOW_PATH
+          venv/bin/python -u instance/week41-paired-recalc.py > instance/week41-paired-reference.log 2>&1
+          grep -E '^WEEK41_' instance/week41-paired-reference.log
+          git fetch origin perf/week41-bounded-publication > instance/week41-shadow-fetch.log 2>&1
+          shadow="$(mktemp -d instance/week41-shadow.XXXXXX)"
+          git archive FETCH_HEAD | tar -x -C "$shadow"
+          export IMS_SHADOW_PATH="$PWD/$shadow"
+          set +e
+          venv/bin/python -u instance/week41-paired-recalc.py > instance/week41-paired-candidate.log 2>&1
+          result=$?
+          set -e
+          grep -E '^WEEK41_' instance/week41-paired-candidate.log || true
+          exit "$result"
           REMOTE
           
