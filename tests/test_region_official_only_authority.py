@@ -104,6 +104,11 @@ def test_september_roster_uses_source_identities_without_deleting_old_targets(re
     service,pid=region
     upload=IMSUpload.query.filter_by(year=2026,month=9).one()
     source_reps=set(service.rep_ids)
+    # A departure can rename the same source identity to a vacant position.
+    # Inactive is not permission to discard an Excel-provided target.
+    vacant=db.session.get(Representative,min(source_reps))
+    vacant.rep_name='BOŞ KADRO'
+    vacant.active=False
     for rid in source_reps:
         db.session.add(IMSRawData(upload_id=upload.id,year=2026,month=9,
             sheet_name='legacy TTS',sheet_type='brick_sales',territory='901',
@@ -115,6 +120,10 @@ def test_september_roster_uses_source_identities_without_deleting_old_targets(re
     rebuilt=RegionPerformanceService('901',2026,9).aggregate([(2026,9)])
     assert {r['representative_id'] for r in rebuilt['representatives']}==source_reps
     assert {r['representative_id'] for r in rebuilt['representative_products']}==source_reps
+    vacancy=next(r for r in rebuilt['representatives'] if r['representative_id']==vacant.id)
+    assert vacancy['target_tl']==1000
+    assert vacancy['active'] is False
+    assert rebuilt['target_tl']==1000  # official region remains independent
     assert Target.query.filter_by(year=2026,month=9,representative_id=old.id).count()==1
 
 
