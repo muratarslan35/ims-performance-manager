@@ -64,6 +64,9 @@ def main():
         prices=ProductUnitPriceService.price_map(product_ids.values(),year,month)
         from app.services.ims_unit_authority import applies as direct_units_apply,import_unit_values,representative_name_key
         explicit=import_unit_values(adapter,views) if direct_units_apply(year,month) else {}
+        for record in explicit.values():
+            for metric in ('target','actual'):
+                counts['direct_unit_fields' if record.get(metric) is not None else 'derived_unit_fields']+=1
         def source_box(scope,identity,name,metric,tl,*,rounded=True):
             value=explicit.get((scope,*identity,name),{}).get(metric)
             if value is not None:
@@ -78,6 +81,7 @@ def main():
             if territory and territory[0].isdigit():source_names[(territory[0],name_key)].add(int(source_row.representative_id))
         source_rep_totals={}
         source_rep_identities={}
+        source_rep_products={}
         expected_region_reps=defaultdict(set)
         for (territory,name),products in views['tl_reps'].items():
             name_key=representative_name_key(name)
@@ -85,6 +89,7 @@ def main():
             assert len(ids)==1,(territory,name,'source representative identity')
             rid=next(iter(ids))
             source_rep_identities[rid]=(territory.split()[0],name_key)
+            source_rep_products[rid]=products
             expected_region_reps[territory.split()[0]].add(rid)
             source_rep_totals[rid]=[
                 sum(float(p['target']) for p in products.values()),
@@ -202,6 +207,13 @@ def main():
                 pid=int((row.get('product') or {}).get('id') or row.get('product_id'))
                 name=next(n for n,p in product_ids.items() if p==pid)
                 t=targets[(rid,pid)].tl_target;a=facts[(rid,pid)].tl
+                native=source_rep_products[rid][name]
+                equal(t,native['target'],f'representative-db:{rid}:{pid}:source-target-tl')
+                equal(a,native['actual'],f'representative-db:{rid}:{pid}:source-actual-tl')
+                if direct_units_apply(year,month):
+                    equal(targets[(rid,pid)].unit_target,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t,rounded=False),f'representative-db:{rid}:{pid}:source-target-unit')
+                    equal(facts[(rid,pid)].unit,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a,rounded=False),f'representative-db:{rid}:{pid}:source-actual-unit')
+                counts['representative_source_products']+=1
                 for field,value in (('target_tl',t),('actual_tl',a),('target_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t)),('actual_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a))):
                     equal(row.get(field),value,f'representative:{rid}:{pid}:{field}')
                 counts['representative_product_rows']+=1
