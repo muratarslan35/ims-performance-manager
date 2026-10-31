@@ -29,6 +29,8 @@ from app.query.base_query import AggregateBuilder
 from app.query.filters import DashboardFilterParams, DashboardFilter
 from app.services.production_result_service import ProductionResultService
 from app.services.official_aggregate_service import OfficialAggregateService, TARGET_TYPE, ACTUAL_TYPE
+from app.services.product_unit_price_service import ProductUnitPriceService
+from app.services.tl_box_calculation_service import TLBoxCalculationService
 
 
 class DashboardQuery:
@@ -637,10 +639,24 @@ class DashboardQuery:
                     rk = str(rep.region).strip().split()[0]; reps_by_region.setdefault(rk, set()).add(rep.id)
                     if rep.city and rk not in city_by_region: city_by_region[rk] = rep.city
                 buckets = {}
+                official_boxes = (
+                    (int(filters.year), int(filters.month)) == (2026, 9)
+                    and TLBoxCalculationService.applies(filters.year, filters.month)
+                )
+                period_prices = ProductUnitPriceService.price_map(
+                    (row.product_id for row in target_rows), filters.year, filters.month
+                ) if official_boxes else {}
                 for target in target_rows:
                     rk = str(target.territory); bucket = buckets.setdefault(rk, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")])
                     au, atl = actual_by_key.get((rk, target.product_id), [Decimal("0"), Decimal("0")])
-                    bucket[0] += Decimal(str(target.unit or 0)); bucket[1] += au
+                    if official_boxes:
+                        price = period_prices.get(target.product_id)
+                        if not price or Decimal(str(price)) <= 0:
+                            raise ValueError(f"Official region map period price missing: {target.product_id}")
+                        bucket[0] += TLBoxCalculationService.boxes_from_tl(target.tl or 0, price)
+                        bucket[1] += TLBoxCalculationService.boxes_from_tl(atl, price)
+                    else:
+                        bucket[0] += Decimal(str(target.unit or 0)); bucket[1] += au
                     bucket[2] += Decimal(str(target.tl or 0)); bucket[3] += atl
                 return [SimpleNamespace(region=rk, city=city_by_region.get(rk), unit_target=v[0], unit_actual=v[1], tl_target=v[2], tl_actual=v[3], representative_count=len(reps_by_region.get(rk, set()))) for rk, v in sorted(buckets.items())]
 
