@@ -960,17 +960,17 @@ def test_national_dashboard_box_metrics_use_target_and_weekly_sources(app):
         representative = Representative(rep_code="BOX-REP", rep_name="Kutu Temsilcisi", active=True)
         db.session.add_all([product, representative])
         db.session.commit()
-        upload = IMSUpload(file_name="box-kpi.xlsx", year=2031, month=5, status="COMPLETED", completed_at=datetime.utcnow())
+        upload = IMSUpload(file_name="box-kpi.xlsx", year=2025, month=5, status="COMPLETED", completed_at=datetime.utcnow())
         db.session.add(upload)
         db.session.commit()
         db.session.add_all([
-            Target(year=2031, month=5, quarter="Q2", representative_id=representative.id, product_id=product.id, unit_target=200, tl_target=20000),
-            IMSRawData(upload_id=upload.id, year=2031, month=5, quarter="Q2", source_row=2, sheet_name="BAKİYE", sheet_type="dashboard_balance_national", product_id=product.id, unit=20000, tl=12000, raw_json="{}"),
-            IMSRawData(upload_id=upload.id, year=2031, month=5, quarter="Q2", source_row=2, sheet_name="TTS", sheet_type="dashboard_weekly_units", product_id=product.id, unit=150, tl=0, raw_json="{}"),
+            Target(year=2025, month=5, quarter="Q2", representative_id=representative.id, product_id=product.id, unit_target=200, tl_target=20000),
+            IMSRawData(upload_id=upload.id, year=2025, month=5, quarter="Q2", source_row=2, sheet_name="BAKİYE", sheet_type="dashboard_balance_national", product_id=product.id, unit=20000, tl=12000, raw_json="{}"),
+            IMSRawData(upload_id=upload.id, year=2025, month=5, quarter="Q2", source_row=2, sheet_name="TTS", sheet_type="dashboard_weekly_units", product_id=product.id, unit=150, tl=0, raw_json="{}"),
         ])
         db.session.commit()
 
-        result = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2031, month=5))
+        result = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2025, month=5))
 
         assert result["unit_target"] == 200
         assert result["unit_actual"] == 150

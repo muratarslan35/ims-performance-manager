@@ -42,37 +42,37 @@ def _seed():
     db.session.add_all([product, rep]); db.session.flush()
 
     old = IMSUpload(
-        file_name="week11.xlsx", year=2041, month=3, quarter="Q1", week_number=11,
+        file_name="week11.xlsx", year=2025, month=3, quarter="Q1", week_number=11,
         status="COMPLETED", reconciliation_status="PASSED", summary_record_count=1,
-        completed_at=datetime(2041, 3, 18, 8, 0),
+        completed_at=datetime(2025, 3, 18, 8, 0),
     )
     latest = IMSUpload(
-        file_name="week13-compact.xlsx", year=2041, month=3, quarter="Q1", week_number=13,
+        file_name="week13-compact.xlsx", year=2025, month=3, quarter="Q1", week_number=13,
         status="COMPLETED", reconciliation_status="PASSED", summary_record_count=1,
-        completed_at=datetime(2041, 3, 25, 8, 0),
+        completed_at=datetime(2025, 3, 25, 8, 0),
     )
     db.session.add_all([old, latest]); db.session.flush()
 
     for territory, representative in (("NATIONAL", "NATIONAL"), ("901", "901 DIYARBAKIR")):
         db.session.add(IMSRawData(
-            upload_id=old.id, year=2041, month=3, quarter="Q1", week_number=11,
+            upload_id=old.id, year=2025, month=3, quarter="Q1", week_number=11,
             sheet_name="BAKIYE", sheet_type=TARGET_TYPE, source_row=0,
             product_id=product.id, representative=representative, territory=territory,
             unit=20.0, tl=100.0, raw_json="{}",
         ))
         db.session.add(IMSRawData(
-            upload_id=old.id, year=2041, month=3, quarter="Q1", week_number=11,
+            upload_id=old.id, year=2025, month=3, quarter="Q1", week_number=11,
             sheet_name="TTS HAFTALIK CIKISLARI", sheet_type=ACTUAL_TYPE, source_row=0,
             product_id=product.id, representative=representative, territory=territory,
             unit=10.0, tl=50.0, raw_json="{}",
         ))
 
     db.session.add(Target(
-        year=2041, month=3, quarter="Q1", representative_id=rep.id, product_id=product.id,
+        year=2025, month=3, quarter="Q1", representative_id=rep.id, product_id=product.id,
         tl_target=200.0, unit_target=0.0,
     ))
     summary = IMSSummary(
-        upload_id=latest.id, year=2041, month=3, quarter="Q1",
+        upload_id=latest.id, year=2025, month=3, quarter="Q1",
         representative_id=rep.id, product_id=product.id,
         target_tl=200.0, target_unit=0.0, tl=150.0, unit=999.0,
     )
@@ -85,7 +85,7 @@ def test_newer_compact_snapshot_overlays_tl_but_preserves_direct_box_authority(t
     with app.app_context():
         product, rep, old, latest, summary = _seed()
 
-        national = OfficialAggregateService.product_totals(2041, 3, "NATIONAL")
+        national = OfficialAggregateService.product_totals(2025, 3, "NATIONAL")
         assert len(national) == 1
         row = national[0]
         assert row["product_id"] == product.id
@@ -94,7 +94,7 @@ def test_newer_compact_snapshot_overlays_tl_but_preserves_direct_box_authority(t
         assert row["target_unit"] == 20.0
         assert row["actual_unit"] == 10.0
 
-        region = RegionPerformanceService("901", 2041, 3)._official_ims_region_month(2041, 3)
+        region = RegionPerformanceService("901", 2025, 3)._official_ims_region_month(2025, 3)
         assert region[product.id][0] == 200.0
         assert region[product.id][1] == 150.0
         assert region[product.id][2] is True
@@ -107,7 +107,7 @@ def test_numeric_zero_in_new_snapshot_replaces_old_official_tl(tmp_path):
         summary.tl = 0.0
         db.session.commit()
 
-        national = OfficialAggregateService.product_totals(2041, 3, "NATIONAL")
+        national = OfficialAggregateService.product_totals(2025, 3, "NATIONAL")
         assert national[0]["actual_tl"] == 0.0
         assert national[0]["actual_unit"] == 10.0
 
@@ -121,14 +121,14 @@ def test_incomplete_target_scope_does_not_replace_official_target(tmp_path):
         )
         db.session.add(extra); db.session.flush()
         db.session.add(IMSSummary(
-            upload_id=latest.id, year=2041, month=3, quarter="Q1",
+            upload_id=latest.id, year=2025, month=3, quarter="Q1",
             representative_id=extra.id, product_id=product.id,
             target_tl=0.0, target_unit=0.0, tl=25.0, unit=0.0,
         ))
         latest.summary_record_count = 2
         db.session.commit()
 
-        national = OfficialAggregateService.product_totals(2041, 3, "NATIONAL")
+        national = OfficialAggregateService.product_totals(2025, 3, "NATIONAL")
         assert national[0]["target_tl"] == 100.0
         assert national[0]["actual_tl"] == 175.0
         assert national[0]["target_unit"] == 20.0
@@ -140,7 +140,7 @@ def test_map_region_uses_latest_compact_tl_and_current_target_roster(tmp_path):
         product, rep, old, latest, summary = _seed()
 
         rows = DashboardQuery().load_region_performance(
-            DashboardFilterParams(year=2041, month=3)
+            DashboardFilterParams(year=2025, month=3)
         )
         region = next(row for row in rows if str(row.region) == "901")
         assert region.tl_target == 200.0
@@ -159,7 +159,7 @@ def test_map_region_numeric_zero_is_real_latest_actual(tmp_path):
         db.session.commit()
 
         rows = DashboardQuery().load_region_performance(
-            DashboardFilterParams(year=2041, month=3)
+            DashboardFilterParams(year=2025, month=3)
         )
         region = next(row for row in rows if str(row.region) == "901")
         assert region.tl_actual == 0.0
