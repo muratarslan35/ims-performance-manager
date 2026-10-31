@@ -539,9 +539,6 @@ class PersistentRegionSnapshotService:
             for representative_id in cls._representative_ids((payload or {}).get("report") or {})
         })
         previous_set_id = PersistentRepresentativeSnapshotService._visible_set_id(previous_year, previous_month) if previous_rep_ids else None
-        previous_official = PersistentRepresentativeSnapshotService._official_monthly_totals(
-            previous_rep_ids, previous_year, previous_month
-        ) if previous_rep_ids else {}
         dashboard_payload = PersistentDashboardSnapshotService.get_generation_for_source(
             year, month, ims_id, production_id
         ) or {}
@@ -556,8 +553,8 @@ class PersistentRegionSnapshotService:
             # bundle. Select only representatives belonging to this region before
             # any brick-level zero-exit/loss analysis is built.
             current_region_rep_ids = cls._representative_ids(report)
-            current_region_workspaces = PersistentRepresentativeSnapshotService._payloads_from_set(
-                current_set_id, current_region_rep_ids
+            current_region_workspaces = PersistentRepresentativeSnapshotService.get_exact_active_many(
+                current_region_rep_ids, year, month, expected_set_id=current_set_id
             )
             missing = set(current_region_rep_ids) - set(current_region_workspaces)
             if missing:
@@ -579,13 +576,9 @@ class PersistentRegionSnapshotService:
             previous_market_analysis = previous_payload.get("market_analysis") or {}
             previous_report = previous_payload.get("report") or {}
             previous_region_rep_ids = cls._representative_ids(previous_report)
-            previous_region_workspaces = PersistentRepresentativeSnapshotService._payloads_from_set(
-                previous_set_id, previous_region_rep_ids
+            previous_region_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+                previous_region_rep_ids, previous_year, previous_month, expected_set_id=previous_set_id
             )
-            for representative_id, workspace in previous_region_workspaces.items():
-                PersistentRepresentativeSnapshotService._apply_official_total_row(
-                    workspace, previous_official.get(int(representative_id))
-                )
 
             ai_report = ScopedAIInsightService.build(
                 scope_type="region",

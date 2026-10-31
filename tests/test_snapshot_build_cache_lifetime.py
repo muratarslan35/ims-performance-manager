@@ -62,3 +62,28 @@ def test_snapshot_label_memo_preserves_original_normalization(value):
     with use_snapshot_upload_ids({}):
         assert snapshot_label_key(value) == expected
         assert snapshot_label_key(value) == expected
+
+
+def test_generation_authority_false_is_reused_without_database_and_never_leaks():
+    from app.services.representative_query_optimizer import use_snapshot_upload_ids, snapshot_authority_status
+    from app.services.kpi_market_single_source import _upload_has_authority
+
+    for present in (False, True):
+        with use_snapshot_upload_ids({(2026, 10): 7}, authority_by_upload={7: present}):
+            # No Flask/DB context exists: this must use the exact generation
+            # input, including a valid False, rather than requerying the source.
+            assert _upload_has_authority(7) is present
+        assert snapshot_authority_status(7) is None
+
+
+def test_scoped_snapshot_reads_reject_a_changed_generation(monkeypatch):
+    from types import SimpleNamespace
+    from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
+
+    monkeypatch.setattr(Snap, "_visible_set_id", classmethod(lambda cls, y, m: 2))
+    monkeypatch.setattr(Snap, "source_identity", classmethod(lambda cls, y, m: (7, 0)))
+    monkeypatch.setattr(Snap, "_latest_exact_active", classmethod(lambda *args: SimpleNamespace(id=2)))
+    with pytest.raises(RuntimeError, match="generation changed"):
+        Snap.get_active_many([1], 2026, 9, expected_set_id=1)
+    with pytest.raises(RuntimeError, match="generation changed"):
+        Snap.get_exact_active_many([1], 2026, 10, expected_set_id=1)

@@ -69,7 +69,7 @@ def test_snapshot_batches_pin_shared_upload_resolution_once():
     snapshot = (ROOT / "app/services/persistent_representative_snapshot_service.py").read_text(encoding="utf-8")
     optimizer = (ROOT / "app/services/representative_query_optimizer.py").read_text(encoding="utf-8")
     assert "snapshot_upload_ids.setdefault" in snapshot
-    assert "use_snapshot_upload_ids(snapshot_upload_ids)" in snapshot
+    assert "snapshot_upload_ids, authority_by_upload=authority_by_upload" in " ".join(snapshot.split())
     assert "_snapshot_upload_ids = ContextVar" in optimizer
     assert "if pinned is not None and key in pinned" in optimizer
     assert "BUILD_WORKERS = 3" in snapshot

@@ -24,7 +24,7 @@ _snapshot_read_cache = ContextVar("representative_snapshot_read_cache", default=
 
 
 @contextmanager
-def use_snapshot_upload_ids(upload_ids):
+def use_snapshot_upload_ids(upload_ids, *, authority_by_upload=None):
     """Pin immutable source identity and reuse one representative's repeated reads.
 
     Normal requests keep their existing request-local behavior. The persistent
@@ -42,6 +42,7 @@ def use_snapshot_upload_ids(upload_ids):
         "product_matches": {},
         "product_catalogs": {},
         "company_matches": {},
+        "authority_by_upload": dict(authority_by_upload or {}),
     })
     try:
         with RepresentativeAnalysisCache.isolated_build_cache():
@@ -68,6 +69,17 @@ def snapshot_label_key(value):
             return result
         labels[source] = result
     return labels[source]
+
+
+def snapshot_authority_status(upload_id):
+    cache = _snapshot_read_cache.get()
+    return cache["authority_by_upload"].get(int(upload_id)) if cache is not None else None
+
+
+def remember_snapshot_authority(upload_id, present):
+    cache = _snapshot_read_cache.get()
+    if cache is not None:
+        cache["authority_by_upload"][int(upload_id)] = bool(present)
 
 
 def _scope_signature(values):
@@ -339,19 +351,11 @@ def install_representative_market_query_optimizer():
                 if not labels:
                     continue
                 scoped = query.filter(column.in_(labels))
-                if representative_exists is not None:
+                if representative_exists is not None and column is CompetitionData.territory:
                     scoped = scoped.filter(~representative_exists)
                 branches.append(scoped)
             selected = branches[0].union(*branches[1:]) if len(branches) > 1 else branches[0] if branches else None
             rows = _namespace_rows(selected.order_by("source_id").all()) if selected is not None else []
-
-            representative_key = self._key(self.representative.rep_name)
-            representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
-            if representative_rows:
-                # These rows do not contain named brick detail. Leave that
-                # bounded query to _brick_competition_rows instead of signalling
-                # an empty detail cache and unnecessarily opening the workbook.
-                return representative_rows
 
             # The exact-brick path executes immediately after this aggregate read
             # during one representative build. Keep the already-fetched bounded
@@ -363,6 +367,11 @@ def install_representative_market_query_optimizer():
                 raw_cache = {}
                 self._rep_query_competition_raw_cache = raw_cache
             raw_cache[(year, month, int(upload_id))] = list(rows)
+
+            representative_key = self._key(self.representative.rep_name)
+            representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
+            if representative_rows:
+                return representative_rows
 
             return [
                 row for row in rows

@@ -186,7 +186,8 @@ def test_scoped_union_preserves_legacy_rows_without_fetching_discarded_region(na
         monkeypatch.setattr(optimizer, "_namespace_rows", capture)
         _, actual = service._competition_rows(brick_keys, fallback_keys)
         assert {r.source_id for r in actual} == {r.id for r in expected}
-        assert fetched == [len(expected)]
+        detail_ids = {r.id for r in legacy if service._key(r.subterritory) in brick_keys}
+        assert fetched == [len({r.id for r in expected} | detail_ids)]
         if assigned:
             _, details = service._brick_competition_rows(brick_keys)
             assert [r.subterritory for r in details] == ["BRICK A"]
