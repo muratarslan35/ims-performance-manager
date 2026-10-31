@@ -60,6 +60,21 @@ def main():
         assert views is not None
         product_ids={name:adapter.resolve_product_match(name)['object'].id for name in views['products']}
         prices=ProductUnitPriceService.price_map(product_ids.values(),year,month)
+        from app.services.adaptive_kpi_target_authority import _norm
+        source_names=defaultdict(set)
+        for source_row in IMSRawData.query.filter_by(upload_id=upload.id).filter(IMSRawData.representative_id.isnot(None)):
+            source_names[_norm(source_row.representative)].add(int(source_row.representative_id))
+        source_rep_totals={}
+        expected_region_reps=defaultdict(set)
+        for (territory,name),products in views['tl_reps'].items():
+            ids=source_names[_norm(name)]
+            assert len(ids)==1,(territory,name,'source representative identity')
+            rid=next(iter(ids))
+            expected_region_reps[territory.split()[0]].add(rid)
+            source_rep_totals[rid]=[
+                sum(float(p['target']) for p in products.values()),
+                sum(float(p['actual']) for p in products.values()),
+            ]
         official={(r.sheet_type,r.territory,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==upload.id,IMSRawData.sheet_type.in_(('official_target_aggregate','official_actual_aggregate')))}
         for identity,products in views['tl_aggregates'].items():
             territory=identity[0]
@@ -80,6 +95,13 @@ def main():
             service=RegionPerformanceService(region,year,month)
             periods=(payload.get('report') or {}).get('periods') or {}
             assert periods.get('monthly') and payload.get('market_analysis') is not None
+            if (year,month)==(2026,9):
+                representative_rows={int(r['representative_id']):r for r in periods['monthly'].get('representatives',[])}
+                assert set(representative_rows)==expected_region_reps[region],(region,'source roster coverage')
+                for rid,row in representative_rows.items():
+                    equal(row.get('target_tl'),source_rep_totals[rid][0],f'region-representative:{region}:{rid}:target_tl')
+                    equal(row.get('actual_tl'),source_rep_totals[rid][1],f'region-representative:{region}:{rid}:actual_tl')
+                    counts['region_representatives']+=1
             cache={}
             for key,period in periods.items():
                 expected=defaultdict(lambda:[Decimal(0),Decimal(0),Decimal(0),Decimal(0),True])

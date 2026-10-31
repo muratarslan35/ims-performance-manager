@@ -87,13 +87,28 @@ class RegionPerformanceService:
 
     def _target_rows(self, months):
         conditions = [and_(Target.year == year, Target.month == month) for year, month in months]
-        return db.session.query(
+        rows = db.session.query(
             Target.year, Target.month, Target.representative_id, Target.product_id,
             func.coalesce(func.sum(Target.tl_target), 0.0),
             func.coalesce(func.sum(Target.unit_target), 0.0),
         ).filter(Target.representative_id.in_(self.rep_ids), or_(*conditions)).group_by(
             Target.year, Target.month, Target.representative_id, Target.product_id
         ).all()
+        # Monthly Target retains earlier weekly roster members for history.
+        # September's visible representative rows must use the accepted source's
+        # identities, not an obsolete vacancy from week 36. Keep prior monthly
+        # contributions and all archived targets intact.
+        if (2026, 9) in months and ProductionResultService.final_upload(2026, 9) is None:
+            source_id = OfficialAggregateService.latest_upload_id(2026, 9)
+            source_reps = {
+                int(row[0]) for row in db.session.query(IMSRawData.representative_id).filter(
+                    IMSRawData.upload_id == source_id,
+                    IMSRawData.representative_id.isnot(None),
+                ).distinct().all()
+            } if source_id else set()
+            if source_reps:
+                rows = [row for row in rows if row[:2] != (2026, 9) or row[2] in source_reps]
+        return rows
 
     @staticmethod
     def _uses_official_region_only(year, month):

@@ -100,6 +100,24 @@ def test_september_dashboard_map_uses_official_product_tl_and_period_price(regio
     assert (row.unit_target,row.unit_actual)==(100,50)
 
 
+def test_september_roster_uses_source_identities_without_deleting_old_targets(region):
+    service,pid=region
+    upload=IMSUpload.query.filter_by(year=2026,month=9).one()
+    source_reps=set(service.rep_ids)
+    for rid in source_reps:
+        db.session.add(IMSRawData(upload_id=upload.id,year=2026,month=9,
+            sheet_name='legacy TTS',sheet_type='brick_sales',territory='901',
+            representative_id=rid,product_id=pid,tl=600,unit=60,raw_json='{}'))
+    old=Representative(rep_code='OLD',rep_name='Obsolete vacancy',region='901',active=False)
+    db.session.add(old);db.session.flush()
+    db.session.add(Target(year=2026,month=9,representative_id=old.id,product_id=pid,tl_target=500,unit_target=50))
+    db.session.commit()
+    rebuilt=RegionPerformanceService('901',2026,9).aggregate([(2026,9)])
+    assert {r['representative_id'] for r in rebuilt['representatives']}==source_reps
+    assert {r['representative_id'] for r in rebuilt['representative_products']}==source_reps
+    assert Target.query.filter_by(year=2026,month=9,representative_id=old.id).count()==1
+
+
 @pytest.mark.parametrize('month',[9,10])
 def test_market_effective_company_matches_region_without_changing_market_denominator(region,month):
     service, pid = region
