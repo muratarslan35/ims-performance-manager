@@ -43,42 +43,26 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          PYTHONPATH="$IMS_PATH" nice -n 10 venv/bin/python - <<'PY'
-          import hashlib,json,sqlite3
-          from pathlib import Path
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import json
           from app import create_app
           from app.extensions import db
-          from app.models import IMSImportJob
-          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
+          from app.models import Target,IMSFact,Representative
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as RS
           app=create_app()
           with app.app_context():
-           job=IMSImportJob.query.filter_by(ims_upload_id=53).order_by(IMSImportJob.id.desc()).first()
-           print('SEP_JOB_INFO|'+json.dumps(dict(id=job.id if job else None,status=job.status if job else None,summary=job.result_summary if job else None,sealed=IMSUploadLifecycleService.snapshot_master_state_sealed(upload_id=53)),default=str),flush=True)
-           result={}
-           conn=sqlite3.connect('file:'+str(Path(db.engine.url.database).resolve())+'?mode=ro',uri=True)
-           def digest(key,sql):
-            h=hashlib.sha256();n=0
-            for row in conn.execute(sql):
-             h.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());h.update(b'\n');n+=1
-            result[key]=dict(rows=n,sha256=h.hexdigest())
-           for table in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data'):
-            digest(table,f'SELECT * FROM {table} WHERE year=2026 AND month=9 ORDER BY id')
-           for sets,rows in [('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')]:
-            where="NOT (s.year=2026 AND s.month=9)" if rows=='manager_region_snapshots' else '1=1'
-            digest(rows,f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND {where} ORDER BY r.id")
-           files={}
-           root=Path(app.instance_path)/'dashboard_snapshots'
-           for path in sorted(root.glob('*.json')):
-            if not path.name.startswith('dashboard-2026-09'):files[path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
-           result['other_dashboard_files']=files
-           baseline=Path('instance/september-authority-protected-before.json')
-           if baseline.exists():
-            before=json.loads(baseline.read_text()); changed=[k for k in set(before)|set(result) if before.get(k)!=result.get(k)]
-            print('SEPTEMBER_PROTECTED_COMPARE|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
-            if changed:raise SystemExit(1)
-           else:
-            baseline.write_text(json.dumps(result),encoding='utf-8')
-            print('SEPTEMBER_PROTECTED_BASELINE|'+json.dumps(dict(tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
+           targets={r.representative_id for r in Target.query.filter_by(year=2026,month=9)}
+           facts={r.representative_id for r in IMSFact.query.filter_by(upload_id=53)}
+           payloads=RS.get_active_all(2026,9)
+           result=[]
+           for rid in sorted(targets-facts):
+            r=db.session.get(Representative,rid)
+            visible=[]
+            for region,payload in payloads.items():
+             rows=(((payload.get('report') or {}).get('periods') or {}).get('monthly') or {}).get('representatives',[])
+             visible.extend([dict(region=region,row=row) for row in rows if row['representative_id']==rid])
+            result.append(dict(id=rid,name=r.rep_name,region=r.region,active=r.active,visible=visible))
+           print('SEP_RETIRED_TARGET_SCOPE|'+json.dumps(result,default=str),flush=True)
           
           PY
           REMOTE
