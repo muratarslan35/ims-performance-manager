@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
@@ -52,6 +53,7 @@ def main():
         path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/f'upload-{upload.id}.xlsx'
         assert path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==job.source_hash
         adapter=IMSImportService(str(path))
+        adapter.upload=upload
         names=pd.ExcelFile(path).sheet_names
         # Discover both the legacy and V2 pair semantically; do not require
         # the Week-41 sheet-name spelling for a historical acceptance.
@@ -60,16 +62,34 @@ def main():
         assert views is not None
         product_ids={name:adapter.resolve_product_match(name)['object'].id for name in views['products']}
         prices=ProductUnitPriceService.price_map(product_ids.values(),year,month)
+        from app.services.ims_unit_authority import applies as direct_units_apply,import_unit_values,representative_name_key
+        explicit=import_unit_values(adapter,views) if direct_units_apply(year,month) else {}
+        for record in explicit.values():
+            for metric in ('target','actual'):
+                counts['direct_unit_fields' if record.get(metric) is not None else 'derived_unit_fields']+=1
+        def source_box(scope,identity,name,metric,tl,*,rounded=True):
+            value=explicit.get((scope,*identity,name),{}).get(metric)
+            if value is not None:
+                return TLBoxCalculationService.round_box(value) if rounded else value
+            return TLBoxCalculationService.boxes_from_tl(tl,prices[product_ids[name]])
         from app.services.adaptive_kpi_target_authority import _norm
         source_names=defaultdict(set)
         for source_row in IMSRawData.query.filter_by(upload_id=upload.id).filter(IMSRawData.representative_id.isnot(None)):
-            source_names[_norm(source_row.representative)].add(int(source_row.representative_id))
+            name_key=representative_name_key(source_row.representative)
+            source_names[(None,name_key)].add(int(source_row.representative_id))
+            territory=str(source_row.territory or '').split()
+            if territory and territory[0].isdigit():source_names[(territory[0],name_key)].add(int(source_row.representative_id))
         source_rep_totals={}
+        source_rep_identities={}
+        source_rep_products={}
         expected_region_reps=defaultdict(set)
         for (territory,name),products in views['tl_reps'].items():
-            ids=source_names[_norm(name)]
+            name_key=representative_name_key(name)
+            ids=source_names.get((territory.split()[0],name_key)) or source_names[(None,name_key)]
             assert len(ids)==1,(territory,name,'source representative identity')
             rid=next(iter(ids))
+            source_rep_identities[rid]=(territory.split()[0],name_key)
+            source_rep_products[rid]=products
             expected_region_reps[territory.split()[0]].add(rid)
             source_rep_totals[rid]=[
                 sum(float(p['target']) for p in products.values()),
@@ -83,7 +103,9 @@ def main():
                     row=official.get((kind,territory,pid))
                     assert row is not None, (territory,pid,kind)
                     equal(row.tl,products[name][metric],f'archive-db:{territory}:{pid}:{metric}:tl')
-                    equal(row.unit,views['unit_aggregates'][identity][name][metric],f'archive-db:{territory}:{pid}:{metric}:raw-unit')
+                    expected_unit=(source_box('AGGREGATE',(territory,),name,metric,products[name][metric],rounded=False)
+                                   if direct_units_apply(year,month) else views['unit_aggregates'][identity][name][metric])
+                    equal(row.unit,expected_unit,f'archive-db:{territory}:{pid}:{metric}:raw-unit')
                     counts['source_records']+=1
         visible=PersistentRegionSnapshotService.get_active_all(year,month)
         expected_regions={k[0] for k in views['tl_aggregates'] if k[0]!='NATIONAL'}
@@ -95,7 +117,7 @@ def main():
             service=RegionPerformanceService(region,year,month)
             periods=(payload.get('report') or {}).get('periods') or {}
             assert periods.get('monthly') and payload.get('market_analysis') is not None
-            if (year,month)==(2026,9):
+            if (year,month)>=(2026,9):
                 representative_rows={int(r['representative_id']):r for r in periods['monthly'].get('representatives',[])}
                 assert set(representative_rows)==expected_region_reps[region],(region,'source roster coverage')
                 for rid,row in representative_rows.items():
@@ -150,7 +172,7 @@ def main():
             print('OFFICIAL_REGION_ACCEPTANCE|'+json.dumps(dict(region=region,periods=len(periods),failures=sum(f['context'].startswith(f'region:{region}:') for f in failures))))
         dashboard=PersistentDashboardSnapshotService.get_generation_for_source(year,month,upload.id,0)
         assert dashboard and isinstance(dashboard.get('competition_analysis'),dict)
-        if (year,month)==(2026,9):
+        if (year,month)>=(2026,9):
             map_rows={str(r['code']):r for r in dashboard.get('region_realization',[])}
             assert set(map_rows)==expected_regions
             for identity,products in views['tl_aggregates'].items():
@@ -160,17 +182,18 @@ def main():
                 expected={
                     'tl_target':sum(float(p['target']) for p in products.values()),
                     'tl_actual':sum(float(p['actual']) for p in products.values()),
-                    'unit_target':sum(TLBoxCalculationService.boxes_from_tl(products[name]['target'],prices[pid]) for name,pid in product_ids.items()),
-                    'unit_actual':sum(TLBoxCalculationService.boxes_from_tl(products[name]['actual'],prices[pid]) for name,pid in product_ids.items()),
+                    'unit_target':sum(source_box('AGGREGATE',(region,),name,'target',products[name]['target']) for name in product_ids),
+                    'unit_actual':sum(source_box('AGGREGATE',(region,),name,'actual',products[name]['actual']) for name in product_ids),
                 }
                 for field,value in expected.items():equal(row.get(field),value,f'dashboard-map:{region}:{field}')
                 counts['dashboard_map_regions']+=1
         national={int(r['product_id']):r for r in (dashboard.get('executive_metrics') or {}).get('products',[])}
         assert set(national)==set(product_ids.values())
         for pid,row in national.items():
+            name=next(n for n,p in product_ids.items() if p==pid)
             t=official[('official_target_aggregate','NATIONAL',pid)].tl
             a=official[('official_actual_aggregate','NATIONAL',pid)].tl
-            for field,value in (('target_tl',t),('actual_tl',a),('unit_target',TLBoxCalculationService.boxes_from_tl(t,prices[pid])),('unit_actual',TLBoxCalculationService.boxes_from_tl(a,prices[pid]))):
+            for field,value in (('target_tl',t),('actual_tl',a),('unit_target',source_box('AGGREGATE',('NATIONAL',),name,'target',t)),('unit_actual',source_box('AGGREGATE',('NATIONAL',),name,'actual',a))):
                 equal(row.get(field),value,f'dashboard:{pid}:{field}')
             counts['national_products']+=1
         targets={(r.representative_id,r.product_id):r for r in Target.query.filter_by(year=year,month=month)}
@@ -182,13 +205,28 @@ def main():
             monthly=((workspace.get('snapshots') or {}).get('monthly') or {})
             for row in monthly.get('products',[]):
                 pid=int((row.get('product') or {}).get('id') or row.get('product_id'))
+                name=next(n for n,p in product_ids.items() if p==pid)
                 t=targets[(rid,pid)].tl_target;a=facts[(rid,pid)].tl
-                for field,value in (('target_tl',t),('actual_tl',a),('target_unit',TLBoxCalculationService.boxes_from_tl(t,prices[pid])),('actual_unit',TLBoxCalculationService.boxes_from_tl(a,prices[pid]))):
+                native=source_rep_products[rid][name]
+                equal(t,native['target'],f'representative-db:{rid}:{pid}:source-target-tl')
+                equal(a,native['actual'],f'representative-db:{rid}:{pid}:source-actual-tl')
+                if direct_units_apply(year,month):
+                    equal(targets[(rid,pid)].unit_target,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t,rounded=False),f'representative-db:{rid}:{pid}:source-target-unit')
+                    equal(facts[(rid,pid)].unit,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a,rounded=False),f'representative-db:{rid}:{pid}:source-actual-unit')
+                counts['representative_source_products']+=1
+                for field,value in (('target_tl',t),('actual_tl',a),('target_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t)),('actual_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a))):
                     equal(row.get(field),value,f'representative:{rid}:{pid}:{field}')
                 counts['representative_product_rows']+=1
         counts['representatives']=len(reps)
         result=dict(result='FAIL' if failures else 'PASS',upload_id=upload.id,week=upload.week_number,counts=dict(counts),failures=failures)
-        print('OFFICIAL_PUBLICATION_ACCEPTANCE|'+json.dumps(result,default=str))
+        # Keep financial mismatches in a private server artifact, not public CI.
+        private=ROOT/'instance'/f'official-publication-acceptance-{upload.id}.json'
+        private.parent.mkdir(parents=True,exist_ok=True)
+        fd=os.open(str(private),os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+        os.chmod(private,0o600)
+        with os.fdopen(fd,'w',encoding='utf-8') as output:json.dump(result,output,default=str)
+        public={**result,'failures':[{'context':f['context']} for f in failures]}
+        print('OFFICIAL_PUBLICATION_ACCEPTANCE|'+json.dumps(public,default=str))
         db.session.rollback()
         return 1 if failures else 0
 

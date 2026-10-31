@@ -42,6 +42,18 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
     if not products:
         return payload
 
+    from app.services.ims_unit_authority import applies as direct_units_apply
+    if direct_units_apply(year, month):
+        units=service._official_region_unit_month(int(year),int(month))
+        for item in products:
+            values=units.get(int(item['product_id']))
+            if values is None or not values[2]:
+                raise ValueError('Incomplete official IMS region boxes')
+            target,actual,_complete=values
+            item.update(target_unit=target,actual_unit=actual,unit_complete=True,
+                        unit_difference=actual-target,box_authority='IMS_DIRECT_UNIT_OR_TL_PERIOD_PRICE')
+        return payload
+
     official_tl = service._official_ims_region_month(int(year), int(month))
     if not official_tl:
         return payload
@@ -121,7 +133,11 @@ def _apply_official_region_market_boxes(service, payload):
         row["realization_percent"] = realization_percent(actual, target)
     totals = payload.setdefault("totals", {})
     totals["effective_company_unit"] = sum(float(row["company_unit"]) for row in payload.get("rows") or [])
-    payload["company_box_source"] = "OFFICIAL_REGION_TL_DIV_PERIOD_PRICE"
+    from app.services.ims_unit_authority import applies as direct_units_apply
+    payload["company_box_source"] = (
+        "IMS_DIRECT_UNIT_OR_TL_PERIOD_PRICE" if direct_units_apply(service.year,service.month)
+        else "OFFICIAL_REGION_TL_DIV_PERIOD_PRICE"
+    )
     return payload
 
 
@@ -273,6 +289,8 @@ def audit_all_regions(year=None, month=None):
             report = service.aggregate([(year, month)])
             official = service._official_ims_region_month(year, month)
             prices = ProductUnitPriceService.price_map(official.keys(), year, month)
+            from app.services.ims_unit_authority import applies as direct_units_apply
+            direct=service._official_region_unit_month(year,month) if direct_units_apply(year,month) else None
         except ValueError as exc:
             failures.append({"region": region_key, "reason": str(exc)})
             continue
@@ -290,18 +308,15 @@ def audit_all_regions(year=None, month=None):
             product_id = int(item["product_id"])
             values = official.get(product_id)
             price = prices.get(product_id)
-            if values is None or not _valid_price(price):
+            if values is None or (direct is None and not _valid_price(price)):
                 failures.append({"region": region_key, "product_id": product_id, "reason": "missing_official_source_or_price"})
                 continue
-            expected_target = TLBoxCalculationService.boxes_from_tl(values[0], price)
-            expected_actual = TLBoxCalculationService.boxes_from_tl(values[1], price)
+            expected_target = direct[product_id][0] if direct is not None else TLBoxCalculationService.boxes_from_tl(values[0], price)
+            expected_actual = direct[product_id][1] if direct is not None else TLBoxCalculationService.boxes_from_tl(values[1], price)
             if target_unit != expected_target or actual_unit != expected_actual:
                 failures.append({
                     "region": region_key,
-                    "product": item.get("product_name"),
-                    "target_tl": float(target_tl),
-                    "actual_tl": float(actual_tl),
-                    "target_unit": float(target_unit),
-                    "actual_unit": float(actual_unit),
+                    "product_id": product_id,
+                    "reason": "official_unit_mismatch",
                 })
     return {"year": year, "month": month, "regions": len(region_keys), "rows": checked, "failures": failures}

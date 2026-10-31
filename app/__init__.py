@@ -238,6 +238,8 @@ def create_app(config_object=Config):
     install_production_result_stale_zero_guard()
     install_april_global_box_period_lock()
     install_region_box_authority_guard()
+    from app.services.ims_unit_authority import install_ims_unit_authority
+    install_ims_unit_authority()
 
     register_template_context(app)
     register_blueprints(app)

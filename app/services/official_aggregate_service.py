@@ -372,7 +372,11 @@ def _reconcile_type(importer, sheet_type, tolerance=0.01):
     national = {}
     regions = defaultdict(lambda: [0.0, 0.0])
     region_codes = set()
+    incomplete_units=set()
     for row in rows:
+        metadata=json.loads(row.raw_json or '{}').get('ims_unit_authority_v1')
+        metric='target' if sheet_type==TARGET_TYPE else 'actual'
+        if metadata is not None and metadata.get(metric) is None:incomplete_units.add(row.product_id)
         if row.territory == "NATIONAL":
             national[row.product_id] = (float(row.unit or 0), float(row.tl or 0))
         else:
@@ -382,7 +386,8 @@ def _reconcile_type(importer, sheet_type, tolerance=0.01):
     conflicts = []
     for product_id, (national_unit, national_tl) in national.items():
         region_unit, region_tl = regions.get(product_id, (0.0, 0.0))
-        if abs(national_unit - region_unit) > tolerance or abs(national_tl - region_tl) > tolerance:
+        unit_conflict=product_id not in incomplete_units and abs(national_unit-region_unit)>tolerance
+        if unit_conflict or abs(national_tl - region_tl) > tolerance:
             conflicts.append(
                 {
                     "sheet_type": sheet_type,
