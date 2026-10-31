@@ -103,6 +103,17 @@ def main():
                 if key=='monthly' and any(v=='REPRESENTATIVE_AGGREGATE' for v in (period.get('source_by_month') or {}).values()):
                     failures.append(dict(context=f'region:{region}:{key}:forbidden-representative-fallback'))
             counts['regions']+=1
+            market_rows={int(r['product_id']):r for r in (payload.get('market_analysis') or {}).get('rows',[])}
+            current_units=service._official_region_unit_month(year,month)
+            assert set(market_rows)==set(current_units),(region,'market product coverage')
+            for pid,row in market_rows.items():
+                equal(row.get('target_unit'),current_units[pid][0],f'region-market:{region}:{pid}:target_unit')
+                equal(row.get('company_unit'),current_units[pid][1],f'region-market:{region}:{pid}:company_unit')
+                counts['region_market_products']+=1
+            annual=(payload.get('report') or {}).get('annual_realization') or []
+            annual_month=next(r for r in annual if int(r['month'])==month)
+            for field in ('target_tl','actual_tl'):
+                equal(annual_month.get(field),periods['monthly'][field],f'region-annual:{region}:{month}:{field}')
             print('OFFICIAL_REGION_ACCEPTANCE|'+json.dumps(dict(region=region,periods=len(periods),failures=sum(f['context'].startswith(f'region:{region}:') for f in failures))))
         dashboard=PersistentDashboardSnapshotService.get_generation_for_source(year,month,upload.id,0)
         assert dashboard and isinstance(dashboard.get('competition_analysis'),dict)

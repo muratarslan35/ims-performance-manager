@@ -96,6 +96,35 @@ def _apply_direct_monthly_box_authority(service, payload, year, month):
     return payload
 
 
+def _apply_official_region_market_boxes(service, payload):
+    """Align effective company KPIs after every KPI/market normalizer.
+
+    IMS competition numerator/denominator and rival observations remain their
+    independent market source; only company target/realization use region TL.
+    """
+    if not RegionPerformanceService._uses_official_region_only(service.year, service.month):
+        return payload
+    if ProductionResultService.final_upload(service.year, service.month) is not None:
+        return payload
+    region = RegionPerformanceService(service.region_key, service.year, service.month)
+    units = region._official_region_unit_month(service.year, service.month)
+    if not units:
+        raise ValueError(f"Official region market source missing: {service.region_key}")
+    from app.services.realization_rounding import realization_percent
+    for row in payload.get("rows") or []:
+        product_id = int(row["product_id"])
+        if product_id not in units or not units[product_id][2]:
+            raise ValueError(f"Incomplete official region market product: {service.region_key}/{product_id}")
+        target, actual, _complete = units[product_id]
+        row["target_unit"] = float(target)
+        row["company_unit"] = float(actual)
+        row["realization_percent"] = realization_percent(actual, target)
+    totals = payload.setdefault("totals", {})
+    totals["effective_company_unit"] = sum(float(row["company_unit"]) for row in payload.get("rows") or [])
+    payload["company_box_source"] = "OFFICIAL_REGION_TL_DIV_PERIOD_PRICE"
+    return payload
+
+
 def install_region_box_authority_guard():
     """Install as the final region aggregate normalization layer.
 
@@ -204,6 +233,13 @@ def install_region_box_authority_guard():
         return payload
 
     RegionPerformanceService.aggregate = guarded_aggregate
+    from app.services.region_market_service import RegionMarketService
+    original_market_build = RegionMarketService.build
+
+    def guarded_market_build(self):
+        return _apply_official_region_market_boxes(self, original_market_build(self))
+
+    RegionMarketService.build = guarded_market_build
     _INSTALLED = True
 
 

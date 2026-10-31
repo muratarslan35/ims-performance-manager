@@ -81,3 +81,20 @@ def test_pre_week41_period_retains_accepted_legacy_fallback(region):
     assert (row["target_tl"],row["actual_tl"],row["target_unit"],row["actual_unit"]) == (2000,1200,200,120)
     assert service._uses_official_region_only(2026,9) is False
     assert service._uses_official_region_only(2026,10) is True
+
+
+def test_market_effective_company_matches_region_without_changing_market_denominator(region):
+    service, pid = region
+    from app.services.region_box_authority_guard import _apply_official_region_market_boxes
+    payload = {"rows":[{"product_id":pid,"target_unit":200,"company_unit":120,
+        "market_company_unit":999,"market_unit":1100,"competitor_unit":101,
+        "share_percent":91}],"totals":{"company_unit":999,"market_unit":1100}}
+    result=_apply_official_region_market_boxes(service,payload)
+    row=result["rows"][0]
+    assert (row["target_unit"],row["company_unit"],row["realization_percent"]) == (100,50,50)
+    assert (row["market_company_unit"],row["market_unit"],row["competitor_unit"],row["share_percent"]) == (999,1100,101,91)
+    assert result["totals"]["effective_company_unit"] == 50
+    assert result["totals"]["company_unit"] == 999
+    service.month=9
+    legacy={"rows":[{"product_id":pid,"target_unit":200,"company_unit":120}]}
+    assert _apply_official_region_market_boxes(service,legacy)==legacy

@@ -33,16 +33,16 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             db.session.add_all([product, first, second])
             db.session.flush()
             db.session.add_all([
-                Target(year=2042, month=1, quarter="Q1", representative_id=first.id, product_id=product.id, unit_target=100),
-                Target(year=2042, month=1, quarter="Q1", representative_id=second.id, product_id=product.id, unit_target=200),
+                Target(year=2025, month=1, quarter="Q1", representative_id=first.id, product_id=product.id, unit_target=100),
+                Target(year=2025, month=1, quarter="Q1", representative_id=second.id, product_id=product.id, unit_target=200),
             ])
-            upload = IMSUpload(file_name="region.xlsx", year=2042, month=1, quarter="Q1", week_number=5, status="COMPLETED")
+            upload = IMSUpload(file_name="region.xlsx", year=2025, month=1, quarter="Q1", week_number=5, status="COMPLETED")
             db.session.add(upload)
             db.session.flush()
 
             def row(territory, brick, name, value, company=False, competitor=False):
                 return CompetitionData(
-                    upload_id=upload.id, year=2042, month=1, sheet_name="AYLIK REKABET KUTU",
+                    upload_id=upload.id, year=2025, month=1, sheet_name="AYLIK REKABET KUTU",
                     period_type="MONTHLY", territory=territory, subterritory=brick,
                     product_group="TRAVAZOL GRUP", product_name=name, metric_type="UNIT",
                     metric_value=value, is_company_product=company, is_competitor=competitor, source_row=value,
@@ -61,7 +61,7 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             ])
             db.session.commit()
 
-            result = RegionMarketService("901", [first.id, second.id], 2042, 1).build()
+            result = RegionMarketService("901", [first.id, second.id], 2025, 1).build()
             travazol = result["rows"][0]
             assert result["has_data"] is True
             assert travazol["target_unit"] == 300
@@ -78,7 +78,7 @@ def test_region_market_analysis_aggregates_region_once_and_excludes_other_region
             assert sum([travazol["share_percent"], *[item["market_share_percent"] for item in travazol["rivals"]]]) == 100
             assert [item["brick"] for item in result["top_bricks"]] == ["MARDIN BRICK A", "SIRNAK BRICK B"]
             assert result["totals"]["competitor_unit"] == 240
-            assert result["available_periods"] == [{"year": 2042, "month": 1, "label": "01/2042"}]
+            assert result["available_periods"] == [{"year": 2025, "month": 1, "label": "01/2025"}]
             assert result["rival_rows"][0]["name"] == "RAKIP A"
             assert result["rival_rows"][0]["cities"] == [
                 {"city": "MARDIN", "unit": 180.0, "market_unit": 300.0, "share_percent": 60.0}
