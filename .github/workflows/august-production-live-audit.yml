@@ -1,4 +1,4 @@
-name: Week 41 Timing and TL Source Classification
+name: Week 41 Final Verification Status
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 30
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -43,87 +43,39 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          
-          umask 077
-          venv/bin/python -u - <<'PY' > instance/week41-final-timing-evidence.log 2>&1
-          import json,os,re,sqlite3,time,hashlib
+
+          venv/bin/python - <<'PY'
+          import json,re,sqlite3
           from pathlib import Path
-          os.umask(0o077)
-          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text())
-          root=Path(meta['root']);jid=int(meta['job_id'])
-          for attempt in range(180):
-           c=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None,timeout=5)
-           row=c.execute('SELECT status,result_summary FROM ims_import_jobs WHERE id=?',(jid,)).fetchone();c.close()
-           if row[0]=='FAILED':raise RuntimeError('Import failed; acceptance blocked')
-           try:p=json.loads((root/'ims_progress'/f'job-{jid}.json').read_text())
-           except (OSError,ValueError):p={}
-           if json.loads(row[1] or '{}').get('publication_ready') is True and p.get('stage')=='completed':break
-           time.sleep(30)
-          else:raise RuntimeError('Publication still not ready')
-          
-          import subprocess
-          from datetime import datetime
-          for _ in range(6):
-           final=root/f'week41-job-{jid}-timing-summary.json'
-           if final.exists():break
-           time.sleep(2)
-          timing=json.loads(final.read_text())
-          print('WEEK41_FINAL_TIMING|'+json.dumps({k:v for k,v in timing.items() if k not in ('stage_telemetry','stage_transitions')}),flush=True)
-          print('WEEK41_STAGE_TRANSITIONS|'+json.dumps(timing.get('stage_transitions')),flush=True)
-          journal=subprocess.run(['sudo','journalctl','-u','ims-import-worker.service','--since',timing['started_at'],'--until',str(timing['publication_ready_at']).replace('T',' ').split('.')[0],'-o','cat','--no-pager'],capture_output=True,text=True)
-          (root/'week41-worker-phases-private.log').write_text(journal.stdout)
-          phases=[]
-          for line in journal.stdout.splitlines():
-           for label in ('dashboard_snapshot_warm','region_snapshot_warm','representative_snapshot_warm','region_snapshot_enrichment'):
-            if label+' ' not in line:continue
-            seconds=re.search(r'\bseconds=([0-9.]+)',line)
-            status=re.search(r'\bstatus=([A-Z_]+)',line)
-            phases.append(dict(phase=label,seconds=float(seconds.group(1)) if seconds else None,status=status.group(1) if status else None))
-          print('WEEK41_WORKER_PHASES|'+json.dumps(phases),flush=True)
+          from collections import defaultdict
+          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text());root=Path(meta['root'])
+          samples=[json.loads(l) for l in (root/'week41-job-46-timing.jsonl').read_text().splitlines()]
+          groups=defaultdict(list)
+          for sample in samples:groups[sample['stage']].append(sample)
+          metrics={}
+          for stage,rows in groups.items():
+           metrics[stage]=dict(samples=len(rows),minimum_available_memory_bytes=min(r.get('available_memory_bytes',10**15) for r in rows),
+           minimum_free_swap_bytes=min(r.get('free_swap_bytes',10**15) for r in rows),
+           peak_worker_rss_bytes=max(r.get('worker_rss_bytes',0) for r in rows),
+           mean_cpu_percent=round(sum(r.get('worker_cpu_percent',0) for r in rows)/len(rows),2))
+           for key in ('worker_read_bytes','worker_write_bytes'):
+            values=[r[key] for r in rows if key in r]
+            metrics[stage][key+'_delta']=max(values)-min(values) if values else None
+          print('WEEK41_RESOURCE_PHASES|'+json.dumps(metrics),flush=True)
+          for name in ('week41-post-publication-validation.log','week41-final-history-validation.log','week41-final-generations-validation.log','week41-final-timing-evidence.log','week41-tl-classification.log'):
+           path=root/name
+           if path.exists():
+            lines=path.read_text(errors='replace').splitlines()
+            for line in lines:
+             if re.match(r'^WEEK41_[A-Z_]+\|',line):print(line,flush=True)
+            error=re.match(r'^([A-Za-z.]+(?:Error|Exception))(?::|$)',lines[-1] if lines else '')
+            if error:print('WEEK41_PRIVATE_LOG_ERROR|'+json.dumps(dict(log=name,error_type=error.group(1))),flush=True)
+          artifact=root/'official-publication-acceptance-56.json'
+          if artifact.exists():
+           a=json.loads(artifact.read_text())
+           print('WEEK41_CURRENT_ACCEPTANCE|'+json.dumps({k:a[k] for k in ('result','upload_id','week','counts')}),flush=True)
+           if a.get('failures'):print('WEEK41_ACCEPTANCE_FAILURE_CONTEXTS|'+json.dumps([f['context'] for f in a['failures']]),flush=True)
           
           PY
-          grep -E '^WEEK41_' instance/week41-final-timing-evidence.log
-          venv/bin/python -u - <<'PY' > instance/week41-tl-classification.log 2>&1
-          import json,os
-          from collections import Counter
-          from decimal import Decimal,ROUND_HALF_UP
-          from pathlib import Path
-          import pandas as pd
-          from app import create_app
-          from app.models import IMSUpload
-          from app.services.ims_import_service import IMSImportService
-          from app.services.adaptive_kpi_target_authority import _pair_views,_norm
-          from app.services.ims_unit_authority import summary_rows,representative_name_key
-          os.umask(0o077)
-          app=create_app()
-          with app.app_context():
-           upload=IMSUpload.query.filter_by(id=56).one()
-           path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/'upload-56.xlsx'
-           adapter=IMSImportService(str(path));adapter.upload=upload
-           adapter.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
-           views=_pair_views(adapter)
-           names=[n for n in adapter.workbook if _norm(n).startswith('1 TTS ') and ' TL' in _norm(n)]
-           assert len(names)==1
-           summary=summary_rows(pd.read_excel(path,sheet_name=names[0],header=None),set(views['products']))
-           native={}
-           for identity,products in views['tl_reps'].items():
-            for product,values in products.items():native[('REPRESENTATIVE',identity[0].split()[0],representative_name_key(identity[1]),product)]=values
-           for identity,products in views['tl_aggregates'].items():
-            for product,values in products.items():native[('AGGREGATE',identity[0],product)]=values
-           assert set(summary)==set(native)
-           counts=Counter();details=[]
-           for key,values in summary.items():
-            for metric in ('target','actual'):
-             a=Decimal(str(values[metric]));b=Decimal(str(native[key][metric]))
-             counts['checked']+=1
-             if abs(a-b)<=Decimal('0.011'):counts['equal_to_cent']+=1;continue
-             category=('same_whole_lira' if a.quantize(Decimal(1),rounding=ROUND_HALF_UP)==b.quantize(Decimal(1),rounding=ROUND_HALF_UP) else 'different_whole_lira')
-             counts[category]+=1;counts[key[0]+'_'+metric+'_'+category]+=1
-             details.append(dict(identity=key,metric=metric,summary=str(a),matrix=str(b),category=category))
-           Path('instance/week41-tl-summary-comparison-private.json').write_text(json.dumps(dict(counts=dict(counts),differences=details)))
-           print('WEEK41_TL_SUMMARY_CLASSIFICATION|'+json.dumps(dict(counts)),flush=True)
-          
-          PY
-          grep -E '^WEEK41_' instance/week41-tl-classification.log
           REMOTE
           
