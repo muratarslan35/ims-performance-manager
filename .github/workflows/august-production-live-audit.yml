@@ -1,4 +1,4 @@
-name: Week 41 Authenticated HTML Acceptance
+name: Week 41 Read Only Performance Baseline
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -45,39 +45,74 @@ jobs:
 
           
           umask 077
-          venv/bin/python -u - <<'PY' > instance/week41-html-acceptance.log 2>&1
+          venv/bin/python -u - <<'PY' > instance/week41-performance-baseline.log 2>&1
+          import os,json,time,cProfile,pstats,hashlib,re
+          from pathlib import Path
+          from collections import defaultdict
+          os.umask(0o077)
+          for _ in range(90):
+           p=Path('instance/week41-final-generations-validation.log')
+           if p.exists() and '"result": "PASS"' in p.read_text():break
+           time.sleep(10)
+          else:raise RuntimeError('Historical verification not yet PASS')
           from app import create_app
           from app.extensions import db
-          from app.models import User
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          from app.models import IMSUpload,IMSFact,Representative,RepresentativeBrickAssignment
+          from app.services.representative_period_workspace import build_representative_workspace_payload
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
+          from app.services.annual_realization_service import AnnualRealizationService
+          from app.services.representative_query_optimizer import use_snapshot_upload_ids
+          from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
+          from sqlalchemy import event,func
           app=create_app()
-          from flask import template_rendered
-          seen=[]
-          def capture(sender,template,context,**extra):seen.append(context)
-          template_rendered.connect(capture,app)
           with app.app_context():
-           user=User.query.filter(User.active.is_(True),db.func.lower(User.role).in_(['admin','administrator'])).first()
-           assert user is not None
-           client=app.test_client()
-           from verify_region_manager_production import _login_as
-           _login_as(client,user.id)
-           snapshots=PersistentRegionSnapshotService.get_active_all(2026,10)
-           checked=0
-           for region,payload in snapshots.items():
-            seen.clear()
-            response=client.get('/regions/'+region+'?year=2026&month=10')
-            assert response.status_code==200,(region,'HTTP status')
-            assert seen,(region,'render context')
-            context=seen[-1];market=context['market_analysis']
-            expected='{:,.0f}'.format(market['totals']['effective_company_unit'])
-            html=response.get_data(as_text=True)
-            match=re.search(r'BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>(.*?)</strong>',html)
-            assert match and match.group(1)==expected,(region,'rendered official company units')
-            checked+=1
-           print('WEEK41_REGION_HTML_ACCEPTANCE|'+json.dumps(dict(result='PASS',regions=checked)),flush=True)
+           db.session.execute(db.text('PRAGMA query_only=ON'))
+           pin={}
+           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
+            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
+           ids=[r[0] for r in db.session.query(IMSFact.representative_id).filter_by(upload_id=56,report_type='brick_sales').distinct()]
+           rid=db.session.query(RepresentativeBrickAssignment.representative_id).filter(
+            RepresentativeBrickAssignment.year==2026,RepresentativeBrickAssignment.month==10,
+            RepresentativeBrickAssignment.active.is_(True),RepresentativeBrickAssignment.representative_id.in_(ids)
+           ).group_by(RepresentativeBrickAssignment.representative_id).order_by(func.count().desc()).first()[0]
+           inputs=AnnualRealizationService.build_snapshot_inputs(2026)
+           records=defaultdict(lambda:dict(calls=0,seconds=0.0,sql=None,parameters=None))
+           def before(conn,cursor,statement,parameters,context,executemany):context._probe_started=time.perf_counter()
+           def after(conn,cursor,statement,parameters,context,executemany):
+            if not statement.lstrip().upper().startswith('SELECT'):return
+            key=hashlib.sha256(statement.encode()).hexdigest()[:12];rec=records[key]
+            rec['calls']+=1;rec['seconds']+=time.perf_counter()-context._probe_started;rec['sql']=statement;rec['parameters']=parameters
+           event.listen(db.engine,'before_cursor_execute',before);event.listen(db.engine,'after_cursor_execute',after)
+           RepresentativeAnalysisCache.clear()
+           profiler=cProfile.Profile();start=time.perf_counter();profiler.enable()
+           with use_snapshot_upload_ids(pin):
+            payload=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=inputs)
+           profiler.disable();elapsed=time.perf_counter()-start
+           event.remove(db.engine,'before_cursor_execute',before);event.remove(db.engine,'after_cursor_execute',after)
+           plain=Snap._json_ready(payload);encoded=json.dumps(plain,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+           Path('instance/week41-performance-baseline-payload.json').write_text(encoded)
+           profiler.dump_stats('instance/week41-performance-baseline.prof')
+           result=dict(representative_id=int(rid),seconds=elapsed,queries=sum(r['calls'] for r in records.values()),sql_seconds=sum(r['seconds'] for r in records.values()),payload_sha256=hashlib.sha256(encoded.encode()).hexdigest())
+           Path('instance/week41-performance-baseline.json').write_text(json.dumps(result))
+           print('WEEK41_PROFILE_BASELINE|'+json.dumps({k:v for k,v in result.items() if k!='representative_id'}),flush=True)
+           top=[]
+           for key,rec in sorted(records.items(),key=lambda item:-item[1]['seconds'])[:15]:
+            plan=[]
+            try:plan=[r[-1] for r in db.session.connection().exec_driver_sql('EXPLAIN QUERY PLAN '+rec['sql'],rec['parameters'])]
+            except Exception:pass
+            top.append(dict(query_hash=key,calls=rec['calls'],seconds=round(rec['seconds'],3),tables=sorted(set(re.findall(r'(?:FROM|JOIN)\s+([a-z_]+)',rec['sql']))),plan=plan))
+           print('WEEK41_PROFILE_SQL|'+json.dumps(top),flush=True)
+           stats=pstats.Stats(profiler)
+           callers=[]
+           for (file,line,name),(cc,nc,tt,ct,callers_map) in sorted(stats.stats.items(),key=lambda item:-item[1][3]):
+            if '/app/' in file.replace('\\','/'):
+             callers.append(dict(file=file.split('/ims_system/')[-1],line=line,function=name,calls=nc,self_seconds=round(tt,3),cumulative_seconds=round(ct,3)))
+            if len(callers)>=25:break
+           print('WEEK41_PROFILE_CALLERS|'+json.dumps(callers),flush=True)
+           Path('instance/week41-performance-sql-private.json').write_text(json.dumps(records,default=str))
            db.session.rollback()
           
           PY
-          grep -E '^WEEK41_' instance/week41-html-acceptance.log
+          grep -E '^WEEK41_' instance/week41-performance-baseline.log
           REMOTE
           
