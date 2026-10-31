@@ -557,7 +557,7 @@ body[data-theme="dark"] .box-balance.is-neutral {
     <div class="region-market-head"><div><small>BÖLGESEL REKABET VE PAZAR MERKEZİ</small><h2 id="region-market-title">{{ report.region_name }} Bölgesel Ürün ve Rakip Analizi</h2><p>{{ report.active_count }} temsilcinin bağlı bricklerindeki gerçek IMS kutu çıkışları; ürün, rakip ve il bazında gösterilir.</p></div><div class="market-head-tools"><div class="market-period-label"><span>ANALİZ DÖNEMİ</span><strong>{{ month_names[report.month - 1] }} {{ report.year }}</strong></div><i class="bi bi-bar-chart-line-fill fs-2"></i></div></div>
     {% if market_analysis.has_data %}
     <div class="region-market-kpis">
-      <div class="region-market-kpi"><span>BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>{{ "{:,.0f}".format(market_analysis.totals.company_unit) }}</strong></div>
+      <div class="region-market-kpi"><span>BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>{{ "{:,.0f}".format(market_analysis.totals.effective_company_unit if report.year == 2026 and report.month == 9 else market_analysis.totals.company_unit) }}</strong></div>
       <div class="region-market-kpi"><span>BÖLGESEL RAKİP TOPLAM KUTU ÇIKIŞI</span><strong>{{ "{:,.0f}".format(market_analysis.totals.competitor_unit) }}</strong></div>
       <div class="region-market-kpi"><span>BÖLGESEL TOPLAM KUTU PAZARI</span><strong>{{ "{:,.0f}".format(market_analysis.totals.market_unit) }}</strong></div>
       <div class="region-market-kpi"><span>BÖLGESEL ŞİRKET PAZAR PAYI</span><strong>%{{ market_analysis.totals.share_percent }}</strong></div>
