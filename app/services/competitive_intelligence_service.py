@@ -11,7 +11,10 @@ from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.extensions import db
 from app.models import CompetitionData, IMSUpload, Product, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
-from app.services.representative_query_optimizer import install_representative_market_query_optimizer
+from app.services.representative_query_optimizer import (
+    install_representative_market_query_optimizer,
+    snapshot_label_key,
+)
 
 
 # The representative route imports RepresentativeMarketService first and this
@@ -44,7 +47,7 @@ class CompetitiveIntelligenceService:
 
     @staticmethod
     def _key(value):
-        return "".join(ch for ch in AliasService.normalize(value) if ch.isalnum())
+        return snapshot_label_key(value)
 
     @staticmethod
     def _shift(year, month, delta):

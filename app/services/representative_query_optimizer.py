@@ -7,11 +7,10 @@ labels; it never falls back to loading an entire competition upload into Python.
 from __future__ import annotations
 
 import hashlib
+from collections import namedtuple
 from contextlib import contextmanager
 from contextvars import ContextVar
-from types import SimpleNamespace
-
-from sqlalchemy import or_
+from functools import lru_cache
 
 from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.extensions import db
@@ -39,9 +38,14 @@ def use_snapshot_upload_ids(upload_ids):
         "effective_products": {},
         "market_products": None,
         "market_scopes": {},
+        "normalized_labels": {},
+        "product_matches": {},
+        "product_catalogs": {},
+        "company_matches": {},
     })
     try:
-        yield
+        with RepresentativeAnalysisCache.isolated_build_cache():
+            yield
     finally:
         _snapshot_read_cache.reset(cache_token)
         _snapshot_upload_ids.reset(upload_token)
@@ -51,13 +55,46 @@ def _key(value):
     return "".join(ch for ch in AliasService.normalize(value) if ch.isalnum())
 
 
+def snapshot_label_key(value):
+    """Memoize the unchanged label normalization for one snapshot member."""
+    cache = _snapshot_read_cache.get()
+    if cache is None:
+        return _key(value)
+    source = "" if value is None else str(value)
+    labels = cache["normalized_labels"]
+    if source not in labels:
+        result = _key(value)
+        if len(labels) >= 8192:
+            return result
+        labels[source] = result
+    return labels[source]
+
+
 def _scope_signature(values):
     encoded = "|".join(sorted(value for value in values if value)).encode("utf-8")
     return hashlib.sha1(encoded).hexdigest()[:16]
 
 
+class _ImmutableProjection:
+    __slots__ = ()
+
+    def __deepcopy__(self, memo):
+        # These projections contain immutable SQL column scalars only. Sharing
+        # a frozen row avoids recursively cloning tens of thousands of mutable
+        # namespace dictionaries on each cache read.
+        return self
+
+
+@lru_cache(maxsize=16)
+def _projection_type(fields):
+    return type("ScopedReadRow", (_ImmutableProjection, namedtuple("ReadColumns", fields)), {"__slots__": ()})
+
+
 def _namespace_rows(rows):
-    return [SimpleNamespace(**dict(row._mapping)) for row in rows]
+    if not rows:
+        return []
+    projection = _projection_type(tuple(rows[0]._mapping))
+    return [projection(*row) for row in rows]
 
 
 def _label_candidates(value):
@@ -86,6 +123,8 @@ def install_representative_market_query_optimizer():
     original_latest_upload_id = RepresentativeMarketService._latest_upload_id
     original_products = RepresentativeMarketService._products
     original_scope = RepresentativeMarketService._scope
+    original_product_for_row = RepresentativeMarketService._product_for_row
+    original_company_product_name = RepresentativeMarketService._is_company_product_name
     original_effective_products = ProductionResultService.effective_products.__func__
 
     def effective_products(cls, year, month, representative_id, product_ids=None):
@@ -130,6 +169,29 @@ def install_representative_market_query_optimizer():
             scoped = original_scope(self)
             cache["market_scopes"][key] = scoped
         return scoped
+
+    def product_for_row(self, row, products):
+        cache = _snapshot_read_cache.get()
+        if cache is None:
+            return original_product_for_row(self, row, products)
+        # The context retains its product list until the member completes, so
+        # its identity is stable and its ORM objects never cross sessions.
+        key = (id(products), row.product_group, row.product_name)
+        cache["product_catalogs"][id(products)] = products
+        matches = cache["product_matches"]
+        if key not in matches:
+            matches[key] = original_product_for_row(self, row, products)
+        return matches[key]
+
+    def company_product_name(self, product_name, product):
+        cache = _snapshot_read_cache.get()
+        if cache is None:
+            return original_company_product_name(self, product_name, product)
+        key = (int(product.id), product_name)
+        matches = cache["company_matches"]
+        if key not in matches:
+            matches[key] = original_company_product_name(self, product_name, product)
+        return matches[key]
 
     def latest_upload_id(self, year, month):
         """Resolve one period upload once per market-service build.
@@ -239,7 +301,14 @@ def install_representative_market_query_optimizer():
         cache_key = f"rep-market:competition:{self.representative.id}:{year}:{month}:{upload_id}:{scope_hash}"
 
         def load():
+            filters = (
+                CompetitionData.upload_id == upload_id,
+                CompetitionData.metric_type == "UNIT",
+                CompetitionData.is_subtotal.is_(False),
+                CompetitionData.is_grand_total.is_(False),
+            )
             query = db.session.query(
+                CompetitionData.id.label("source_id"),
                 CompetitionData.subterritory.label("subterritory"),
                 CompetitionData.territory.label("territory"),
                 CompetitionData.product_group.label("product_group"),
@@ -247,21 +316,42 @@ def install_representative_market_query_optimizer():
                 CompetitionData.metric_type.label("metric_type"),
                 CompetitionData.metric_value.label("metric_value"),
                 CompetitionData.sheet_name.label("sheet_name"),
-            ).filter(
-                CompetitionData.upload_id == upload_id,
-                CompetitionData.metric_type == "UNIT",
-                CompetitionData.is_subtotal.is_(False),
-                CompetitionData.is_grand_total.is_(False),
-            )
+            ).filter(*filters)
 
-            sql_scopes = []
+            # Resolve the existing representative-first contract in SQL. The
+            # previous OR also read every row in the representative's region,
+            # then discarded them after fetching. Separate UNION branches let
+            # SQLite seek the scope indexes without scanning the whole upload.
+            branches = []
+            representative_exists = None
             if representative_labels:
-                sql_scopes.append(CompetitionData.subterritory.in_(sorted(representative_labels)))
-            if brick_labels:
-                sql_scopes.append(CompetitionData.subterritory.in_(sorted(brick_labels)))
-            if geography_labels:
-                sql_scopes.append(CompetitionData.territory.in_(sorted(geography_labels)))
-            rows = _namespace_rows(query.filter(or_(*sql_scopes)).all()) if sql_scopes else []
+                named = CompetitionData.subterritory.in_(sorted(representative_labels))
+                branches.append(query.filter(named))
+                representative_exists = db.session.query(CompetitionData.id).filter(
+                    *filters, named
+                ).correlate(None).exists()
+            scope_keys = set(brick_keys or ()) or set(fallback_keys or ())
+            for column, candidates in (
+                (CompetitionData.subterritory, brick_labels),
+                (CompetitionData.territory, geography_labels),
+            ):
+                labels = sorted(value for value in candidates if self._key(value) in scope_keys)
+                if not labels:
+                    continue
+                scoped = query.filter(column.in_(labels))
+                if representative_exists is not None:
+                    scoped = scoped.filter(~representative_exists)
+                branches.append(scoped)
+            selected = branches[0].union(*branches[1:]) if len(branches) > 1 else branches[0] if branches else None
+            rows = _namespace_rows(selected.order_by("source_id").all()) if selected is not None else []
+
+            representative_key = self._key(self.representative.rep_name)
+            representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
+            if representative_rows:
+                # These rows do not contain named brick detail. Leave that
+                # bounded query to _brick_competition_rows instead of signalling
+                # an empty detail cache and unnecessarily opening the workbook.
+                return representative_rows
 
             # The exact-brick path executes immediately after this aggregate read
             # during one representative build. Keep the already-fetched bounded
@@ -274,12 +364,6 @@ def install_representative_market_query_optimizer():
                 self._rep_query_competition_raw_cache = raw_cache
             raw_cache[(year, month, int(upload_id))] = list(rows)
 
-            representative_key = self._key(self.representative.rep_name)
-            representative_rows = [row for row in rows if self._key(row.subterritory) == representative_key]
-            if representative_rows:
-                return representative_rows
-
-            scope_keys = set(brick_keys or ()) or set(fallback_keys or ())
             return [
                 row for row in rows
                 if self._key(row.subterritory) in scope_keys or self._key(row.territory) in scope_keys
@@ -396,6 +480,9 @@ def install_representative_market_query_optimizer():
 
     ProductionResultService.effective_products = classmethod(effective_products)
     RepresentativeMarketService._products = products
+    RepresentativeMarketService._key = staticmethod(snapshot_label_key)
+    RepresentativeMarketService._product_for_row = product_for_row
+    RepresentativeMarketService._is_company_product_name = company_product_name
     RepresentativeMarketService._scope = scope
     RepresentativeMarketService._competition_rows = competition_rows
     RepresentativeMarketService._brick_raw_rows = brick_raw_rows

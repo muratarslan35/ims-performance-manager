@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import pytest
 
 from flask_migrate import upgrade
 from sqlalchemy import event
@@ -142,3 +143,50 @@ def test_market_build_paths_reuse_current_upload_and_scope_queries(tmp_path):
 
         assert len(upload_selects) == 1
         assert len(scope_selects) == 1
+
+
+@pytest.mark.parametrize("named,assigned", [(True, True), (False, True), (True, False), (False, False)])
+def test_scoped_union_preserves_legacy_rows_without_fetching_discarded_region(named, assigned, tmp_path, monkeypatch):
+    from sqlalchemy import or_
+    import app.services.representative_query_optimizer as optimizer
+
+    application = _app(tmp_path)
+    with application.app_context():
+        representative = Representative(rep_code="SCOPE", rep_name="SCOPE REP", region="901", city="CITY", territory="GEO", active=True)
+        upload = IMSUpload(file_name="scope.xlsx", year=2026, month=2, quarter="Q1", week_number=6, status="COMPLETED")
+        db.session.add_all([representative, upload]);db.session.flush()
+        if assigned:
+            db.session.add(RepresentativeBrickAssignment(representative_id=representative.id, year=2026, month=2, brick="BRICK A", active=True))
+        labels = [("901", "BRICK A"), ("BRICK A", "OTHER"), ("GEO", "FALLBACK")]
+        labels += [("901", f"NOISE {i}") for i in range(60)]
+        if named:
+            labels.append(("901", representative.rep_name))
+        for index, (territory, subterritory) in enumerate(labels):
+            db.session.add(CompetitionData(upload_id=upload.id, year=2026, month=2, sheet_name="AYLIK REKABET KUTU", period_type="MONTHLY", territory=territory, subterritory=subterritory, product_group="GROUP", product_name="RIVAL", metric_type="UNIT", metric_value=index+1, is_subtotal=False, is_grand_total=False, source_row=index+1))
+        db.session.commit()
+        service = RepresentativeMarketService(representative, 2026, 2)
+        _, brick_keys, fallback_keys = service._scope()
+        brick_labels = optimizer._candidate_set(["BRICK A"] if assigned else [])
+        geography_labels = optimizer._candidate_set(["901", "CITY", "GEO"])
+        representative_labels = optimizer._label_candidates(representative.rep_name)
+        legacy = CompetitionData.query.filter(
+            CompetitionData.upload_id==upload.id, CompetitionData.metric_type=="UNIT",
+            CompetitionData.is_subtotal.is_(False), CompetitionData.is_grand_total.is_(False),
+            or_(CompetitionData.subterritory.in_(representative_labels | brick_labels), CompetitionData.territory.in_(geography_labels)),
+        ).all()
+        expected = [r for r in legacy if service._key(r.subterritory)==service._key(representative.rep_name)]
+        if not expected:
+            scope_keys = brick_keys or fallback_keys
+            expected = [r for r in legacy if service._key(r.subterritory) in scope_keys or service._key(r.territory) in scope_keys]
+        fetched=[]
+        original=optimizer._namespace_rows
+        def capture(rows):
+            fetched.append(len(rows))
+            return original(rows)
+        monkeypatch.setattr(optimizer, "_namespace_rows", capture)
+        _, actual = service._competition_rows(brick_keys, fallback_keys)
+        assert {r.source_id for r in actual} == {r.id for r in expected}
+        assert fetched == [len(expected)]
+        if assigned:
+            _, details = service._brick_competition_rows(brick_keys)
+            assert [r.subterritory for r in details] == ["BRICK A"]

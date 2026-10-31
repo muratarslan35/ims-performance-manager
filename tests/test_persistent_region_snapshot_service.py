@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 
 import pytest
@@ -295,3 +296,72 @@ def test_failed_force_refresh_keeps_previous_active_payload(monkeypatch):
 
         after = PersistentRegionSnapshotService.get_active("101", 2026, 7)
         assert after == before
+
+
+@pytest.mark.parametrize("bad_member", [None, "missing", "corrupt"])
+def test_enrichment_decodes_one_region_at_a_time_and_never_publishes_partial_members(monkeypatch, bad_member):
+    from app.services.persistent_representative_snapshot_service import (
+        PersistentRepresentativeSnapshotService as Reps,
+        representative_snapshot_sets,
+        representative_snapshots,
+    )
+    from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService as Dashboard
+    from app.services.region_ai_snapshot_service import RegionAISnapshotService
+    from app.services.scoped_ai_insight_service import ScopedAIInsightService
+
+    app = _app()
+    with app.app_context():
+        _patch_sources(monkeypatch, (17, 0))
+        class Performance(FakePerformance):
+            def report(self):
+                report = super().report()
+                rid = 1 if self.region_key == "101" else 2
+                report["periods"]["monthly"]["representatives"] = [{"representative_id": rid}]
+                return report
+        monkeypatch.setattr(snapshot_module, "RegionPerformanceService", Performance)
+        region_set = PersistentRegionSnapshotService.build_for_period(2026, 7)["set_id"]
+        before = PersistentRegionSnapshotService.get_active_set_all(region_set)
+        monkeypatch.setattr(Reps, "source_identity", classmethod(lambda cls, y, m: (17 if m==7 else 16, 0)))
+        for month, source, members in [(7, 17, [1, 2]), (6, 16, [3, 4])]:
+            result = db.session.execute(representative_snapshot_sets.insert().values(year=2026, month=month, source_upload_id=source, production_upload_id=0, status="ACTIVE", representative_count=2))
+            sid = int(result.inserted_primary_key[0])
+            for rid in members:
+                if rid==2 and bad_member=="missing":
+                    continue
+                raw = "broken-json" if rid==2 and bad_member=="corrupt" else json.dumps({"identity": rid})
+                db.session.execute(representative_snapshots.insert().values(set_id=sid, representative_id=rid, payload_json=raw))
+        db.session.commit()
+        previous = {
+            region: {"report": {"periods": {"monthly": {"representatives": [{"representative_id": rid}]}}}}
+            for region, rid in [("101", 3), ("102", 4)]
+        }
+        monkeypatch.setattr(PersistentRegionSnapshotService, "get_active_all", classmethod(lambda cls, y, m: previous))
+        monkeypatch.setattr(Dashboard, "get_generation_for_source", classmethod(lambda *args: {}))
+        monkeypatch.setattr(Reps, "_official_monthly_totals", classmethod(lambda cls, ids, y, m: {3: "official-3", 4: "official-4"}))
+        monkeypatch.setattr(Reps, "_apply_official_total_row", classmethod(lambda cls, payload, official: payload.update(official=official)))
+        monkeypatch.setattr(PersistentRegionSnapshotService, "_embed_representative_products", classmethod(lambda cls, report, y, m, workspaces: report))
+        monkeypatch.setattr(PersistentRegionSnapshotService, "_embed_national_product_realizations", staticmethod(lambda report, dashboard: report))
+        monkeypatch.setattr(ScopedAIInsightService, "build", staticmethod(lambda **kwargs: {}))
+        monkeypatch.setattr(RegionAISnapshotService, "build", staticmethod(lambda **kwargs: {
+            "current": sorted(kwargs["current_workspaces"]),
+            "previous": kwargs["previous_workspaces"],
+        }))
+        decoded=[]
+        original=Reps._payloads_from_set
+        def bounded(cls, sid, ids):
+            decoded.append(list(ids))
+            assert len(ids)<=1, "whole-roster JSON decode exceeds region memory bound"
+            return original(sid, ids)
+        monkeypatch.setattr(Reps, "_payloads_from_set", classmethod(bounded))
+        result=PersistentRegionSnapshotService.enrich_for_period(2026, 7)
+        after=PersistentRegionSnapshotService.get_active_set_all(region_set)
+        if bad_member:
+            assert result["status"]=="WAITING_REPRESENTATIVES"
+            assert after==before
+        else:
+            assert result["status"]=="ENRICHED"
+            assert decoded==[[1], [3], [2], [4]]
+            for region, current, prior in [("101", 1, 3), ("102", 2, 4)]:
+                intelligence=after[region]["ai_report"]["region_snapshot_intelligence"]
+                assert intelligence["current"]==[current]
+                assert intelligence["previous"][str(prior)]["official"]==f"official-{prior}"
