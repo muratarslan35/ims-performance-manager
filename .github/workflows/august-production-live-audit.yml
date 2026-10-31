@@ -1,4 +1,4 @@
-name: Week 41 Isolated Performance Comparison
+name: Week 41 Full Roster Read Only Performance Gate
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -46,6 +46,7 @@ jobs:
           
           umask 077
           git fetch origin perf/week41-bounded-publication > instance/week41-shadow-fetch.log 2>&1
+          echo "SHADOW_COMMIT|$(git rev-parse FETCH_HEAD)"
           shadow="$(mktemp -d instance/week41-shadow.XXXXXX)"
           git archive FETCH_HEAD | tar -x -C "$shadow"
           export IMS_SHADOW_PATH="$PWD/$shadow"
@@ -85,6 +86,10 @@ jobs:
             RepresentativeBrickAssignment.active.is_(True),RepresentativeBrickAssignment.representative_id.in_(ids)
            ).group_by(RepresentativeBrickAssignment.representative_id).order_by(func.count().desc()).first()[0]
            inputs=AnnualRealizationService.build_snapshot_inputs(2026)
+           from app.services.kpi_market_single_source import _upload_has_authority
+           authority_started=time.perf_counter()
+           authority_by_upload={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
+           print('WEEK41_SHARED_SOURCE_SETUP|'+json.dumps(dict(seconds=round(time.perf_counter()-authority_started,3),sources=len(authority_by_upload))),flush=True)
            records=defaultdict(lambda:dict(calls=0,seconds=0.0,sql=None,parameters=None))
            def before(conn,cursor,statement,parameters,context,executemany):context._probe_started=time.perf_counter()
            def after(conn,cursor,statement,parameters,context,executemany):
@@ -94,7 +99,7 @@ jobs:
            event.listen(db.engine,'before_cursor_execute',before);event.listen(db.engine,'after_cursor_execute',after)
            RepresentativeAnalysisCache.clear()
            profiler=cProfile.Profile();start=time.perf_counter();profiler.enable()
-           with use_snapshot_upload_ids(pin):
+           with use_snapshot_upload_ids(pin,authority_by_upload=authority_by_upload):
             payload=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=inputs)
            profiler.disable();elapsed=time.perf_counter()-start
            event.remove(db.engine,'before_cursor_execute',before);event.remove(db.engine,'after_cursor_execute',after)
@@ -143,6 +148,33 @@ jobs:
            walk(before,after)
            print('WEEK41_PROFILE_DIFFERENCE_PATHS|'+json.dumps(dict(count=len(differences),paths=differences[:40])),flush=True)
            raise SystemExit(1)
+          
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          def member(rid):
+           started=time.perf_counter()
+           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority_by_upload):
+            try:
+             old=Snap.get_exact_active_many([rid],2026,10).get(rid)
+             workspace=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=inputs)
+             encoded=json.dumps(Snap._json_ready(workspace),sort_keys=True,separators=(',',':'),default=Snap._json_default)
+             previous=json.dumps(old,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+             return dict(id=rid,same=encoded==previous,sha256=hashlib.sha256(encoded.encode()).hexdigest(),previous_sha256=hashlib.sha256(previous.encode()).hexdigest(),seconds=time.perf_counter()-started)
+            except Exception as exc:
+             import traceback
+             (live/'instance'/f'week41-shadow-member-{rid}-error-private.log').write_text(traceback.format_exc())
+             return dict(id=rid,same=False,error_type=type(exc).__name__,seconds=time.perf_counter()-started)
+            finally:db.session.rollback()
+          start=time.perf_counter();results=[]
+          with ThreadPoolExecutor(max_workers=3) as pool:
+           futures={pool.submit(member,rid):rid for rid in ids}
+           for future in as_completed(futures):
+            results.append(future.result())
+            if len(results)%8==0 or len(results)==len(ids):print('WEEK41_SHADOW_ROSTER_PROGRESS|'+json.dumps(dict(done=len(results),total=len(ids),seconds=round(time.perf_counter()-start,3))),flush=True)
+          elapsed=time.perf_counter()-start
+          (live/'instance/week41-shadow-roster-results-private.json').write_text(json.dumps(results))
+          failed=[r for r in results if not r['same']]
+          print('WEEK41_SHADOW_ROSTER_ACCEPTANCE|'+json.dumps(dict(result='FAIL' if failed else 'PASS',representatives=len(results),failures=len(failed),seconds=round(elapsed,3),errors=[r.get('error_type') for r in failed if r.get('error_type')])),flush=True)
+          if failed:raise SystemExit(1)
           
           PY
           result=$?
