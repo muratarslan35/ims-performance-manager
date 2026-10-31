@@ -43,118 +43,42 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import json,hashlib
+          PYTHONPATH="$IMS_PATH" nice -n 10 venv/bin/python - <<'PY'
+          import hashlib,json,sqlite3
           from pathlib import Path
-          from collections import defaultdict
-          import pandas as pd
-          import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload,IMSRawData,IMSFact,Target,Representative
-          from app.services.ims_import_service import IMSImportService
-          from app.services.adaptive_kpi_target_authority import _pair_views
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.product_unit_price_service import ProductUnitPriceService
-          from app.services.tl_box_calculation_service import TLBoxCalculationService as Box
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as RS
-          from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService as DS
-          from app.services.production_result_service import ProductionResultService
+          from app.models import IMSImportJob
+          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
           app=create_app()
-          def out(tag,data):print(tag+'|'+json.dumps(data,default=str),flush=True)
-          def same(a,b):return a is not None and abs(float(a)-float(b))<.011
           with app.app_context():
-           db.session.execute(sa.text('PRAGMA query_only=ON'))
-           uploads=IMSUpload.query.filter_by(year=2026,month=9).order_by(IMSUpload.week_number,IMSUpload.id).all()
-           out('SEP_UPLOADS',[dict(id=u.id,week=u.week_number,status=u.status,file=u.file_name) for u in uploads])
-           out('SEP_PRODUCTION',str(ProductionResultService.final_upload(2026,9)))
-           latest=max((u for u in uploads if u.status=='COMPLETED'),key=lambda u:(u.week_number,u.id))
-           for u in uploads:
-            if u.status!='COMPLETED':continue
-            path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/f'upload-{u.id}.xlsx'
-            if not path.is_file():
-             out('SEP_FILE',dict(id=u.id,error='archive missing'));continue
-            a=IMSImportService(str(path)); a.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
-            v=_pair_views(a)
-            if v is None:
-             out('SEP_FILE',dict(id=u.id,error='no paired view',sheets=list(a.workbook)));continue
-            pids={n:a.resolve_product_match(n)['object'].id for n in v['products']}
-            raw={(r.sheet_type,r.territory,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==u.id,IMSRawData.sheet_type.in_(('official_target_aggregate','official_actual_aggregate')))}
-            mism=[];matches=0
-            for ident,vals in v['tl_aggregates'].items():
-             for name,pid in pids.items():
-              for metric,kind in [('target','official_target_aggregate'),('actual','official_actual_aggregate')]:
-               r=raw.get((kind,ident[0],pid))
-               if r is not None and same(r.tl,vals[name][metric]) and same(r.unit,v['unit_aggregates'][ident][name][metric]):matches+=1
-               else:mism.append(dict(region=ident[0],product=pid,metric=metric,db=None if r is None else [r.tl,r.unit],excel=[vals[name][metric],v['unit_aggregates'][ident][name][metric]]))
-            out('SEP_FILE',dict(id=u.id,week=u.week_number,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),sheets=len(a.workbook),pair=[v['tl_name'],v['unit_name']],representatives=len(v['tl_reps']),products=len(pids),aggregate_matches=matches,aggregate_mismatches=len(mism),examples=mism[:2],fact_rows=IMSFact.query.filter_by(upload_id=u.id).count()))
-            from app.services.adaptive_kpi_target_authority import _norm
-            identities=defaultdict(set)
-            for rawrow in IMSRawData.query.filter_by(upload_id=u.id).filter(IMSRawData.representative_id.isnot(None)):
-             identities[_norm(rawrow.representative)].add(rawrow.representative_id)
-            ff={(f.representative_id,f.product_id):f for f in IMSFact.query.filter_by(upload_id=u.id)}
-            weeklyfails=[];weeklycount=0
-            for (territory,name),values in v['tl_reps'].items():
-             ids=identities.get(_norm(name),set())
-             if len(ids)!=1:
-              weeklyfails.append(dict(name=name,ids=list(ids)));continue
-             rid=next(iter(ids))
-             for prod,pid in pids.items():
-              fact=ff.get((rid,pid));weeklycount+=1
-              if fact is None or not same(fact.tl,values[prod]['actual']):weeklyfails.append(dict(rep=rid,pid=pid,db=getattr(fact,'tl',None),excel=values[prod]['actual']))
-            out('SEP_REP_SOURCE',dict(upload=u.id,checks=weeklycount,failures=weeklyfails))
-            if u.id!=latest.id:continue
-            prices=ProductUnitPriceService.price_map(pids.values(),2026,9)
-            visible=RS.get_active_all(2026,9)
-            fails=[];ct=defaultdict(int);totals=[]
-            for ident,vals in v['tl_aggregates'].items():
-             reg=ident[0]
-             if reg=='NATIONAL':continue
-             payload=visible.get(reg,{})
-             monthly=((payload.get('report') or {}).get('periods') or {}).get('monthly') or {}
-             rows={int(r['product_id']):r for r in monthly.get('products',[])}
-             market={int(r['product_id']):r for r in (payload.get('market_analysis') or {}).get('rows',[])}
-             service=RegionPerformanceService(reg,2026,9)
-             reps=defaultdict(lambda:[0,0])
-             for (region,rep),products in v['tl_reps'].items():
-              if region.split()[0]==reg:
-               for n,values in products.items():reps[n][0]+=values['target'];reps[n][1]+=values['actual']
-             for name,pid in pids.items():
-              expected=dict(target_tl=vals[name]['target'],actual_tl=vals[name]['actual'],target_unit=Box.boxes_from_tl(vals[name]['target'],prices[pid]),actual_unit=Box.boxes_from_tl(vals[name]['actual'],prices[pid]))
-              for field,value in expected.items():
-               ct['region_checks']+=1
-               if not same(rows.get(pid,{}).get(field),value):fails.append(dict(region=reg,pid=pid,field=field,db=rows.get(pid,{}).get(field),excel_expected=value,rep_tl=reps[name]))
-              for field,expfield in [('target_unit','target_unit'),('company_unit','actual_unit')]:
-               ct['market_checks']+=1
-               if not same(market.get(pid,{}).get(field),expected[expfield]):ct['market_mismatches']+=1
-             totals.append(dict(region=reg,source=monthly.get('source_by_month'),excel=[sum(p['target'] for p in vals.values()),sum(p['actual'] for p in vals.values())],published=[monthly.get('target_tl'),monthly.get('actual_tl'),monthly.get('target_unit'),monthly.get('actual_unit')],representatives=[sum(p[0] for p in reps.values()),sum(p[1] for p in reps.values())]))
-            dashboard=DS.get_generation_for_source(2026,9,u.id,0) or {}
-            natrows={int(r['product_id']):r for r in (dashboard.get('executive_metrics') or {}).get('products',[])}
-            for ident,vals in v['tl_aggregates'].items():
-             if ident[0]!='NATIONAL':continue
-             for name,pid in pids.items():
-              for field,val in [('target_tl',vals[name]['target']),('actual_tl',vals[name]['actual']),('unit_target',Box.boxes_from_tl(vals[name]['target'],prices[pid])),('unit_actual',Box.boxes_from_tl(vals[name]['actual'],prices[pid]))]:
-               ct['national_checks']+=1
-               if not same(natrows.get(pid,{}).get(field),val):fails.append(dict(region='NATIONAL',pid=pid,field=field,db=natrows.get(pid,{}).get(field),excel_expected=val))
-            targets={(r.representative_id,r.product_id):r for r in Target.query.filter_by(year=2026,month=9)}
-            facts={(r.representative_id,r.product_id):r for r in IMSFact.query.filter_by(upload_id=u.id)}
-            repfails=[]
-            for (reg,name),vals in v['tl_reps'].items():
-             sourceids=identities.get(_norm(name),set())
-             match={'matched':True,'object':db.session.get(Representative,next(iter(sourceids)))} if len(sourceids)==1 else a.resolve_representative_match(name)
-             if not match.get('matched'):
-              candidates=Representative.query.filter(Representative.rep_name==name).all()
-              candidates=[r for r in candidates if str(r.region).startswith(reg)]
-              if len(candidates)!=1:repfails.append(dict(name=name,region=reg,error='unmatched'));continue
-              rid=candidates[0].id
-             else:rid=match['object'].id
-             for prod,pid in pids.items():
-              t=targets.get((rid,pid));f=facts.get((rid,pid));ct['rep_products']+=1
-              if t is None or f is None or not same(t.tl_target,vals[prod]['target']) or not same(f.tl,vals[prod]['actual']):repfails.append(dict(rep=rid,product=pid,db=[getattr(t,'tl_target',None),getattr(f,'tl',None)],excel=[vals[prod]['target'],vals[prod]['actual']]))
-            out('SEP_DASHBOARD_SHAPE',dict(keys=list(dashboard),national_products=list(natrows.values())[:1],region_realization=dashboard.get('region_realization')))
-            out('SEP_REGION_TOTALS',totals)
-            out('SEP_VIEW_AUDIT',dict(latest=u.id,counts=dict(ct),failures=len(fails),examples=fails,representative_failures=len(repfails),rep_examples=repfails[:5]))
-           db.session.rollback()
+           job=IMSImportJob.query.filter_by(ims_upload_id=53).order_by(IMSImportJob.id.desc()).first()
+           print('SEP_JOB_INFO|'+json.dumps(dict(id=job.id if job else None,status=job.status if job else None,summary=job.result_summary if job else None,sealed=IMSUploadLifecycleService.snapshot_master_state_sealed(upload_id=53)),default=str),flush=True)
+           result={}
+           conn=sqlite3.connect('file:'+str(Path(db.engine.url.database).resolve())+'?mode=ro',uri=True)
+           def digest(key,sql):
+            h=hashlib.sha256();n=0
+            for row in conn.execute(sql):
+             h.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());h.update(b'\n');n+=1
+            result[key]=dict(rows=n,sha256=h.hexdigest())
+           for table in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data'):
+            digest(table,f'SELECT * FROM {table} WHERE year=2026 AND month=9 ORDER BY id')
+           for sets,rows in [('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')]:
+            where="NOT (s.year=2026 AND s.month=9)" if rows=='manager_region_snapshots' else '1=1'
+            digest(rows,f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND {where} ORDER BY r.id")
+           files={}
+           root=Path(app.instance_path)/'dashboard_snapshots'
+           for path in sorted(root.glob('*.json')):
+            if not path.name.startswith('dashboard-2026-09'):files[path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
+           result['other_dashboard_files']=files
+           baseline=Path('instance/september-authority-protected-before.json')
+           if baseline.exists():
+            before=json.loads(baseline.read_text()); changed=[k for k in set(before)|set(result) if before.get(k)!=result.get(k)]
+            print('SEPTEMBER_PROTECTED_COMPARE|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
+            if changed:raise SystemExit(1)
+           else:
+            baseline.write_text(json.dumps(result),encoding='utf-8')
+            print('SEPTEMBER_PROTECTED_BASELINE|'+json.dumps(dict(tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
           
           PY
           REMOTE
