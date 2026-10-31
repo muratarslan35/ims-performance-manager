@@ -1,4 +1,4 @@
-name: September Official Region Recovery
+name: September Final Read Only Acceptance
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -20,7 +20,7 @@ jobs:
       IMS_USER: ${{ vars.IMS_SERVER_USER || 'ubuntu' }}
       IMS_PATH: ${{ vars.IMS_DEPLOY_PATH || '/home/ubuntu/ims_system' }}
     steps:
-      - name: Configure production SSH
+      - name: Configure read-only SSH
         env:
           IMS_DEPLOY_SSH_KEY: ${{ secrets.IMS_DEPLOY_SSH_KEY }}
         run: |
@@ -31,7 +31,7 @@ jobs:
           chmod 600 ~/.ssh/audit_key
           ssh-keyscan -p "$IMS_PORT" -H "$IMS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Refresh and verify September only
+      - name: Verify September rendered cards and protected snapshots
         run: |
           set -Eeuo pipefail
           ssh -i ~/.ssh/audit_key -p "$IMS_PORT" \
@@ -43,82 +43,51 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          test "$(git rev-parse HEAD)" = 76a29175e1f93c926aef6627fcf96ab4317757ff
-          exec 9>instance/.production-maintenance.lock
-          flock -w 300 9
-          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'BACKUP'
-          import json,shutil
+          test "$(git rev-parse HEAD)" = f04b524ac1b8e9c80be25f14c823638dc93b2dea
+          PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
+          import hashlib,json,re
           from pathlib import Path
           import sqlalchemy as sa
           from app import create_app
           from app.extensions import db
-          from app.models import IMSImportJob
-          from app.services.ims_progress_store import IMSProgressStore
-          from app.services.persistent_region_snapshot_service import region_snapshot_sets,region_snapshots
+          from app.models import User
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as RS
+          from verify_region_manager_production import _login_as
           app=create_app()
+          failures=[];checked=[]
           with app.app_context():
-           for job in IMSImportJob.query.filter(IMSImportJob.status.in_(('QUEUED','PROCESSING'))):
-            raise RuntimeError('Active import prevents maintenance')
-           latest=IMSImportJob.query.order_by(IMSImportJob.id.desc()).first()
-           progress=IMSProgressStore.read(latest.id) or {}
-           if progress.get('status') in ('PROCESSING','QUEUED'):raise RuntimeError('Active publication prevents maintenance')
-           backup=Path(app.instance_path)/'september-authority-read-model-backup-53'
-           backup.mkdir(exist_ok=True)
-           manifest=backup/'regions-and-job.json'
-           if not manifest.exists():
-            sets=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshot_sets).where(region_snapshot_sets.c.year==2026,region_snapshot_sets.c.month==9))]
-            ids=[s['id'] for s in sets]
-            rows=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshots).where(region_snapshots.c.set_id.in_(ids)))]
-            job=IMSImportJob.query.filter_by(ims_upload_id=53).order_by(IMSImportJob.id.desc()).first()
-            manifest.write_text(json.dumps(dict(sets=sets,rows=rows,job=dict(id=job.id,result_summary=job.result_summary,progress=IMSProgressStore.read(job.id))),default=str),encoding='utf-8')
-            for path in (Path(app.instance_path)/'dashboard_snapshots').glob('dashboard-2026-09*.json'):
-             shutil.copy2(path,backup/path.name)
-           print('SEPTEMBER_READ_MODEL_BACKUP|'+str(backup),flush=True)
-          
-          BACKUP
-          sudo systemctl stop ims-import-worker.service
-          trap 'sudo systemctl start ims-import-worker.service' EXIT
-          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/refresh_september_official_region_publication.py --upload 53
-          sudo systemctl start ims-import-worker.service
-          trap - EXIT
-          sudo systemctl is-active ims-import-worker.service
-          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/verify_official_region_publication.py --year 2026 --month 9
-          PYTHONPATH="$IMS_PATH" nice -n 10 venv/bin/python - <<'PROTECT'
-          import hashlib,json,sqlite3
-          from pathlib import Path
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSImportJob
-          from app.services.ims_upload_lifecycle_service import IMSUploadLifecycleService
-          app=create_app()
-          with app.app_context():
-           job=IMSImportJob.query.filter_by(ims_upload_id=53).order_by(IMSImportJob.id.desc()).first()
-           print('SEP_JOB_INFO|'+json.dumps(dict(id=job.id if job else None,status=job.status if job else None,summary=job.result_summary if job else None,sealed=IMSUploadLifecycleService.snapshot_master_state_sealed(upload_id=53)),default=str),flush=True)
-           result={}
-           conn=sqlite3.connect('file:'+str(Path(db.engine.url.database).resolve())+'?mode=ro',uri=True)
-           def digest(key,sql):
-            h=hashlib.sha256();n=0
-            for row in conn.execute(sql):
-             h.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());h.update(b'\n');n+=1
-            result[key]=dict(rows=n,sha256=h.hexdigest())
-           for table in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data'):
-            digest(table,f'SELECT * FROM {table} WHERE year=2026 AND month=9 ORDER BY id')
+           admin=next(u for u in User.query.filter_by(active=True).all() if (u.role or '').lower()=='admin')
+           payloads=RS.get_active_all(2026,9)
+           assert len(payloads)==11
+           client=app.test_client();_login_as(client,admin.id)
+           for region,payload in payloads.items():
+            market=payload['market_analysis']
+            expected=sum(float(r['company_unit']) for r in market['rows'])
+            assert abs(expected-float(market['totals']['effective_company_unit']))<.001
+            response=client.get('/regions/'+region+'?year=2026&month=9')
+            html=response.get_data(as_text=True)
+            match=re.search(r'BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>([^<]+)</strong>',html)
+            actual=match.group(1) if match else None
+            if response.status_code!=200 or actual!=format(expected,',.0f'):
+             failures.append(dict(region=region,status=response.status_code,actual=actual,expected=format(expected,',.0f')))
+            checked.append(dict(region=region,company_exit_boxes=expected,rendered=actual))
+           print('SEPTEMBER_REGION_HTML_ACCEPTANCE|'+json.dumps(dict(result='FAIL' if failures else 'PASS',regions=checked,failures=failures)),flush=True)
+           baseline=json.loads(Path('instance/september-authority-protected-before.json').read_text())
+           current={}
            for sets,rows in [('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')]:
             where="NOT (s.year=2026 AND s.month=9)" if rows=='manager_region_snapshots' else '1=1'
-            digest(rows,f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND {where} ORDER BY r.id")
+            digest=hashlib.sha256();count=0
+            for row in db.session.execute(sa.text(f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND {where} ORDER BY r.id")):
+             digest.update(json.dumps(tuple(row),ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
+            current[rows]=dict(rows=count,sha256=digest.hexdigest())
            files={}
-           root=Path(app.instance_path)/'dashboard_snapshots'
-           for path in sorted(root.glob('*.json')):
+           for path in sorted((Path(app.instance_path)/'dashboard_snapshots').glob('*.json')):
             if not path.name.startswith('dashboard-2026-09'):files[path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
-           result['other_dashboard_files']=files
-           baseline=Path('instance/september-authority-protected-before.json')
-           if baseline.exists():
-            before=json.loads(baseline.read_text()); changed=[k for k in set(before)|set(result) if before.get(k)!=result.get(k)]
-            print('SEPTEMBER_PROTECTED_COMPARE|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
-            if changed:raise SystemExit(1)
-           else:
-            baseline.write_text(json.dumps(result),encoding='utf-8')
-            print('SEPTEMBER_PROTECTED_BASELINE|'+json.dumps(dict(tables={k:v for k,v in result.items() if k!='other_dashboard_files'},dashboard_files=len(files))),flush=True)
+           current['other_dashboard_files']=files
+           changed=[k for k,v in current.items() if baseline.get(k)!=v]
+           print('SEPTEMBER_FINAL_PROTECTED_SNAPSHOTS|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,region_rows=current['manager_region_snapshots']['rows'],representative_rows=current['representative_snapshots']['rows'],dashboard_files=len(files))),flush=True)
+           if failures or changed:raise SystemExit(1)
           
-          PROTECT
+          PY
+          sudo systemctl is-active ims-performance-manager.service ims-import-worker.service ims-report-worker.service
           REMOTE
