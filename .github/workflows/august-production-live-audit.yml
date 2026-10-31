@@ -45,24 +45,26 @@ jobs:
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
           import json
+          from pathlib import Path
+          from collections import defaultdict
+          import pandas as pd
           from app import create_app
-          from app.extensions import db
-          from app.models import Target,IMSFact,Representative
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as RS
+          from app.models import IMSRawData
+          from app.services.ims_import_service import IMSImportService
+          from app.services.adaptive_kpi_target_authority import _pair_views,_norm
           app=create_app()
           with app.app_context():
-           targets={r.representative_id for r in Target.query.filter_by(year=2026,month=9)}
-           facts={r.representative_id for r in IMSFact.query.filter_by(upload_id=53)}
-           payloads=RS.get_active_all(2026,9)
-           result=[]
-           for rid in sorted(targets-facts):
-            r=db.session.get(Representative,rid)
-            visible=[]
-            for region,payload in payloads.items():
-             rows=(((payload.get('report') or {}).get('periods') or {}).get('monthly') or {}).get('representatives',[])
-             visible.extend([dict(region=region,row=row) for row in rows if row['representative_id']==rid])
-            result.append(dict(id=rid,name=r.rep_name,region=r.region,active=r.active,visible=visible))
-           print('SEP_RETIRED_TARGET_SCOPE|'+json.dumps(result,default=str),flush=True)
+           for uid in (49,53):
+            path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/f'upload-{uid}.xlsx'
+            a=IMSImportService(str(path));a.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
+            v=_pair_views(a);ids=defaultdict(set)
+            for r in IMSRawData.query.filter_by(upload_id=uid).filter(IMSRawData.representative_id.isnot(None)):ids[_norm(r.representative)].add(r.representative_id)
+            reps=[]
+            for (region,name),products in v['tl_reps'].items():
+             if region.split()[0]!='501':continue
+             reps.append(dict(name=name,ids=sorted(ids[_norm(name)]),vacant=a._is_vacancy_representative(name),target=sum(p['target'] for p in products.values()),actual=sum(p['actual'] for p in products.values())))
+            region=next(p for ident,p in v['tl_aggregates'].items() if ident[0]=='501')
+            print('ANKARA_SOURCE_POSITIONS|'+json.dumps(dict(upload=uid,positions=reps,official_target=sum(p['target'] for p in region.values()),official_actual=sum(p['actual'] for p in region.values())),default=str),flush=True)
           
           PY
           REMOTE
