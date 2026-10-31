@@ -1,4 +1,4 @@
-name: Week 41 Verified Monthly Cache Bootstrap
+name: Week 41 Monthly Bootstrap Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -43,163 +43,21 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          
-          umask 077
-          git fetch origin fa65eb8870c6c17a834bcb5ceaee13d86328d514 > instance/week41-shadow-fetch.log 2>&1
-          echo "SHADOW_COMMIT|$(git rev-parse FETCH_HEAD)"
-          shadow="$(mktemp -d instance/week41-shadow.XXXXXX)"
-          git archive FETCH_HEAD | tar -x -C "$shadow"
-          export IMS_SHADOW_PATH="$PWD/$shadow"
-          set +e
-          venv/bin/python -u - <<'PY' > instance/week41-monthly-cache-bootstrap.log 2>&1
-          import os,sys,json,time,cProfile,pstats,hashlib,re,sqlite3
+
+          venv/bin/python - <<'PY'
+          import json,re
           from pathlib import Path
-          from collections import defaultdict
-          os.umask(0o077)
-          live=Path.cwd()
-          import config as live_config
-          metadata=json.loads((live/'instance/week41-unit-timing-session.json').read_text())
-          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
-          import app as shadow_app
-          shadow_app.create_database=lambda application:None
-          class ReadOnlyConfig(live_config.Config):
-           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+metadata['database']+'?mode=ro&uri=true'
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSUpload,IMSFact,Representative,RepresentativeBrickAssignment
-          from app.services.representative_period_workspace import build_representative_workspace_payload
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
-          from app.services.annual_realization_service import AnnualRealizationService
-          from app.services.representative_query_optimizer import use_snapshot_upload_ids
-          from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
-          from sqlalchemy import event,func
-          app=create_app(ReadOnlyConfig)
-          app.instance_path=str(live/'instance')
-          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as MonthlyCache
-          MonthlyCache.statistics(reset=True)
-          with app.app_context():
-           db.session.execute(db.text('PRAGMA query_only=ON'))
-           pin={}
-           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
-            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
-           ids=[r[0] for r in db.session.query(IMSFact.representative_id).filter_by(upload_id=56,report_type='brick_sales').distinct()]
-           rid=db.session.query(RepresentativeBrickAssignment.representative_id).filter(
-            RepresentativeBrickAssignment.year==2026,RepresentativeBrickAssignment.month==10,
-            RepresentativeBrickAssignment.active.is_(True),RepresentativeBrickAssignment.representative_id.in_(ids)
-           ).group_by(RepresentativeBrickAssignment.representative_id).order_by(func.count().desc()).first()[0]
-           inputs=AnnualRealizationService.build_snapshot_inputs(2026)
-           from app.services.kpi_market_single_source import _upload_has_authority
-           authority_started=time.perf_counter()
-           authority_by_upload={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
-           print('WEEK41_SHARED_SOURCE_SETUP|'+json.dumps(dict(seconds=round(time.perf_counter()-authority_started,3),sources=len(authority_by_upload))),flush=True)
-           records=defaultdict(lambda:dict(calls=0,seconds=0.0,sql=None,parameters=None))
-           def before(conn,cursor,statement,parameters,context,executemany):context._probe_started=time.perf_counter()
-           def after(conn,cursor,statement,parameters,context,executemany):
-            if not statement.lstrip().upper().startswith('SELECT'):return
-            key=hashlib.sha256(statement.encode()).hexdigest()[:12];rec=records[key]
-            rec['calls']+=1;rec['seconds']+=time.perf_counter()-context._probe_started;rec['sql']=statement;rec['parameters']=parameters
-           event.listen(db.engine,'before_cursor_execute',before);event.listen(db.engine,'after_cursor_execute',after)
-           RepresentativeAnalysisCache.clear()
-           profiler=cProfile.Profile();start=time.perf_counter();profiler.enable()
-           with use_snapshot_upload_ids(pin,authority_by_upload=authority_by_upload):
-            payload=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=inputs)
-           profiler.disable();elapsed=time.perf_counter()-start
-           event.remove(db.engine,'before_cursor_execute',before);event.remove(db.engine,'after_cursor_execute',after)
-           plain=Snap._json_ready(payload);encoded=json.dumps(plain,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-           Path('instance/week41-performance-candidate-payload.json').write_text(encoded)
-           profiler.dump_stats('instance/week41-performance-candidate.prof')
-           result=dict(representative_id=int(rid),seconds=elapsed,queries=sum(r['calls'] for r in records.values()),sql_seconds=sum(r['seconds'] for r in records.values()),payload_sha256=hashlib.sha256(encoded.encode()).hexdigest())
-           Path('instance/week41-performance-candidate.json').write_text(json.dumps(result))
-           print('WEEK41_PROFILE_CANDIDATE|'+json.dumps({k:v for k,v in result.items() if k!='representative_id'}),flush=True)
-           top=[]
-           for key,rec in sorted(records.items(),key=lambda item:-item[1]['seconds'])[:15]:
-            plan=[]
-            try:plan=[r[-1] for r in db.session.connection().exec_driver_sql('EXPLAIN QUERY PLAN '+rec['sql'],rec['parameters'])]
-            except Exception:pass
-            top.append(dict(query_hash=key,calls=rec['calls'],seconds=round(rec['seconds'],3),tables=sorted(set(re.findall(r'(?:FROM|JOIN)\s+([a-z_]+)',rec['sql']))),plan=plan))
-           print('WEEK41_PROFILE_SQL|'+json.dumps(top),flush=True)
-           stats=pstats.Stats(profiler)
-           callers=[]
-           for (file,line,name),(cc,nc,tt,ct,callers_map) in sorted(stats.stats.items(),key=lambda item:-item[1][3]):
-            if '/app/' in file.replace('\\','/'):
-             callers.append(dict(file=file.split('/ims_system/')[-1],line=line,function=name,calls=nc,self_seconds=round(tt,3),cumulative_seconds=round(ct,3)))
-            if len(callers)>=25:break
-           print('WEEK41_PROFILE_CALLERS|'+json.dumps(callers),flush=True)
-           Path('instance/week41-performance-candidate-sql-private.json').write_text(json.dumps(records,default=str))
-           db.session.rollback()
-          
-          baseline=json.loads((live/'instance/week41-performance-baseline.json').read_text())
-          candidate=json.loads((live/'instance/week41-performance-candidate.json').read_text())
-          same=baseline['payload_sha256']==candidate['payload_sha256']
-          print('WEEK41_PROFILE_EQUIVALENCE|'+json.dumps(dict(result='PASS' if same else 'FAIL',baseline_seconds=baseline['seconds'],candidate_seconds=candidate['seconds'],speedup=round(baseline['seconds']/candidate['seconds'],2),same_representative=baseline['representative_id']==candidate['representative_id'])),flush=True)
-          if not same:
-           before=json.loads((live/'instance/week41-performance-baseline-payload.json').read_text())
-           after=json.loads((live/'instance/week41-performance-candidate-payload.json').read_text())
-           differences=[]
-           def walk(a,b,path='root'):
-            if type(a)!=type(b):differences.append(path+':type');return
-            if isinstance(a,dict):
-             for key in set(a)|set(b):
-              label=str(key) if re.fullmatch('[a-z_0-9]+',str(key)) else 'redacted_key'
-              if key not in a or key not in b:differences.append(path+'.'+label+':presence')
-              else:walk(a[key],b[key],path+'.'+label)
-            elif isinstance(a,list):
-             if len(a)!=len(b):differences.append(path+':length')
-             for i,(left,right) in enumerate(zip(a,b)):walk(left,right,path+'.'+str(i))
-            elif a!=b:differences.append(path+':value')
-           walk(before,after)
-           print('WEEK41_PROFILE_DIFFERENCE_PATHS|'+json.dumps(dict(count=len(differences),paths=differences[:40])),flush=True)
-           raise SystemExit(1)
-          
-          from concurrent.futures import ThreadPoolExecutor,as_completed
-          
-          reference_file=live/'instance/week41-canonical-reference-hashes.json'
-          original=json.loads((live/'instance/week41-shadow-roster-results-private.json').read_text())
-          reference={str(r['id']):r['previous_sha256'] for r in original if r['same']}
-          for record in original:
-           if not record['same']:
-            source=live/'instance'/f"week41-reference-member-{record['id']}-private.json"
-            reference[str(record['id'])]=hashlib.sha256(source.read_bytes()).hexdigest()
-          assert len(reference)==113
-          if reference_file.exists():assert json.loads(reference_file.read_text())==reference
-          else:reference_file.write_text(json.dumps(reference))
-          
-          def member(rid):
-           started=time.perf_counter()
-           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority_by_upload):
-            try:
-             expected=reference[str(rid)]
-             workspace=build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=inputs)
-             encoded=json.dumps(Snap._json_ready(workspace),sort_keys=True,separators=(',',':'),default=Snap._json_default)
-             previous_hash=expected
-             return dict(id=rid,same=hashlib.sha256(encoded.encode()).hexdigest()==previous_hash,sha256=hashlib.sha256(encoded.encode()).hexdigest(),previous_sha256=previous_hash,seconds=time.perf_counter()-started)
-            except Exception as exc:
-             import traceback
-             (live/'instance'/f'week41-shadow-member-{rid}-error-private.log').write_text(traceback.format_exc())
-             return dict(id=rid,same=False,error_type=type(exc).__name__,seconds=time.perf_counter()-started)
-            finally:db.session.rollback()
-          start=time.perf_counter();results=[]
-          with ThreadPoolExecutor(max_workers=3) as pool:
-           futures={pool.submit(member,rid):rid for rid in ids}
-           for future in as_completed(futures):
-            results.append(future.result())
-            if len(results)%8==0 or len(results)==len(ids):print('WEEK41_SHADOW_ROSTER_PROGRESS|'+json.dumps(dict(done=len(results),total=len(ids),seconds=round(time.perf_counter()-start,3))),flush=True)
-          elapsed=time.perf_counter()-start
-          (live/'instance/week41-monthly-cache-bootstrap-results-private.json').write_text(json.dumps(results))
-          failed=[r for r in results if not r['same']]
-          print('WEEK41_SHADOW_ROSTER_ACCEPTANCE|'+json.dumps(dict(result='FAIL' if failed else 'PASS',representatives=len(results),failures=len(failed),seconds=round(elapsed,3),errors=[r.get('error_type') for r in failed if r.get('error_type')])),flush=True)
-          if failed:raise SystemExit(1)
-          
-          print('WEEK41_MONTHLY_CACHE_STATS|'+json.dumps(MonthlyCache.statistics()),flush=True)
-          cache_root=live/'instance/representative_monthly_market'
-          files=list(cache_root.glob('*.json.gz'))
-          print('WEEK41_MONTHLY_CACHE_STORAGE|'+json.dumps(dict(files=len(files),bytes=sum(p.stat().st_size for p in files))),flush=True)
+          from datetime import datetime,timezone
+          for name in ('week41-monthly-cache-bootstrap.log','week41-monthly-cache-hot.log'):
+           p=Path('instance')/name
+           if p.exists():
+            for line in p.read_text(errors='replace').splitlines():
+             if re.match(r'^WEEK41_(SHARED_SOURCE_SETUP|PROFILE_CANDIDATE|PROFILE_EQUIVALENCE|PROFILE_DIFFERENCE_PATHS|SHADOW_ROSTER_PROGRESS|SHADOW_ROSTER_ACCEPTANCE|MONTHLY_CACHE)',line):print(line,flush=True)
+          root=Path('instance/representative_monthly_market')
+          files=list(root.glob('*.json.gz')) if root.exists() else []
+          print('WEEK41_MONTHLY_CACHE_CURRENT_FILES|'+json.dumps(dict(files=len(files),bytes=sum(p.stat().st_size for p in files))),flush=True)
+          print('WEEK41_STATUS_TIME|'+datetime.now(timezone.utc).isoformat(),flush=True)
           
           PY
-          result=$?
-          set -e
-          grep -E '^WEEK41_(PROFILE_CANDIDATE|SHARED_SOURCE_SETUP|PROFILE_EQUIVALENCE|PROFILE_DIFFERENCE_PATHS|SHADOW_ROSTER_PROGRESS|SHADOW_ROSTER_ACCEPTANCE|MONTHLY_CACHE)' instance/week41-monthly-cache-bootstrap.log || true
-          echo "WEEK41_MONTHLY_BOOTSTRAP_EXIT|$result"
-          exit "$result"
           REMOTE
           
