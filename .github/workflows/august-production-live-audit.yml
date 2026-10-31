@@ -1,4 +1,4 @@
-name: Week 41 Read Only Source Audit
+name: Week 41 Summary Schema Audit
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,85 +44,31 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
           PYTHONPATH="$IMS_PATH" venv/bin/python - <<'PY'
-          import contextlib,io,json,os,runpy,sys,traceback
+          import json
           from pathlib import Path
-          os.umask(0o077)
-          private=Path('instance/week41-source-audit-private.log')
-          buffer=io.StringIO()
-          summary={}
-          try:
-           with contextlib.redirect_stdout(buffer),contextlib.redirect_stderr(buffer):
-            import pandas as pd
-            import sqlalchemy as sa
-            from collections import defaultdict
-            from app import create_app
-            from app.extensions import db
-            from app.models import IMSUpload,IMSRawData,IMSFact,Target
-            from app.services.ims_import_service import IMSImportService
-            from app.services.adaptive_kpi_target_authority import _pair_views,_norm
-            from app.services.product_unit_price_service import ProductUnitPriceService
-            from app.services.tl_box_calculation_service import TLBoxCalculationService as Box
-            from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService as DS
-            from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as RS
-            from scripts.verify_official_region_publication import main as verify
-            sys.argv=['verify','--year','2026','--month','10']
-            result=verify()
-            for line in buffer.getvalue().splitlines():
-             if line.startswith('OFFICIAL_PUBLICATION_ACCEPTANCE|'):
-              acceptance=json.loads(line.split('|',1)[1])
-              summary['published_acceptance']=dict(result=acceptance['result'],counts=acceptance['counts'],failure_contexts=[x['context'] for x in acceptance['failures']])
-            app=create_app()
-            with app.app_context():
-             db.session.execute(sa.text('PRAGMA query_only=ON'))
-             upload=IMSUpload.query.filter_by(year=2026,month=10,status='COMPLETED').order_by(IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
-             if upload.week_number!=41:raise RuntimeError('Scope changed: newest October source is not week 41')
-             path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/f'upload-{upload.id}.xlsx'
-             adapter=IMSImportService(str(path));adapter.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
-             views=_pair_views(adapter)
-             pids={n:adapter.resolve_product_match(n)['object'].id for n in views['products']}
-             prices=ProductUnitPriceService.price_map(pids.values(),2026,10)
-             ids=defaultdict(set)
-             for r in IMSRawData.query.filter_by(upload_id=upload.id).filter(IMSRawData.representative_id.isnot(None)):
-              ids[_norm(r.representative)].add(int(r.representative_id))
-             facts={(r.representative_id,r.product_id):r for r in IMSFact.query.filter_by(upload_id=upload.id,report_type='brick_sales')}
-             targets={(r.representative_id,r.product_id):r for r in Target.query.filter_by(year=2026,month=10)}
-             counts=defaultdict(int);contexts=[]
-             def check(a,b,label):
-              counts[label+'_checks']+=1
-              if a is None or abs(float(a)-float(b))>.011:counts[label+'_mismatches']+=1
-             for identity,products in views['tl_reps'].items():
-              identity_ids=ids[_norm(identity[1])]
-              if len(identity_ids)!=1:raise RuntimeError('Ambiguous immutable representative identity')
-              rid=next(iter(identity_ids))
-              for name,pid in pids.items():
-               t=targets.get((rid,pid));f=facts.get((rid,pid))
-               check(getattr(t,'tl_target',None),products[name]['target'],'representative_target_tl')
-               check(getattr(f,'tl',None),products[name]['actual'],'representative_actual_tl')
-               check(getattr(t,'unit_target',None),views['unit_reps'][identity][name]['target'],'representative_raw_target_unit')
-               check(getattr(f,'unit',None),views['unit_reps'][identity][name]['actual'],'representative_raw_actual_unit')
-             dashboard=DS.get_generation_for_source(2026,10,upload.id,0)
-             maprows={str(r['code']):r for r in dashboard.get('region_realization',[])}
-             payloads=RS.get_active_all(2026,10)
-             for identity,products in views['tl_aggregates'].items():
-              region=identity[0]
-              for name,pid in pids.items():
-               for metric in ('target','actual'):
-                check(views['unit_aggregates'][identity][name][metric],Box.boxes_from_tl(products[name][metric],prices[pid]),'excel_raw_vs_tl_price_'+metric)
-              if region=='NATIONAL':continue
-              expected=dict(tl_target=sum(p['target'] for p in products.values()),tl_actual=sum(p['actual'] for p in products.values()),unit_target=sum(Box.boxes_from_tl(products[n]['target'],prices[pid]) for n,pid in pids.items()),unit_actual=sum(Box.boxes_from_tl(products[n]['actual'],prices[pid]) for n,pid in pids.items()))
-              for field,value in expected.items():check(maprows.get(region,{}).get(field),value,'map_'+field)
-              market=payloads[region]['market_analysis']
-              check(market['totals'].get('company_unit'),sum(float(r['company_unit']) for r in market['rows']),'legacy_market_card')
-              check(market['totals'].get('effective_company_unit'),sum(float(r['company_unit']) for r in market['rows']),'effective_market_card')
-             summary.update(dict(upload_id=upload.id,week=upload.week_number,source_sheets=len(adapter.workbook),first_two_sheets=list(adapter.workbook)[:2],tl_sheet=views['tl_name'],unit_sheet=views['unit_name'],representatives=len(views['tl_reps']),products=len(pids),source_checks=dict(counts)))
-             db.session.rollback()
-          except BaseException as exc:
-           summary['execution_error']=type(exc).__name__
-           buffer.write(traceback.format_exc())
-          finally:
-           private.write_text(buffer.getvalue(),encoding='utf-8')
-           print('WEEK41_REDACTED_SOURCE_AUDIT|'+json.dumps(summary,ensure_ascii=True),flush=True)
-           if 'execution_error' in summary:raise SystemExit(1)
+          import pandas as pd
+          from app import create_app
+          from app.services.ims_import_service import IMSImportService
+          from app.services.adaptive_kpi_target_authority import _norm,_pair_views
+          app=create_app()
+          with app.app_context():
+           path=Path(app.config['UPLOAD_FOLDER'])/'ims_archive'/'upload-55.xlsx'
+           a=IMSImportService(str(path));a.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20);v=_pair_views(a)
+           names=list(a.workbook)[:2];allowed={_norm(p) for p in v['products']}|{'BOLGE','TTS','IL','HEDEF','URUN CIKIS','NATIONAL','TURKIYE TOPLAM','REAL','REA','RANK','TTS BRICK'}
+           out=[]
+           for name in names:
+            f=pd.read_excel(path,sheet_name=name,header=None)
+            headers=[]
+            for i in range(min(10,len(f))):
+             labels=[]
+             for j in range(f.shape[1]):
+              value=f.iloc[i,j]
+              if isinstance(value,str):
+               label=_norm(value)
+               if label in allowed or label.startswith(('HEDEF','URUN CIKIS','REAL','REA ','TTS ','BOLGE ')):labels.append([j,label])
+             if labels:headers.append(dict(row=i,labels=labels))
+            out.append(dict(sheet=name,rows=len(f),columns=f.shape[1],semantic_headers=headers))
+           print('WEEK41_SUMMARY_SHEET_SCHEMA|'+json.dumps(out,ensure_ascii=True),flush=True)
           
           PY
           REMOTE
