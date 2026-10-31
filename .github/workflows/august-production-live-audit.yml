@@ -50,6 +50,7 @@ jobs:
           from pathlib import Path
           from concurrent.futures import ThreadPoolExecutor,as_completed
           live=Path.cwd()
+          sys.path.insert(0,str(live))
           import config as live_config
           meta=json.loads((live/'instance/week41-unit-timing-session.json').read_text())
           shadow=os.environ.get('IMS_SHADOW_PATH')
@@ -118,7 +119,8 @@ jobs:
           unset IMS_SHADOW_PATH
           venv/bin/python -u instance/week41-paired-recalc.py > instance/week41-paired-reference.log 2>&1
           grep -E '^WEEK41_' instance/week41-paired-reference.log
-          git fetch origin perf/week41-bounded-publication > instance/week41-shadow-fetch.log 2>&1
+          git fetch origin 5b1c986750226e4877373a48fbee3a4f3bc22339 > instance/week41-shadow-fetch.log 2>&1
+          echo "SHADOW_COMMIT|$(git rev-parse FETCH_HEAD)"
           shadow="$(mktemp -d instance/week41-shadow.XXXXXX)"
           git archive FETCH_HEAD | tar -x -C "$shadow"
           export IMS_SHADOW_PATH="$PWD/$shadow"
