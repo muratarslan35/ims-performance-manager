@@ -88,6 +88,21 @@ jobs:
                if r is not None and same(r.tl,vals[name][metric]) and same(r.unit,v['unit_aggregates'][ident][name][metric]):matches+=1
                else:mism.append(dict(region=ident[0],product=pid,metric=metric,db=None if r is None else [r.tl,r.unit],excel=[vals[name][metric],v['unit_aggregates'][ident][name][metric]]))
             out('SEP_FILE',dict(id=u.id,week=u.week_number,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),sheets=len(a.workbook),pair=[v['tl_name'],v['unit_name']],representatives=len(v['tl_reps']),products=len(pids),aggregate_matches=matches,aggregate_mismatches=len(mism),examples=mism[:2],fact_rows=IMSFact.query.filter_by(upload_id=u.id).count()))
+            from app.services.adaptive_kpi_target_authority import _norm
+            identities=defaultdict(set)
+            for rawrow in IMSRawData.query.filter_by(upload_id=u.id).filter(IMSRawData.representative_id.isnot(None)):
+             identities[_norm(rawrow.representative)].add(rawrow.representative_id)
+            ff={(f.representative_id,f.product_id):f for f in IMSFact.query.filter_by(upload_id=u.id)}
+            weeklyfails=[];weeklycount=0
+            for (territory,name),values in v['tl_reps'].items():
+             ids=identities.get(_norm(name),set())
+             if len(ids)!=1:
+              weeklyfails.append(dict(name=name,ids=list(ids)));continue
+             rid=next(iter(ids))
+             for prod,pid in pids.items():
+              fact=ff.get((rid,pid));weeklycount+=1
+              if fact is None or not same(fact.tl,values[prod]['actual']):weeklyfails.append(dict(rep=rid,pid=pid,db=getattr(fact,'tl',None),excel=values[prod]['actual']))
+            out('SEP_REP_SOURCE',dict(upload=u.id,checks=weeklycount,failures=weeklyfails))
             if u.id!=latest.id:continue
             prices=ProductUnitPriceService.price_map(pids.values(),2026,9)
             visible=RS.get_active_all(2026,9)
@@ -102,7 +117,7 @@ jobs:
              service=RegionPerformanceService(reg,2026,9)
              reps=defaultdict(lambda:[0,0])
              for (region,rep),products in v['tl_reps'].items():
-              if region==reg:
+              if region.split()[0]==reg:
                for n,values in products.items():reps[n][0]+=values['target'];reps[n][1]+=values['actual']
              for name,pid in pids.items():
               expected=dict(target_tl=vals[name]['target'],actual_tl=vals[name]['actual'],target_unit=Box.boxes_from_tl(vals[name]['target'],prices[pid]),actual_unit=Box.boxes_from_tl(vals[name]['actual'],prices[pid]))
@@ -125,7 +140,8 @@ jobs:
             facts={(r.representative_id,r.product_id):r for r in IMSFact.query.filter_by(upload_id=u.id)}
             repfails=[]
             for (reg,name),vals in v['tl_reps'].items():
-             match=a.resolve_representative_match(name)
+             sourceids=identities.get(_norm(name),set())
+             match={'matched':True,'object':db.session.get(Representative,next(iter(sourceids)))} if len(sourceids)==1 else a.resolve_representative_match(name)
              if not match.get('matched'):
               candidates=Representative.query.filter(Representative.rep_name==name).all()
               candidates=[r for r in candidates if str(r.region).startswith(reg)]
@@ -135,8 +151,9 @@ jobs:
              for prod,pid in pids.items():
               t=targets.get((rid,pid));f=facts.get((rid,pid));ct['rep_products']+=1
               if t is None or f is None or not same(t.tl_target,vals[prod]['target']) or not same(f.tl,vals[prod]['actual']):repfails.append(dict(rep=rid,product=pid,db=[getattr(t,'tl_target',None),getattr(f,'tl',None)],excel=[vals[prod]['target'],vals[prod]['actual']]))
+            out('SEP_DASHBOARD_SHAPE',dict(keys=list(dashboard),national_products=list(natrows.values())[:1],region_realization=dashboard.get('region_realization')))
             out('SEP_REGION_TOTALS',totals)
-            out('SEP_VIEW_AUDIT',dict(latest=u.id,counts=dict(ct),failures=len(fails),examples=fails[:12],representative_failures=len(repfails),rep_examples=repfails[:5]))
+            out('SEP_VIEW_AUDIT',dict(latest=u.id,counts=dict(ct),failures=len(fails),examples=fails,representative_failures=len(repfails),rep_examples=repfails[:5]))
            db.session.rollback()
           
           PY
