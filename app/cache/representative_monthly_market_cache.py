@@ -150,15 +150,14 @@ class RepresentativeMonthlyMarketCache:
             path = root / f"{int(year):04d}-{int(month):02d}-{int(representative.id)}.json.gz"
             if path.is_file() and path.stat().st_size <= cls._MAX_FILE_BYTES:
                 with gzip.open(path, "rb") as source:
-                    raw = source.read(cls._MAX_FILE_BYTES + 1)
-                if len(raw) > cls._MAX_FILE_BYTES:
-                    raise ValueError("Monthly market cache exceeds size limit")
-                envelope = json.loads(raw)
-                data = envelope["data"]
-                if envelope["fingerprint"] == fingerprint and envelope["sha256"] == hashlib.sha256(_json(data, sort_keys=False).encode()).hexdigest():
-                    result = _decode(data, products)
-                    cls._count("hits")
-                    return result
+                    header = json.loads(source.readline(4096))
+                    if header["fingerprint"] == fingerprint:
+                        raw = source.read(cls._MAX_FILE_BYTES + 1)
+                        if len(raw) > cls._MAX_FILE_BYTES or header["sha256"] != hashlib.sha256(raw).hexdigest():
+                            raise ValueError("Monthly market cache integrity check failed")
+                        result = _decode(json.loads(raw), products)
+                        cls._count("hits")
+                        return result
         except (OSError, EOFError, ValueError, TypeError, KeyError):
             cls._count("unavailable")
         cls._count("misses")
@@ -168,12 +167,13 @@ class RepresentativeMonthlyMarketCache:
         temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
         try:
             data = _encode(result)
-            envelope = _json({"fingerprint": fingerprint, "sha256": hashlib.sha256(_json(data, sort_keys=False).encode()).hexdigest(), "data": data}, sort_keys=False).encode()
-            if len(envelope) > cls._MAX_FILE_BYTES:
+            payload = _json(data, sort_keys=False).encode()
+            if len(payload) > cls._MAX_FILE_BYTES:
                 return result
+            header = _json({"fingerprint": fingerprint, "sha256": hashlib.sha256(payload).hexdigest()}).encode()
             descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, "wb") as output:
-                output.write(gzip.compress(envelope, compresslevel=1, mtime=0))
+                output.write(gzip.compress(header + b"\n" + payload, compresslevel=1, mtime=0))
             os.replace(temporary, path)
             cls._count("writes")
         except (OSError, ValueError, TypeError):

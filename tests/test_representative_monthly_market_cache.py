@@ -92,9 +92,10 @@ def test_corrupt_or_tampered_monthly_cache_recomputes_canonical_data(cache_conte
     app, rep, product, values, calls, load = cache_context
     _read(rep, "source-1", load)
     path = next((Path(app.instance_path) / "representative_monthly_market").glob("*.json.gz"))
-    envelope = json.loads(gzip.decompress(path.read_bytes()))
-    envelope["data"]["rows"][0]["missing"] = 777
-    path.write_bytes(gzip.compress(json.dumps(envelope).encode()))
+    header, raw = gzip.decompress(path.read_bytes()).split(b"\n", 1)
+    data = json.loads(raw)
+    data["rows"][0]["missing"] = 777
+    path.write_bytes(gzip.compress(header + b"\n" + json.dumps(data).encode()))
     assert _read(rep, "source-1", load)["rows"][0]["missing"] is None
     path.write_bytes(b"broken gzip")
     assert _read(rep, "source-1", load)["rows"][0]["actual_unit"] == 0
