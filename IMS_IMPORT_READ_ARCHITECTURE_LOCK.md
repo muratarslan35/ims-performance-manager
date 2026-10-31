@@ -53,7 +53,7 @@ Geç gelen üretim dosyası geçmiş ayı günceller ve o aya bağlı dashboard/
 
 ### 3.3 Kutu hesabı
 
-Nisan 2026 ve sonrası açık IMS dönemlerinde:
+Nisan–Eylül 2026 açık IMS dönemlerinde mevcut hesap korunur:
 
 - hedef kutu = resmi hedef TL / dönem için geçerli ürün birim fiyatı
 - gerçekleşen kutu = resmi gerçekleşen TL / dönem için geçerli ürün birim fiyatı
@@ -63,6 +63,17 @@ Nisan 2026 ve sonrası açık IMS dönemlerinde:
 Dönem birim fiyatı geçmişe dönük mutable master fiyattan okunmaz. Aktif ay başladıktan sonra yapılan fiyat değişikliği bir sonraki IMS döneminden itibaren geçerlidir.
 
 P1/P2 ile kapanan dönemlerin final kutu/TL sonuçları sonradan formül değişikliğiyle yeniden yazılmaz.
+
+**41. hafta / Ekim 2026 ve sonrası için kullanıcı onaylı güncelleme:**
+
+- Excel'de temsilci, bölge ve NATIONAL için verilen resmi kutu hedef/çıkış alanı varsa doğrudan kullanılır; TL'ye bölme uygulanmaz.
+- Hedef ve çıkış varlığı birbirinden bağımsızdır. Yalnız eksik alan, aynı kimlik/ürün/ayın resmi TL'si / kilitli dönem fiyatıyla üretilir. Kısmi ya da kutusuz dosyada eski TL yöntemi çalışır; dolu hücreler bu yüzden ezilmez.
+- Sayısal sıfır gerçek değerdir. Boş, bulunmayan alan veya eksik bir DB varsayılanı ile aynı sayılmaz. Kaynak hücrenin varlığı ve sayfası import sırasında mevcut RAW/FACT JSON metadatasında saklanır; ham kaynak dosya değiştirilmez.
+- TTS kutu özet sayfası semantik kimlik ve ürün başlıklarıyla okunur; desteklenen eski brick matrisi de korunur. Mevcut 41. haftada özet kutu alanlarının tamamı brick detaylarıyla doğrulanmıştır. Kaynak tanınamazsa tahmin edilmez.
+- Merkezî ROUND_HALF_DOWN gösterim kuralı korunur. Q/YTD farklı ayların tamamlanmış aylık kutularını toplar; geçmiş ayları tek fiyatla yeniden üretmez.
+- Temsilci boş kadroya dönüşürse dosyadaki pozisyonun hedef ve çıkışları korunur. BOS/BOŞ ayrı kimliklerdir; aktif/pasif durumu kaynak satırını düşürmez.
+- Bölge ve Türkiye, temsilci toplamlarından üretilmez; her biri kendi resmi satırını kullanır. Bağımsız pazar/rakip pay ve paydaları şirket hedef/çıkış otoritesinin yerine geçmez.
+- Bu değişiklik Eylül ve önceki kaynak/snapshotları yeniden yazmaz. P2 > P1 > IMS ve kapanan dönem kilidi aynı kalır.
 
 ### 3.4 Kota çıkış
 
@@ -144,7 +155,7 @@ Publication öncesi:
 - BOSTANCI vacancy değildir.
 - Temsilci ayrıldığında tarihsel isim/veri korunur; yeni kişi yeni kimliğiyle bağlanır.
 - Ankara dahil boş/boş kadro kayıtları canonical roster kapsamından keyfi olarak düşürülemez.
-- Eylül 2026 ve sonrası için Bölge IMS hedef/çıkışının tek kaynağı Excel'in resmi bölge toplamıdır. Resmi bölge kaynağı yokken temsilci toplamı fallback olarak kullanılamaz; kaynak eksikliği açıkça korunur ve eksik generation yayınlanamaz. Ortak brick temsilci toplamı bölge toplamını artıramaz. Açık dönem bölge kutuları resmi bölge TL / kilitli dönem fiyatıyla, ürün/ay bazında ROUND_HALF_DOWN ile hesaplanır; Q/YTD aylık sonuçları toplar. National official aggregate varsa temsilci toplamı onun yerine alternatif authority olarak kullanılamaz. Kabul edilmiş P2/P1 üretim önceliği ve kapalı dönem kilidi korunur.
+- Eylül 2026 ve sonrası için Bölge IMS hedef/çıkışının tek kaynağı Excel'in resmi bölge toplamıdır. Resmi bölge kaynağı yokken temsilci toplamı fallback olarak kullanılamaz; kaynak eksikliği açıkça korunur ve eksik generation yayınlanamaz. Ortak brick temsilci toplamı bölge toplamını artıramaz. Bölge kutuları 3.3 maddesindeki kaynak önceliğiyle okunur: 41. hafta ve sonrası mevcut resmi kutu alanı doğrudan, yalnız eksik alan resmi TL / kilitli dönem fiyatıyla; Eylül hesabı değişmeden korunur. ROUND_HALF_DOWN ve Q/YTD aylık toplama kuralı sürer. National official aggregate varsa temsilci toplamı onun yerine alternatif authority olarak kullanılamaz. Kabul edilmiş P2/P1 üretim önceliği ve kapalı dönem kilidi korunur.
 - Aynı ürün/ay/temsilci için iki farklı kaynak aynı anda final katkı yapamaz.
 
 ## 8.1 Adaptive IMS semantik matris sözleşmesi (40. ve 41. hafta)
@@ -153,7 +164,7 @@ Publication öncesi:
 - Ekim/41. hafta V2 düzeni de kabul edilir: `TTS / BRICK` + bitişik `TTS` başlıkları, `TÜRKİYE TOPLAM` ulusal satırı ve `İL`/TTS boşken brick sütununda bölge adı bulunan bölge toplamı.
 - V2'de il/brick satırlarından önce gelen, il alanı boş ve TTS/brick kimlikleri aynı olan TTS özet satırı temsilci toplamına ikinci kez eklenmez.
 - Her V2 TTS özetindeki ürün hedef/gerçekleşen değerleri o TTS'nin detay brick satırlarıyla; ulusal ürün hedef/gerçekleşen değerleri de bölge toplamlarıyla uzlaştırılır. Eksik veya tutarsız kapsam sessizce kabul edilmez; import fail-closed hata verir.
-- TL ve KUTU sayfaları aynı ürün, temsilci ve aggregate kapsamını sağlamalıdır. Başlık çözümlenemediğinde hata tanısı sayfa adını ve ilk satırlardaki semantik başlık ipuçlarını içermelidir.
+- TL kimlik/ürün kapsamı zorunludur. 41. hafta ve sonrasında KUTU sayfası/ürün/alanı eksik olabilir; mevcut kutu hücreleri korunur, yalnız eksik alan aynı kimliğin TL/fiyat kaynağıyla tamamlanır. Fazladan ya da belirsiz KUTU kimliği kabul edilmez. Aynı kimlikte hem özet hem brick kutu değeri verilmişse mevcut alanlar uzlaştırılır; çelişki yayınlanmaz. Önceki dönemlerin eşlenik kapsam sözleşmesi korunur. Başlık çözümlenemediğinde hata tanısı sayfa adını ve semantik başlık ipuçlarını içermelidir.
 - `app/services/adaptive_kpi_target_authority.py` veya deploy sınıflandırıcısı değiştiğinde import worker yeniden başlatılır; bu, çalışan process'te eski parser kodunun kalmasını önler.
 
 Bu sözleşme yeni V2 formatını ekler, legacy formatın kurallarını kaldırmaz. Workbook'un hedef/gerçekleşen kaynak değerleri değiştirilmez.

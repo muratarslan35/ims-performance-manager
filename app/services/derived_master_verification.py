@@ -62,6 +62,8 @@ def _seed_adaptive_official_aggregates(importer, year, month):
 
     importer.statistics["adaptive_pre_reconcile_target_records"] = target_written
     importer.statistics["adaptive_pre_reconcile_actual_records"] = actual_written
+    from app.services.ims_unit_authority import persist_import_units
+    persist_import_units(importer,views,year,month)
     official.db.session.flush()
 
 

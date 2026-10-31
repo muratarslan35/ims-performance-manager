@@ -87,7 +87,7 @@ def _metric_hint(sheet_name, frame):
     return None
 
 
-def _find_pair(workbook):
+def _find_pair(workbook, *, allow_missing_units=False):
     candidates = {"tl": [], "unit": []}
     structural = []
     for name, frame in (workbook or {}).items():
@@ -99,6 +99,8 @@ def _find_pair(workbook):
         if metric:
             candidates[metric].append((name, frame, plan))
 
+    if allow_missing_units and len(candidates['tl'])==1 and not candidates['unit']:
+        return candidates['tl'][0],None
     if len(candidates["tl"]) != 1 or len(candidates["unit"]) != 1:
         from app.services.kpi_workbook_compat import _find_matrix
         tl_name, tl_frame = _find_matrix(workbook or {}, "tl")
@@ -139,12 +141,14 @@ def _find_pair(workbook):
         )
     tl = candidates["tl"][0]
     unit = candidates["unit"][0]
-    if set(tl[2]["products"]) != set(unit[2]["products"]):
+    if set(tl[2]["products"]) != set(unit[2]["products"]) and not (
+        allow_missing_units and set(unit[2]['products']).issubset(tl[2]['products'])
+    ):
         raise ValueError("Adaptive IMS: TL/KUTU matrislerinin ürün kapsamı aynı değil.")
     return tl, unit
 
 
-def _source_rows(frame, plan):
+def _source_rows(frame, plan, *, track_presence=False):
     """Read official aggregates and detail rows without counting V2 summaries twice.
 
     Legacy sheets use NATIONAL and region Subtotal rows. Week-41 V2 sheets
@@ -182,6 +186,17 @@ def _source_rows(frame, plan):
             }
             for product in products
         }
+        if track_presence:
+            for product,actual_column in plan['products'].items():
+                for metric,column in (('target',actual_column-1),('actual',actual_column)):
+                    raw=row.iloc[column]
+                    present=not pd.isna(raw) and str(raw).strip() not in ('','-','—')
+                    if metric=='target' and 'HEDEF' not in _norm(frame.iloc[plan['header_row'],column]):present=False
+                    if present:
+                        parsed=pd.to_numeric(pd.Series([raw]),errors='coerce').iloc[0]
+                        import math
+                        if pd.isna(parsed) or not math.isfinite(float(parsed)):raise ValueError('Invalid explicit IMS unit metric')
+                    values[product][metric+'_present']=bool(present)
 
         # National identity moved from legacy C/D columns to the V2 region label.
         if any(label in {"NATIONAL", "TURKIYE TOPLAM"} for label in (
@@ -227,6 +242,10 @@ def _source_rows(frame, plan):
             for product in products:
                 bucket[product]["target"] += values[product]["target"]
                 bucket[product]["actual"] += values[product]["actual"]
+                if track_presence:
+                    for metric in ('target','actual'):
+                        field=metric+'_present'
+                        bucket[product][field]=bucket[product].get(field,True) and values[product][field]
     if v2_layout_seen:
         # Each V2 summary must reconcile to its own detailed brick rows. This
         # proves the workbook was read completely and prevents silent undercounts.
@@ -239,6 +258,7 @@ def _source_rows(frame, plan):
                 )
             for product in products:
                 for metric in ("target", "actual"):
+                    if track_presence and not (summary_values[product][metric+'_present'] and detail_values[product][metric+'_present']):continue
                     expected = float(summary_values[product][metric] or 0)
                     actual = float(detail_values[product][metric] or 0)
                     if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
@@ -247,6 +267,13 @@ def _source_rows(frame, plan):
                             f"(satır={source_row}, bölge={territory}, TTS={representative}, "
                             f"ürün={product}, metrik={metric}, özet={expected}, detay={actual})."
                         )
+            if track_presence:
+                for product in products:
+                    for metric in ('target','actual'):
+                        flag=metric+'_present'
+                        if not detail_values[product][flag] and summary_values[product][flag]:
+                            detail_values[product][metric]=summary_values[product][metric]
+                            detail_values[product][flag]=True
 
         # V2 explicitly supplies national and region aggregates. Check product
         # target/actual columns against the sum of the region totals.
@@ -261,6 +288,7 @@ def _source_rows(frame, plan):
             raise ValueError("Adaptive IMS: V2 matriste yinelenen bölge toplamı bulundu.")
         for product in products:
             for metric in ("target", "actual"):
+                if track_presence and not (national_rows[0][product][metric+'_present'] and all(values[product][metric+'_present'] for values in region_rows)):continue
                 expected = float(national_rows[0][product][metric] or 0)
                 actual = sum(float(values[product][metric] or 0) for values in region_rows)
                 if abs(expected - actual) > max(0.01, abs(expected) * 1e-6):
@@ -271,25 +299,37 @@ def _source_rows(frame, plan):
     return products, aggregates, reps
 
 def _pair_views(importer):
-    pair = _find_pair(importer.workbook or {})
+    from app.services.ims_unit_authority import applies
+    upload=getattr(importer,'upload',None)
+    optional=bool(upload and applies(upload.year,upload.month))
+    pair = _find_pair(importer.workbook or {},allow_missing_units=optional)
     if pair is None:
         return None
-    (tl_name, _tl_frame, _tl_plan), (unit_name, _unit_frame, _unit_plan) = pair
-    raw = pd.read_excel(importer.file_path, sheet_name=[tl_name, unit_name], header=None)
-    tl_frame, unit_frame = raw[tl_name], raw[unit_name]
-    tl_plan, unit_plan = _matrix_plan(tl_frame), _matrix_plan(unit_frame)
-    if tl_plan is None or unit_plan is None:
+    tl_source,unit_source=pair
+    tl_name=tl_source[0];unit_name=unit_source[0] if unit_source else None
+    raw = pd.read_excel(importer.file_path, sheet_name=[tl_name]+([unit_name] if unit_name else []), header=None)
+    tl_frame=raw[tl_name]
+    tl_plan=_matrix_plan(tl_frame)
+    unit_frame=raw[unit_name] if unit_name else None
+    unit_plan=_matrix_plan(unit_frame) if unit_name else None
+    if tl_plan is None or (unit_name and unit_plan is None):
         raise ValueError("Adaptive IMS: ham TL/KUTU matris başlıkları çözümlenemedi.")
     tl_products, tl_aggregates, tl_reps = _source_rows(tl_frame, tl_plan)
-    unit_products, unit_aggregates, unit_reps = _source_rows(unit_frame, unit_plan)
-    if tl_products != unit_products:
+    unit_products, unit_aggregates, unit_reps = _source_rows(unit_frame, unit_plan,track_presence=optional) if unit_name else ([],[],{})
+    if tl_products != unit_products and not (optional and set(unit_products).issubset(tl_products)):
         raise ValueError("Adaptive IMS: ham TL/KUTU ürün kapsamı aynı değil.")
-    if set(tl_reps) != set(unit_reps):
+    if set(tl_reps) != set(unit_reps) and not (optional and set(unit_reps).issubset(tl_reps)):
         raise ValueError("Adaptive IMS: TL/KUTU temsilci kapsamı aynı değil.")
     tl_agg = {(territory, representative): values for territory, representative, values in tl_aggregates}
     unit_agg = {(territory, representative): values for territory, representative, values in unit_aggregates}
-    if set(tl_agg) != set(unit_agg):
+    if set(tl_agg) != set(unit_agg) and not (optional and set(unit_agg).issubset(tl_agg)):
         raise ValueError("Adaptive IMS: TL/KUTU NATIONAL/bölge kapsamı aynı değil.")
+    if optional:
+        for originals,units in ((tl_reps,unit_reps),(tl_agg,unit_agg)):
+            for identity in originals:
+                bucket=units.setdefault(identity,{})
+                for product in tl_products:
+                    bucket.setdefault(product,dict(target=0.0,actual=0.0,target_present=False,actual_present=False))
     return {
         "tl_name": tl_name,
         "unit_name": unit_name,
@@ -401,6 +441,8 @@ def install_adaptive_kpi_target_authority():
         # Reconcile only after the workbook-authoritative TL and KUTU values are
         # both persisted.  This keeps the same fail-closed safety gate without
         # letting the synthetic compatibility aggregate pre-empt the adapter.
+        from app.services.ims_unit_authority import persist_import_units
+        persist_import_units(self,views,year,month)
         official.reconcile_national_regions(self)
 
     IMSImportService.apply_balance_summary = apply_adaptive_targets

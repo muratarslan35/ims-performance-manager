@@ -55,9 +55,11 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         db.session.flush()
         self.product_id = product.id
         self.rep_id = rep.id
+        # This fixture covers the accepted legacy balance-era contract, before
+        # the October 2026 explicit-cell-presence policy.
         self.upload = IMSUpload(
             file_name="official.xlsx",
-            year=2038,
+            year=2025,
             month=1,
             quarter="Q1",
             status="COMPLETED",
@@ -66,7 +68,7 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         db.session.add(self.upload)
         db.session.flush()
         self.target = Target(
-            year=2038,
+            year=2025,
             month=1,
             quarter="Q1",
             representative_id=rep.id,
@@ -76,7 +78,7 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         )
         self.summary = IMSSummary(
             upload_id=self.upload.id,
-            year=2038,
+            year=2025,
             month=1,
             quarter="Q1",
             representative_id=rep.id,
@@ -116,11 +118,11 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         service = IMSImportService(Path(self.temp_dir.name) / "official.xlsx")
         service.upload = self.upload
         service.workbook = self._workbook()
-        persist_official_aggregates(service, 2038, 1)
+        persist_official_aggregates(service, 2025, 1)
         db.session.commit()
 
-        national = OfficialAggregateService.product_totals(2038, 1, "NATIONAL")
-        region = OfficialAggregateService.product_totals(2038, 1, "901")
+        national = OfficialAggregateService.product_totals(2025, 1, "NATIONAL")
+        region = OfficialAggregateService.product_totals(2025, 1, "901")
         self.assertEqual(len(national), 1)
         self.assertEqual(len(region), 1)
         self.assertAlmostEqual(national[0]["target_tl"], 1005.0, places=8)
@@ -136,13 +138,13 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         service = IMSImportService(Path(self.temp_dir.name) / "official.xlsx")
         service.upload = self.upload
         service.workbook = workbook
-        result = persist_official_aggregates(service, 2038, 1)
+        result = persist_official_aggregates(service, 2025, 1)
         db.session.commit()
 
         self.assertTrue(result["reconciliation"]["passed"])
         self.assertEqual(result["reconciliation"]["targets"]["region_count"], 1)
         self.assertEqual(result["reconciliation"]["actuals"]["region_count"], 1)
-        region = OfficialAggregateService.product_totals(2038, 1, "901")
+        region = OfficialAggregateService.product_totals(2025, 1, "901")
         self.assertEqual(len(region), 1)
         self.assertAlmostEqual(region[0]["target_tl"], 1005.0, places=8)
         self.assertAlmostEqual(region[0]["actual_tl"], 250.0, places=8)
@@ -152,12 +154,12 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         old_service = IMSImportService(Path(self.temp_dir.name) / "wide.xlsx")
         old_service.upload = self.upload
         old_service.workbook = self._workbook()
-        persist_official_aggregates(old_service, 2038, 1)
+        persist_official_aggregates(old_service, 2025, 1)
         db.session.commit()
 
         compact_upload = IMSUpload(
             file_name="compact.xlsx",
-            year=2038,
+            year=2025,
             month=1,
             quarter="Q1",
             week_number=2,
@@ -178,14 +180,14 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         service = IMSImportService(Path(self.temp_dir.name) / "compact.xlsx")
         service.upload = compact_upload
         service.workbook = compact
-        result = persist_official_aggregates(service, 2038, 1)
+        result = persist_official_aggregates(service, 2025, 1)
         db.session.commit()
 
         self.assertTrue(result["reconciliation"]["passed"])
         self.assertEqual(result["reconciliation"]["targets"]["region_count"], 1)
         self.assertEqual(result["reconciliation"]["actuals"]["region_count"], 1)
-        region = OfficialAggregateService.product_totals(2038, 1, "901")
-        national = OfficialAggregateService.product_totals(2038, 1, "NATIONAL")
+        region = OfficialAggregateService.product_totals(2025, 1, "901")
+        national = OfficialAggregateService.product_totals(2025, 1, "NATIONAL")
         self.assertAlmostEqual(region[0]["target_tl"], 777.0, places=8)
         self.assertAlmostEqual(region[0]["actual_tl"], 333.0, places=8)
         self.assertAlmostEqual(national[0]["target_tl"], 777.0, places=8)
@@ -197,15 +199,15 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
         service = IMSImportService(Path(self.temp_dir.name) / "official.xlsx")
         service.upload = self.upload
         service.workbook = self._workbook()
-        persist_official_aggregates(service, 2038, 1)
+        persist_official_aggregates(service, 2025, 1)
         db.session.commit()
 
-        metrics = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2038, month=1))
+        metrics = DashboardQuery().load_national_dashboard_metrics(DashboardFilterParams(year=2025, month=1))
         self.assertEqual(metrics["target_tl"], 1005.0)
         self.assertEqual(metrics["unit_target"], 100.5)
         self.assertEqual(metrics["actual_tl"], 250.0)
         self.assertEqual(metrics["unit_actual"], 17.25)
-        regions = DashboardQuery().load_region_performance(DashboardFilterParams(year=2038, month=1))
+        regions = DashboardQuery().load_region_performance(DashboardFilterParams(year=2025, month=1))
         self.assertEqual(len(regions), 1)
         self.assertAlmostEqual(float(regions[0].unit_target), 100.5, places=8)
         self.assertAlmostEqual(float(regions[0].unit_actual), 17.25, places=8)
@@ -233,7 +235,7 @@ class OfficialAggregateSourceTestCase(unittest.TestCase):
             pending,
             vacancy.id,
             self.product_id,
-            2038,
+            2025,
             1,
             "Q1",
             123.4567,

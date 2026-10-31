@@ -475,6 +475,57 @@ def validate_product_kpi_sheets(workbook, canonical):
     return checked
 
 
+def optional_unit_compat_workbook(workbook,file_path):
+    """Build a derived unit view without changing any uploaded worksheet.
+
+    Incomplete product/metric columns use zero placeholders only in the legacy
+    compatibility layer. Import authority subsequently resolves original cells
+    or TL/price per entity; placeholders are never treated as explicit zeros.
+    """
+    tl_name,tl_frame=_find_matrix(workbook,'tl')
+    unit_name,unit_frame=_find_matrix(workbook,'unit')
+    if not tl_name:return workbook,file_path,False
+    raw=pd.read_excel(file_path,sheet_name=[tl_name]+([unit_name] if unit_name else []),header=None)
+    tl_frame=raw[tl_name];tl=_matrix_plan(tl_frame,'tl')
+    unit_frame=raw[unit_name] if unit_name else None
+    unit=_matrix_plan(unit_frame,'unit') if unit_name and not unit_frame.dropna(how='all').empty else None
+    def keyed(frame,plan):
+        result={}
+        for i in range(plan['data_start'],len(frame)):
+            row=frame.iloc[i]
+            key=tuple('' if col is None or pd.isna(row.iloc[col]) else str(row.iloc[col]).strip()
+                      for col in (plan['region'],plan['province'],plan['brick'],plan['primary_rep'],plan['secondary_rep']))
+            if not any(key):continue
+            if key in result:raise ValueError('Duplicate optional-unit source identity')
+            result[key]=(i,row)
+        return result
+    tl_rows=keyed(tl_frame,tl);unit_rows=keyed(unit_frame,unit) if unit else {}
+    if set(unit_rows)-set(tl_rows):raise ValueError('Unit matrix has unknown TL identities')
+    if unit and set(unit['products'])-set(tl['products']):raise ValueError('Unit matrix has unknown TL products')
+    placeholder=tl_frame.copy(deep=True);incomplete=set()
+    for key,(index,_tl_row) in tl_rows.items():
+        source=unit_rows.get(key)
+        for product,tl_actual in tl['products'].items():
+            actual=unit['products'].get(product) if unit else None
+            for metric,offset in (('target',-1),('actual',0)):
+                value=None
+                if source is not None and actual is not None:
+                    column=actual+offset
+                    header=_norm(unit_frame.iloc[unit['header_row'],column])
+                    if metric!='target' or 'HEDEF' in header:value=source[1].iloc[column]
+                missing=value is None or pd.isna(value) or str(value).strip() in ('','-','—')
+                if missing:incomplete.add((product,offset))
+                placeholder.iloc[index,tl_actual+offset]=0.0 if missing else value
+    if not incomplete:return workbook,file_path,False
+    # Keep derived V2 summary/detail controls internally consistent while the
+    # separate original-cell authority retains all supplied partial values.
+    for product,offset in incomplete:
+        placeholder.iloc[tl['data_start']:,tl['products'][product]+offset]=0.0
+    result=dict(workbook);result[tl_name]=tl_frame
+    result[unit_name or '2-TTS-BRICK KUTU REA% OPTIONAL COMPAT']=placeholder
+    return result,None,True
+
+
 def install_kpi_workbook_compat():
     from app.services.competition_import_service import CompetitionImportService
     from app.services.ims_import_service import IMSImportService
@@ -484,16 +535,23 @@ def install_kpi_workbook_compat():
     original_analyze = IMSImportService.analyze_workbook
 
     def analyze_with_kpi_compat(self):
+        workbook=self.workbook or {}
+        file_path=self.file_path
+        from app.services.ims_unit_authority import applies
+        upload=getattr(self,'upload',None)
+        if upload and applies(upload.year,upload.month):
+            workbook,file_path,derived=optional_unit_compat_workbook(workbook,file_path)
+            if derived:self.statistics['optional_unit_matrix_fallback']=1
         canonical, consumed = build_canonical_brick_frame(
-            self.workbook or {}, file_path=self.file_path
+            workbook, file_path=file_path
         )
         if canonical is None:
             return original_analyze(self)
         self.statistics["kpi_validation_sheets"] = validate_product_kpi_sheets(
-            self.workbook or {}, canonical
+            workbook, canonical
         )
         compat_frames = build_legacy_summary_frames(
-            self.workbook or {}, file_path=self.file_path
+            workbook, file_path=file_path
         )
         compat_frames.update(build_competition_frames(self.workbook or {}))
         self.workbook.update(compat_frames)
