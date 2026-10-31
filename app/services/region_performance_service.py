@@ -97,9 +97,10 @@ class RegionPerformanceService:
 
     @staticmethod
     def _uses_official_region_only(year, month):
-        # Week 41 is the first October 2026 IMS. Earlier business periods keep
-        # their accepted calculation contract and persisted snapshots.
-        return (int(year), int(month)) >= (2026, 10)
+        # September legacy and October V2 workbooks both supply official region
+        # subtotals. Authority depends on the business period, not the layout.
+        # August and earlier accepted periods retain their calculation contract.
+        return (int(year), int(month)) >= (2026, 9)
 
     def _official_ims_region_month(self, year, month):
         """Return the workbook-authoritative region target and actual metrics.

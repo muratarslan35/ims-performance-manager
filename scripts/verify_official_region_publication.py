@@ -1,4 +1,5 @@
 """Exact source/DB/published-view acceptance for the latest open IMS period."""
+import argparse
 import hashlib
 import json
 from collections import defaultdict
@@ -24,6 +25,12 @@ from app.services.persistent_dashboard_snapshot_service import PersistentDashboa
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--year',type=int)
+    parser.add_argument('--month',type=int)
+    args=parser.parse_args()
+    if (args.year is None)!=(args.month is None):
+        parser.error('--year and --month must be supplied together')
     app=create_app()
     failures=[]
     counts=defaultdict(int)
@@ -32,7 +39,10 @@ def main():
             failures.append(dict(context=context,actual=actual,expected=str(expected)))
     with app.app_context():
         db.session.execute(sa.text('PRAGMA query_only=ON'))
-        upload=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
+        query=IMSUpload.query.filter_by(status='COMPLETED')
+        if args.year is not None:
+            query=query.filter_by(year=args.year,month=args.month)
+        upload=query.order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
         assert upload is not None
         year,month=int(upload.year),int(upload.month)
         job=IMSImportJob.query.filter_by(ims_upload_id=upload.id).order_by(IMSImportJob.id.desc()).first()
@@ -43,8 +53,9 @@ def main():
         assert path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==job.source_hash
         adapter=IMSImportService(str(path))
         names=pd.ExcelFile(path).sheet_names
-        pair=[n for n in names if 'TTS-BR' in n and 'REAL-' in n]
-        adapter.workbook=pd.read_excel(path,sheet_name=pair,header=None)
+        # Discover both the legacy and V2 pair semantically; do not require
+        # the Week-41 sheet-name spelling for a historical acceptance.
+        adapter.workbook=pd.read_excel(path,sheet_name=None,header=None,nrows=20)
         views=_pair_views(adapter)
         assert views is not None
         product_ids={name:adapter.resolve_product_match(name)['object'].id for name in views['products']}
@@ -117,6 +128,21 @@ def main():
             print('OFFICIAL_REGION_ACCEPTANCE|'+json.dumps(dict(region=region,periods=len(periods),failures=sum(f['context'].startswith(f'region:{region}:') for f in failures))))
         dashboard=PersistentDashboardSnapshotService.get_generation_for_source(year,month,upload.id,0)
         assert dashboard and isinstance(dashboard.get('competition_analysis'),dict)
+        if (year,month)==(2026,9):
+            map_rows={str(r['code']):r for r in dashboard.get('region_realization',[])}
+            assert set(map_rows)==expected_regions
+            for identity,products in views['tl_aggregates'].items():
+                region=identity[0]
+                if region=='NATIONAL':continue
+                row=map_rows[region]
+                expected={
+                    'tl_target':sum(float(p['target']) for p in products.values()),
+                    'tl_actual':sum(float(p['actual']) for p in products.values()),
+                    'unit_target':sum(TLBoxCalculationService.boxes_from_tl(products[name]['target'],prices[pid]) for name,pid in product_ids.items()),
+                    'unit_actual':sum(TLBoxCalculationService.boxes_from_tl(products[name]['actual'],prices[pid]) for name,pid in product_ids.items()),
+                }
+                for field,value in expected.items():equal(row.get(field),value,f'dashboard-map:{region}:{field}')
+                counts['dashboard_map_regions']+=1
         national={int(r['product_id']):r for r in (dashboard.get('executive_metrics') or {}).get('products',[])}
         assert set(national)==set(product_ids.values())
         for pid,row in national.items():
