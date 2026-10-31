@@ -1,4 +1,4 @@
-name: Week 41 Integrity and Performance Status
+name: Week 41 TL Source Relationship Audit
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,26 +44,44 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          venv/bin/python - <<'PY'
-          import json
+          umask 077
+          venv/bin/python - <<'PY' > instance/week41-tl-relation.log 2>&1
+          import json,sqlite3
           from pathlib import Path
-          from collections import Counter
-          from decimal import Decimal,ROUND_DOWN,ROUND_UP,ROUND_HALF_UP
-          p=Path('instance/week41-tl-summary-comparison-private.json')
-          if p.exists():
-           data=json.loads(p.read_text());counts=Counter()
-           for row in data['differences']:
-            a=Decimal(row['summary']);b=Decimal(row['matrix']);delta=abs(a-b)
-            counts['le_one_lira' if delta<=1 else 'le_ten_lira' if delta<=10 else 'over_ten_lira']+=1
-            for label,mode in [('truncate_integer',ROUND_DOWN),('ceil_integer',ROUND_UP),('round_integer',ROUND_HALF_UP)]:
-             if a==b.quantize(Decimal(1),rounding=mode):counts[label]+=1
-           print('WEEK41_TL_DIFFERENCE_SHAPE|'+json.dumps(counts),flush=True)
-          for name in ('week41-html-acceptance.log','week41-final-history-validation.log','week41-final-generations-validation.log','week41-performance-baseline.log'):
-           p=Path('instance')/name
-           if p.exists():
-            for line in p.read_text(errors='replace').splitlines():
-             if line.startswith('WEEK41_'):print(line,flush=True)
+          from decimal import Decimal
+          from collections import Counter,defaultdict
+          from app.services.ims_unit_authority import representative_name_key
+          from app.services.adaptive_kpi_target_authority import _norm
+          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text())
+          c=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None)
+          c.row_factory=sqlite3.Row
+          data=json.loads(Path('instance/week41-tl-summary-comparison-private.json').read_text())
+          products={}
+          for p in c.execute('SELECT id,product_name,product_code,ims_name,unit_price FROM products'):
+           for key in ('product_name','product_code','ims_name'):
+            if p[key]:products[_norm(p[key])]=dict(p)
+          reps=defaultdict(list)
+          for r in c.execute('SELECT id,rep_name,region FROM representatives'):reps[representative_name_key(r['rep_name'])].append(dict(r))
+          counts=Counter();ratios=defaultdict(list);private=[]
+          for diff in data['differences']:
+           key=diff['identity'];product=products.get(key[-1]);candidates=reps.get(key[-2],[])
+           candidates=[r for r in candidates if str(r['region'] or '').split()[0]==key[1]] or candidates
+           if product is None or len(candidates)!=1:counts['unresolved_identity']+=1;continue
+           target=c.execute('SELECT unit_target,tl_target FROM targets WHERE year=2026 AND month=10 AND representative_id=? AND product_id=?',(candidates[0]['id'],product['id'])).fetchone()
+           price=c.execute('SELECT unit_price FROM product_unit_price_history WHERE product_id=? AND (effective_year<2026 OR (effective_year=2026 AND effective_month<=10)) ORDER BY effective_year DESC,effective_month DESC LIMIT 1',(product['id'],)).fetchone()
+           price=Decimal(str(price[0] if price else product['unit_price']))
+           units=Decimal(str(target['unit_target']));summary=Decimal(diff['summary']);matrix=Decimal(diff['matrix'])
+           counts['checked']+=1;counts['product_'+str(product['id'])]+=1
+           counts['summary_less_than_matrix' if summary<matrix else 'summary_greater_than_matrix']+=1
+           if abs(summary-units*price)<1:counts['summary_matches_boxes_times_locked_price']+=1
+           if abs(matrix-units*price)<1:counts['matrix_matches_boxes_times_locked_price']+=1
+           ratios[product['id']].append(summary/matrix if matrix else Decimal(0))
+           private.append(dict(product=product['id'],identity=key,summary=str(summary),matrix=str(matrix),boxes=str(units),price=str(price)))
+          counts['products_with_consistent_summary_matrix_ratio']=sum(max(v)-min(v)<Decimal('.00001') for v in ratios.values())
+          Path('instance/week41-tl-source-inconsistency-detail-private.json').write_text(json.dumps(dict(counts=dict(counts),details=private)))
+          print('WEEK41_TL_SOURCE_RELATION|'+json.dumps(dict(counts)),flush=True)
           
           PY
+          grep -E '^WEEK41_' instance/week41-tl-relation.log
           REMOTE
           
