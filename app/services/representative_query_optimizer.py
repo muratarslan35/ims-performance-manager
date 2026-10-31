@@ -76,6 +76,10 @@ def snapshot_authority_status(upload_id):
     return cache["authority_by_upload"].get(int(upload_id)) if cache is not None else None
 
 
+def snapshot_build_active():
+    return _snapshot_read_cache.get() is not None
+
+
 def remember_snapshot_authority(upload_id, present):
     cache = _snapshot_read_cache.get()
     if cache is not None:
