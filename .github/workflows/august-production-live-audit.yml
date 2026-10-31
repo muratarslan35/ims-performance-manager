@@ -1,4 +1,4 @@
-name: Week 41 Lightweight Publication Status
+name: Week 41 Final Publication Acceptance
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -12,7 +12,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 105
     environment: production
     env:
       IMS_HOST: ${{ vars.IMS_SERVER_HOST || '130.162.48.162' }}
@@ -43,40 +43,122 @@ jobs:
           echo "WEB_ACTIVE|$(sudo systemctl is-active ims-performance-manager.service)"
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
-          venv/bin/python - <<'PY'
-          import json,re,sqlite3
-          from datetime import datetime,timezone
+          
+          umask 077
+          venv/bin/python -u - <<'PY' > instance/week41-post-publication-validation.log 2>&1
+          import json,os,re,sqlite3,time,hashlib
           from pathlib import Path
-          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text());job_id=int(meta['job_id']);root=Path(meta['root'])
-          connection=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None,timeout=5)
-          connection.row_factory=sqlite3.Row
-          row=connection.execute('SELECT status,ims_upload_id,queued_at,started_at,completed_at,result_summary,error_message FROM ims_import_jobs WHERE id=?',(job_id,)).fetchone()
-          summary=json.loads(row['result_summary'] or '{}')
-          try:progress=json.loads((root/'ims_progress'/f'job-{job_id}.json').read_text())
-          except (OSError,ValueError):progress={}
-          stage=str(progress.get('stage') or '')
-          if not re.fullmatch('[a-z_]{1,48}',stage):stage='other_stage'
-          fraction=re.search(r'(\d+)\s*/\s*(\d+)',progress.get('detail') or '')
-          now=datetime.now(timezone.utc)
-          queued=datetime.fromisoformat(row['queued_at']).replace(tzinfo=timezone.utc)
-          result=dict(job_id=job_id,status=row['status'],upload_id=row['ims_upload_id'],publication_ready=summary.get('publication_ready') is True,
-           stage=stage,percent=progress.get('percent'),elapsed_seconds=round((now-queued).total_seconds(),1),
-           queued_at=row['queued_at'],started_at=row['started_at'],import_completed_at=row['completed_at'],
-           has_error=bool(row['error_message']),sample_time_utc=now.isoformat())
-          if fraction:result.update(representatives_done=int(fraction.group(1)),representatives_total=int(fraction.group(2)))
-          timeline=root/f'week41-job-{job_id}-timing.jsonl'
-          if timeline.exists():
-           lines=timeline.read_text().splitlines()
-           if lines:
-            latest=json.loads(lines[-1]);result['observer_samples']=len(lines)
-            result['latest_worker_rss_bytes']=latest.get('worker_rss_bytes')
-            result['latest_worker_cpu_percent']=latest.get('worker_cpu_percent')
-            result['latest_available_memory_bytes']=latest.get('available_memory_bytes')
-            result['observer_latest_at']=latest.get('observed_at')
-          final=root/f'week41-job-{job_id}-timing-summary.json'
-          if final.exists():
-           timing=json.loads(final.read_text());result['timing']={k:v for k,v in timing.items() if k not in ('stage_telemetry','stage_transitions')}
-          print('WEEK41_LIVE_STATUS|'+json.dumps(result),flush=True)
+          os.umask(0o077)
+          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text())
+          root=Path(meta['root']);jid=int(meta['job_id'])
+          for attempt in range(180):
+           c=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None,timeout=5)
+           row=c.execute('SELECT status,result_summary FROM ims_import_jobs WHERE id=?',(jid,)).fetchone();c.close()
+           if row[0]=='FAILED':raise RuntimeError('Import failed; acceptance blocked')
+           try:p=json.loads((root/'ims_progress'/f'job-{jid}.json').read_text())
+           except (OSError,ValueError):p={}
+           if json.loads(row[1] or '{}').get('publication_ready') is True and p.get('stage')=='completed':break
+           time.sleep(30)
+          else:raise RuntimeError('Publication still not ready')
+          print('WEEK41_ACCEPTANCE_START|ready',flush=True)
+          import subprocess,sys
+          log=root/'week41-final-source-acceptance.log'
+          with log.open('w') as out:
+           rc=subprocess.run([sys.executable,'scripts/verify_official_region_publication.py','--year','2026','--month','10'],stdout=out,stderr=subprocess.STDOUT).returncode
+          print('WEEK41_SOURCE_ACCEPTANCE_EXIT|'+str(rc),flush=True)
+          artifact=root/'official-publication-acceptance-56.json'
+          if artifact.exists():
+           a=json.loads(artifact.read_text())
+           print('WEEK41_SOURCE_ACCEPTANCE|'+json.dumps({k:a[k] for k in ('result','upload_id','week','counts')}),flush=True)
+          if rc:raise SystemExit(rc)
+          from app import create_app
+          from app.extensions import db
+          from app.models import User
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService
+          app=create_app()
+          from flask import template_rendered
+          seen=[]
+          def capture(sender,template,context,**extra):seen.append(context)
+          template_rendered.connect(capture,app)
+          with app.app_context():
+           user=User.query.filter(User.active.is_(True),db.func.lower(User.role).in_(['admin','administrator'])).first()
+           assert user is not None
+           client=app.test_client()
+           with client.session_transaction() as session:
+            session['_user_id']=str(user.id);session['_fresh']=True
+           snapshots=PersistentRegionSnapshotService.get_active_all(2026,10)
+           checked=0
+           for region,payload in snapshots.items():
+            seen.clear()
+            response=client.get('/regions/'+region+'?year=2026&month=10')
+            assert response.status_code==200,(region,'HTTP status')
+            assert seen,(region,'render context')
+            context=seen[-1];market=context['market_analysis']
+            expected='{:,.0f}'.format(market['totals']['effective_company_unit'])
+            html=response.get_data(as_text=True)
+            match=re.search(r'BÖLGESEL ŞİRKET TOPLAM KUTU ÇIKIŞI</span><strong>(.*?)</strong>',html)
+            assert match and match.group(1)==expected,(region,'rendered official company units')
+            checked+=1
+           print('WEEK41_REGION_HTML_ACCEPTANCE|'+json.dumps(dict(result='PASS',regions=checked)),flush=True)
+           db.session.rollback()
           
           PY
+          grep -E '^WEEK41_' instance/week41-post-publication-validation.log
+          nice -n 10 venv/bin/python -u - <<'PY' > instance/week41-final-history-validation.log 2>&1
+          import json,hashlib,sqlite3
+          from pathlib import Path
+          meta=json.loads(Path('instance/week41-unit-timing-session.json').read_text())
+          before=json.loads(Path('instance/week41-unit-policy-protection-before.json').read_text())
+          c=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None)
+          current={}
+          for table in before['business']:
+           digest=hashlib.sha256();count=0
+           for row in c.execute(f'SELECT * FROM {table} WHERE year<2026 OR (year=2026 AND month<10) ORDER BY id'):
+            digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
+           current[table]=dict(rows=count,sha256=digest.hexdigest())
+           print('WEEK41_HISTORY_TABLE|'+json.dumps(dict(table=table,result='PASS' if current[table]==before['business'][table] else 'FAIL',rows=count)),flush=True)
+          changed=[k for k in before['business'] if before['business'][k]!=current[k]]
+          Path('instance/week41-unit-policy-protection-after-business.json').write_text(json.dumps(current))
+          print('WEEK41_HISTORY_BUSINESS|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables=len(current))),flush=True)
+          if changed:raise SystemExit(1)
+          
+          PY
+          grep -E '^WEEK41_' instance/week41-final-history-validation.log
+          venv/bin/python -u - <<'PY' > instance/week41-final-generations-validation.log 2>&1
+          import hashlib,json,os,sqlite3
+          from pathlib import Path
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSUpload,IMSImportJob
+          app=create_app()
+          os.umask(0o077)
+          with app.app_context():
+           latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
+           if (latest.year,latest.month,latest.week_number)!=(2026,10,41):raise RuntimeError('Scope is no longer Week 41')
+           result={}
+           legacy=json.loads(Path('instance/official-region-history-before-week41.json').read_text())
+           result['business']={k:v for k,v in legacy.items() if k in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data')}
+           conn=sqlite3.connect('file:'+str(Path(db.engine.url.database).resolve())+'?mode=ro',uri=True)
+           for sets,rows in [('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')]:
+            sql=f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND (s.year<2026 OR (s.year=2026 AND s.month<10)) ORDER BY r.id"
+            digest=hashlib.sha256();count=0
+            for row in conn.execute(sql):
+             digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
+            result[rows]=dict(rows=count,sha256=digest.hexdigest())
+           result['dashboard_files']={}
+           for path in sorted((Path(app.instance_path)/'dashboard_snapshots').glob('*.json')):
+            if not path.name.startswith('dashboard-2026-10'):result['dashboard_files'][path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
+           baseline=Path('instance/week41-unit-policy-protection-before.json')
+           if baseline.exists():
+            before=json.loads(baseline.read_text())
+            changed=[k for k in ('manager_region_snapshots','representative_snapshots','dashboard_files') if before.get(k)!=result.get(k)]
+            print('WEEK41_PROTECTED_GENERATIONS|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,region_rows=result['manager_region_snapshots']['rows'],representative_rows=result['representative_snapshots']['rows'],dashboard_files=len(result['dashboard_files']))),flush=True)
+            if changed:raise SystemExit(1)
+           else:
+            baseline.write_text(json.dumps(result),encoding='utf-8')
+            print('WEEK41_PROTECTION_BASELINE|'+json.dumps(dict(result='READY',region_rows=result['manager_region_snapshots']['rows'],representative_rows=result['representative_snapshots']['rows'],dashboard_files=len(result['dashboard_files']),historical_business_tables=len(result['business']))),flush=True)
+          
+          PY
+          grep -E '^WEEK41_' instance/week41-final-generations-validation.log
           REMOTE
+          
