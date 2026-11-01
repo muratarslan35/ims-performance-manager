@@ -242,3 +242,16 @@ def test_explicit_quota_approval_accepts_partial_sales_without_requiring_preclos
     assert single['target_tl'] == single['actual_tl'] == 500
     assert single['realization_percent'] == 100
     assert single['actual_unit'] == 10  # factual units never become synthetic quota sales
+
+
+def test_targetless_region_market_has_no_performance_credit_but_retains_observations(quota_audit):
+    from types import SimpleNamespace
+    from app.services.region_box_authority_guard import _apply_official_region_market_boxes
+    rep,product=quota_audit
+    payload={'rows':[{'product_id':product.id,'target_unit':100,'company_unit':50,
+                     'market_company_unit':50,'competitor_unit':70,'realization_percent':50}]}
+    result=_apply_official_region_market_boxes(SimpleNamespace(region_key='901',year=2045,month=7),payload)
+    row=result['rows'][0]
+    assert row['target_unit']==row['company_unit']==row['realization_percent']==0
+    assert row['market_company_unit']==50 and row['competitor_unit']==70
+    assert result['totals']['effective_company_unit']==0
