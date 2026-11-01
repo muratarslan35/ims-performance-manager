@@ -1,4 +1,4 @@
-name: Week 41 Performance Publication Progress
+name: Week 41 Remaining Performance Profile
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,20 +44,77 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          venv/bin/python - <<'PY'
+          umask 077
+          cat > instance/week41-remaining-performance-profile.py <<'PY'
+          import sys,json,time,cProfile,pstats
           from pathlib import Path
-          from datetime import datetime
-          import json,sqlite3
-          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
-          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,timeout=3) as con:
-           con.row_factory=sqlite3.Row
-           row=dict(con.execute('SELECT id,status,queued_at,started_at,completed_at,ims_upload_id,result_summary FROM ims_import_jobs WHERE id=?',(meta['job_id'],)).fetchone())
-           summary=json.loads(row.pop('result_summary') or '{}')
-          progress=json.loads((Path(meta['root'])/'ims_progress'/f"job-{meta['job_id']}.json").read_text())
-          row.update(stage=progress.get('stage'),percent=progress.get('percent'),updated_at=progress.get('updated_at'),publication_ready=summary.get('publication_ready'),elapsed_seconds=round((datetime.utcnow()-datetime.fromisoformat(row['queued_at'])).total_seconds(),3))
-          print('WEEK41_PERFORMANCE_STATUS|'+json.dumps(row),flush=True)
-          for p in [Path(meta['root'])/f"week41-job-{meta['job_id']}-timing-summary.json"]:
-           if p.exists():print('WEEK41_PERFORMANCE_TIMING|'+p.read_text(),flush=True)
+          from collections import defaultdict
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          import app as module
+          module.create_database=lambda application:None
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.representative_period_workspace import build_representative_workspace_payload
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
+          from app.services.annual_realization_service import AnnualRealizationService as Annual
+          from app.services.representative_query_optimizer import use_snapshot_upload_ids
+          from app.services.kpi_market_single_source import _upload_has_authority
+          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          from sqlalchemy import event
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          with app.app_context():
+           pin={}
+           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
+            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
+           annual=Annual.build_snapshot_inputs(2026)
+           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
+           rid=min(map(int,json.loads((live/'instance/week41-independent-period-reference-hashes.json').read_text())))
+           def profile(label,loader):
+            profiler=cProfile.Profile();started=time.perf_counter()
+            profiler.enable();value=loader();profiler.disable()
+            profiler.dump_stats(str(live/'instance'/f'week41-remaining-{label}-private.prof'))
+            stats=pstats.Stats(profiler)
+            top=sorted(stats.stats.items(),key=lambda pair:pair[1][3],reverse=True)[:30]
+            print('WEEK41_REMAINING_PROFILE|'+json.dumps(dict(stage=label,seconds=round(time.perf_counter()-started,3),top=[dict(file=Path(k[0]).name,line=k[1],function=k[2],calls=v[1],self_seconds=round(v[2],3),cumulative=round(v[3],3)) for k,v in top])),flush=True)
+            return value
+           with use_snapshot_upload_ids(pin,authority_by_upload=authority):
+            profile('representative',lambda:Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual)))
+           print('WEEK41_REMAINING_CACHE|'+json.dumps(Monthly.statistics()),flush=True)
+           region=RegionPerformanceService('101',2026,10)
+           report=profile('region-performance',region.report)
+           profile('region-market',lambda:RegionMarketService(report['region_key'],region.rep_ids,2026,10).build())
+           db.session.rollback()
+          
           PY
+          venv/bin/python -u - <<'PY'
+          import json,sqlite3,time
+          from pathlib import Path
+          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
+          for attempt in range(50):
+           with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,timeout=3) as con:
+            status,raw=con.execute('SELECT status,result_summary FROM ims_import_jobs WHERE id=?',(meta['job_id'],)).fetchone()
+           progress=json.loads((Path(meta['root'])/'ims_progress'/f"job-{meta['job_id']}.json").read_text())
+           summary=json.loads(raw or '{}')
+           ready=summary.get('publication_ready') is True and progress.get('status')=='COMPLETED' and progress.get('percent')==100
+           if ready:
+            print('WEEK41_PROFILE_RELEASE_GATE|READY|job_id='+str(meta['job_id']),flush=True)
+            break
+           if status=='FAILED':raise SystemExit('Import failed; profiling refused')
+           if attempt==49:raise SystemExit('Full publication not ready; profiling refused')
+           time.sleep(30)
+          PY
+          set +e
+          nice -n 10 venv/bin/python instance/week41-remaining-performance-profile.py > instance/week41-remaining-performance-profile.log 2>&1
+          profile_rc=$?
+          set -e
+          grep '^WEEK41_' instance/week41-remaining-performance-profile.log || true
+          echo "WEEK41_REMAINING_PROFILE_EXIT|$profile_rc"
+          test "$profile_rc" = "0"
           REMOTE
           
