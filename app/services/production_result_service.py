@@ -102,10 +102,17 @@ class ProductionResultService:
         if current_app.testing:
             return cls._quota_product_months_uncached(periods)
         database = str(current_app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+        # An accepted P2/P1 replacement changes quota authority immediately;
+        # a short TTL alone must not retain the previous workbook's answer.
+        versions = {}
+        for period in periods:
+            upload = cls.final_upload(*period)
+            versions[period] = int(upload.id) if upload is not None else 0
+        keys = {period: (database, period, versions[period]) for period in periods}
         now = time.monotonic()
         with cls._quota_cache_lock:
             cached = {
-                period: cls._quota_cache.get((database, period))
+                period: cls._quota_cache.get(keys[period])
                 for period in periods
             }
         missing = [
@@ -120,9 +127,9 @@ class ProductionResultService:
                         int(product_id) for product_id, detected in fresh.items()
                         if period in detected
                     }
-                    cls._quota_cache[(database, period)] = (time.monotonic(), products)
+                    cls._quota_cache[keys[period]] = (time.monotonic(), products)
                 cached = {
-                    period: cls._quota_cache[(database, period)]
+                    period: cls._quota_cache[keys[period]]
                     for period in periods
                 }
         result = {}
@@ -244,6 +251,7 @@ class ProductionResultService:
         result = {}
         tolerance = Decimal("0.05")
         for period, upload in selected.items():
+            year, month = period
             upload_rows = rows_by_upload.get(int(upload.id), [])
             expected_regions = {str(row.region_code) for row in upload_rows}
             by_product = {}

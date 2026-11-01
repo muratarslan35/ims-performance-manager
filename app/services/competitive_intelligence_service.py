@@ -276,6 +276,9 @@ class CompetitiveIntelligenceService:
                 row["severity"] != "critical",
                 -row["delta_unit"],
                 -row["current_unit"],
+                row["brick"],
+                row["group"],
+                row["product"],
             )
         )
         weekly_alerts = weekly_alerts[:10]
@@ -368,6 +371,7 @@ class CompetitiveIntelligenceService:
                 -row["average_unit"],
                 row["brick"],
                 row["product"],
+                row["group"],
             )
         )
 
@@ -390,6 +394,7 @@ class CompetitiveIntelligenceService:
                 -row["latest_unit"],
                 row["brick"],
                 row["product"],
+                row["group"],
             )
         )
         emerging_limit = max(0, 7 - len(recurring))
