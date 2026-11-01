@@ -1,4 +1,4 @@
-name: Quota Deployment Activation Progress
+name: Quota Deployment Service Transition State
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -45,27 +45,21 @@ jobs:
 
 
           umask 077
+          sudo systemctl show ims-performance-manager.service ims-import-worker.service ims-report-worker.service --property=Id,MainPID,ActiveState,SubState,ActiveEnterTimestamp --no-pager
+          sudo systemctl list-jobs --no-pager
           venv/bin/python - <<'PY'
-          import json,sqlite3
+          import json
           from pathlib import Path
-          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
-          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
-           tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%refresh%' OR name LIKE '%finalization%')")]
-           counts={}
-           for table in tables:
-            columns=[r[1] for r in con.execute('PRAGMA table_info("'+table+'")')]
-            if 'status' in columns:counts[table]=con.execute('SELECT status,count(*) FROM "'+table+'" GROUP BY status').fetchall()
-           print('QUOTA_DEPLOY_QUEUES|'+json.dumps(counts),flush=True)
-          scripts={'verify_production_snapshot_finalization.py','finalize_latest_snapshot_publication.py','verify_region_manager_production.py','production_resource_gate.py','verify_live_ims_gate.py'}
-          active=[]
+          names={'git','systemctl','journalctl','install_systemd_service.sh','verify_runtime.py','verify_region_manager_production.py','verify_production_snapshot_finalization.py','finalize_latest_snapshot_publication.py','sudo'}
+          result=[]
           for directory in Path('/proc').iterdir():
            if not directory.name.isdigit():continue
            try:
-            args=(directory/'cmdline').read_bytes().split(b'\0')
-            matched=[Path(a.decode(errors='replace')).name for a in args if Path(a.decode(errors='replace')).name in scripts]
-            if matched:active.append(dict(pid=int(directory.name),script=matched[0]))
+            args=[a.decode(errors='replace') for a in (directory/'cmdline').read_bytes().split(b'\0') if a]
+            if args and any(Path(a).name in names for a in args):
+             result.append(dict(pid=int(directory.name),command=[Path(a).name for a in args[:3]]))
            except (PermissionError,FileNotFoundError,ProcessLookupError):pass
-          print('QUOTA_DEPLOY_ACTIVE_CHECKS|'+json.dumps(active),flush=True)
+          print('QUOTA_DEPLOY_PROCESS_STATE|'+json.dumps(result),flush=True)
           PY
           REMOTE
           
