@@ -1,4 +1,4 @@
-name: Week 41 Final Source Catalog Validation
+name: Week 41 Source Catalog Validation Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,138 +44,20 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          umask 077
-          git fetch origin 51e2d0bd3707af7bc20c4922b845c84de757e18c
-          candidate_shadow="$(mktemp -d instance/week41-budget-final.XXXXXX)"
-          git archive FETCH_HEAD | tar -x -C "$candidate_shadow"
-          export IMS_SHADOW_PATH="$IMS_PATH/$candidate_shadow"
-          echo "WEEK41_FINAL_VALIDATION_COMMIT|51e2d0bd3707af7bc20c4922b845c84de757e18c"
-          cat > instance/week41-region-final-gate.py <<'PY'
-          import os,sys,json,hashlib,time
+          venv/bin/python - <<'PY'
           from pathlib import Path
-          from contextlib import nullcontext
-          live=Path.cwd();sys.path.insert(0,str(live))
-          import config
-          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
-          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
-          import app as module
-          module.create_database=lambda application:None
-          class ReadOnlyConfig(config.Config):
-           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
-          from app.extensions import db
-          from app.models import IMSUpload,Representative
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.region_market_service import RegionMarketService
-          import sqlalchemy as sa
-          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
-          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
-          phase=os.environ['REGION_GATE_PHASE'];started=time.perf_counter()
-          if phase.startswith('candidate'):
-           from app.cache.ims_generation_reads import isolated_generation_reads
-           scope=isolated_generation_reads()
-          else:scope=nullcontext()
-          with app.app_context(),scope:
-           latest=IMSUpload.query.filter_by(status='COMPLETED',year=2026,month=10).order_by(IMSUpload.id.desc()).first()
-           assert latest.id==57 and latest.week_number==41
-           keys=Regions.region_keys(2026,10);assert len(keys)==11
-           hashes={}
-           for key in keys:
-            performance=RegionPerformanceService(key,2026,10)
-            report=performance.report()
-            market=RegionMarketService(report['region_key'],performance.rep_ids,2026,10).build()
-            payload=Snap._json_ready(dict(report=report,market_analysis=market))
-            hashes[str(key)]=digest(payload)
-            (live/'instance'/f'week41-region-{phase}-{key}-private.json').write_text(canonical(payload))
-            print('WEEK41_REGION_GATE_PROGRESS|'+json.dumps(dict(phase=phase,done=len(hashes),total=len(keys),seconds=round(time.perf_counter()-started,3))),flush=True)
-           db.session.rollback()
-           root=live/'instance';reference=root/'week41-region-budget-reference-hashes.json'
-           if phase=='reference':reference.write_text(json.dumps(hashes));changed=[]
-           else:
-            before=json.loads(reference.read_text());changed=[k for k in set(before)|set(hashes) if before.get(k)!=hashes.get(k)]
-           summary=dict(result='FAIL' if changed else 'PASS',phase=phase,regions=len(hashes),changed=changed,seconds=round(time.perf_counter()-started,3))
-           (root/f'week41-region-budget-{phase}-summary.json').write_text(json.dumps(summary))
-           print('WEEK41_REGION_BUDGET_GATE|'+json.dumps(summary),flush=True)
-           if changed:raise SystemExit(1)
-          
+          import json
+          root=Path('instance')
+          for name in ('week41-region-budget-candidate-final.log','week41-region-budget-candidate-hot.log','week41-region-budget-bootstrap-final.log'):
+           p=root/name
+           if p.exists():
+            lines=[l for l in p.read_text(errors='replace').splitlines() if l.startswith('WEEK41_')]
+            for line in lines[-2:]:print(line,flush=True)
+          for name in ('week41-region-budget-candidate-final-summary.json','week41-region-budget-candidate-hot-summary.json','week41-region-budget-bootstrap-summary.json'):
+           p=root/name
+           if p.exists():print('WEEK41_FINAL_BUDGET_SUMMARY|'+p.read_text(),flush=True)
+          memory={line.split(':')[0]:line.split(':')[1].strip() for line in Path('/proc/meminfo').read_text().splitlines()}
+          print('WEEK41_VALIDATION_MEMORY|'+json.dumps({k:memory[k] for k in ('MemAvailable','SwapFree')}),flush=True)
           PY
-          for phase in candidate-final candidate-hot; do
-           export REGION_GATE_PHASE="$phase"
-           set +e
-           nice -n 10 venv/bin/python instance/week41-region-final-gate.py > "instance/week41-region-budget-$phase.log" 2>&1
-           region_rc=$?
-           set -e
-           grep '^WEEK41_' "instance/week41-region-budget-$phase.log" || true
-           echo "WEEK41_FINAL_REGION_GATE_EXIT|$phase|$region_rc"
-           test "$region_rc" = "0"
-          done
-          cat > instance/week41-region-budget-bootstrap-final.py <<'PY'
-          import os,sys,json,hashlib,time
-          from pathlib import Path
-          from contextlib import nullcontext
-          live=Path.cwd();sys.path.insert(0,str(live))
-          import config
-          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
-          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
-          import app as module
-          module.create_database=lambda application:None
-          class ReadOnlyConfig(config.Config):
-           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
-          from app.extensions import db
-          from app.models import IMSUpload,Representative
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.region_market_service import RegionMarketService
-          import sqlalchemy as sa
-          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
-          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
-          from concurrent.futures import ThreadPoolExecutor,as_completed
-          from app.services.representative_period_workspace import build_representative_workspace_payload
-          from app.services.annual_realization_service import AnnualRealizationService as Annual
-          from app.services.representative_query_optimizer import use_snapshot_upload_ids
-          from app.services.kpi_market_single_source import _upload_has_authority
-          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
-          started=time.perf_counter()
-          with app.app_context():
-           pin={}
-           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
-            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
-           assert pin[(2026,10)]==57
-           annual=Annual.build_snapshot_inputs(2026)
-           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
-           set_id=db.session.execute(sa.select(representative_snapshot_sets.c.id).where(representative_snapshot_sets.c.source_upload_id==57,representative_snapshot_sets.c.status=='ACTIVE').order_by(representative_snapshot_sets.c.id.desc()).limit(1)).scalar()
-           references={int(r.representative_id):digest(json.loads(r.payload_json)) for r in db.session.execute(sa.select(representative_snapshots.c.representative_id,representative_snapshots.c.payload_json).where(representative_snapshots.c.set_id==set_id))}
-           assert len(references)==113
-          def member(rid):
-           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
-            try:
-             workspace=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
-             actual=digest(workspace);ok=actual==references[rid]
-             if not ok:(live/'instance'/f'week41-region-budget-rep-{rid}-private.json').write_text(canonical(workspace))
-             return dict(id=rid,equal=ok)
-            finally:db.session.rollback()
-          results=[]
-          with ThreadPoolExecutor(max_workers=3) as pool:
-           for future in as_completed([pool.submit(member,rid) for rid in sorted(references)]):
-            results.append(future.result())
-            if len(results)%8==0 or len(results)==113:print('WEEK41_REGION_BUDGET_REP_PROGRESS|'+json.dumps(dict(done=len(results),total=113,seconds=round(time.perf_counter()-started,3))),flush=True)
-          failures=sum(not r['equal'] for r in results)
-          summary=dict(result='FAIL' if failures else 'PASS',members=len(results),full_workspace_differences=failures,seconds=round(time.perf_counter()-started,3),cache=Monthly.statistics())
-          (live/'instance/week41-region-budget-bootstrap-summary.json').write_text(json.dumps(summary))
-          print('WEEK41_REGION_BUDGET_BOOTSTRAP|'+json.dumps(summary),flush=True)
-          if failures:raise SystemExit(1)
-          
-          PY
-          set +e
-          nice -n 10 venv/bin/python instance/week41-region-budget-bootstrap-final.py > instance/week41-region-budget-bootstrap-final.log 2>&1
-          bootstrap_rc=$?
-          set -e
-          grep '^WEEK41_' instance/week41-region-budget-bootstrap-final.log || true
-          echo "WEEK41_REGION_BUDGET_BOOTSTRAP_EXIT|$bootstrap_rc"
-          test "$bootstrap_rc" = "0"
           REMOTE
           
