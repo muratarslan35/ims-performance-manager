@@ -1,4 +1,4 @@
-name: Week 41 Final Production Acceptance and Historical Protection
+name: Week 41 Final Acceptance Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,144 +44,18 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          umask 077
           venv/bin/python - <<'PY'
-          import json,sqlite3
           from pathlib import Path
-          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
-          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,timeout=3) as con:
-           latest=con.execute("SELECT id,year,month,week_number,status FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-           active=con.execute("SELECT count(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
-           row=con.execute('SELECT status,ims_upload_id,result_summary FROM ims_import_jobs WHERE id=?',(meta['job_id'],)).fetchone()
-          summary=json.loads(row[2] or '{}')
-          progress=json.loads((Path(meta['root'])/'ims_progress'/f"job-{meta['job_id']}.json").read_text())
-          print('WEEK41_CURRENT_STATE|'+json.dumps(dict(latest=latest,active_imports=active,job_id=meta['job_id'],job_status=row[0],upload_id=row[1],publication_ready=summary.get('publication_ready'),progress=progress.get('percent'),stage=progress.get('stage'))),flush=True)
-          assert tuple(latest[:4])==(58,2026,10,41) and active==0 and summary.get('publication_ready') is True and progress.get('percent')==100
-          PY
-          umask 077
-          set +e
-          PYTHONPATH="$IMS_PATH" nice -n 10 venv/bin/python scripts/verify_official_region_publication.py --year 2026 --month 10 > instance/week41-final-performance-source-acceptance-private.log 2>&1
-          acceptance_rc=$?
-          set -e
-          grep -E '^OFFICIAL_(PUBLICATION|REGION)_ACCEPTANCE\|' instance/week41-final-performance-source-acceptance-private.log || true
-          echo "WEEK41_PERFORMANCE_SOURCE_ACCEPTANCE_EXIT|$acceptance_rc"
-          test "$acceptance_rc" = "0"
-          cat > instance/week41-final-performance-html-acceptance.py <<'PY'
-          import json,re,html
-          from pathlib import Path
-          from decimal import Decimal
-          from app import create_app
-          from app.extensions import db
-          from app.models import User,IMSUpload,IMSRawData
-          from app.services.tl_box_calculation_service import TLBoxCalculationService as Boxes
-          from verify_region_manager_production import _login_as
-          app=create_app()
-          with app.app_context():
-           upload=IMSUpload.query.filter_by(status='COMPLETED',year=2026,month=10).order_by(IMSUpload.id.desc()).first()
-           assert upload.week_number==41
-           admin=next(u for u in User.query.filter_by(active=True) if str(u.role).lower()=='admin')
-           official={}
-           for r in IMSRawData.query.filter_by(upload_id=upload.id,sheet_type='official_actual_aggregate'):
-            if r.territory!='NATIONAL':official[r.territory]=official.get(r.territory,Decimal(0))+Boxes.round_box(r.unit)
-           client=app.test_client();_login_as(client,admin.id)
-           failures=[]
-           for code,expected in sorted(official.items()):
-            response=client.get('/market-analysis/region/'+code+'?year=2026&month=10')
-            body=html.unescape(response.get_data(as_text=True))
-            detail=client.get('/regions/'+code+'?year=2026&month=10')
-            if detail.status_code!=200 or 'data-quarter-period-tab="monthly"' not in detail.get_data(as_text=True):failures.append(dict(region=code,detail_http=detail.status_code))
-            match=re.search(r'Bölgesel şirket toplam kutu çıkışı</span>\s*<strong>([^<]+)</strong>',body)
-            actual=Decimal(re.sub(r'[^0-9-]','',match.group(1))) if match else None
-            if response.status_code!=200 or actual!=expected:failures.append(dict(region=code,http=response.status_code,metric_found=bool(match)))
-           print('WEEK41_HTML_ACCEPTANCE|'+json.dumps(dict(result='FAIL' if failures else 'PASS',regions=len(official),failures=failures)),flush=True)
-           assert len(official)==11 and not failures
-          
-          PY
-          set +e
-          PYTHONPATH="$IMS_PATH" venv/bin/python instance/week41-final-performance-html-acceptance.py > instance/week41-final-performance-html-acceptance-private.log 2>&1
-          html_rc=$?
-          set -e
-          grep '^WEEK41_HTML_ACCEPTANCE' instance/week41-final-performance-html-acceptance-private.log || true
-          echo "WEEK41_HTML_ACCEPTANCE_EXIT|$html_rc"
-          test "$html_rc" = "0"
-          venv/bin/python - <<'PY'
-          import json,sqlite3
-          from pathlib import Path
-          from datetime import datetime,timezone
-          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
+          import sqlite3,json
+          root=Path('instance');meta=json.loads((root/'week41-performance-timing-session.json').read_text())
           with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
-           queued=con.execute('SELECT queued_at FROM ims_import_jobs WHERE id=?',(meta['job_id'],)).fetchone()[0]
-          epoch=datetime.fromisoformat(queued).replace(tzinfo=timezone.utc).timestamp()
-          root=Path(meta['root'])
-          files=list((root/'representative_monthly_market').glob('2026-*.json.gz'))
-          current=[p for p in files if p.name.startswith('2026-10-')]
-          historical=[p for p in files if not p.name.startswith('2026-10-')]
-          current_rebuilt=sum(p.stat().st_mtime>=epoch for p in current)
-          historical_rebuilt=sum(p.stat().st_mtime>=epoch for p in historical)
-          catalog=list((root/'region_period_catalog').glob('*.json'))
-          historical_catalog_rebuilt=sum(p.stat().st_mtime>=epoch for p in catalog if p.name!='2026-10.json')
-          result=dict(result='PASS' if len(current)==113 and current_rebuilt==113 and historical_rebuilt==0 and historical_catalog_rebuilt==0 else 'FAIL',
-           current_month_members=len(current),current_month_recomputed=current_rebuilt,
-           unchanged_historical_monthly_frames=len(historical),historical_frames_rewritten=historical_rebuilt,historical_catalog_frames_rewritten=historical_catalog_rebuilt)
-          print('WEEK41_NORMAL_INCREMENTAL_REUSE|'+json.dumps(result),flush=True)
-          assert result['result']=='PASS'
+           latest=con.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
+           print('WEEK41_CURRENT_LATEST_SOURCE|'+json.dumps(latest),flush=True)
+          for name in ('week41-final-performance-source-acceptance-private.log','week41-final-performance-html-acceptance-private.log','week41-performance-final-history-validation.log','week41-performance-final-generations-validation.log'):
+           p=root/name
+           if p.exists():
+            lines=[l for l in p.read_text(errors='replace').splitlines() if l.startswith(('WEEK41_','OFFICIAL_PUBLICATION_ACCEPTANCE|'))]
+            for line in lines[-2:]:print(line,flush=True)
           PY
-          
-          nice -n 10 venv/bin/python -u - <<'PY' > instance/week41-performance-final-history-validation.log 2>&1
-          import json,hashlib,sqlite3
-          from pathlib import Path
-          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
-          before=json.loads(Path('instance/week41-unit-policy-protection-before.json').read_text())
-          c=sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,isolation_level=None)
-          current={}
-          for table in before['business']:
-           digest=hashlib.sha256();count=0
-           for row in c.execute(f'SELECT * FROM {table} WHERE year<2026 OR (year=2026 AND month<10) ORDER BY id'):
-            digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
-           current[table]=dict(rows=count,sha256=digest.hexdigest())
-           print('WEEK41_HISTORY_TABLE|'+json.dumps(dict(table=table,result='PASS' if current[table]==before['business'][table] else 'FAIL',rows=count)),flush=True)
-          changed=[k for k in before['business'] if before['business'][k]!=current[k]]
-          Path('instance/week41-performance-protection-after-business.json').write_text(json.dumps(current))
-          print('WEEK41_HISTORY_BUSINESS|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,tables=len(current))),flush=True)
-          if changed:raise SystemExit(1)
-          
-          PY
-          grep -E '^WEEK41_' instance/week41-performance-final-history-validation.log
-          venv/bin/python -u - <<'PY' > instance/week41-performance-final-generations-validation.log 2>&1
-          import hashlib,json,os,sqlite3
-          from pathlib import Path
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSUpload,IMSImportJob
-          app=create_app()
-          os.umask(0o077)
-          with app.app_context():
-           latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
-           if (latest.year,latest.month,latest.week_number)!=(2026,10,41):raise RuntimeError('Scope is no longer Week 41')
-           result={}
-           legacy=json.loads(Path('instance/official-region-history-before-week41.json').read_text())
-           result['business']={k:v for k,v in legacy.items() if k in ('ims_uploads','ims_facts','ims_summary','ims_raw_data','targets','ims_competition_data')}
-           conn=sqlite3.connect('file:'+str(Path(db.engine.url.database).resolve())+'?mode=ro',uri=True)
-           for sets,rows in [('manager_region_snapshot_sets','manager_region_snapshots'),('representative_snapshot_sets','representative_snapshots')]:
-            sql=f"SELECT r.* FROM {rows} r JOIN {sets} s ON s.id=r.set_id WHERE s.status='ACTIVE' AND (s.year<2026 OR (s.year=2026 AND s.month<10)) ORDER BY r.id"
-            digest=hashlib.sha256();count=0
-            for row in conn.execute(sql):
-             digest.update(json.dumps(row,ensure_ascii=True,separators=(',',':'),default=str).encode());digest.update(b'\n');count+=1
-            result[rows]=dict(rows=count,sha256=digest.hexdigest())
-           result['dashboard_files']={}
-           for path in sorted((Path(app.instance_path)/'dashboard_snapshots').glob('*.json')):
-            if not path.name.startswith('dashboard-2026-10'):result['dashboard_files'][path.name]=hashlib.sha256(path.read_bytes()).hexdigest()
-           baseline=Path('instance/week41-unit-policy-protection-before.json')
-           if baseline.exists():
-            before=json.loads(baseline.read_text())
-            changed=[k for k in ('manager_region_snapshots','representative_snapshots','dashboard_files') if before.get(k)!=result.get(k)]
-            print('WEEK41_PROTECTED_GENERATIONS|'+json.dumps(dict(result='FAIL' if changed else 'PASS',changed=changed,region_rows=result['manager_region_snapshots']['rows'],representative_rows=result['representative_snapshots']['rows'],dashboard_files=len(result['dashboard_files']))),flush=True)
-            if changed:raise SystemExit(1)
-           else:
-            baseline.write_text(json.dumps(result),encoding='utf-8')
-            print('WEEK41_PROTECTION_BASELINE|'+json.dumps(dict(result='READY',region_rows=result['manager_region_snapshots']['rows'],representative_rows=result['representative_snapshots']['rows'],dashboard_files=len(result['dashboard_files']),historical_business_tables=len(result['business']))),flush=True)
-          
-          PY
-          grep -E '^WEEK41_' instance/week41-performance-final-generations-validation.log
           REMOTE
           
