@@ -112,6 +112,7 @@ class DashboardQuery:
         representative_ids = {key[0] for key in keys}
         product_ids = {key[1] for key in keys}
         resolved = {}
+        production_targets = {}
         uploads = ProductionResultService.applied_uploads(year, month)
         if uploads:
             priority = {int(upload.id): index for index, upload in enumerate(uploads)}
@@ -123,6 +124,7 @@ class DashboardQuery:
             for row in sorted(production_rows, key=lambda item: priority[int(item.upload_id)]):
                 key = (int(row.representative_id), int(row.product_id))
                 if key in keys and key not in resolved:
+                    production_targets[key] = row.target_tl
                     resolved[key] = (
                         Decimal(str(row.actual_unit or 0)),
                         Decimal(str(row.actual_tl or 0)),
@@ -145,6 +147,22 @@ class DashboardQuery:
                         Decimal(str(row.tl or 0)),
                     )
 
+        scope = ProductionResultService.ims_target_scope(year, month)
+        if scope is not None:
+            quota_ids = self._quota_ids(year, month)
+            for target in targets:
+                key = (int(target.representative_id), int(target.product_id))
+                if int(target.product_id) not in scope:
+                    resolved[key] = (Decimal("0"), Decimal("0"), Decimal("0"))
+                    continue
+                allocated = Decimal(str(target.tl_target or 0))
+                production_target = production_targets.get(key)
+                effective_target = Decimal(str(production_target)) if production_target is not None else allocated
+                units, actual = resolved.get(key, (Decimal("0"), Decimal("0")))[:2]
+                if int(target.product_id) in quota_ids:
+                    effective_target = effective_target or allocated
+                    actual = effective_target
+                resolved[key] = (units, actual, effective_target)
         return resolved
 
     def load_top_representatives(
@@ -177,6 +195,9 @@ class DashboardQuery:
                 Target.representative_id == filters.representative_id
             )
         target_rows = targets_query.all()
+        scope = ProductionResultService.ims_target_scope(filters.year, filters.month)
+        if scope is not None:
+            target_rows = [row for row in target_rows if int(row.product_id) in scope]
         if not target_rows:
             return []
 
@@ -219,6 +240,12 @@ class DashboardQuery:
                 representative_id, [Decimal("0"), Decimal("0")]
             )
             target_tl = Decimal(str(target.tl_target or 0))
+            if scope is not None:
+                effective = actual_by_key.get((representative_id, int(target.product_id)))
+                if effective is not None:
+                    bucket[1] += effective[2]
+                    bucket[0] += effective[1]
+                    continue
             bucket[1] += target_tl
             bucket[0] += (
                 target_tl if int(target.product_id) in quota_ids
@@ -234,7 +261,7 @@ class DashboardQuery:
             if representative is None:
                 continue
             official = official_by_rep.get(representative_id)
-            if official is not None:
+            if official is not None and scope is None:
                 actual_tl = Decimal(str(official.actual_tl or 0))
                 target_tl = Decimal(str(official.target_tl or 0))
             rows.append((
@@ -302,7 +329,10 @@ class DashboardQuery:
             for row in production_rows
         )
         totals = {}
+        scopes = {month: ProductionResultService.ims_target_scope(year, month) for month in {key[0] for key in source_keys}}
         for month, representative_id, product_id in source_keys:
+            if scopes[month] is not None and product_id not in scopes[month]:
+                continue
             selected = None
             for upload in uploads_by_month.get(month, ()):
                 selected = production_by_key.get((int(upload.id), representative_id, product_id))
@@ -361,6 +391,12 @@ class DashboardQuery:
         total_target = Decimal("0")
         total_actual = Decimal("0")
         for target in target_rows:
+            if scope is not None:
+                effective = actual_by_key.get((int(target.representative_id), int(target.product_id)))
+                if effective is not None:
+                    total_target += effective[2]
+                    total_actual += effective[1]
+                    continue
             total_target += Decimal(str(target.tl_target or 0))
             total_actual += (
                 Decimal(str(target.tl_target or 0)) if int(target.product_id) in quota_ids
@@ -524,8 +560,12 @@ class DashboardQuery:
             if scope is not None and int(target.product_id) not in scope:
                 continue
             bucket = totals.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
-            bucket[1] += Decimal(str(target.tl_target or 0))
             effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)
+            if scope is not None:
+                bucket[1] += Decimal(str(effective.get("target_tl") or 0))
+                bucket[0] += Decimal(str(effective.get("actual_tl") or 0))
+                continue
+            bucket[1] += Decimal(str(target.tl_target or 0))
             bucket[0] += (
                 Decimal(str(target.tl_target or 0)) if target.product_id in quota_ids
                 else Decimal(str(effective.get("actual_tl") or 0))
@@ -544,6 +584,29 @@ class DashboardQuery:
         Retrieves territory performance aggregated by Representative City.
         Returns raw SQLAlchemy Rows.
         """
+        if filters and filters.year is not None and filters.month is not None and ProductionResultService.target_first_quota_applies(filters.year, filters.month):
+            scope = ProductionResultService.ims_target_scope(filters.year, filters.month)
+            query = self.session.query(Target, Representative).join(Representative, Representative.id == Target.representative_id).filter(
+                Target.year == filters.year, Target.month == filters.month, Target.product_id.in_(scope), Representative.city.isnot(None),
+            )
+            for field in ("representative_id", "product_id"):
+                if getattr(filters, field) is not None:
+                    query = query.filter(getattr(Target, field) == getattr(filters, field))
+            for field in ("manager", "region", "city", "territory"):
+                if getattr(filters, field) is not None:
+                    query = query.filter(getattr(Representative, field) == getattr(filters, field))
+            if filters.is_prime_product is not None:
+                query = query.join(Product, Product.id == Target.product_id).filter(Product.is_prime_product == filters.is_prime_product)
+            pairs = query.all()
+            effective = self._effective_actuals_for_targets(filters.year, filters.month, [target for target, _ in pairs])
+            buckets = {}
+            for target, rep in pairs:
+                bucket = buckets.setdefault(rep.city, [Decimal("0"), Decimal("0"), set()])
+                value = effective[(int(rep.id), int(target.product_id))]
+                bucket[0] += value[1]; bucket[1] += value[2]; bucket[2].add(int(rep.id))
+            rows = [SimpleNamespace(city=city, total_tl=value[0], target_tl=value[1], rep_count=len(value[2])) for city, value in buckets.items()]
+            rows.sort(key=lambda row: (-row.total_tl, row.city))
+            return rows[(offset or 0):None if limit is None else (offset or 0) + limit]
         default_order = order_by if order_by is not None else desc("total_tl")
 
         joins = [
@@ -626,6 +689,29 @@ class DashboardQuery:
     def load_region_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
+        if ProductionResultService.target_first_quota_applies(filters.year, filters.month):
+            from app.models import ProductionRegionProductResult
+            from app.services.region_performance_service import RegionPerformanceService
+            target_source = OfficialAggregateService.latest_upload_id(filters.year, filters.month, TARGET_TYPE)
+            keys = {str(row[0]) for row in self.session.query(IMSRawData.territory).filter(
+                IMSRawData.upload_id == target_source, IMSRawData.sheet_type == TARGET_TYPE,
+                IMSRawData.territory != "NATIONAL",
+            ).distinct()} if target_source else set()
+            production = ProductionResultService.final_upload(filters.year, filters.month)
+            if production is not None:
+                keys.update(str(row[0]) for row in self.session.query(ProductionRegionProductResult.region_code).filter_by(upload_id=production.id).distinct())
+            rows = []
+            for key in sorted(keys):
+                service = RegionPerformanceService(key, filters.year, filters.month)
+                tl = service._official_ims_region_month(filters.year, filters.month)
+                units = service._official_region_unit_month(filters.year, filters.month)
+                if not tl:
+                    continue
+                rows.append(SimpleNamespace(region=key, city=next((r.city for r in service.representatives if r.city), None),
+                    tl_target=sum(v[0] for v in tl.values()), tl_actual=sum(v[1] for v in tl.values() if v[2]),
+                    unit_target=sum(v[0] for v in units.values()), unit_actual=sum(v[1] for v in units.values() if v[2]),
+                    representative_count=len(service.rep_ids)))
+            return rows
         target_upload = OfficialAggregateService.latest_upload_id(filters.year, filters.month, TARGET_TYPE)
         # A final production result establishes the period's operational
         # target/actual source.  Region detail pages already use Target plus
@@ -723,7 +809,7 @@ class DashboardQuery:
             key = (rep.region, rep.city); bucket = buckets.setdefault(key, [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), set()])
             actual_unit, actual_tl = actual_by_target.get(
                 (int(target.representative_id), int(target.product_id)), (Decimal("0"), Decimal("0"))
-            )
+            )[:2]
             bucket[0] += Decimal(str(target.unit_target or 0)); bucket[1] += actual_unit
             bucket[2] += Decimal(str(target.tl_target or 0)); bucket[3] += actual_tl; bucket[4].add(rep.id)
         return [SimpleNamespace(region=k[0], city=k[1], unit_target=v[0], unit_actual=v[1], tl_target=v[2], tl_actual=v[3], representative_count=len(v[4])) for k, v in sorted(buckets.items())]

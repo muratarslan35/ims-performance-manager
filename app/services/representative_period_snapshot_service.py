@@ -238,10 +238,7 @@ class RepresentativePeriodSnapshotService:
                     ),
                     None,
                 )
-                if official_total is not None and not (
-                    ProductionResultService.target_first_quota_applies(year, month)
-                    and any((y, m) == (year, month) for y, m, _pid in quota_periods)
-                ):
+                if official_total is not None and not ProductionResultService.target_first_quota_applies(year, month):
                     total_percent = cls._percent(
                         official_total.actual_tl,
                         official_total.target_tl,

@@ -255,3 +255,51 @@ def test_targetless_region_market_has_no_performance_credit_but_retains_observat
     assert row['target_unit']==row['company_unit']==row['realization_percent']==0
     assert row['market_company_unit']==50 and row['competitor_unit']==70
     assert result['totals']['effective_company_unit']==0
+
+
+@pytest.mark.parametrize('quota_approved',[False,True])
+def test_dashboard_ranking_and_region_map_cannot_restore_unadjusted_production_total(quota_audit,quota_approved):
+    from app.models import ProductionRepresentativeTotal, ProductionRegionTotal
+    from app.query.dashboard_query import DashboardQuery
+    from app.query.filters import DashboardFilterParams
+    from app.services.representative_period_workspace import _aggregate_sales
+    rep,product=quota_audit
+    excluded=Product(product_code='NO-TARGET',product_name='Hedefsiz Urun',is_active=True)
+    rep.city='DIYARBAKIR'
+    upload=ProductionResultUpload(file_name='Uretim'+(' KOTA CIKIS Degisen Urun' if quota_approved else '')+'.xlsx',stored_file_name='totals.xlsx',
+        source_hash='e'*64,year=2045,month=7,production_stage=2,status='APPLIED')
+    db.session.add_all([excluded,upload]);db.session.flush()
+    for item,target,actual,units in ((product,500,250,10),(excluded,0,777,77)):
+        db.session.add_all([
+            Target(year=2045,month=7,representative_id=rep.id,product_id=item.id,tl_target=target,unit_target=20 if target else 0),
+            IMSSummary(year=2045,month=7,representative_id=rep.id,product_id=item.id,tl=actual,unit=units),
+            ProductionResult(upload_id=upload.id,representative_id=rep.id,product_id=item.id,
+                target_tl=target,target_unit=20 if target else 0,actual_tl=actual,actual_unit=units,realization_percent=50),
+            ProductionRegionProductResult(upload_id=upload.id,region_code='901',product_id=item.id,
+                target_tl=400 if target else 0,target_unit=40 if target else 0,actual_tl=200 if target else 777,
+                actual_unit=20 if target else 77,realization_percent=50,unit_realization_percent=50),
+        ])
+    db.session.add_all([
+        ProductionRepresentativeTotal(upload_id=upload.id,representative_id=rep.id,target_tl=500,target_unit=20,
+            actual_tl=1027,actual_unit=87,realization_percent=205.4,unit_realization_percent=435),
+        ProductionRegionTotal(upload_id=upload.id,region_code='901',target_tl=400,target_unit=40,
+            actual_tl=977,actual_unit=97,realization_percent=244.25,unit_realization_percent=242.5),
+    ])
+    db.session.commit()
+    query=DashboardQuery();filters=DashboardFilterParams(year=2045,month=7,representative_id=rep.id)
+    rank=query.load_top_representatives(filters)[0]
+    expected_actual=500 if quota_approved else 250
+    assert rank[3]==expected_actual and rank[5]==500
+    period=query.load_period_performance(filters)
+    assert period.realization_tl==expected_actual and period.target_tl==500
+    city=query.load_city_performance(filters)[0]
+    assert city.total_tl==expected_actual and city.target_tl==500 and city.rep_count==1
+    products=query.load_product_performance(filters)
+    assert len(products)==1 and products[0].realization_tl==expected_actual and products[0].target_tl==500
+    ytd=query.load_ytd_product_rankings(2045,7)
+    assert {r.product_id for r in ytd}=={product.id}
+    region=query.load_region_performance(filters)[0]
+    assert region.tl_target==400 and region.tl_actual==(400 if quota_approved else 200)
+    assert region.unit_target==40 and region.unit_actual==20  # factual boxes
+    _,totals,_,_=_aggregate_sales(rep.id,[(2045,7)])
+    assert totals['target_tl']==500 and totals['actual_tl']==expected_actual and totals['percent']==(100 if quota_approved else 50)

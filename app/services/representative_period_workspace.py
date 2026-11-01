@@ -189,9 +189,7 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
             ).first()
             if upload else None
         )
-        if official_total is not None and not (
-            ProductionResultService.target_first_quota_applies(year, month) and quota_periods
-        ):
+        if official_total is not None and not ProductionResultService.target_first_quota_applies(year, month):
             totals["percent"] = realization_percent(
                 official_total.actual_tl,
                 official_total.target_tl,
