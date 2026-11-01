@@ -83,3 +83,14 @@ second cache's store/return deep copies. Each period still copies before
 mutation; interactive callers retain the existing cache behavior.
 Complete region and representative payload equality
 and another normal queue measurement are required before completion.
+
+Region period availability also reuses private, checksummed metadata per source
+month. The legacy predicate is presence of any UNIT row on a COMPLETED upload,
+including zero/subtotal-only observations, grouped by the upload's year/month.
+Only three-ASCII-digit region prefixes use the catalog; other prefixes retain
+the original query. Selected completed upload IDs/timestamps, database identity
+and calculation code fingerprint each slot. Changed/corrupt/missing months are
+queried together in bounded source-ID batches; unchanged months need no historic
+competition scan. This cache stores availability only, never amounts or business
+rows. It is used only inside generation scope and disappears safely to source
+queries when storage is unavailable.

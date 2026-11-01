@@ -1,4 +1,4 @@
-"""Small source-ID memo scoped to one sequential read-model generation."""
+"""Small source/metadata memo scoped to one sequential read-model generation."""
 from contextlib import contextmanager
 from contextvars import ContextVar
 
