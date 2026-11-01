@@ -77,5 +77,9 @@ inside one sequential build. ORM rows are resolved in the current session;
 normal readers, subsequent builds, nested builds and other threads do not share
 the memo. Product matches are bounded and confined to one region service, keyed
 by exact labels and catalog identity/values. Original lookup order, source
-selection and matching formulas are retained. Complete region payload equality
+selection and matching formulas are retained. Snapshot composition also uses
+its existing per-member monthly market mapping directly, avoiding a redundant
+second cache's store/return deep copies. Each period still copies before
+mutation; interactive callers retain the existing cache behavior.
+Complete region and representative payload equality
 and another normal queue measurement are required before completion.

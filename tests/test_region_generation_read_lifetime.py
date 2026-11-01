@@ -81,3 +81,43 @@ def test_region_product_memo_keeps_matching_order_missing_values_and_catalog_cha
     assert service._product_for("ORTAK", None, products) is second
     assert len(calls) == 3
     assert RegionMarketService("101", [], 2026, 10)._product_matches == {}
+
+
+def test_snapshot_monthly_market_uses_member_cache_and_keeps_period_mutations_isolated(monkeypatch):
+    from copy import deepcopy
+    from app.services import representative_period_workspace as workspace
+    from app.services.representative_query_optimizer import use_snapshot_upload_ids
+    from app.cache.representative_analysis_cache import RepresentativeAnalysisCache as Cache
+
+    product = SimpleNamespace(id=1, product_name="PRODUCT", display_order=1)
+    months = [(2026, 1), (2026, 2)]
+    calls = []
+
+    def monthly(cls, representative, year, month, source, loader):
+        calls.append(month)
+        actual = 0.0 if month == 1 else 5.0
+        return {"rows": [{"product": product, "actual_unit": actual,
+                         "target_unit": 10.0, "market_unit": actual + 3,
+                         "competitor_unit": 3.0, "rivals": [{"name": "RIVAL", "unit": 3.0}]}]}
+
+    monkeypatch.setattr(workspace, "_market_source_cache_key", lambda rep, year, month: f"rep-market:test:{year}:{month}")
+    monkeypatch.setattr(workspace.RepresentativeMonthlyMarketCache, "get_or_compute", classmethod(monthly))
+    Cache.clear()
+    expected = workspace._aggregate_market(SimpleNamespace(id=1), months)
+    calls.clear()
+
+    def redundant_cache(*args, **kwargs):
+        raise AssertionError("snapshot composition must not copy a second cache")
+
+    monkeypatch.setattr(Cache, "get_or_compute", redundant_cache)
+    with use_snapshot_upload_ids({}):
+        member_cache = {}
+        single = workspace._aggregate_market(SimpleNamespace(id=1), months[:1], market_cache=member_cache)
+        single["rows"][0]["actual_unit"] = 999
+        single["rows"][0]["rivals"].append({"name": "MUTATED", "unit": 999})
+        actual = workspace._aggregate_market(SimpleNamespace(id=1), months, market_cache=member_cache)
+        assert actual == expected
+        assert member_cache[months[0]]["rows"][0]["actual_unit"] == 0.0
+        assert member_cache[months[0]]["rows"][0]["rivals"] == [{"name": "RIVAL", "unit": 3.0}]
+        assert calls == [1, 2]
+    Cache.clear()
