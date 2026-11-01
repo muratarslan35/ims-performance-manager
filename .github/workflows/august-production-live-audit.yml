@@ -1,4 +1,4 @@
-name: Week 41 Final Budget Progress
+name: Week 41 Region Period Catalog Probe
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,18 +44,38 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          venv/bin/python - <<'PY'
+          umask 077
+          venv/bin/python -u - <<'PY'
+          import os,signal,json,time,sqlite3
           from pathlib import Path
-          import json
-          root=Path('instance')
-          for name in ('week41-performance-source-acceptance-private.log','week41-performance-html-acceptance-private.log','week41-region-budget-reference.log','week41-region-budget-candidate.log','week41-region-budget-bootstrap.log','week41-region-budget-bootstrap-v2.log'):
-           p=root/name
-           if p.exists():
-            lines=[l for l in p.read_text(errors='replace').splitlines() if l.startswith(('WEEK41_','OFFICIAL_PUBLICATION_ACCEPTANCE|'))]
-            for line in lines[-2:]:print(line,flush=True)
-          for name in ('week41-region-budget-reference-summary.json','week41-region-budget-candidate-summary.json','week41-region-budget-bootstrap-summary.json'):
-           p=root/name
-           if p.exists():print('WEEK41_BUDGET_PROGRESS_SUMMARY|'+p.read_text(),flush=True)
+          root=Path.cwd();stopped=0
+          for proc in Path('/proc').iterdir():
+           if not proc.name.isdigit():continue
+           try:
+            args=(proc/'cmdline').read_bytes().split(b'\0')
+            if b'instance/week41-region-budget-bootstrap-v2.py' not in args:continue
+            if (proc/'cwd').resolve()!=root or proc.stat().st_uid!=os.getuid():continue
+            os.kill(int(proc.name),signal.SIGTERM);stopped+=1
+           except (OSError,ProcessLookupError):continue
+          print('WEEK41_SUPERSEDED_SHADOW_PREPARATION_STOPPED|'+str(stopped),flush=True)
+          time.sleep(2)
+          meta=json.loads((root/'instance/week41-performance-timing-session.json').read_text())
+          expected={}
+          for path in sorted((root/'instance').glob('week41-region-reference-*-private.json')):
+           value=json.loads(path.read_text());code=str(value['report']['region_key'])
+           expected[code]=value['market_analysis']['available_periods']
+          assert len(expected)==11
+          codes=sorted(expected);started=time.perf_counter()
+          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
+           sql="SELECT DISTINCT u.year,u.month,substr(c.territory,1,3) FROM ims_competition_data c JOIN ims_uploads u ON u.id=c.upload_id WHERE u.status='COMPLETED' AND c.metric_type='UNIT' AND substr(c.territory,1,3) IN ("+','.join('?' for _ in codes)+") ORDER BY u.year DESC,u.month DESC"
+           rows=con.execute(sql,codes).fetchall()
+          actual={code:[] for code in codes}
+          for year,month,code in rows:actual[code].append(dict(year=year,month=month,label=f'{month:02d}/{year}'))
+          changed=[code for code in codes if expected[code]!=actual[code]]
+          summary=dict(result='FAIL' if changed else 'PASS',regions=len(codes),changed=changed,seconds=round(time.perf_counter()-started,3))
+          (root/'instance/week41-period-catalog-probe.json').write_text(json.dumps(summary))
+          print('WEEK41_PERIOD_CATALOG_PROBE|'+json.dumps(summary),flush=True)
+          assert not changed
           PY
           REMOTE
           
