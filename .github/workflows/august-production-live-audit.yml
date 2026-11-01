@@ -1,4 +1,4 @@
-name: Quota Deployment Resource Audit
+name: Quota Reproducible Cache Disk Inventory
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -45,18 +45,8 @@ jobs:
 
 
           umask 077
-          echo "QUOTA_DISK_BEFORE|$(df -B1 --output=avail . | tail -n 1)"
-          for path in instance/quota-target-first-shadow.*; do
-           [ -d "$path" ] || continue
-           du -sk "$path"
-          done
-          echo "QUOTA_CURRENT_SHADOW|$(cat instance/quota-target-first-shadow-path.txt)"
-          venv/bin/python - <<'PY'
-          from pathlib import Path
-          import json,os
-          p=Path('instance/quota-candidate-representatives-summary.json')
-          assert json.loads(p.read_text())['summary']['result']=='PASS'
-          print('QUOTA_FULL_SHADOW|PASS',flush=True)
-          PY
+          du -k --max-depth=1 instance | sort -nr | head -n 24
+          venv/bin/python -m pip cache info
+          find instance -maxdepth 1 -type f -size +50M -printf '%s %f\n' | sort -nr | head -n 12
           REMOTE
           
