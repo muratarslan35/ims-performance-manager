@@ -1,4 +1,4 @@
-name: Week 41 Performance Normal Queue Timing
+name: Week 41 Performance Publication Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,53 +44,20 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          
-          umask 077
-          test "$(git rev-parse HEAD)" = "446e0f21da2d0e9c8faf1787c397dd352a15e8ff"
-          test -f instance/week41-publication-timing-observer.py
-          venv/bin/python - <<'PY' > instance/week41-performance-backup-private.log 2>&1
-          import json,shutil
-          from pathlib import Path
-          import sqlalchemy as sa
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSUpload,IMSImportJob
-          from app.services.ims_progress_store import IMSProgressStore
-          from app.services.persistent_region_snapshot_service import region_snapshot_sets,region_snapshots
-          app=create_app()
-          with app.app_context():
-           source=db.session.get(IMSUpload,56)
-           latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
-           assert latest.id==56 and (source.year,source.month,source.week_number)==(2026,10,41)
-           assert IMSImportJob.query.filter(IMSImportJob.status.in_(('QUEUED','PROCESSING'))).count()==0
-           job=IMSImportJob.query.filter_by(ims_upload_id=56).order_by(IMSImportJob.id.desc()).first()
-           progress=IMSProgressStore.read(job.id) or {}
-           assert json.loads(job.result_summary or '{}').get('publication_ready') is True and progress.get('percent')==100
-           root=Path(app.instance_path);backup=root/'week41-performance-before-56';backup.mkdir(exist_ok=True)
-           if not (backup/'regions-and-job.json').exists():
-            sets=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshot_sets).where(region_snapshot_sets.c.source_upload_id==56,region_snapshot_sets.c.status=='ACTIVE'))]
-            rows=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshots).where(region_snapshots.c.set_id.in_([s['id'] for s in sets])))]
-            (backup/'regions-and-job.json').write_text(json.dumps(dict(sets=sets,rows=rows,job_id=job.id,summary=job.result_summary,progress=progress),default=str))
-            for path in (root/'dashboard_snapshots').glob('dashboard-2026-10*.json'):shutil.copy2(path,backup/path.name)
-          PY
-          echo "WEEK41_PERFORMANCE_BACKUP|READY"
-          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/queue_verified_ims_reimport.py --source-upload 56 > instance/week41-performance-queue-private.log 2>&1
-          export IMS_TIMING_WORKER_PID="$(sudo systemctl show ims-import-worker.service --property MainPID --value)"
           venv/bin/python - <<'PY'
-          import json,os
           from pathlib import Path
-          from app import create_app
-          from app.extensions import db
-          from app.models import IMSImportJob
-          app=create_app()
-          with app.app_context():
-           marker=json.loads(Path('instance/official-region-replay-56.json').read_text())
-           job=db.session.get(IMSImportJob,int(marker['job_id']))
-           meta=dict(job_id=job.id,database=str(Path(db.engine.url.database).resolve()),root=str(Path(app.instance_path).resolve()),worker_pid=int(os.environ['IMS_TIMING_WORKER_PID']))
-           Path('instance/week41-performance-timing-session.json').write_text(json.dumps(meta))
-           print('WEEK41_PERFORMANCE_QUEUED|'+json.dumps(dict(job_id=job.id,queued_at=job.queued_at.isoformat(),source_upload_id=56,week=41)),flush=True)
+          from datetime import datetime
+          import json,sqlite3
+          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
+          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True,timeout=3) as con:
+           con.row_factory=sqlite3.Row
+           row=dict(con.execute('SELECT id,status,queued_at,started_at,completed_at,ims_upload_id,result_summary FROM ims_import_jobs WHERE id=?',(meta['job_id'],)).fetchone())
+           summary=json.loads(row.pop('result_summary') or '{}')
+          progress=json.loads((Path(meta['root'])/'ims_progress'/f"job-{meta['job_id']}.json").read_text())
+          row.update(stage=progress.get('stage'),percent=progress.get('percent'),updated_at=progress.get('updated_at'),publication_ready=summary.get('publication_ready'),elapsed_seconds=round((datetime.utcnow()-datetime.fromisoformat(row['queued_at'])).total_seconds(),3))
+          print('WEEK41_PERFORMANCE_STATUS|'+json.dumps(row),flush=True)
+          for p in [Path(meta['root'])/f"week41-job-{meta['job_id']}-timing-summary.json"]:
+           if p.exists():print('WEEK41_PERFORMANCE_TIMING|'+p.read_text(),flush=True)
           PY
-          nohup nice -n 10 venv/bin/python instance/week41-publication-timing-observer.py instance/week41-performance-timing-session.json > instance/week41-performance-timing-observer.log 2>&1 < /dev/null &
-          echo "WEEK41_TIMING_OBSERVER|STARTED|interval_seconds=5"
           REMOTE
           
