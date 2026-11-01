@@ -44,7 +44,7 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          echo 'QUOTA_PROGRESS_CHECK|1793570643407'
+          echo 'QUOTA_PROGRESS_CHECK|1793570760299'
           umask 077
           venv/bin/python - <<'PY'
           import json,os
