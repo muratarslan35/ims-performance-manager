@@ -1,4 +1,4 @@
-name: Quota Target First Readonly Shadow
+name: Quota Target First Readonly Shadow V2
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -48,7 +48,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "4effa51befff54a23b33c33e3b89bf3f96e0585d"
           git fetch origin fix/quota-target-first-contract --quiet
           shadow_dir="$(mktemp -d "$IMS_PATH/instance/quota-target-first-shadow.XXXXXX")"
-          git archive b3ba619120db8d0b665e18d69240ccd0328e5431 | tar -x -C "$shadow_dir"
+          git archive 1aaebfeb6a5a599ba987af6bb5a59d4bd17dff25 | tar -x -C "$shadow_dir"
           export IMS_SHADOW_PATH="$shadow_dir"
           printf '%s' "$shadow_dir" > instance/quota-target-first-shadow-path.txt
           cat > instance/quota-region-shadow.py <<'PY'
