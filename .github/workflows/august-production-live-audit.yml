@@ -1,4 +1,4 @@
-name: Quota Target First Readonly Shadow V2
+name: Quota Target First Final Readonly Shadow
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -46,9 +46,206 @@ jobs:
 
           umask 077
           test "$(git rev-parse HEAD)" = "4effa51befff54a23b33c33e3b89bf3f96e0585d"
+          pkill -f '^venv/bin/python instance/quota-representative-shadow.py
+          shadow_dir="$(mktemp -d "$IMS_PATH/instance/quota-target-first-shadow.XXXXXX")"
+          git archive 4eddb8041dbf820350017c3af7864b424c36235f | tar -x -C "$shadow_dir"
+          export IMS_SHADOW_PATH="$shadow_dir"
+          printf '%s' "$shadow_dir" > instance/quota-target-first-shadow-path.txt
+          cat > instance/quota-dashboard-shadow.py <<'PY'
+          import os,sys,json,hashlib,time
+          from pathlib import Path
+          from contextlib import nullcontext
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          import sqlalchemy as sa
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
+          
+          from app.query.dashboard_query import DashboardQuery
+          from app.query.filters import DashboardFilterParams
+          from app.services.production_result_service import ProductionResultService as Production
+          from app.services.official_aggregate_service import OfficialAggregateService
+          with app.app_context():
+           filters=DashboardFilterParams(year=2026,month=10);query=DashboardQuery()
+           scope=Production.ims_target_scope(2026,10)
+           national=query.load_national_dashboard_metrics(filters)
+           assert {int(r['product_id']) for r in national['products']}==set(scope)
+           official={int(r['product_id']):r for r in OfficialAggregateService.product_totals(2026,10,'NATIONAL')}
+           for row in national['products']:
+            source=official[int(row['product_id'])]
+            assert abs(float(row['target_tl'])-float(source['target_tl']))<0.011
+            assert abs(float(row['actual_tl'])-float(source['actual_tl']))<0.011
+           maps=query.load_region_performance(filters);assert len(maps)==11
+           for row in maps:
+            official=OfficialAggregateService.product_totals(2026,10,str(row.region))
+            for field,source_field in [('tl_target','target_tl'),('tl_actual','actual_tl')]:
+             assert abs(float(getattr(row,field))-sum(float(r[source_field]) for r in official if int(r['product_id']) in scope))<0.02
+           ranking=query.load_top_representatives(filters);assert len(ranking)==113
+           print('QUOTA_DASHBOARD_SHADOW|'+json.dumps(dict(result='PASS',national_products=len(national['products']),map_regions=len(maps),ranked_representatives=len(ranking),cities=len(query.load_city_performance(filters)))),flush=True)
+           db.session.rollback()
+          
+          PY
+          set +e
+          venv/bin/python instance/quota-dashboard-shadow.py > instance/quota-dashboard-shadow.log 2>&1
+          dash_rc=$?
+          set -e
+          grep '^QUOTA_' instance/quota-dashboard-shadow.log || true
+          echo "QUOTA_DASHBOARD_EXIT|$dash_rc"
+          test "$dash_rc" = "0"
+          cat > instance/quota-region-shadow.py <<'PY'
+          import os,sys,json,hashlib,time
+          from pathlib import Path
+          from contextlib import nullcontext
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          import sqlalchemy as sa
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
+          
+          from app.cache.ims_generation_reads import isolated_generation_reads
+          from app.services.production_result_service import ProductionResultService as Production
+          started=time.perf_counter()
+          with app.app_context(),isolated_generation_reads():
+           scope=Production.ims_target_scope(2026,10);keys=Regions.region_keys(2026,10);assert len(keys)==11
+           summaries=[]
+           for key in keys:
+            service=RegionPerformanceService(key,2026,10);report=Snap._json_ready(service.report())
+            previous=Regions.get_active(key,2026,10)
+            old_periods=previous['report']['periods']
+            for period_key,period in report['periods'].items():
+             old={int(r['product_id']):r for r in old_periods[period_key]['products']}
+             rows={int(r['product_id']):r for r in period['products']}
+             if period_key=='monthly':assert set(rows)==set(scope),('scope',key)
+             for pid,row in rows.items():
+              assert pid in old
+              for field in ('target_tl','actual_tl','target_unit','actual_unit'):
+               assert abs(float(row.get(field) or 0)-float(old[pid].get(field) or 0))<0.011,('source change',key,period_key,field)
+            market=Snap._json_ready(RegionMarketService(report['region_key'],service.rep_ids,2026,10).build())
+            assert len(market['rows'])==7
+            for row in market['rows']:
+             if int(row['product_id']) not in scope:assert not row.get('target_unit') and not row.get('company_unit'),('targetless company market',key)
+            (live/'instance'/f'quota-candidate-region-{key}-private.json').write_text(canonical(dict(report=report,market_analysis=market)))
+            summaries.append(str(key));print('QUOTA_REGION_PROGRESS|'+json.dumps(dict(done=len(summaries),total=11,seconds=round(time.perf_counter()-started,3))),flush=True)
+           print('QUOTA_REGION_SHADOW|'+json.dumps(dict(result='PASS',regions=len(summaries),seconds=round(time.perf_counter()-started,3))),flush=True)
+           db.session.rollback()
+          
+          PY
+          set +e
+          venv/bin/python instance/quota-region-shadow.py > instance/quota-region-shadow.log 2>&1
+          region_rc=$?
+          set -e
+          grep '^QUOTA_' instance/quota-region-shadow.log || true
+          echo "QUOTA_REGION_EXIT|$region_rc"
+          if [ "$region_rc" != "0" ]; then tail -n 5 instance/quota-region-shadow.log | sed -E 's/[0-9]+([.][0-9]+)?/[redacted]/g'; exit 1; fi
+          cat > instance/quota-representative-shadow.py <<'PY'
+          import os,sys,json,hashlib,time
+          from pathlib import Path
+          from contextlib import nullcontext
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          import sqlalchemy as sa
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
+          
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          from app.services.representative_period_workspace import build_representative_workspace_payload
+          from app.services.annual_realization_service import AnnualRealizationService as Annual
+          from app.services.representative_query_optimizer import use_snapshot_upload_ids
+          from app.services.kpi_market_single_source import _upload_has_authority
+          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
+          from app.services.production_result_service import ProductionResultService as Production
+          started=time.perf_counter()
+          with app.app_context():
+           pin={}
+           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
+            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
+           assert pin[(2026,10)]==58
+           assert Production.final_upload(2026,10) is None
+           scope=Production.ims_target_scope(2026,10);assert len(scope)==6
+           annual=Annual.build_snapshot_inputs(2026)
+           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
+           set_id=db.session.execute(sa.select(representative_snapshot_sets.c.id).where(representative_snapshot_sets.c.source_upload_id==58,representative_snapshot_sets.c.status=='ACTIVE').order_by(representative_snapshot_sets.c.id.desc()).limit(1)).scalar()
+           references={int(r.representative_id):json.loads(r.payload_json) for r in db.session.execute(sa.select(representative_snapshots.c.representative_id,representative_snapshots.c.payload_json).where(representative_snapshots.c.set_id==set_id))}
+           assert len(references)==113
+          def pid(row):return int((row.get('product') or {}).get('id') or row.get('product_id'))
+          def member(rid):
+           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
+            try:
+             workspace=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
+             before=references[rid];issues=[]
+             if workspace['annual_realization']!=before['annual_realization']:issues.append('annual')
+             for key,period in workspace['snapshots'].items():
+              old={pid(r):r for r in before['snapshots'][key]['products']}
+              new={pid(r):r for r in period['products']}
+              if key=='monthly' and set(new)!=set(scope):issues.append(key+':scope')
+              if not set(new)<=set(old):issues.append(key+':added')
+              for product_id,row in new.items():
+               for field in ('target_tl','actual_tl','target_unit','actual_unit'):
+                if abs(float(row.get(field) or 0)-float(old[product_id].get(field) or 0))>0.011:issues.append(key+':'+field)
+              for field in ('target_tl','actual_tl','target_unit','actual_unit'):
+               if abs(float(period['totals'].get(field) or 0)-sum(float(r.get(field) or 0) for r in new.values()))>0.02:issues.append(key+':total:'+field)
+             (live/'instance'/f'quota-candidate-rep-{rid}-private.json').write_text(canonical(workspace))
+             return dict(id=rid,issues=issues)
+            finally:db.session.rollback()
+          results=[]
+          with ThreadPoolExecutor(max_workers=3) as pool:
+           for future in as_completed([pool.submit(member,rid) for rid in sorted(references)]):
+            results.append(future.result())
+            if len(results)%8==0 or len(results)==113:print('QUOTA_REP_PROGRESS|'+json.dumps(dict(done=len(results),total=113,seconds=round(time.perf_counter()-started,3))),flush=True)
+          failures=[r for r in results if r['issues']]
+          summary=dict(result='FAIL' if failures else 'PASS',members=len(results),failed_members=len(failures),seconds=round(time.perf_counter()-started,3),cache=Monthly.statistics())
+          (live/'instance/quota-candidate-representatives-summary.json').write_text(json.dumps(dict(summary=summary,failures=failures)))
+          print('QUOTA_REP_SHADOW|'+json.dumps(summary),flush=True)
+          if failures:raise SystemExit(1)
+          
+          PY
+          nohup nice -n 10 venv/bin/python instance/quota-representative-shadow.py > instance/quota-representative-shadow.log 2>&1 < /dev/null &
+          echo "QUOTA_REP_SHADOW|STARTED|members=113|readonly=true"
+          REMOTE
+           || true
+          if [ -f instance/quota-representative-shadow.log ]; then cp instance/quota-representative-shadow.log instance/quota-representative-shadow-previous.log; fi
           git fetch origin fix/quota-target-first-contract --quiet
           shadow_dir="$(mktemp -d "$IMS_PATH/instance/quota-target-first-shadow.XXXXXX")"
-          git archive 1aaebfeb6a5a599ba987af6bb5a59d4bd17dff25 | tar -x -C "$shadow_dir"
+          git archive 4eddb8041dbf820350017c3af7864b424c36235f | tar -x -C "$shadow_dir"
           export IMS_SHADOW_PATH="$shadow_dir"
           printf '%s' "$shadow_dir" > instance/quota-target-first-shadow-path.txt
           cat > instance/quota-region-shadow.py <<'PY'
