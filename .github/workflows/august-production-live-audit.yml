@@ -1,4 +1,4 @@
-name: Quota Target First Final Readonly Shadow
+name: Quota Final Source Consistency Shadow
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -48,7 +48,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "4effa51befff54a23b33c33e3b89bf3f96e0585d"
           pkill -f '^venv/bin/python instance/quota-representative-shadow.py
           shadow_dir="$(mktemp -d "$IMS_PATH/instance/quota-target-first-shadow.XXXXXX")"
-          git archive 4eddb8041dbf820350017c3af7864b424c36235f | tar -x -C "$shadow_dir"
+          git archive 09bef569aff1d41ac2b7b080dd6f0925425560e0 | tar -x -C "$shadow_dir"
           export IMS_SHADOW_PATH="$shadow_dir"
           printf '%s' "$shadow_dir" > instance/quota-target-first-shadow-path.txt
           cat > instance/quota-dashboard-shadow.py <<'PY'
