@@ -1,4 +1,4 @@
-name: Week 41 Region Period Catalog Probe
+name: Week 41 Final Source Catalog Validation
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -45,37 +45,137 @@ jobs:
 
 
           umask 077
-          venv/bin/python -u - <<'PY'
-          import os,signal,json,time,sqlite3
+          git fetch origin 51e2d0bd3707af7bc20c4922b845c84de757e18c
+          candidate_shadow="$(mktemp -d instance/week41-budget-final.XXXXXX)"
+          git archive FETCH_HEAD | tar -x -C "$candidate_shadow"
+          export IMS_SHADOW_PATH="$IMS_PATH/$candidate_shadow"
+          echo "WEEK41_FINAL_VALIDATION_COMMIT|51e2d0bd3707af7bc20c4922b845c84de757e18c"
+          cat > instance/week41-region-final-gate.py <<'PY'
+          import os,sys,json,hashlib,time
           from pathlib import Path
-          root=Path.cwd();stopped=0
-          for proc in Path('/proc').iterdir():
-           if not proc.name.isdigit():continue
-           try:
-            args=(proc/'cmdline').read_bytes().split(b'\0')
-            if b'instance/week41-region-budget-bootstrap-v2.py' not in args:continue
-            if (proc/'cwd').resolve()!=root or proc.stat().st_uid!=os.getuid():continue
-            os.kill(int(proc.name),signal.SIGTERM);stopped+=1
-           except (OSError,ProcessLookupError):continue
-          print('WEEK41_SUPERSEDED_SHADOW_PREPARATION_STOPPED|'+str(stopped),flush=True)
-          time.sleep(2)
-          meta=json.loads((root/'instance/week41-performance-timing-session.json').read_text())
-          expected={}
-          for path in sorted((root/'instance').glob('week41-region-reference-*-private.json')):
-           value=json.loads(path.read_text());code=str(value['report']['region_key'])
-           expected[code]=value['market_analysis']['available_periods']
-          assert len(expected)==11
-          codes=sorted(expected);started=time.perf_counter()
-          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
-           sql="SELECT DISTINCT u.year,u.month,substr(c.territory,1,3) FROM ims_competition_data c JOIN ims_uploads u ON u.id=c.upload_id WHERE u.status='COMPLETED' AND c.metric_type='UNIT' AND substr(c.territory,1,3) IN ("+','.join('?' for _ in codes)+") ORDER BY u.year DESC,u.month DESC"
-           rows=con.execute(sql,codes).fetchall()
-          actual={code:[] for code in codes}
-          for year,month,code in rows:actual[code].append(dict(year=year,month=month,label=f'{month:02d}/{year}'))
-          changed=[code for code in codes if expected[code]!=actual[code]]
-          summary=dict(result='FAIL' if changed else 'PASS',regions=len(codes),changed=changed,seconds=round(time.perf_counter()-started,3))
-          (root/'instance/week41-period-catalog-probe.json').write_text(json.dumps(summary))
-          print('WEEK41_PERIOD_CATALOG_PROBE|'+json.dumps(summary),flush=True)
-          assert not changed
+          from contextlib import nullcontext
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          import sqlalchemy as sa
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
+          phase=os.environ['REGION_GATE_PHASE'];started=time.perf_counter()
+          if phase.startswith('candidate'):
+           from app.cache.ims_generation_reads import isolated_generation_reads
+           scope=isolated_generation_reads()
+          else:scope=nullcontext()
+          with app.app_context(),scope:
+           latest=IMSUpload.query.filter_by(status='COMPLETED',year=2026,month=10).order_by(IMSUpload.id.desc()).first()
+           assert latest.id==57 and latest.week_number==41
+           keys=Regions.region_keys(2026,10);assert len(keys)==11
+           hashes={}
+           for key in keys:
+            performance=RegionPerformanceService(key,2026,10)
+            report=performance.report()
+            market=RegionMarketService(report['region_key'],performance.rep_ids,2026,10).build()
+            payload=Snap._json_ready(dict(report=report,market_analysis=market))
+            hashes[str(key)]=digest(payload)
+            (live/'instance'/f'week41-region-{phase}-{key}-private.json').write_text(canonical(payload))
+            print('WEEK41_REGION_GATE_PROGRESS|'+json.dumps(dict(phase=phase,done=len(hashes),total=len(keys),seconds=round(time.perf_counter()-started,3))),flush=True)
+           db.session.rollback()
+           root=live/'instance';reference=root/'week41-region-budget-reference-hashes.json'
+           if phase=='reference':reference.write_text(json.dumps(hashes));changed=[]
+           else:
+            before=json.loads(reference.read_text());changed=[k for k in set(before)|set(hashes) if before.get(k)!=hashes.get(k)]
+           summary=dict(result='FAIL' if changed else 'PASS',phase=phase,regions=len(hashes),changed=changed,seconds=round(time.perf_counter()-started,3))
+           (root/f'week41-region-budget-{phase}-summary.json').write_text(json.dumps(summary))
+           print('WEEK41_REGION_BUDGET_GATE|'+json.dumps(summary),flush=True)
+           if changed:raise SystemExit(1)
+          
           PY
+          for phase in candidate-final candidate-hot; do
+           export REGION_GATE_PHASE="$phase"
+           set +e
+           nice -n 10 venv/bin/python instance/week41-region-final-gate.py > "instance/week41-region-budget-$phase.log" 2>&1
+           region_rc=$?
+           set -e
+           grep '^WEEK41_' "instance/week41-region-budget-$phase.log" || true
+           echo "WEEK41_FINAL_REGION_GATE_EXIT|$phase|$region_rc"
+           test "$region_rc" = "0"
+          done
+          cat > instance/week41-region-budget-bootstrap-final.py <<'PY'
+          import os,sys,json,hashlib,time
+          from pathlib import Path
+          from contextlib import nullcontext
+          live=Path.cwd();sys.path.insert(0,str(live))
+          import config
+          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
+          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
+          import app as module
+          module.create_database=lambda application:None
+          class ReadOnlyConfig(config.Config):
+           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          from app.extensions import db
+          from app.models import IMSUpload,Representative
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
+          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
+          from app.services.region_performance_service import RegionPerformanceService
+          from app.services.region_market_service import RegionMarketService
+          import sqlalchemy as sa
+          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
+          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          from app.services.representative_period_workspace import build_representative_workspace_payload
+          from app.services.annual_realization_service import AnnualRealizationService as Annual
+          from app.services.representative_query_optimizer import use_snapshot_upload_ids
+          from app.services.kpi_market_single_source import _upload_has_authority
+          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
+          started=time.perf_counter()
+          with app.app_context():
+           pin={}
+           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
+            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
+           assert pin[(2026,10)]==57
+           annual=Annual.build_snapshot_inputs(2026)
+           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
+           set_id=db.session.execute(sa.select(representative_snapshot_sets.c.id).where(representative_snapshot_sets.c.source_upload_id==57,representative_snapshot_sets.c.status=='ACTIVE').order_by(representative_snapshot_sets.c.id.desc()).limit(1)).scalar()
+           references={int(r.representative_id):digest(json.loads(r.payload_json)) for r in db.session.execute(sa.select(representative_snapshots.c.representative_id,representative_snapshots.c.payload_json).where(representative_snapshots.c.set_id==set_id))}
+           assert len(references)==113
+          def member(rid):
+           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
+            try:
+             workspace=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
+             actual=digest(workspace);ok=actual==references[rid]
+             if not ok:(live/'instance'/f'week41-region-budget-rep-{rid}-private.json').write_text(canonical(workspace))
+             return dict(id=rid,equal=ok)
+            finally:db.session.rollback()
+          results=[]
+          with ThreadPoolExecutor(max_workers=3) as pool:
+           for future in as_completed([pool.submit(member,rid) for rid in sorted(references)]):
+            results.append(future.result())
+            if len(results)%8==0 or len(results)==113:print('WEEK41_REGION_BUDGET_REP_PROGRESS|'+json.dumps(dict(done=len(results),total=113,seconds=round(time.perf_counter()-started,3))),flush=True)
+          failures=sum(not r['equal'] for r in results)
+          summary=dict(result='FAIL' if failures else 'PASS',members=len(results),full_workspace_differences=failures,seconds=round(time.perf_counter()-started,3),cache=Monthly.statistics())
+          (live/'instance/week41-region-budget-bootstrap-summary.json').write_text(json.dumps(summary))
+          print('WEEK41_REGION_BUDGET_BOOTSTRAP|'+json.dumps(summary),flush=True)
+          if failures:raise SystemExit(1)
+          
+          PY
+          set +e
+          nice -n 10 venv/bin/python instance/week41-region-budget-bootstrap-final.py > instance/week41-region-budget-bootstrap-final.log 2>&1
+          bootstrap_rc=$?
+          set -e
+          grep '^WEEK41_' instance/week41-region-budget-bootstrap-final.log || true
+          echo "WEEK41_REGION_BUDGET_BOOTSTRAP_EXIT|$bootstrap_rc"
+          test "$bootstrap_rc" = "0"
           REMOTE
           
