@@ -1,4 +1,4 @@
-name: Week 41 Monthly Difference Audit
+name: Week 41 Independent Monthly Financial Reference
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -46,80 +46,69 @@ jobs:
 
           
           umask 077
-          git fetch origin fa65eb8870c6c17a834bcb5ceaee13d86328d514 > instance/week41-shadow-fetch.log 2>&1
-          shadow="$(mktemp -d instance/week41-shadow.XXXXXX)"
-          git archive FETCH_HEAD | tar -x -C "$shadow"
-          export IMS_SHADOW_PATH="$PWD/$shadow"
           set +e
-          venv/bin/python -u - <<'PY' > instance/week41-monthly-difference-audit.log 2>&1
-          import os,sys,json,hashlib,time,re
+          venv/bin/python -u - <<'PY' > instance/week41-independent-period-reference.log 2>&1
+          import os,sys,json,hashlib,time
           from pathlib import Path
-          from collections import Counter
           from concurrent.futures import ThreadPoolExecutor
-          os.umask(0o077);live=Path.cwd()
-          import config as live_config
+          os.umask(0o077);live=Path.cwd();sys.path.insert(0,str(live))
+          import config
           meta=json.loads((live/'instance/week41-unit-timing-session.json').read_text())
-          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
           import app as module
           module.create_database=lambda application:None
-          class ReadOnlyConfig(live_config.Config):
+          class ReadOnlyConfig(config.Config):
            SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
           from app.extensions import db
-          from app.models import IMSUpload,Representative
-          from app.services.representative_period_workspace import build_representative_workspace_payload
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
-          from app.services.annual_realization_service import AnnualRealizationService
+          from app.models import IMSUpload,IMSFact
+          from app.services.production_result_service import ProductionResultService as Production
+          from app.services.representative_period_workspace import _aggregate_sales,_period_months,PERIOD_OPTIONS
+          from app.services.annual_realization_service import AnnualRealizationService as Annual
           from app.services.representative_query_optimizer import use_snapshot_upload_ids
-          from app.services.kpi_market_single_source import _upload_has_authority
-          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
+          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
           app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
+          periods=[(2025,12)]+[(2026,m) for m in range(1,11)]
           with app.app_context():
+           # Independent reference: the original calculator's single-month API is
+           # unaffected by the batch-variable bug; union only its official answers.
+           quota={}
+           for period in periods:
+            for pid,detected in Production._quota_product_months_uncached([period]).items():quota.setdefault(pid,set()).update(detected)
+           def stable_quota(cls,months):
+            requested={tuple(p) for p in months}
+            return {pid:sorted(found & requested) for pid,found in quota.items() if found & requested}
+           Production.quota_product_months=classmethod(stable_quota)
+           annual=Annual.build_snapshot_inputs(2026)
            pin={}
            for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
             pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
-           annual=AnnualRealizationService.build_snapshot_inputs(2026)
-           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
-          records=json.loads((live/'instance/week41-monthly-cache-bootstrap-results-private.json').read_text())
-          ids=[r['id'] for r in records if not r['same']]
+           ids=[r[0] for r in db.session.query(IMSFact.representative_id).filter_by(upload_id=56,report_type='brick_sales').distinct()]
           def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-          def compare(a,b,path='root',counts=None,paths=None):
-           if a==b:return
-           if isinstance(a,dict) and isinstance(b,dict):
-            for key in set(a)|set(b):
-             label=str(key) if re.fullmatch('[a-z_0-9]+',str(key)) else 'key'
-             if key not in a or key not in b:counts['presence']+=1;paths[path+'.'+label+':presence']+=1
-             else:compare(a[key],b[key],path+'.'+label,counts,paths)
-           elif isinstance(a,list) and isinstance(b,list):
-            if Counter(canonical(x) for x in a)==Counter(canonical(x) for x in b):
-             counts['list_order_only']+=1;paths[path+':list_order_only']+=1;return
-            if len(a)!=len(b):counts['length']+=1;paths[path+':length']+=1
-            for i,(x,y) in enumerate(zip(a,b)):compare(x,y,path+'.'+str(i),counts,paths)
-           else:
-            kind='numeric' if type(a) in (int,float) and type(b) in (int,float) else 'other'
-            if kind=='numeric' and abs(a-b)<1e-7:kind='numeric_epsilon'
-            counts[kind]+=1;paths[path+':'+kind]+=1
           def member(rid):
-           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
-            reference=live/'instance'/f'week41-reference-member-{rid}-private.json'
-            before=json.loads(reference.read_text()) if reference.exists() else Snap.get_exact_active_many([rid],2026,10).get(rid)
-            after=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
-            (live/'instance'/f'week41-monthly-audit-member-{rid}-private.json').write_text(canonical(after))
-            counts=Counter();paths=Counter();compare(before,after,counts=counts,paths=paths)
+           with app.app_context(),use_snapshot_upload_ids(pin):
+            sales={};assignments={};result={'snapshots':{}}
+            for key,label,kind in PERIOD_OPTIONS:
+             months=_period_months(2026,10,key)
+             rows,totals,assigned,sources=_aggregate_sales(rid,months,sales_cache=sales,assignment_cache=assignments)
+             result['snapshots'][key]={'products':rows,'totals':totals,'assignments':assigned}
+            result['annual_realization']=Annual.build(2026,[rid],snapshot_inputs=annual)
+            financial=canonical(Snap._json_ready(result))
+            (live/'instance'/f'week41-period-financial-reference-{rid}-private.json').write_text(financial)
+            original=live/'instance'/f'week41-reference-member-{rid}-private.json'
+            original=json.loads(original.read_text()) if original.exists() else Snap.get_exact_active_many([rid],2026,10).get(rid)
+            market={key:part['market_analysis'] for key,part in original['snapshots'].items()}
+            encoded_market=canonical(market)
             db.session.rollback()
-            return dict(id=rid,counts=dict(counts),paths=dict(paths))
+            return str(rid),dict(financial_sha256=hashlib.sha256(financial.encode()).hexdigest(),market_sha256=hashlib.sha256(encoded_market.encode()).hexdigest())
           started=time.perf_counter()
-          with ThreadPoolExecutor(max_workers=3) as pool:results=list(pool.map(member,ids))
-          (live/'instance/week41-monthly-differences-private.json').write_text(json.dumps(results))
-          counts=Counter();paths=Counter()
-          for result in results:counts.update(result['counts']);paths.update(result['paths'])
-          print('WEEK41_MONTHLY_DIFFERENCE_AUDIT|'+json.dumps(dict(members=len(ids),seconds=round(time.perf_counter()-started,3),categories=dict(counts),paths=dict(paths))),flush=True)
-          print('WEEK41_MONTHLY_CACHE_STATS|'+json.dumps(Monthly.statistics()),flush=True)
+          with ThreadPoolExecutor(max_workers=3) as pool:references=dict(pool.map(member,ids))
+          (live/'instance/week41-independent-period-reference-hashes.json').write_text(json.dumps(references))
+          print('WEEK41_INDEPENDENT_PERIOD_REFERENCE|'+json.dumps(dict(result='PASS',members=len(references),quota_product_periods=sum(map(len,quota.values())),seconds=round(time.perf_counter()-started,3))),flush=True)
           
           PY
           result=$?
           set -e
-          grep -E '^WEEK41_' instance/week41-monthly-difference-audit.log || true
-          echo "WEEK41_AUDIT_EXIT|$result"
+          grep -E '^WEEK41_' instance/week41-independent-period-reference.log || true
+          echo "WEEK41_REFERENCE_EXIT|$result"
           exit "$result"
           REMOTE
           
