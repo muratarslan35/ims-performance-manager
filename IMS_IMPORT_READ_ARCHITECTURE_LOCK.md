@@ -77,13 +77,14 @@ P1/P2 ile kapanan dönemlerin final kutu/TL sonuçları sonradan formül değiş
 
 ### 3.4 Kota çıkış
 
-Üretim otoritesine göre ulusal düzeyde gerçek satış bulunmayan ürün/ay kota çıkış kabul edildiğinde ilgili ürünün TL hedefi %100 kapanmış sayılır. Bu sonuç temsilci, bölge, dashboard ve Q tüketicilerinde aynı authority üzerinden okunur. Aynı kural için ekran bazlı alternatif hesap üretilemez.
+41. hafta / Ekim 2026 ve sonrası için önce IMS hedef kapsamı, sonra kabul edilmiş üretimin kota çıkış kararı değerlendirilir. Onaylanan ürünün TL hedefi bir kez %100 kapanmış sayılır; satışın üzerine hedef tutarı eklenmez. Temsilci, yıllık grafik, bölge, dashboard ve Q aynı merkezi kararı kullanır. Bölge/Türkiye kendi resmi hedefiyle kapanır; temsilci toplamı hedef otoritesi değildir.
 
 Ürün/ay kapsama koşulu:
 - Ürünün ilgili aya dahil olup olmadığı yalnız o aya ait kabul edilmiş IMS hedeflerinden belirlenir; ürün için temsilciler toplamında pozitif TL hedefi yoksa ürün o ay kapsam dışıdır. Ürün kimliği sabitlenmez; koşul her ürün için dinamik uygulanır.
-- Kapsam dışı ürün, üretim dosyasında sıfır/hedefsiz satır veya kota dosya adı işareti bulunsa dahi o ayın ürün hesabına ya da kota çıkış listesine eklenmez. Üretim importu bu satırları ancak tüm temsilcilerde TL ve kutu hedef/çıkışlarının boş veya sıfır olduğu doğrulanırsa kapsam dışı bırakabilir; aktif satış veya beklenen hedef satırı eksikliği doğrulamayı fail-closed tutar.
-- Ürünün IMS hedefi varsa mevcut ulusal üretim koşulları uygulanır: üretim yüklemesi tamamlanmış olmalı, satış yokluğu ulusal sonuçta doğrulanmalı, küçük münferit hareketler mevcut toleranslara göre değerlendirilmelidir; anlamlı gerçek satış kota çıkışını engeller.
-- IMS hedefleri ve üretim kaynak satırları değiştirilmez. Bu kural yeni import ve türetilmiş hesaplamalarda uygulanır; geçmiş IMS verileri veya yayınlanmış snapshotlar geriye dönük olarak yeniden yazılmaz.
+- Hedefi olmayan ürün, üretim dosyasında boş/sıfır satır veya kota dosya adı işareti bulunsa dahi o ayın performans, prim ve Q hesabına girmez. Tekrar hedef indirimi veya %100/yapay satış eklenmez. Ham kaynak ve bağımsız pazar/rakip gözlemleri saklanır.
+- Hedef varsa ve kabul edilmiş üretim dosyası ürünü açıkça kota çıkış olarak adlandırıyorsa bu onay kısmi gerçek satışta da geçerlidir; üretim yüzdesinin önceden %100 olması aranmaz. Açık onay yoksa mevcut ulusal satış yokluğu/boş üretim ve münferit hareket toleransları korunur; anlamlı satış otomatik kota çıkarımını engeller.
+- Üretim onayı olmadan manuel Q seçimi kredi yaratamaz; üretimin onayladığı birden fazla ürün varsa her biri yalnız bir kez kapanır. Gerçek kutu hareketleri kota için artırılmaz.
+- IMS hedefleri ve üretim kaynak satırları değiştirilmez. Eylül 2026 ve önceki kapalı dönemlerin hesapları ve yayınlanmış snapshotları aynen korunur; düzeltme açık Ekim 2026 ve ileri dönemlerde uygulanır.
 
 ## 4. Kalıcı okuma mimarisi
 

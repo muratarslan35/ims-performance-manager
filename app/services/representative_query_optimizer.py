@@ -36,6 +36,7 @@ def use_snapshot_upload_ids(upload_ids, *, authority_by_upload=None):
     upload_token = _snapshot_upload_ids.set(dict(upload_ids or {}))
     cache_token = _snapshot_read_cache.set({
         "effective_products": {},
+        "target_scopes": {},
         "market_products": None,
         "market_scopes": {},
         "normalized_labels": {},
@@ -78,6 +79,16 @@ def snapshot_authority_status(upload_id):
 
 def snapshot_build_active():
     return _snapshot_read_cache.get() is not None
+
+
+def snapshot_target_scope(year, month, loader):
+    cache = _snapshot_read_cache.get()
+    if cache is None:
+        return loader()
+    key = (int(year), int(month))
+    if key not in cache["target_scopes"]:
+        cache["target_scopes"][key] = loader()
+    return cache["target_scopes"][key]
 
 
 def remember_snapshot_authority(upload_id, present):

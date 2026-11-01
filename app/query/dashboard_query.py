@@ -353,6 +353,9 @@ class DashboardQuery:
         if filters.representative_id is not None:
             targets = targets.filter(Target.representative_id == filters.representative_id)
         target_rows = targets.all()
+        scope = ProductionResultService.ims_target_scope(filters.year, filters.month)
+        if scope is not None:
+            target_rows = [row for row in target_rows if int(row.product_id) in scope]
         actual_by_key = self._effective_actuals_for_targets(filters.year, filters.month, target_rows)
         quota_ids = self._quota_ids(filters.year, filters.month)
         total_target = Decimal("0")
@@ -369,6 +372,7 @@ class DashboardQuery:
         """Use exact official aggregates when present and preserve legacy periods otherwise."""
         if not filters or filters.year is None or filters.month is None:
             return {}
+        scope = ProductionResultService.ims_target_scope(filters.year, filters.month)
         official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
         actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
         if official and actual_rows:
@@ -388,7 +392,12 @@ class DashboardQuery:
                 Target.year == filters.year, Target.month == filters.month,
                 Target.product_id.in_(quota_ids),
             ).group_by(Target.product_id).all()) if quota_ids else {}
+            if scope is not None:
+                quota_targets = {item["product_id"]: item["target_tl"] for item in official
+                                 if item["product_id"] in quota_ids}
             for item in official:
+                if scope is not None and int(item["product_id"]) not in scope:
+                    continue
                 values = production.get(item["product_id"], [Decimal(str(item["actual_tl"] or 0)), Decimal(str(item["actual_unit"] or 0))])
                 item["actual_tl"] = float(values[0]); item["actual_unit"] = float(values[1])
                 if item["product_id"] in quota_ids:
@@ -398,6 +407,8 @@ class DashboardQuery:
                         item["actual_tl"] = quota_target
             products = []
             for item in official:
+                if scope is not None and int(item["product_id"]) not in scope:
+                    continue
                 row = {
                     "product_id": item["product_id"], "product_name": item["product_name"],
                     "target_tl": round(float(item["target_tl"] or 0), 2),
@@ -441,6 +452,8 @@ class DashboardQuery:
         ).filter(Target.year == filters.year, Target.month == filters.month).group_by(Target.product_id).all())
         products = []
         for row in balance_rows:
+            if scope is not None and int(row[0]) not in scope:
+                continue
             weekly_unit, weekly_tl = weekly_by_product.get(row[0], (0.0, float(row[3] or 0)))
             products.append({
                 "product_id": row[0], "product_name": row[1],
@@ -464,6 +477,7 @@ class DashboardQuery:
     def load_product_performance(self, filters: Optional[DashboardFilterParams] = None):
         if not filters or filters.year is None or filters.month is None:
             return []
+        scope = ProductionResultService.ims_target_scope(filters.year, filters.month)
         if filters.representative_id is None:
             official = OfficialAggregateService.product_totals(filters.year, filters.month, "NATIONAL")
             actual_rows = OfficialAggregateService.rows(filters.year, filters.month, "NATIONAL", ACTUAL_TYPE)
@@ -481,8 +495,13 @@ class DashboardQuery:
                     Target.year == filters.year, Target.month == filters.month,
                     Target.product_id.in_(quota_ids),
                 ).group_by(Target.product_id).all()) if quota_ids else {}
+                if scope is not None:
+                    quota_targets = {item["product_id"]: item["target_tl"] for item in official
+                                     if item["product_id"] in quota_ids}
                 rows = []
                 for item in official:
+                    if scope is not None and int(item["product_id"]) not in scope:
+                        continue
                     actual = production.get(item["product_id"], Decimal("0")) if production is not None else Decimal(str(item["actual_tl"] or 0))
                     if item["product_id"] in quota_ids:
                         actual = Decimal(str(quota_targets.get(item["product_id"]) or 0))
@@ -502,6 +521,8 @@ class DashboardQuery:
         products = {p.id: p for p in Product.query.all()}
         quota_ids = self._quota_ids(filters.year, filters.month)
         for target in q.all():
+            if scope is not None and int(target.product_id) not in scope:
+                continue
             bucket = totals.setdefault(target.product_id, [Decimal("0"), Decimal("0")])
             bucket[1] += Decimal(str(target.tl_target or 0))
             effective = ProductionResultService.effective_product(filters.year, filters.month, target.representative_id, target.product_id)

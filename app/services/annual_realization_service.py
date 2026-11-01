@@ -124,6 +124,10 @@ class AnnualRealizationService:
         year = int(year)
         representative_id = int(representative_id)
         targets = Target.query.filter_by(year=year, representative_id=representative_id).all()
+        scopes = {month: ProductionResultService.ims_target_scope(year, month)
+                  for month in {int(target.month) for target in targets}}
+        targets = [target for target in targets
+                   if scopes[int(target.month)] is None or int(target.product_id) in scopes[int(target.month)]]
         if not targets:
             return [{"month": month, "label": label, "target_tl": 0.0, "actual_tl": 0.0,
                      "percent": None, "has_data": False, "source": None}
@@ -186,7 +190,12 @@ class AnnualRealizationService:
                     selected_result, selected_upload = result, upload
                     break
 
-            if selected_result is not None:
+            if ProductionResultService.target_first_quota_applies(year, month) and (month, product_id) in quota_periods:
+                effective = ProductionResultService.effective_products(year, month, representative_id)
+                target_tl = Decimal(str(effective.get(product_id, {}).get("target_tl", target_tl)))
+                actual_tl = target_tl
+                source = f"PRODUCTION_{int(uploads_by_month[month][0].production_stage)}"
+            elif selected_result is not None:
                 percent = Decimal(str(selected_result.realization_percent or 0))
                 actual_tl = (
                     target_tl if (month, product_id) in quota_periods

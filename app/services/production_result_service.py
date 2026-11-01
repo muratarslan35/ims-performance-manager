@@ -38,6 +38,28 @@ class ProductionResultService:
     INCIDENTAL_SALE_MAX_REPRESENTATIVES = 20
     INCIDENTAL_SALE_MAX_UNIT_PER_REPRESENTATIVE = Decimal("2")
     INCIDENTAL_SALE_MAX_NATIONAL_UNIT = Decimal("40")
+    TARGET_FIRST_QUOTA_FROM = (2026, 10)
+
+    @classmethod
+    def target_first_quota_applies(cls, year, month):
+        """New open-period contract; accepted pre-Week-41 periods stay intact."""
+        return (int(year), int(month)) >= cls.TARGET_FIRST_QUOTA_FROM
+
+    @classmethod
+    def ims_target_scope(cls, year, month):
+        """Return eligible product IDs, or None for the historical contract.
+
+        This is product/month inclusion, never a region/Türkiye target amount.
+        Keep it member-local during snapshot construction, not process-global.
+        """
+        if not cls.target_first_quota_applies(year, month):
+            return None
+        from app.services.representative_query_optimizer import snapshot_target_scope
+        return snapshot_target_scope(year, month, lambda: frozenset(
+            int(pid) for pid, in db.session.query(Target.product_id).filter(
+                Target.year == int(year), Target.month == int(month),
+            ).group_by(Target.product_id).having(func.sum(Target.tl_target) > 0).all()
+        ))
 
     @staticmethod
     def _d(value):
@@ -257,13 +279,29 @@ class ProductionResultService:
             by_product = {}
             for row in upload_rows:
                 by_product.setdefault(int(row.product_id), []).append(row)
-            for product_id in set(by_product) | empty_by_period[period]:
+            explicit_ids = set()
+            if cls.target_first_quota_applies(year, month):
+                source = AliasService.normalize(" ".join(filter(None, (upload.file_name, upload.stored_file_name))))
+                marker = next((item for item in ("KOTA SATIS", "KOTA CIKIS") if item in source), None)
+                if marker:
+                    quota_names = f" {source.split(marker, 1)[1]} "
+                    candidates = {pid for (y, m, pid), value in target_amounts.items()
+                                  if (y, m) == period and cls._d(value) > 0}
+                    for product in Product.query.filter(Product.id.in_(candidates)).all():
+                        labels = {AliasService.normalize(value) for value in
+                                  (product.product_name, product.product_code, product.ims_name) if value}
+                        if any(f" {label} " in quota_names for label in labels if label):
+                            explicit_ids.add(int(product.id))
+            for product_id in set(by_product) | empty_by_period[period] | explicit_ids:
                 # The current IMS target is the inclusion contract for this
                 # month. Production workbook quota markers cannot add a product
                 # that IMS deliberately omitted from the period.
                 if cls._d(target_amounts.get((year, month, product_id))) <= 0:
                     continue
-                if product_id in empty_by_period[period]:
+                # Accepted production explicitly names this quota product.
+                # Its real partial sales or not-yet-closed percentage do not
+                # veto that approval. No-target products were rejected above.
+                if product_id in explicit_ids or product_id in empty_by_period[period]:
                     result.setdefault(product_id, []).append(period)
                     continue
                 product_rows = by_product[product_id]
@@ -322,8 +360,20 @@ class ProductionResultService:
         targets_by_product = {int(target.product_id): target for target in targets}
         product_prices = {int(target.product_id): price for target, price in target_pairs}
         resolved_ids = product_filter or set(targets_by_product)
+        scope = cls.ims_target_scope(year, month)
+        excluded = {}
+        if scope is not None:
+            # Explicit zero contribution keeps independent market readers
+            # source-complete. Performance/entitlement consumers omit these IDs.
+            excluded = {pid: {
+                "source": "IMS", "complete": True, "out_of_scope": True,
+                "target_tl": Decimal("0"), "target_unit": Decimal("0"),
+                "actual_tl": Decimal("0"), "actual_unit": Decimal("0"),
+                "realization_percent": Decimal("0"),
+            } for pid in set(resolved_ids) - scope}
+            resolved_ids = set(resolved_ids) & scope
         if not resolved_ids:
-            return {}
+            return excluded
 
         summary_query = IMSSummary.query.filter_by(
             year=year, month=month, representative_id=representative_id,
@@ -342,7 +392,7 @@ class ProductionResultService:
             ).all()
             production_by_key = {(int(row.upload_id), int(row.product_id)): row for row in rows}
 
-        resolved = {}
+        resolved = dict(excluded)
         for product_id in resolved_ids:
             target = targets_by_product.get(product_id)
             target_tl = cls._d(target.tl_target if target else 0)
@@ -413,6 +463,18 @@ class ProductionResultService:
                 "actual_tl": actual_tl,
                 "actual_unit": actual_unit,
             }
+        if scope is not None and uploads:
+            quota_ids = {pid for pid, periods in cls.quota_product_months([(year, month)]).items()
+                         if (year, month) in periods}
+            for product_id in quota_ids & set(resolved_ids):
+                value = resolved[product_id]
+                allocated = cls._d(targets_by_product[product_id].tl_target) if product_id in targets_by_product else Decimal("0")
+                closing_target = cls._d(value.get("target_tl")) or allocated
+                if closing_target <= 0:
+                    continue
+                value.update(target_tl=closing_target, actual_tl=closing_target,
+                             realization_percent=Decimal("100"), complete=True, quota_exit=True,
+                             source=f"PRODUCTION_{uploads[0].production_stage}")
         return resolved
 
     @classmethod
@@ -433,6 +495,9 @@ class ProductionResultService:
             row = (override.get("rows") or {}).get(int(product_id))
             if row is not None:
                 return row
+
+        if cls.target_first_quota_applies(year, month):
+            return cls.effective_products(year, month, representative_id, [product_id])[int(product_id)]
 
         target = Target.query.filter_by(
             year=year, month=month, representative_id=representative_id, product_id=product_id,
@@ -505,7 +570,11 @@ class ProductionResultService:
     @classmethod
     def effective_representative(cls, year, month, representative_id):
         targets = Target.query.filter_by(year=year, month=month, representative_id=representative_id).all()
-        rows = [cls.effective_product(year, month, representative_id, target.product_id) for target in targets]
+        if cls.target_first_quota_applies(year, month):
+            rows = [row for row in cls.effective_products(year, month, representative_id).values()
+                    if not row.get("out_of_scope")]
+        else:
+            rows = [cls.effective_product(year, month, representative_id, target.product_id) for target in targets]
         complete = bool(rows) and all(row["complete"] for row in rows)
         total_target = sum((row["target_tl"] for row in rows), Decimal("0"))
         total_actual = sum((row["actual_tl"] for row in rows), Decimal("0"))
