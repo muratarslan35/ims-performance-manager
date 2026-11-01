@@ -1,4 +1,4 @@
-name: Quota Source Consistency Shadow Checked Runner
+name: Quota Targetless Contribution Projection Check
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -139,6 +139,7 @@ jobs:
             service=RegionPerformanceService(key,2026,10);report=Snap._json_ready(service.report())
             previous=Regions.get_active(key,2026,10)
             old_periods=previous['report']['periods']
+            old_monthly={int(r['product_id']):r for r in old_periods['monthly']['products']}
             for period_key,period in report['periods'].items():
              old={int(r['product_id']):r for r in old_periods[period_key]['products']}
              rows={int(r['product_id']):r for r in period['products']}
@@ -146,7 +147,10 @@ jobs:
              for pid,row in rows.items():
               assert pid in old
               for field in ('target_tl','actual_tl','target_unit','actual_unit'):
-               assert abs(float(row.get(field) or 0)-float(old[pid].get(field) or 0))<0.011,('source change',key,period_key,field)
+               expected=float(old[pid].get(field) or 0)
+               has_october=any((int(span['year']),int(span['month']))==(2026,10) for span in period.get('months',[]))
+               if pid not in scope and has_october:expected-=float(old_monthly.get(pid,{}).get(field) or 0)
+               assert abs(float(row.get(field) or 0)-expected)<0.02,('unexpected source change',key,period_key,pid,field)
             market=Snap._json_ready(RegionMarketService(report['region_key'],service.rep_ids,2026,10).build())
             assert len(market['rows'])==7
             for row in market['rows']:
@@ -213,7 +217,15 @@ jobs:
             try:
              workspace=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
              before=references[rid];issues=[]
-             if workspace['annual_realization']!=before['annual_realization']:issues.append('annual')
+             old_monthly={pid(r):r for r in before['snapshots']['monthly']['products']}
+             for index,row in enumerate(workspace['annual_realization']):
+              previous=before['annual_realization'][index]
+              if int(row['month'])!=10:
+               if row!=previous:issues.append('historical-annual')
+              else:
+               for field in ('target_tl','actual_tl'):
+                expected=float(previous.get(field) or 0)-sum(float(r.get(field) or 0) for p,r in old_monthly.items() if p not in scope)
+                if abs(float(row.get(field) or 0)-expected)>0.02:issues.append('current-annual:'+field)
              for key,period in workspace['snapshots'].items():
               old={pid(r):r for r in before['snapshots'][key]['products']}
               new={pid(r):r for r in period['products']}
@@ -221,7 +233,10 @@ jobs:
               if not set(new)<=set(old):issues.append(key+':added')
               for product_id,row in new.items():
                for field in ('target_tl','actual_tl','target_unit','actual_unit'):
-                if abs(float(row.get(field) or 0)-float(old[product_id].get(field) or 0))>0.011:issues.append(key+':'+field)
+                expected=float(old[product_id].get(field) or 0)
+                if product_id not in scope and [2026,10] in period['months']:
+                 expected-=float(old_monthly.get(product_id,{}).get(field) or 0)
+                if abs(float(row.get(field) or 0)-expected)>0.02:issues.append(key+':'+field)
               for field in ('target_tl','actual_tl','target_unit','actual_unit'):
                if abs(float(period['totals'].get(field) or 0)-sum(float(r.get(field) or 0) for r in new.values()))>0.02:issues.append(key+':total:'+field)
              (live/'instance'/f'quota-candidate-rep-{rid}-private.json').write_text(canonical(workspace))
