@@ -1,4 +1,4 @@
-name: Week 41 Final Acceptance Progress
+name: Quota Target First Rollout Preflight
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,18 +44,18 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
+          umask 077
           venv/bin/python - <<'PY'
           from pathlib import Path
           import sqlite3,json
-          root=Path('instance');meta=json.loads((root/'week41-performance-timing-session.json').read_text())
+          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
           with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
            latest=con.execute("SELECT id,year,month,week_number FROM ims_uploads WHERE status='COMPLETED' ORDER BY year DESC,month DESC,week_number DESC,id DESC LIMIT 1").fetchone()
-           print('WEEK41_CURRENT_LATEST_SOURCE|'+json.dumps(latest),flush=True)
-          for name in ('week41-final-performance-source-acceptance-private.log','week41-final-performance-html-acceptance-private.log','week41-performance-final-history-validation.log','week41-performance-final-generations-validation.log'):
-           p=root/name
-           if p.exists():
-            lines=[l for l in p.read_text(errors='replace').splitlines() if l.startswith(('WEEK41_','OFFICIAL_PUBLICATION_ACCEPTANCE|'))]
-            for line in lines[-2:]:print(line,flush=True)
+           active=con.execute("SELECT count(*) FROM ims_import_jobs WHERE status IN ('QUEUED','PROCESSING')").fetchone()[0]
+           production=con.execute("SELECT id,year,month,production_stage FROM production_result_uploads WHERE status='APPLIED' AND (year>2026 OR (year=2026 AND month>=10)) ORDER BY id").fetchall()
+           products=con.execute("SELECT product_id,CASE WHEN SUM(tl_target)>0 THEN 1 ELSE 0 END FROM targets WHERE year=? AND month=? GROUP BY product_id",latest[1:3]).fetchall()
+          print('QUOTA_CONTRACT_PREFLIGHT|'+json.dumps(dict(latest=latest,active_imports=active,new_period_production=production,product_scope=products)),flush=True)
+          assert latest==(58,2026,10,41) and active==0 and not production
           PY
           REMOTE
           
