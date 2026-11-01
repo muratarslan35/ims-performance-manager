@@ -69,6 +69,10 @@ class RepresentativePeriodSnapshotService:
             Target.representative_id == representative_id,
             cls._period_filter(Target, allowed),
         ).all()
+        scopes = {period: ProductionResultService.ims_target_scope(*period) for period in allowed}
+        targets = [target for target in targets
+                   if scopes[(int(target.year), int(target.month))] is None
+                   or int(target.product_id) in scopes[(int(target.year), int(target.month))]]
         if not targets:
             return {
                 key: {
@@ -138,10 +142,12 @@ class RepresentativePeriodSnapshotService:
             (quota_year, quota_month, int(product_id))
             for product_id, periods in (
                 ProductionResultService.quota_product_months(allowed).items()
-                if possible_quota else ()
+                if possible_quota or any(ProductionResultService.target_first_quota_applies(*period) for period in allowed) else ()
             )
             for quota_year, quota_month in periods
         }
+        effective_new = {period: ProductionResultService.effective_products(*period, representative_id)
+                         for period in allowed if ProductionResultService.target_first_quota_applies(*period)}
         resolved = {}
         for target in targets:
             period = (int(target.year), int(target.month))
@@ -171,8 +177,16 @@ class RepresentativePeriodSnapshotService:
                     actual_tl = Decimal("0")
                     complete = False
 
-            if selected_result is not None and (*period, product_id) in quota_periods:
+            if (*period, product_id) in quota_periods and (
+                selected_result is not None or ProductionResultService.target_first_quota_applies(*period)
+            ):
                 actual_tl = target_tl
+                complete = True
+            if period in effective_new:
+                value = effective_new[period].get(product_id, {})
+                target_tl = Decimal(str(value.get("target_tl", 0)))
+                actual_tl = Decimal(str(value.get("actual_tl", 0)))
+                complete = bool(value.get("complete"))
 
             resolved[(period[0], period[1], product_id)] = {
                 "product_id": product_id,
@@ -224,7 +238,7 @@ class RepresentativePeriodSnapshotService:
                     ),
                     None,
                 )
-                if official_total is not None:
+                if official_total is not None and not ProductionResultService.target_first_quota_applies(year, month):
                     total_percent = cls._percent(
                         official_total.actual_tl,
                         official_total.target_tl,

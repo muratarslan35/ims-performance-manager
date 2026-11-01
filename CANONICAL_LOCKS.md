@@ -35,6 +35,7 @@ Bu işaret genel veya kalıcı izin değildir; yalnız ilgili PR kapsamındaki, 
 18. **Ranking kilidi:** Alt IMS Türkiye Sıralaması seçili ayın temsilci ₺ realizasyon sıralamasıdır. Üst Yıllık Ürün Bazlı Türkiye Sıralaması Ocak→seçili ay ürün kutu YTD toplamıdır. Her iki alanda aylık kaynak önceliği P2 > P1 > IMS'tir.
 19. **Market payload bütünlüğü kilidi:** Dashboard/ranking refresh tam `competition_analysis` payloadını korumak zorundadır. Rekabet authority mevcutken eksik market read-model yayınlanamaz. Region market/önceki-ay competitor/kutu farkı completeness kontrolleri publication kabulünün parçasıdır.
 20. **Kanonik mimari belgesi:** `IMS_IMPORT_READ_ARCHITECTURE_LOCK.md` bu kuralların operasyonel açıklamasıdır ve bu dosyayla birlikte kilitlidir.
+21. **Hedef öncelikli kota çıkış kilidi:** 41. hafta / Ekim 2026 ve sonrası için ürün/ay kapsamını kabul edilmiş IMS'deki pozitif TL hedefi belirler. Hedefi olmayan ürün hesaplamaya girmez; ikinci hedef indirimi, yapay satış veya %100 kredi üretmez. Hedefi olan üründe kabul edilmiş üretimin açık kota çıkış onayı (ürünü adlandıran dosya işareti dahil) kısmi satış olsa da geçerlidir; yüzde önceden 100 olmak zorunda değildir. Açık işaret yoksa mevcut ulusal satış/boş üretim ve münferit satış toleransları korunur. Üretim onayı olmadan manuel Q seçimi kota kredisi yaratamaz. Onaylı ürünün TL hedefi bir kez kapanır; mevcut satışın üzerine hedef eklenmez. Ürün kimliği her ay dinamik belirlenir. Bölge/Türkiye kapanışı kendi resmi hedefinden yapılır, temsilci hedef toplamından türetilmez. Gerçek kutu/rakip gözlemleri yapay kota satışıyla değiştirilmez. Eylül ve önceki kabul edilmiş kapalı dönemler ve snapshotları yeniden yazılmaz.
 
 ## Kilitli kritik kod yolları
 
@@ -82,6 +83,9 @@ Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 - `app/routes/__init__.py`
 - `app/regions.py`
 - `app/services/production_result_service.py`
+- `app/services/prime_engine.py`
+- `app/services/quarter_entitlement_service.py`
+- `app/services/representative_query_optimizer.py`
 - `app/services/tl_box_calculation_service.py`
 - `app/services/april_global_box_period_lock.py`
 - `app/services/product_unit_price_service.py`

@@ -164,6 +164,9 @@ def _build_snapshot(service, months):
                 break
 
         if selected_result is not None:
+            if ProductionResultService.target_first_quota_applies(year, month):
+                target_tl = _d(selected_result.target_tl) if selected_result.target_tl is not None else target_tl
+                target_unit = _d(selected_result.target_unit) if selected_result.target_unit is not None else target_unit
             percent = (
                 _d(selected_result.actual_tl) * Decimal("100") / target_tl
                 if target_tl and selected_result.actual_tl is not None
@@ -211,6 +214,17 @@ def _build_snapshot(service, months):
             "actual_unit": actual_unit,
         }
 
+    new_periods = [period for period in months if ProductionResultService.target_first_quota_applies(*period)]
+    quota_periods = {(y, m, int(pid)) for pid, periods in ProductionResultService.quota_product_months(new_periods).items()
+                     for y, m in periods} if new_periods else set()
+    for (year, month, rid, pid), value in effective.items():
+        if (year, month, pid) not in quota_periods:
+            continue
+        closing_target = value["target_tl"] or target_by_key[(year, month, rid, pid)][0]
+        if closing_target > 0:
+            value.update(target_tl=closing_target, actual_tl=closing_target, complete=True,
+                         realization_percent=Decimal("100"), quota_exit=True,
+                         source=f"PRODUCTION_{uploads_by_period[(year, month)][0].production_stage}")
     return {
         "periods": set(months),
         "effective": effective,

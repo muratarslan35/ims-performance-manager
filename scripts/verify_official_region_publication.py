@@ -23,6 +23,7 @@ from app.services.tl_box_calculation_service import TLBoxCalculationService
 from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService,region_snapshot_sets
 from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService,representative_snapshot_sets
 from app.services.persistent_dashboard_snapshot_service import PersistentDashboardSnapshotService
+from app.services.production_result_service import ProductionResultService
 
 
 def main():
@@ -61,6 +62,8 @@ def main():
         views=_pair_views(adapter)
         assert views is not None
         product_ids={name:adapter.resolve_product_match(name)['object'].id for name in views['products']}
+        scope=ProductionResultService.ims_target_scope(year,month)
+        performance_products={name:pid for name,pid in product_ids.items() if scope is None or pid in scope}
         prices=ProductUnitPriceService.price_map(product_ids.values(),year,month)
         from app.services.ims_unit_authority import applies as direct_units_apply,import_unit_values,representative_name_key
         explicit=import_unit_values(adapter,views) if direct_units_apply(year,month) else {}
@@ -92,8 +95,8 @@ def main():
             source_rep_products[rid]=products
             expected_region_reps[territory.split()[0]].add(rid)
             source_rep_totals[rid]=[
-                sum(float(p['target']) for p in products.values()),
-                sum(float(p['actual']) for p in products.values()),
+                sum(float(p['target']) for name,p in products.items() if name in performance_products),
+                sum(float(p['actual']) for name,p in products.items() if name in performance_products),
             ]
         official={(r.sheet_type,r.territory,r.product_id):r for r in IMSRawData.query.filter(IMSRawData.upload_id==upload.id,IMSRawData.sheet_type.in_(('official_target_aggregate','official_actual_aggregate')))}
         for identity,products in views['tl_aggregates'].items():
@@ -160,10 +163,11 @@ def main():
             counts['regions']+=1
             market_rows={int(r['product_id']):r for r in (payload.get('market_analysis') or {}).get('rows',[])}
             current_units=service._official_region_unit_month(year,month)
-            assert set(market_rows)==set(current_units),(region,'market product coverage')
+            assert set(market_rows)==set(product_ids.values()),(region,'market product coverage')
             for pid,row in market_rows.items():
-                equal(row.get('target_unit'),current_units[pid][0],f'region-market:{region}:{pid}:target_unit')
-                equal(row.get('company_unit'),current_units[pid][1],f'region-market:{region}:{pid}:company_unit')
+                values=current_units.get(pid,[0,0,True])
+                equal(row.get('target_unit'),values[0],f'region-market:{region}:{pid}:target_unit')
+                equal(row.get('company_unit'),values[1],f'region-market:{region}:{pid}:company_unit')
                 counts['region_market_products']+=1
             annual=(payload.get('report') or {}).get('annual_realization') or []
             annual_month=next(r for r in annual if int(r['month'])==month)
@@ -180,15 +184,15 @@ def main():
                 if region=='NATIONAL':continue
                 row=map_rows[region]
                 expected={
-                    'tl_target':sum(float(p['target']) for p in products.values()),
-                    'tl_actual':sum(float(p['actual']) for p in products.values()),
-                    'unit_target':sum(source_box('AGGREGATE',(region,),name,'target',products[name]['target']) for name in product_ids),
-                    'unit_actual':sum(source_box('AGGREGATE',(region,),name,'actual',products[name]['actual']) for name in product_ids),
+                    'tl_target':sum(float(products[name]['target']) for name in performance_products),
+                    'tl_actual':sum(float(products[name]['actual']) for name in performance_products),
+                    'unit_target':sum(source_box('AGGREGATE',(region,),name,'target',products[name]['target']) for name in performance_products),
+                    'unit_actual':sum(source_box('AGGREGATE',(region,),name,'actual',products[name]['actual']) for name in performance_products),
                 }
                 for field,value in expected.items():equal(row.get(field),value,f'dashboard-map:{region}:{field}')
                 counts['dashboard_map_regions']+=1
         national={int(r['product_id']):r for r in (dashboard.get('executive_metrics') or {}).get('products',[])}
-        assert set(national)==set(product_ids.values())
+        assert set(national)==set(performance_products.values())
         for pid,row in national.items():
             name=next(n for n,p in product_ids.items() if p==pid)
             t=official[('official_target_aggregate','NATIONAL',pid)].tl
@@ -203,9 +207,9 @@ def main():
         assert set(reps)==set(rep_ids)
         for rid,workspace in reps.items():
             monthly=((workspace.get('snapshots') or {}).get('monthly') or {})
-            for row in monthly.get('products',[]):
-                pid=int((row.get('product') or {}).get('id') or row.get('product_id'))
-                name=next(n for n,p in product_ids.items() if p==pid)
+            rows={int((row.get('product') or {}).get('id') or row.get('product_id')):row for row in monthly.get('products',[])}
+            assert set(rows)==set(performance_products.values()),('representative product scope',rid)
+            for name,pid in product_ids.items():
                 t=targets[(rid,pid)].tl_target;a=facts[(rid,pid)].tl
                 native=source_rep_products[rid][name]
                 equal(t,native['target'],f'representative-db:{rid}:{pid}:source-target-tl')
@@ -214,6 +218,10 @@ def main():
                     equal(targets[(rid,pid)].unit_target,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t,rounded=False),f'representative-db:{rid}:{pid}:source-target-unit')
                     equal(facts[(rid,pid)].unit,source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a,rounded=False),f'representative-db:{rid}:{pid}:source-actual-unit')
                 counts['representative_source_products']+=1
+                if pid not in rows:
+                    counts['representative_targetless_excluded']+=1
+                    continue
+                row=rows[pid]
                 for field,value in (('target_tl',t),('actual_tl',a),('target_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'target',t)),('actual_unit',source_box('REPRESENTATIVE',source_rep_identities[rid],name,'actual',a))):
                     equal(row.get(field),value,f'representative:{rid}:{pid}:{field}')
                 counts['representative_product_rows']+=1

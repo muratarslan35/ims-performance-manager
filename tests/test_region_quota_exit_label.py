@@ -188,7 +188,7 @@ def test_quota_detection_is_independent_of_month_batch_and_cache_fill_order(tmp_
 
 def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_path):
     from types import SimpleNamespace
-    from app.models import IMSSummary, ProductionNationalProductResult, ProductionResult
+    from app.models import IMSSummary, IMSUpload, IMSRawData, ProductionNationalProductResult, ProductionResult
     from app.services.production_result_service import ProductionResultService
     from app.services.quarter_entitlement_service import QuarterEntitlementService
 
@@ -210,6 +210,17 @@ def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_
         )
         db.session.add(upload)
         db.session.flush()
+        # The new-period contract closes each region's own official IMS target;
+        # a representative sum must never invent a missing regional quota.
+        ims = IMSUpload(file_name="Temmuz_IMS.xlsx", year=2044, month=7, status="COMPLETED")
+        db.session.add(ims)
+        db.session.flush()
+        for rep in reps:
+            db.session.add(IMSRawData(
+                upload_id=ims.id, year=2044, month=7, sheet_name="BAKIYE",
+                sheet_type="official_target_aggregate", territory=rep.region,
+                product_id=fentivag.id, tl=500, unit=5, raw_json="{}",
+            ))
         for rep in reps:
             db.session.add_all([
                 Target(year=2044, month=7, representative_id=rep.id,

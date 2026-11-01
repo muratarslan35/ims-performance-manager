@@ -108,6 +108,12 @@ class QuarterEntitlementService:
         return monthly
 
     def _selected_quota_product(self, month, available_ids):
+        if ProductionResultService.target_first_quota_applies(self.year, month):
+            official = [pid for pid in self._official_quota.get(month, []) if pid in available_ids]
+            selected = self.quota_exit_by_month.get(month)
+            if selected in official:
+                return selected, True
+            return (official[0] if official else None), bool(official)
         if month in self.quota_exit_by_month:
             selected = self.quota_exit_by_month[month]
             return selected if selected in available_ids else None, False
@@ -134,6 +140,8 @@ class QuarterEntitlementService:
         meta = self._product_meta()
         rows = []
         for raw_product_id, resolved in effective.items():
+            if resolved.get("out_of_scope"):
+                continue
             product_id = int(raw_product_id)
             config = meta.get(product_id)
             if not config:
@@ -170,9 +178,12 @@ class QuarterEntitlementService:
         rows = []
 
         if monthly is not None:
+            scope = ProductionResultService.ims_target_scope(self.year, month)
             for snapshot_row in monthly.get("products") or []:
                 product_id, product_name = self._product_identity(snapshot_row)
                 if product_id is None:
+                    continue
+                if scope is not None and product_id not in scope:
                     continue
                 config = meta.get(product_id, {})
                 target_tl = float(snapshot_row.get("target_tl") or 0)
@@ -208,24 +219,26 @@ class QuarterEntitlementService:
 
         available_ids = {row["product_id"] for row in rows}
         selected_id, auto_selected = self._selected_quota_product(month, available_ids)
+        strict = ProductionResultService.target_first_quota_applies(self.year, month)
+        approved_ids = set(self._official_quota.get(month, [])) & available_ids if strict else {selected_id}
         if selected_id is not None:
             for row in rows:
-                if row["product_id"] != selected_id:
+                if row["product_id"] not in approved_ids:
                     continue
                 if auto_selected and float(row.get("target_tl") or 0) <= 0:
                     # The stock-exit product has no production target column;
                     # use its allocated IMS quota for this Q calculation only.
                     allocated = Target.query.filter_by(
                         year=self.year, month=int(month),
-                        representative_id=self.representative_id, product_id=selected_id,
+                        representative_id=self.representative_id, product_id=row["product_id"],
                     ).first()
                     if allocated is not None and float(allocated.tl_target or 0) > 0:
                         row["target_tl"] = round(float(allocated.tl_target), 2)
                         row["target_unit"] = round(float(allocated.unit_target or 0), 2)
                 original_actual_tl = float(row.get("actual_tl") or 0)
                 original_actual_unit = float(row.get("actual_unit") or 0)
-                row["actual_tl"] = round(max(original_actual_tl, float(row.get("target_tl") or 0)), 2)
-                row["actual_unit"] = round(max(original_actual_unit, float(row.get("target_unit") or 0)), 2)
+                row["actual_tl"] = round(float(row.get("target_tl") or 0) if strict else max(original_actual_tl, float(row.get("target_tl") or 0)), 2)
+                row["actual_unit"] = round(original_actual_unit if strict else max(original_actual_unit, float(row.get("target_unit") or 0)), 2)
                 row["percent"] = (
                     round(row["actual_tl"] / row["target_tl"] * 100.0, 2)
                     if row.get("target_tl") else 0.0
@@ -234,12 +247,14 @@ class QuarterEntitlementService:
                 row["quota_exit"] = True
                 row["quota_uplift_tl"] = round(row["actual_tl"] - original_actual_tl, 2)
                 row["quota_uplift_unit"] = round(row["actual_unit"] - original_actual_unit, 2)
-                break
+                if not strict:
+                    break
 
         options = [
             {"id": row["product_id"], "name": row["product_name"]}
             for row in rows
             if float(row.get("target_tl") or 0) > 0
+            and (not strict or row["product_id"] in approved_ids)
         ]
         self._snapshot_rows[month] = rows
         return rows, {
@@ -247,6 +262,8 @@ class QuarterEntitlementService:
             "auto_selected": auto_selected,
             "options": options,
             "source": source,
+            "approval_required": strict,
+            "confirmed_ids": sorted(approved_ids - {None}),
         }, True
 
     def _monthly_row(self, month):

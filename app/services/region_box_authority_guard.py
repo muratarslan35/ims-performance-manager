@@ -116,15 +116,25 @@ def _apply_official_region_market_boxes(service, payload):
     """
     if not RegionPerformanceService._uses_official_region_only(service.year, service.month):
         return payload
+    scope = ProductionResultService.ims_target_scope(service.year, service.month)
+    if scope is not None:
+        for row in payload.get("rows") or []:
+            if int(row["product_id"]) not in scope:
+                row.update(target_unit=0.0, company_unit=0.0, realization_percent=0.0)
+        payload.setdefault("totals", {})["effective_company_unit"] = sum(
+            float(row.get("company_unit") or 0) for row in payload.get("rows") or []
+        )
     if ProductionResultService.final_upload(service.year, service.month) is not None:
         return payload
     region = RegionPerformanceService(service.region_key, service.year, service.month)
     units = region._official_region_unit_month(service.year, service.month)
-    if not units:
+    if not units and scope != frozenset():
         raise ValueError(f"Official region market source missing: {service.region_key}")
     from app.services.realization_rounding import realization_percent
     for row in payload.get("rows") or []:
         product_id = int(row["product_id"])
+        if scope is not None and product_id not in scope:
+            continue
         if product_id not in units or not units[product_id][2]:
             raise ValueError(f"Incomplete official region market product: {service.region_key}/{product_id}")
         target, actual, _complete = units[product_id]

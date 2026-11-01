@@ -113,6 +113,9 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
             targets = Target.query.filter_by(
                 representative_id=representative_id, year=year, month=month
             ).join(Product).order_by(Product.display_order, Product.product_name).all()
+            scope = ProductionResultService.ims_target_scope(year, month)
+            if scope is not None:
+                targets = [target for target in targets if int(target.product_id) in scope]
             effective = ProductionResultService.effective_products(year, month, representative_id)
             cached = (targets, effective)
             sales_cache[cache_key] = cached
@@ -132,7 +135,8 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
             target_tl = float(resolved.get("target_tl", target.tl_target or 0.0))
             actual_tl = float(resolved.get("actual_tl", 0.0))
             if (year, month, int(target.product_id)) in quota_periods:
-                target_tl = float(target.tl_target or target_tl)
+                if not ProductionResultService.target_first_quota_applies(year, month):
+                    target_tl = float(target.tl_target or target_tl)
                 actual_tl = target_tl
             target_unit = float(resolved.get("target_unit", target.unit_target or 0.0))
             actual_unit = float(resolved.get("actual_unit", 0.0))
@@ -185,7 +189,7 @@ def _aggregate_sales(representative_id, months, sales_cache=None, assignment_cac
             ).first()
             if upload else None
         )
-        if official_total is not None:
+        if official_total is not None and not ProductionResultService.target_first_quota_applies(year, month):
             totals["percent"] = realization_percent(
                 official_total.actual_tl,
                 official_total.target_tl,

@@ -4,6 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_target_first_quota_contract_is_locked_in_codeowners_and_ci():
+    canonical = (ROOT / "CANONICAL_LOCKS.md").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/locked-contracts.yml").read_text(encoding="utf-8")
+    owners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
+    assert "Hedef öncelikli kota çıkış kilidi" in canonical
+    assert "tests/test_quota_target_first_contract.py" in workflow
+    for path in ("app/services/prime_engine.py", "app/services/quarter_entitlement_service.py",
+                 "app/services/representative_query_optimizer.py"):
+        assert path in canonical and path in workflow
+        assert f"/{path} @muratarslan35" in owners
+
+
 def test_canonical_import_architecture_document_is_present_and_locked():
     doc = (ROOT / "IMS_IMPORT_READ_ARCHITECTURE_LOCK.md").read_text(encoding="utf-8")
     canonical = (ROOT / "CANONICAL_LOCKS.md").read_text(encoding="utf-8")

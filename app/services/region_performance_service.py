@@ -127,6 +127,7 @@ class RegionPerformanceService:
         same official region row. This keeps region authority and avoids summing
         representative rows whose scope can differ from the official subtotal.
         """
+        scope = ProductionResultService.ims_target_scope(year, month)
         production_upload = ProductionResultService.final_upload(year, month)
         if production_upload is not None:
             production_rows = ProductionRegionProductResult.query.filter_by(
@@ -140,6 +141,7 @@ class RegionPerformanceService:
                         True,
                     ]
                     for row in production_rows
+                    if scope is None or int(row.product_id) in scope
                 }
                 quota_ids = {
                     product_id for product_id, periods in
@@ -154,8 +156,16 @@ class RegionPerformanceService:
                         Target.representative_id.in_(self.rep_ids),
                         Target.product_id.in_(quota_ids),
                     ).group_by(Target.product_id).all())
+                    if scope is not None:
+                        official_quota_targets = OfficialAggregateService.rows(year, month, self.region_key, TARGET_TYPE)
+                        allocated = {int(row.product_id): row.tl for row in official_quota_targets
+                                     if int(row.product_id) in quota_ids}
+                        allocated.update({pid: values[0] for pid, values in result.items()
+                                          if pid in quota_ids and values[0] > 0})
                     for product_id, amount in allocated.items():
                         target = Decimal(str(amount or 0))
+                        if scope is not None and product_id in result and result[product_id][0] > 0:
+                            target = result[product_id][0]
                         if target > 0:
                             result[int(product_id)] = [target, target, True]
                 return result
@@ -181,6 +191,8 @@ class RegionPerformanceService:
                 }
             result = {}
             for target in official_targets:
+                if scope is not None and int(target.product_id) not in scope:
+                    continue
                 target_tl = Decimal(str(target.tl or 0))
                 actual_row = official_actuals.get(target.product_id)
                 if actual_row is not None:
@@ -242,6 +254,7 @@ class RegionPerformanceService:
         This mirrors the TL balance logic and never substitutes TTS competition
         units, percentage estimates, or TL-to-unit conversions.
         """
+        scope = ProductionResultService.ims_target_scope(year, month)
         production_upload = ProductionResultService.final_upload(year, month)
         if production_upload is not None:
             rows = ProductionRegionProductResult.query.filter_by(
@@ -255,6 +268,7 @@ class RegionPerformanceService:
                         True,
                     ]
                     for row in rows
+                    if scope is None or int(row.product_id) in scope
                 }
 
         # From April 2026 onward IMS boxes are derived per representative from
@@ -317,6 +331,7 @@ class RegionPerformanceService:
         }
 
     def aggregate(self, months):
+        scopes = {(int(y), int(m)): ProductionResultService.ims_target_scope(y, m) for y, m in months}
         quota_months = ProductionResultService.quota_product_months(months)
         quota_periods = {
             (year, month, product_id)
@@ -328,11 +343,17 @@ class RegionPerformanceService:
             "target_unit": Decimal("0"), "actual_unit": Decimal("0"), "unit_complete": True,
         })
         for year, month, rep_id, product_id, target, target_unit in self._target_rows(months):
+            scope = scopes[(int(year), int(month))]
+            if scope is not None and int(product_id) not in scope:
+                continue
             key = (year, month, rep_id, product_id)
             exact_target = Decimal(str(target or 0))
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if ProductionResultService.target_first_quota_applies(year, month):
+                exact_target = Decimal(str(effective.get("target_tl") or 0))
+                target_unit = effective.get("target_unit") or 0
             cells[key]["target"] += exact_target
             cells[key]["target_unit"] += Decimal(str(target_unit or 0))
-            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
             if not effective["complete"] or effective["actual_tl"] is None:
                 cells[key]["complete"] = False
             else:

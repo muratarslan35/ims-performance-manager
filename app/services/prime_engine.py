@@ -215,8 +215,8 @@ class PrimeEngine:
         summary = self.summaries_by_period.get((product_id, month))
         effective = ProductionResultService.effective_product(self.year, month, self.rep_id, product_id)
         return {
-            "target_unit": float(target.unit_target if target else 0),
-            "target_tl": float(target.tl_target if target else 0),
+            "target_unit": float(effective.get("target_unit") or 0) if ProductionResultService.target_first_quota_applies(self.year, month) else float(target.unit_target if target else 0),
+            "target_tl": float(effective.get("target_tl") or 0) if ProductionResultService.target_first_quota_applies(self.year, month) else float(target.tl_target if target else 0),
             "actual_unit": float(effective.get("actual_unit") or 0),
             "actual_tl": float(effective.get("actual_tl") or 0),
             "bonus_amount": float(summary.bonus_amount if summary else 0),
@@ -285,6 +285,10 @@ class PrimeEngine:
 
         base = self.month_record(product.id, month)
         adjusted = self.apply_override(product, month, base)
+        scope = ProductionResultService.ims_target_scope(self.year, month)
+        out_of_scope = scope is not None and int(product.id) not in scope
+        if out_of_scope:
+            adjusted = {**adjusted, "target_tl": 0.0, "target_unit": 0.0, "actual_tl": 0.0, "actual_unit": 0.0}
         target_tl = adjusted["target_tl"]
         percent = round((adjusted["actual_tl"] / target_tl * 100.0), 2) if target_tl > 0 else 0.0
         gap_tl = round(max(0.0, target_tl - adjusted["actual_tl"]), 2)
@@ -296,6 +300,8 @@ class PrimeEngine:
         required_percent = float(rule.required_percent) if rule else float(getattr(product, 'required_percent', 0) or 0)
         include_in_total = bool(rule.include_in_total_tl) if rule else bool(getattr(product, 'include_total_tl', False))
         include_in_prime = bool(rule.include_in_prime) if rule else bool(getattr(product, 'is_prime_product', False))
+        if out_of_scope:
+            include_in_total = include_in_prime = False
 
         result = {
             "product_id": product.id,

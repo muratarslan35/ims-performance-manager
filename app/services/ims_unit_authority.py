@@ -290,7 +290,7 @@ def install_ims_unit_authority():
         repaired={}
         for pid,row in rows.items():
             item=dict(row)
-            if str(item.get('source') or '')=='IMS':
+            if str(item.get('source') or '')=='IMS' and not item.get('out_of_scope'):
                 item['target_unit'],item['actual_unit']=resolve(year,month,'REPRESENTATIVE',rid,pid,item.get('target_tl'),item.get('actual_tl'),prices.get(pid))
                 item['box_source']='IMS_DIRECT_UNIT_OR_TL_PERIOD_PRICE'
             repaired[pid]=item
