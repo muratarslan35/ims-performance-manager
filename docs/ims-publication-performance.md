@@ -61,3 +61,36 @@ Compare canonical and optimized payloads before release, run the complete Linux
 suite, then verify official Excel/DB/snapshot values and historical protection.
 Keep financial/person-level details in private server artifacts; public logs
 contain statuses, counts, hashes and timings only.
+
+## First optimized normal replay and region follow-up
+
+Job 47 (source 56 -> upload 57) published in 682.312 seconds: 0.506 seconds
+queue wait, 274.012 seconds importing and 407.794 seconds after import. This
+reduces the 2,895.972-second baseline by 76.44%, but exceeds the 600-second
+budget. Peak worker RSS was 510,533,632 bytes and minimum available memory
+225,902,592 bytes. These are real normal-queue measurements, not a projection.
+
+Post-publication profiling identified repeated `_latest_authority_upload`
+discovery in the region wrapper chain and repeated product-label matching.
+Region generation now reuses the selected source ID (including absence) only
+inside one sequential build. ORM rows are resolved in the current session;
+normal readers, subsequent builds, nested builds and other threads do not share
+the memo. Product matches are bounded and confined to one region service, keyed
+by exact labels and catalog identity/values. Original lookup order, source
+selection and matching formulas are retained. Snapshot composition also uses
+its existing per-member monthly market mapping directly, avoiding a redundant
+second cache's store/return deep copies. Each period still copies before
+mutation; interactive callers retain the existing cache behavior.
+Complete region and representative payload equality
+and another normal queue measurement are required before completion.
+
+Region period availability also reuses private, checksummed metadata per source
+month. The legacy predicate is presence of any UNIT row on a COMPLETED upload,
+including zero/subtotal-only observations, grouped by the upload's year/month.
+Only three-ASCII-digit region prefixes use the catalog; other prefixes retain
+the original query. Selected completed upload IDs/timestamps, database identity
+and calculation code fingerprint each slot. Changed/corrupt/missing months are
+queried together in bounded source-ID batches; unchanged months need no historic
+competition scan. This cache stores availability only, never amounts or business
+rows. It is used only inside generation scope and disappears safely to source
+queries when storage is unavailable.

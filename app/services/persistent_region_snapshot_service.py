@@ -15,6 +15,7 @@ import sqlalchemy as sa
 from sqlalchemy import desc
 
 from app.extensions import db
+from app.cache.ims_generation_reads import isolated_generation_reads
 from app.models import IMSUpload, ProductionResultUpload, Representative, Target
 from app.services.production_result_service import ProductionResultService
 from app.services.region_market_service import RegionMarketService, repair_duplicated_rival_totals
@@ -629,6 +630,7 @@ class PersistentRegionSnapshotService:
         return {"status": "ENRICHED", "set_id": int(set_id), "regions": len(updates)}
 
     @classmethod
+    @isolated_generation_reads()
     def build_for_period(
         cls,
         year,

@@ -14,6 +14,10 @@ def test_deploy_workflow_is_change_aware_and_keeps_expensive_gates_bounded():
     assert 'mode="docs"' in text
     assert 'app/services/kpi_workbook_compat.py' in text
     assert 'app/services/representative_snapshot_refresh_queue.py' in text
+    import_classifier = next(line for line in text.splitlines() if 'verify_live_ims_gate.py|app/ims.py|' in line)
+    assert 'app/cache/ims_generation_reads.py|' in import_classifier
+    assert 'app/cache/region_period_catalog.py|' in import_classifier
+    assert 'app/services/region_market_service.py|' in import_classifier
     assert 'migrations/*|app/models.py)' in text
     assert 'requirements.txt|deploy/*|sqlite_online_backup.py' in text
     assert 'multi-gigabyte online backup for actual schema changes only' in text

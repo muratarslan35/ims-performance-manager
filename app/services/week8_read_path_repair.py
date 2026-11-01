@@ -458,6 +458,10 @@ def install_week8_read_path_repair() -> None:
 
     # Preserve only the proven safe region-period optimization from PR #285.
     def bounded_available_periods(self):
+        from app.cache.region_period_catalog import generation_region_periods
+        catalog = generation_region_periods(self.region_key)
+        if catalog is not None:
+            return catalog
         prefix = f"{self.region_key}%"
         has_scope = exists().where(
             CompetitionData.upload_id == IMSUpload.id,

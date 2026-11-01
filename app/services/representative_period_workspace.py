@@ -232,13 +232,18 @@ def _aggregate_market(representative, months, market_cache=None):
         payload = market_cache.get(cache_key)
         if payload is None:
             source_cache_key = _market_source_cache_key(representative, year, month)
-            payload = RepresentativeAnalysisCache.get_or_compute(
-                source_cache_key,
-                lambda y=year, m=month, source=source_cache_key: RepresentativeMonthlyMarketCache.get_or_compute(
+            def load(y=year, m=month, source=source_cache_key):
+                return RepresentativeMonthlyMarketCache.get_or_compute(
                     representative, y, m, source,
                     lambda: RepresentativeMarketService(representative, y, m).build(),
-                ),
-                ttl_seconds=45,
+                )
+
+            from app.services.representative_query_optimizer import snapshot_build_active
+            # The workspace's market_cache already owns one fresh monthly
+            # result per member. Snapshot reads need no second store/copy pair.
+            # Period composition below still copies before any mutation.
+            payload = load() if snapshot_build_active() else RepresentativeAnalysisCache.get_or_compute(
+                source_cache_key, load, ttl_seconds=45,
             )
             market_cache[cache_key] = payload
         monthly.append(payload)
