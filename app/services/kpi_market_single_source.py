@@ -236,7 +236,13 @@ def persist_market_authority(service, year, month, week_number=None):
 
 
 def _latest_authority_upload(year, month):
-    return (
+    from app.cache.ims_generation_reads import generation_reads
+    reads = generation_reads()
+    key = ("kpi-authority-upload", int(year), int(month))
+    if reads is not None and key in reads:
+        upload_id = reads[key]
+        return db.session.get(IMSUpload, upload_id) if upload_id is not None else None
+    upload = (
         db.session.query(IMSUpload)
         .join(CompetitionData, CompetitionData.upload_id == IMSUpload.id)
         .filter(
@@ -249,6 +255,9 @@ def _latest_authority_upload(year, month):
         .order_by(desc(IMSUpload.week_number), desc(IMSUpload.completed_at), desc(IMSUpload.id))
         .first()
     )
+    if reads is not None:
+        reads[key] = int(upload.id) if upload is not None else None
+    return upload
 
 
 def _upload_has_authority(upload_id):

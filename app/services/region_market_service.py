@@ -65,6 +65,7 @@ class RegionMarketService:
         self.representative_ids = tuple(sorted({int(item) for item in representative_ids}))
         self.year = int(year)
         self.month = int(month)
+        self._product_matches = {}
 
     @staticmethod
     def _key(value):
@@ -128,6 +129,24 @@ class RegionMarketService:
         return ordered
 
     def _product_for(self, product_group, product_name, products):
+        # A region repeats the same product labels for every brick. Keep exact
+        # results only on this short-lived service, including a valid no-match.
+        # Include catalog values so an edited catalog never reuses an answer.
+        key = (product_group, product_name, tuple(
+            (id(p), p.id, p.product_name, p.product_code, p.ims_name, p.competitor_group)
+            for p in products
+        ))
+        matches = getattr(self, "_product_matches", None)
+        if matches is None:
+            matches = self._product_matches = {}
+        if key in matches:
+            return matches[key]
+        result = self._match_product_for(product_group, product_name, products)
+        if len(matches) < 2048:
+            matches[key] = result
+        return result
+
+    def _match_product_for(self, product_group, product_name, products):
         group_key, product_key = self._key(product_group), self._key(product_name)
         for product in products:
             candidates = {
