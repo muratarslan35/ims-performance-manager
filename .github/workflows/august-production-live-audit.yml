@@ -1,4 +1,4 @@
-name: Quota Restore Safe Disk Headroom
+name: Quota Deployment Activation Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -46,57 +46,26 @@ jobs:
 
           umask 077
           venv/bin/python - <<'PY'
-          import gzip,hashlib,json,os,re,shutil,subprocess
+          import json,sqlite3
           from pathlib import Path
-          root=Path.cwd().resolve();instance=(root/'instance').resolve()
-          current=Path((instance/'quota-target-first-shadow-path.txt').read_text()).resolve()
-          removed=0
-          for path in instance.iterdir():
-           if not path.is_dir() or path.is_symlink() or path.resolve()==current:continue
-           if not re.fullmatch(r'(quota-target-first-shadow|week41-budget-final|week41-region-final|week41-region-candidate|week41-region-reference|week41-shadow)\.[A-Za-z0-9]{6}',path.name):continue
-           assert path.resolve().parent==instance and (path/'app').is_dir() and (path/'config.py').is_file()
-           shutil.rmtree(path);removed+=1
-          print('QUOTA_REPRODUCIBLE_SOURCE_CLEANUP|'+json.dumps(dict(removed=removed)),flush=True)
+          meta=json.loads(Path('instance/week41-performance-timing-session.json').read_text())
+          with sqlite3.connect('file:'+meta['database']+'?mode=ro',uri=True) as con:
+           tables=[r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%refresh%' OR name LIKE '%finalization%')")]
+           counts={}
+           for table in tables:
+            columns=[r[1] for r in con.execute('PRAGMA table_info("'+table+'")')]
+            if 'status' in columns:counts[table]=con.execute('SELECT status,count(*) FROM "'+table+'" GROUP BY status').fetchall()
+           print('QUOTA_DEPLOY_QUEUES|'+json.dumps(counts),flush=True)
+          scripts={'verify_production_snapshot_finalization.py','finalize_latest_snapshot_publication.py','verify_region_manager_production.py','production_resource_gate.py','verify_live_ims_gate.py'}
+          active=[]
+          for directory in Path('/proc').iterdir():
+           if not directory.name.isdigit():continue
+           try:
+            args=(directory/'cmdline').read_bytes().split(b'\0')
+            matched=[Path(a.decode(errors='replace')).name for a in args if Path(a.decode(errors='replace')).name in scripts]
+            if matched:active.append(dict(pid=int(directory.name),script=matched[0]))
+           except (PermissionError,FileNotFoundError,ProcessLookupError):pass
+          print('QUOTA_DEPLOY_ACTIVE_CHECKS|'+json.dumps(active),flush=True)
           PY
-          venv/bin/python -m pip cache purge
-          venv/bin/python - <<'PY'
-          import gzip,hashlib,json,os,shutil,subprocess
-          from pathlib import Path
-          instance=(Path.cwd()/'instance').resolve()
-          source=instance/'rollback-module-proof-base-upload-31.db'
-          destination=source.with_suffix('.db.gz')
-          assert source.resolve().parent==instance and source.name!='ipm.db'
-          assert source.is_file() and not source.is_symlink()
-          assert not Path(str(source)+'-wal').exists(),'Proof copy still has a WAL companion'
-          fuser=shutil.which('fuser');assert fuser,'Open-file check unavailable'
-          rc=subprocess.run(['sudo',fuser,'-s',str(source)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode
-          assert rc==1,'Proof database is in use or open-file check failed'
-          temporary=destination.with_name(destination.name+'.verified-tmp')
-          assert not destination.exists() and not temporary.exists()
-          before=source.stat();digest=hashlib.sha256()
-          try:
-           fd=os.open(str(temporary),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-           with source.open('rb') as original,os.fdopen(fd,'wb') as output:
-            with gzip.GzipFile(fileobj=output,mode='wb',compresslevel=1,mtime=0) as compressed:
-             while True:
-              chunk=original.read(1024*1024)
-              if not chunk:break
-              if shutil.disk_usage(instance).free<256*1024**2:raise RuntimeError('Insufficient temporary archive headroom')
-              digest.update(chunk);compressed.write(chunk)
-           actual=hashlib.sha256()
-           with gzip.open(temporary,'rb') as verified:
-            while True:
-             chunk=verified.read(1024*1024)
-             if not chunk:break
-             actual.update(chunk)
-           assert actual.digest()==digest.digest(),'Lossless backup archive verification failed'
-           after=source.stat();assert after.st_size==before.st_size and after.st_mtime_ns==before.st_mtime_ns
-           os.replace(temporary,destination)
-           source.unlink()
-           print('QUOTA_PROOF_BACKUP_ARCHIVE|'+json.dumps(dict(result='PASS',original_bytes=before.st_size,archive_bytes=destination.stat().st_size,sha256=digest.hexdigest(),content_preserved=True)),flush=True)
-          finally:
-           temporary.unlink(missing_ok=True)
-          PY
-          venv/bin/python production_resource_gate.py --database instance/ipm.db --acceptance-seconds 0
           REMOTE
           
