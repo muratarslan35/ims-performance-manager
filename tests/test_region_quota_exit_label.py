@@ -147,6 +147,45 @@ def test_region_template_renders_compact_quota_exit_badge():
     assert "item.quota_exit_months" in template
 
 
+def test_quota_detection_is_independent_of_month_batch_and_cache_fill_order(tmp_path):
+    from app.models import ProductionNationalProductResult, ProductionResult
+
+    app = _app(tmp_path)
+    with app.app_context():
+        db.create_all()
+        representative = Representative(rep_code="BATCH", rep_name="Quota Batch", region="901", active=True)
+        product = Product(product_code="BATCH-QUOTA", product_name="Quota product", is_active=True)
+        db.session.add_all([representative, product])
+        db.session.flush()
+        for month, amount in [(1, 100), (2, 0)]:
+            upload = ProductionResultUpload(file_name=f"period-{month}.xlsx", stored_file_name=f"period-{month}.xlsx", source_hash=str(month)*64, year=2044, month=month, production_stage=2, status="APPLIED")
+            db.session.add(upload)
+            db.session.flush()
+            db.session.add_all([
+                Target(year=2044, month=month, representative_id=representative.id, product_id=product.id, tl_target=amount, unit_target=amount/10),
+                ProductionResult(upload_id=upload.id, representative_id=representative.id, product_id=product.id, target_tl=0, target_unit=0, actual_tl=0, actual_unit=0, realization_percent=0),
+                ProductionNationalProductResult(upload_id=upload.id, product_id=product.id, actual_tl=0, actual_unit=0, realization_percent=0, unit_realization_percent=0),
+            ])
+        db.session.commit()
+        expected = {product.id: [(2044, 1)]}
+        assert ProductionResultService.quota_product_months([(2044, 1)]) == expected
+        assert ProductionResultService.quota_product_months([(2044, 2)]) == {}
+        assert ProductionResultService.quota_product_months([(2044, 1), (2044, 2)]) == expected
+        app.config["TESTING"] = False
+        for first in ([(2044, 1)], [(2044, 2)], [(2044, 1), (2044, 2)]):
+            with ProductionResultService._quota_cache_lock:
+                ProductionResultService._quota_cache.clear()
+            ProductionResultService.quota_product_months(first)
+            assert ProductionResultService.quota_product_months([(2044, 1), (2044, 2)]) == expected
+        replacement = ProductionResultUpload(file_name="replacement.xlsx", stored_file_name="replacement.xlsx", source_hash="r"*64, year=2044, month=1, production_stage=2, status="APPLIED")
+        db.session.add(replacement)
+        db.session.flush()
+        db.session.add(ProductionNationalProductResult(upload_id=replacement.id, product_id=product.id, actual_tl=10000, actual_unit=1000, realization_percent=100, unit_realization_percent=100))
+        db.session.commit()
+        assert ProductionResultService.final_upload(2044, 1).id == replacement.id
+        assert ProductionResultService.quota_product_months([(2044, 1)]) == {}
+
+
 def test_july_empty_national_product_is_quota_exit_for_every_representative(tmp_path):
     from types import SimpleNamespace
     from app.models import IMSSummary, ProductionNationalProductResult, ProductionResult

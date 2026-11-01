@@ -20,6 +20,33 @@ import verify_representative_performance as performance_gate
 MIGRATIONS_DIR = str(Path(__file__).resolve().parents[1] / "migrations")
 
 
+def test_equal_priority_competitor_signals_have_stable_group_tiebreaker(tmp_path, monkeypatch):
+    import app.services.competitive_intelligence_service as module
+
+    class ReverseSet(set):
+        def __iter__(self):
+            return iter(sorted(super().__iter__(), reverse=True))
+
+    app = _app(tmp_path)
+    with app.app_context():
+        # Force an adversarial set traversal. Equal scored observations must
+        # retain the same order across hash seeds, workers and cache restores.
+        monkeypatch.setattr(module, "set", ReverseSet, raising=False)
+        service = CompetitiveIntelligenceService(1, 2026, 10)
+        rows = [
+            SimpleNamespace(upload_id=uid, subterritory="BRICK A", product_group=group, product_name="RIVAL", metric_value=value)
+            for group in ("GROUP B", "GROUP A")
+            for uid, value in ((10, 0), (20, 100), (21, 90), (22, 100))
+        ]
+        periods = [(2026, 9), (2026, 10)]
+        early = {periods[0]: SimpleNamespace(id=10), periods[1]: SimpleNamespace(id=20)}
+        current = [SimpleNamespace(id=22), SimpleNamespace(id=21)]
+        for ordered in (rows, list(reversed(rows))):
+            monkeypatch.setattr(service, "_scoped_aggregate_rows", lambda *args: ordered)
+            result = service._build_from_plan(periods, early, current, {uid: None for uid in (10, 20, 21, 22)}, {"BRICK A"}, {service._key("BRICK A")})
+            assert [row["group"] for row in result["early_month_emerging"]] == ["GROUP A", "GROUP B"]
+
+
 def _app(tmp_path):
     class Config:
         TESTING = True

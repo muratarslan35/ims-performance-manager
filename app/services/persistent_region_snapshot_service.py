@@ -498,6 +498,7 @@ class PersistentRegionSnapshotService:
         )
         from app.services.persistent_representative_snapshot_service import (
             PersistentRepresentativeSnapshotService,
+            representative_snapshots,
         )
         from app.services.region_ai_snapshot_service import RegionAISnapshotService
         from app.services.scoped_ai_insight_service import ScopedAIInsightService
@@ -507,15 +508,26 @@ class PersistentRegionSnapshotService:
             for payload in payloads.values()
             for representative_id in cls._representative_ids((payload or {}).get("report") or {})
         })
-        current_workspaces = PersistentRepresentativeSnapshotService.get_exact_active_many(
-            current_rep_ids, year, month
-        ) if current_rep_ids else {}
-        if current_rep_ids and len(current_workspaces) < len(current_rep_ids):
+        # Check member coverage using IDs, then decode one region at a time.
+        # Loading two complete annual representative generations together made
+        # enrichment compete with the worker cache for RAM and swap heavily.
+        rep_ims_id, rep_production_id = PersistentRepresentativeSnapshotService.source_identity(year, month)
+        current_set = PersistentRepresentativeSnapshotService._latest_exact_active(
+            year, month, rep_ims_id, rep_production_id
+        )
+        current_set_id = int(current_set.id) if current_set else None
+        available_rep_ids = set(db.session.execute(
+            sa.select(representative_snapshots.c.representative_id).where(
+                representative_snapshots.c.set_id == current_set_id,
+                representative_snapshots.c.representative_id.in_(current_rep_ids),
+            )
+        ).scalars()) if current_set_id and current_rep_ids else set()
+        if set(current_rep_ids) - available_rep_ids:
             return {
                 "status": "WAITING_REPRESENTATIVES",
                 "set_id": int(set_id),
                 "regions": len(payloads),
-                "representatives": len(current_workspaces),
+                "representatives": len(available_rep_ids),
                 "expected_representatives": len(current_rep_ids),
             }
 
@@ -526,9 +538,7 @@ class PersistentRegionSnapshotService:
             for payload in previous_payloads.values()
             for representative_id in cls._representative_ids((payload or {}).get("report") or {})
         })
-        previous_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
-            previous_rep_ids, previous_year, previous_month
-        ) if previous_rep_ids else {}
+        previous_set_id = PersistentRepresentativeSnapshotService._visible_set_id(previous_year, previous_month) if previous_rep_ids else None
         dashboard_payload = PersistentDashboardSnapshotService.get_generation_for_source(
             year, month, ims_id, production_id
         ) or {}
@@ -543,11 +553,20 @@ class PersistentRegionSnapshotService:
             # bundle. Select only representatives belonging to this region before
             # any brick-level zero-exit/loss analysis is built.
             current_region_rep_ids = cls._representative_ids(report)
-            current_region_workspaces = {
-                representative_id: current_workspaces[representative_id]
-                for representative_id in current_region_rep_ids
-                if representative_id in current_workspaces
-            }
+            current_region_workspaces = PersistentRepresentativeSnapshotService.get_exact_active_many(
+                current_region_rep_ids, year, month, expected_set_id=current_set_id
+            )
+            missing = set(current_region_rep_ids) - set(current_region_workspaces)
+            if missing:
+                # A present row may still contain corrupt JSON. No region is
+                # persisted until every member and every region has succeeded.
+                return {
+                    "status": "WAITING_REPRESENTATIVES",
+                    "set_id": int(set_id),
+                    "regions": len(payloads),
+                    "representatives": len(available_rep_ids) - len(missing),
+                    "expected_representatives": len(current_rep_ids),
+                }
             report = cls._embed_representative_products(
                 report, year, month, current_region_workspaces
             )
@@ -557,11 +576,9 @@ class PersistentRegionSnapshotService:
             previous_market_analysis = previous_payload.get("market_analysis") or {}
             previous_report = previous_payload.get("report") or {}
             previous_region_rep_ids = cls._representative_ids(previous_report)
-            previous_region_workspaces = {
-                representative_id: previous_workspaces[representative_id]
-                for representative_id in previous_region_rep_ids
-                if representative_id in previous_workspaces
-            }
+            previous_region_workspaces = PersistentRepresentativeSnapshotService.get_active_many(
+                previous_region_rep_ids, previous_year, previous_month, expected_set_id=previous_set_id
+            )
 
             ai_report = ScopedAIInsightService.build(
                 scope_type="region",
@@ -594,6 +611,7 @@ class PersistentRegionSnapshotService:
                     default=cls._json_default,
                 ),
             })
+            del current_region_workspaces, previous_region_workspaces, enriched, ai_report
 
         try:
             for item in updates:

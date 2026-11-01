@@ -8,6 +8,7 @@ from flask import request, render_template
 from flask_login import current_user, login_required
 
 from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
+from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache
 from app.models import (
     Product,
     ProductionRepresentativeTotal,
@@ -233,7 +234,10 @@ def _aggregate_market(representative, months, market_cache=None):
             source_cache_key = _market_source_cache_key(representative, year, month)
             payload = RepresentativeAnalysisCache.get_or_compute(
                 source_cache_key,
-                lambda y=year, m=month: RepresentativeMarketService(representative, y, m).build(),
+                lambda y=year, m=month, source=source_cache_key: RepresentativeMonthlyMarketCache.get_or_compute(
+                    representative, y, m, source,
+                    lambda: RepresentativeMarketService(representative, y, m).build(),
+                ),
                 ttl_seconds=45,
             )
             market_cache[cache_key] = payload

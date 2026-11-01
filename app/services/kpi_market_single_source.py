@@ -255,7 +255,11 @@ def _upload_has_authority(upload_id):
     """Check KPI authority on the exact already-selected IMS upload."""
     if not upload_id:
         return False
-    return (
+    from app.services.representative_query_optimizer import snapshot_authority_status, remember_snapshot_authority
+    cached = snapshot_authority_status(upload_id)
+    if cached is not None:
+        return cached
+    present = (
         db.session.query(CompetitionData.id)
         .filter(
             CompetitionData.upload_id == int(upload_id),
@@ -267,6 +271,8 @@ def _upload_has_authority(upload_id):
         .scalar()
         is not None
     )
+    remember_snapshot_authority(upload_id, present)
+    return present
 
 
 def _authority(upload_id, territory):

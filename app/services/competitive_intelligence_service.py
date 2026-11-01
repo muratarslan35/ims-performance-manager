@@ -11,7 +11,10 @@ from app.cache.representative_analysis_cache import RepresentativeAnalysisCache
 from app.extensions import db
 from app.models import CompetitionData, IMSUpload, Product, RepresentativeBrickAssignment
 from app.services.alias_service import AliasService
-from app.services.representative_query_optimizer import install_representative_market_query_optimizer
+from app.services.representative_query_optimizer import (
+    install_representative_market_query_optimizer,
+    snapshot_label_key,
+)
 
 
 # The representative route imports RepresentativeMarketService first and this
@@ -44,7 +47,7 @@ class CompetitiveIntelligenceService:
 
     @staticmethod
     def _key(value):
-        return "".join(ch for ch in AliasService.normalize(value) if ch.isalnum())
+        return snapshot_label_key(value)
 
     @staticmethod
     def _shift(year, month, delta):
@@ -208,6 +211,8 @@ class CompetitiveIntelligenceService:
         snapshots = defaultdict(
             lambda: defaultdict(lambda: {"company": 0.0, "competitor": 0.0})
         )
+        product_matches = {}
+        company_matches = {}
 
         for row in aggregate_rows:
             if self._key(row.subterritory) not in brick_keys:
@@ -221,11 +226,19 @@ class CompetitiveIntelligenceService:
                 str(row.product_group).strip(),
                 str(row.product_name).strip(),
             )
-            managed_product = self._managed_product_for_row(row, products)
+            match_key = (row.product_group, row.product_name)
+            if match_key not in product_matches:
+                product_matches[match_key] = self._managed_product_for_row(row, products)
+            managed_product = product_matches[match_key]
+            company = False
+            if managed_product is not None:
+                company_key = (int(managed_product.id), row.product_name)
+                if company_key not in company_matches:
+                    company_matches[company_key] = self._is_managed_product_name(row.product_name, managed_product)
+                company = company_matches[company_key]
             side = (
                 "company"
-                if managed_product is not None
-                and self._is_managed_product_name(row.product_name, managed_product)
+                if company
                 else "competitor"
             )
             snapshots[int(row.upload_id)][key][side] += float(row.metric_value or 0.0)
@@ -263,6 +276,9 @@ class CompetitiveIntelligenceService:
                 row["severity"] != "critical",
                 -row["delta_unit"],
                 -row["current_unit"],
+                row["brick"],
+                row["group"],
+                row["product"],
             )
         )
         weekly_alerts = weekly_alerts[:10]
@@ -355,6 +371,7 @@ class CompetitiveIntelligenceService:
                 -row["average_unit"],
                 row["brick"],
                 row["product"],
+                row["group"],
             )
         )
 
@@ -377,6 +394,7 @@ class CompetitiveIntelligenceService:
                 -row["latest_unit"],
                 row["brick"],
                 row["product"],
+                row["group"],
             )
         )
         emerging_limit = max(0, 7 - len(recurring))

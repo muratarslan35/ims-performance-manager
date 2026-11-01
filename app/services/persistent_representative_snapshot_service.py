@@ -28,6 +28,7 @@ from app.services.production_result_service import ProductionResultService
 
 
 metadata = db.metadata
+_UNPINNED = object()
 
 representative_snapshot_sets = sa.Table(
     "representative_snapshot_sets",
@@ -327,9 +328,11 @@ class PersistentRepresentativeSnapshotService:
         return result
 
     @classmethod
-    def get_active_many(cls, representative_ids, year, month):
+    def get_active_many(cls, representative_ids, year, month, *, expected_set_id=_UNPINNED):
         """Read the currently visible representative generation in one query."""
         set_id = cls._visible_set_id(year, month)
+        if expected_set_id is not _UNPINNED and set_id != expected_set_id:
+            raise RuntimeError("Representative generation changed during scoped read")
         payloads = cls._payloads_from_set(set_id, representative_ids)
         official = cls._official_monthly_totals(payloads, year, month)
         for representative_id, payload in payloads.items():
@@ -337,12 +340,14 @@ class PersistentRepresentativeSnapshotService:
         return payloads
 
     @classmethod
-    def get_exact_active_many(cls, representative_ids, year, month):
+    def get_exact_active_many(cls, representative_ids, year, month, *, expected_set_id=_UNPINNED):
         """Read the exact current-source ACTIVE generation behind publication gate."""
         year, month = int(year), int(month)
         ims_id, production_id = cls.source_identity(year, month)
         exact = cls._latest_exact_active(year, month, ims_id, production_id)
         set_id = int(exact.id) if exact else None
+        if expected_set_id is not _UNPINNED and set_id != expected_set_id:
+            raise RuntimeError("Representative generation changed during scoped read")
         return cls._payloads_from_set(set_id, representative_ids)
 
     @classmethod
@@ -629,11 +634,22 @@ class PersistentRepresentativeSnapshotService:
             for period_key in period_keys:
                 snapshot_upload_ids.setdefault(period_key, None)
 
+            # Authority depends on the immutable accepted upload, not the
+            # representative. Resolve each source once for this generation;
+            # every reader receives its own small copy, never a global cache.
+            from app.services.kpi_market_single_source import _upload_has_authority
+            authority_by_upload = {
+                upload_id: _upload_has_authority(upload_id)
+                for upload_id in set(snapshot_upload_ids.values()) if upload_id
+            }
+
             def calculate(representative_id):
                 # Every worker owns an application context and therefore its own
                 # scoped SQLAlchemy session. Workers only read; SQLite writes stay
                 # serialized in the parent after the complete batch is ready.
-                with app.app_context(), use_snapshot_upload_ids(snapshot_upload_ids):
+                with app.app_context(), use_snapshot_upload_ids(
+                    snapshot_upload_ids, authority_by_upload=authority_by_upload
+                ):
                     representative = db.session.get(Representative, representative_id)
                     if representative is None:
                         return None

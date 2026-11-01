@@ -17,6 +17,8 @@ import copy
 import math
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Event, RLock
 from typing import Any, Callable
 
@@ -37,6 +39,25 @@ class RepresentativeAnalysisCache:
     _store: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
     _inflight: dict[str, Event] = {}
     _lock = RLock()
+    _build_store = ContextVar("representative_analysis_build_store", default=None)
+    _BUILD_MAX_ENTRIES = 64
+
+    @classmethod
+    @contextmanager
+    def isolated_build_cache(cls):
+        """Release one snapshot member's intermediates when its build ends.
+
+        A year-wide worker visits every representative/month once. Retaining
+        their raw market rows in the process LRU makes memory grow with the
+        whole roster instead of the concurrent batch. Repeated reads within
+        one member still share exact source-keyed values; interactive callers
+        retain the existing process cache.
+        """
+        token = cls._build_store.set(OrderedDict())
+        try:
+            yield
+        finally:
+            cls._build_store.reset(token)
 
     @classmethod
     def enabled(cls) -> bool:
@@ -86,6 +107,17 @@ class RepresentativeAnalysisCache:
     ) -> Any:
         if not key or (not force_enable and not cls.enabled()):
             return loader()
+
+        local = cls._build_store.get()
+        if local is not None:
+            if key in local:
+                local.move_to_end(key)
+                return cls._copy(local[key])
+            value = loader()
+            local[key] = cls._copy(value)
+            while len(local) > cls._BUILD_MAX_ENTRIES:
+                local.popitem(last=False)
+            return cls._copy(value)
 
         ttl = cls._ttl_for_key(key, ttl_seconds)
         now = time.monotonic()
