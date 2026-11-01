@@ -348,9 +348,12 @@ class RegionPerformanceService:
                 continue
             key = (year, month, rep_id, product_id)
             exact_target = Decimal(str(target or 0))
+            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
+            if ProductionResultService.target_first_quota_applies(year, month):
+                exact_target = Decimal(str(effective.get("target_tl") or 0))
+                target_unit = effective.get("target_unit") or 0
             cells[key]["target"] += exact_target
             cells[key]["target_unit"] += Decimal(str(target_unit or 0))
-            effective = ProductionResultService.effective_product(year, month, rep_id, product_id)
             if not effective["complete"] or effective["actual_tl"] is None:
                 cells[key]["complete"] = False
             else:

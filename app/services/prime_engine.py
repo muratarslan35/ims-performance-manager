@@ -215,8 +215,8 @@ class PrimeEngine:
         summary = self.summaries_by_period.get((product_id, month))
         effective = ProductionResultService.effective_product(self.year, month, self.rep_id, product_id)
         return {
-            "target_unit": float(target.unit_target if target else 0),
-            "target_tl": float(target.tl_target if target else 0),
+            "target_unit": float(effective.get("target_unit") or 0) if ProductionResultService.target_first_quota_applies(self.year, month) else float(target.unit_target if target else 0),
+            "target_tl": float(effective.get("target_tl") or 0) if ProductionResultService.target_first_quota_applies(self.year, month) else float(target.tl_target if target else 0),
             "actual_unit": float(effective.get("actual_unit") or 0),
             "actual_tl": float(effective.get("actual_tl") or 0),
             "bonus_amount": float(summary.bonus_amount if summary else 0),

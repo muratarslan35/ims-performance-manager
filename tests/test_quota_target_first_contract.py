@@ -258,7 +258,8 @@ def test_targetless_region_market_has_no_performance_credit_but_retains_observat
 
 
 @pytest.mark.parametrize('quota_approved',[False,True])
-def test_dashboard_ranking_and_region_map_cannot_restore_unadjusted_production_total(quota_audit,quota_approved):
+@pytest.mark.parametrize('production_target',[500,600])
+def test_dashboard_ranking_and_region_map_cannot_restore_unadjusted_production_total(quota_audit,quota_approved,production_target):
     from app.models import ProductionRepresentativeTotal, ProductionRegionTotal
     from app.query.dashboard_query import DashboardQuery
     from app.query.filters import DashboardFilterParams
@@ -274,7 +275,7 @@ def test_dashboard_ranking_and_region_map_cannot_restore_unadjusted_production_t
             Target(year=2045,month=7,representative_id=rep.id,product_id=item.id,tl_target=target,unit_target=20 if target else 0),
             IMSSummary(year=2045,month=7,representative_id=rep.id,product_id=item.id,tl=actual,unit=units),
             ProductionResult(upload_id=upload.id,representative_id=rep.id,product_id=item.id,
-                target_tl=target,target_unit=20 if target else 0,actual_tl=actual,actual_unit=units,realization_percent=50),
+                target_tl=production_target if target else 0,target_unit=20 if target else 0,actual_tl=actual,actual_unit=units,realization_percent=50),
             ProductionRegionProductResult(upload_id=upload.id,region_code='901',product_id=item.id,
                 target_tl=400 if target else 0,target_unit=40 if target else 0,actual_tl=200 if target else 777,
                 actual_unit=20 if target else 77,realization_percent=50,unit_realization_percent=50),
@@ -288,18 +289,29 @@ def test_dashboard_ranking_and_region_map_cannot_restore_unadjusted_production_t
     db.session.commit()
     query=DashboardQuery();filters=DashboardFilterParams(year=2045,month=7,representative_id=rep.id)
     rank=query.load_top_representatives(filters)[0]
-    expected_actual=500 if quota_approved else 250
-    assert rank[3]==expected_actual and rank[5]==500
+    expected_actual=production_target if quota_approved else 250
+    assert rank[3]==expected_actual and rank[5]==production_target
     period=query.load_period_performance(filters)
-    assert period.realization_tl==expected_actual and period.target_tl==500
+    assert period.realization_tl==expected_actual and period.target_tl==production_target
     city=query.load_city_performance(filters)[0]
-    assert city.total_tl==expected_actual and city.target_tl==500 and city.rep_count==1
+    assert city.total_tl==expected_actual and city.target_tl==production_target and city.rep_count==1
     products=query.load_product_performance(filters)
-    assert len(products)==1 and products[0].realization_tl==expected_actual and products[0].target_tl==500
+    assert len(products)==1 and products[0].realization_tl==expected_actual and products[0].target_tl==production_target
     ytd=query.load_ytd_product_rankings(2045,7)
     assert {r.product_id for r in ytd}=={product.id}
     region=query.load_region_performance(filters)[0]
     assert region.tl_target==400 and region.tl_actual==(400 if quota_approved else 200)
     assert region.unit_target==40 and region.unit_actual==20  # factual boxes
     _,totals,_,_=_aggregate_sales(rep.id,[(2045,7)])
-    assert totals['target_tl']==500 and totals['actual_tl']==expected_actual and totals['percent']==(100 if quota_approved else 50)
+    assert totals['target_tl']==production_target and totals['actual_tl']==expected_actual
+    from app.services.prime_engine import PrimeEngine
+    from app.services.region_performance_service import RegionPerformanceService
+    from app.services.representative_period_snapshot_service import RepresentativePeriodSnapshotService
+    prime=PrimeEngine(rep.id,2045,7,use_cache=False).calculate_product(product)
+    assert prime['target_tl']==production_target and prime['actual_tl']==expected_actual
+    assert prime['percent']==(100 if quota_approved else round(250/production_target*100,2))
+    regional=RegionPerformanceService('901',2045,7).report()['periods']['monthly']
+    person=next(r for r in regional['representatives'] if r['representative_id']==rep.id)
+    assert person['target_tl']==production_target and person['actual_tl']==expected_actual
+    old_snapshot=RepresentativePeriodSnapshotService.build(rep.id,2045,7)['monthly']
+    assert old_snapshot['target_tl']==production_target and old_snapshot['actual_tl']==expected_actual
