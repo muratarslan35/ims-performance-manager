@@ -1,4 +1,4 @@
-name: Week 41 Deployed Cache Readonly Probe
+name: Week 41 Performance Normal Queue Timing
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,84 +44,53 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
+          
           umask 077
-          ps -eo etimes,pcpu,pmem,comm | awk '$4 ~ /(python|gunicorn)/'
           test "$(git rev-parse HEAD)" = "446e0f21da2d0e9c8faf1787c397dd352a15e8ff"
-          cat > instance/week41-deployed-cache-probe.py <<'PY'
-          import os,sys,json,hashlib,time
+          test -f instance/week41-publication-timing-observer.py
+          venv/bin/python - <<'PY' > instance/week41-performance-backup-private.log 2>&1
+          import json,shutil
           from pathlib import Path
-          from concurrent.futures import ThreadPoolExecutor,as_completed
-          os.umask(0o077);live=Path.cwd();sys.path.insert(0,str(live))
-          import config
-          meta=json.loads((live/'instance/week41-unit-timing-session.json').read_text())
-          
-          import app as module
-          module.create_database=lambda application:None
-          class ReadOnlyConfig(config.Config):
-           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
+          import sqlalchemy as sa
+          from app import create_app
           from app.extensions import db
-          from app.models import IMSUpload,Representative
-          from app.services.representative_period_workspace import build_representative_workspace_payload
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap
-          from app.services.annual_realization_service import AnnualRealizationService as Annual
-          from app.services.representative_query_optimizer import use_snapshot_upload_ids
-          from app.services.kpi_market_single_source import _upload_has_authority
-          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
-          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
-          phase='deployed-probe';started=time.perf_counter()
+          from app.models import IMSUpload,IMSImportJob
+          from app.services.ims_progress_store import IMSProgressStore
+          from app.services.persistent_region_snapshot_service import region_snapshot_sets,region_snapshots
+          app=create_app()
           with app.app_context():
-           pin={}
-           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
-            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
-           assert pin[(2026,10)]==56
-           annual=Annual.build_snapshot_inputs(2026)
-           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
-          references=json.loads((live/'instance/week41-independent-period-reference-hashes.json').read_text())
-          ids=sorted(map(int,references))[:1]
-          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
-          def member(rid):
-           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
-            try:
-             workspace=Snap._json_ready(build_representative_workspace_payload(db.session.get(Representative,rid),2026,10,annual_snapshot_inputs=annual))
-             financial={'annual_realization':workspace['annual_realization'],'snapshots':{key:{field:part[field] for field in ('products','totals','assignments')} for key,part in workspace['snapshots'].items()}}
-             market={key:part['market_analysis'] for key,part in workspace['snapshots'].items()}
-             expected=references[str(rid)]
-             result=dict(id=rid,financial=digest(financial)==expected['financial_sha256'],market=digest(market)==expected['market_sha256'],workspace_sha256=digest(workspace))
-             if not result['financial'] or not result['market']:
-              (live/'instance'/f'week41-{phase}-gate-member-{rid}-private.json').write_text(canonical(workspace))
-             return result
-            except Exception as exc:
-             import traceback
-             (live/'instance'/f'week41-{phase}-gate-member-{rid}-error-private.log').write_text(traceback.format_exc())
-             return dict(id=rid,financial=False,market=False,error_type=type(exc).__name__)
-            finally:db.session.rollback()
-          results=[]
-          with ThreadPoolExecutor(max_workers=3) as pool:
-           for future in as_completed([pool.submit(member,rid) for rid in ids]):
-            results.append(future.result())
-            if len(results)%8==0 or len(results)==len(ids):print('WEEK41_GATE_PROGRESS|'+json.dumps(dict(phase=phase,done=len(results),total=len(ids),seconds=round(time.perf_counter()-started,3))),flush=True)
-          results.sort(key=lambda r:r['id'])
-          (live/'instance'/f'week41-{phase}-stable-gate-results-private.json').write_text(json.dumps(results))
-          failed_financial=sum(not r['financial'] for r in results);failed_market=sum(not r['market'] for r in results)
-          stable=True
-          if phase=='hot':
-           previous=json.loads((live/'instance/week41-bootstrap-stable-gate-results-private.json').read_text())
-           stable=all(a.get('workspace_sha256')==b.get('workspace_sha256') for a,b in zip(previous,results))
-          summary=dict(result='PASS' if not failed_financial and not failed_market and stable else 'FAIL',phase=phase,members=len(results),financial_failures=failed_financial,market_failures=failed_market,stable_across_processes=stable,seconds=round(time.perf_counter()-started,3),cache=Monthly.statistics(),errors=[r.get('error_type') for r in results if r.get('error_type')])
-          (live/'instance'/f'week41-{phase}-stable-gate-summary.json').write_text(json.dumps(summary))
-          print('WEEK41_STABLE_GATE_ACCEPTANCE|'+json.dumps(summary),flush=True)
-          if summary['result']!='PASS':raise SystemExit(1)
-          
-          assert Monthly.statistics().get('hits') == 10 and not Monthly.statistics().get('misses'), 'Verified monthly cache is not portable to deployed code'
-          print('WEEK41_DEPLOYED_CACHE|PASS|hits=10',flush=True)
+           source=db.session.get(IMSUpload,56)
+           latest=IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year.desc(),IMSUpload.month.desc(),IMSUpload.week_number.desc(),IMSUpload.id.desc()).first()
+           assert latest.id==56 and (source.year,source.month,source.week_number)==(2026,10,41)
+           assert IMSImportJob.query.filter(IMSImportJob.status.in_(('QUEUED','PROCESSING'))).count()==0
+           job=IMSImportJob.query.filter_by(ims_upload_id=56).order_by(IMSImportJob.id.desc()).first()
+           progress=IMSProgressStore.read(job.id) or {}
+           assert json.loads(job.result_summary or '{}').get('publication_ready') is True and progress.get('percent')==100
+           root=Path(app.instance_path);backup=root/'week41-performance-before-56';backup.mkdir(exist_ok=True)
+           if not (backup/'regions-and-job.json').exists():
+            sets=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshot_sets).where(region_snapshot_sets.c.source_upload_id==56,region_snapshot_sets.c.status=='ACTIVE'))]
+            rows=[dict(r._mapping) for r in db.session.execute(sa.select(region_snapshots).where(region_snapshots.c.set_id.in_([s['id'] for s in sets])))]
+            (backup/'regions-and-job.json').write_text(json.dumps(dict(sets=sets,rows=rows,job_id=job.id,summary=job.result_summary,progress=progress),default=str))
+            for path in (root/'dashboard_snapshots').glob('dashboard-2026-10*.json'):shutil.copy2(path,backup/path.name)
           PY
-          set +e
-          venv/bin/python instance/week41-deployed-cache-probe.py > instance/week41-deployed-cache-probe.log 2>&1
-          probe_rc=$?
-          set -e
-          grep '^WEEK41_' instance/week41-deployed-cache-probe.log || true
-          echo "WEEK41_DEPLOYED_CACHE_EXIT|$probe_rc"
-          test "$probe_rc" = "0"
+          echo "WEEK41_PERFORMANCE_BACKUP|READY"
+          PYTHONPATH="$IMS_PATH" venv/bin/python scripts/queue_verified_ims_reimport.py --source-upload 56 > instance/week41-performance-queue-private.log 2>&1
+          export IMS_TIMING_WORKER_PID="$(sudo systemctl show ims-import-worker.service --property MainPID --value)"
+          venv/bin/python - <<'PY'
+          import json,os
+          from pathlib import Path
+          from app import create_app
+          from app.extensions import db
+          from app.models import IMSImportJob
+          app=create_app()
+          with app.app_context():
+           marker=json.loads(Path('instance/official-region-replay-56.json').read_text())
+           job=db.session.get(IMSImportJob,int(marker['job_id']))
+           meta=dict(job_id=job.id,database=str(Path(db.engine.url.database).resolve()),root=str(Path(app.instance_path).resolve()),worker_pid=int(os.environ['IMS_TIMING_WORKER_PID']))
+           Path('instance/week41-performance-timing-session.json').write_text(json.dumps(meta))
+           print('WEEK41_PERFORMANCE_QUEUED|'+json.dumps(dict(job_id=job.id,queued_at=job.queued_at.isoformat(),source_upload_id=56,week=41)),flush=True)
+          PY
+          nohup nice -n 10 venv/bin/python instance/week41-publication-timing-observer.py instance/week41-performance-timing-session.json > instance/week41-performance-timing-observer.log 2>&1 < /dev/null &
+          echo "WEEK41_TIMING_OBSERVER|STARTED|interval_seconds=5"
           REMOTE
           
