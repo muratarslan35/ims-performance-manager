@@ -1,4 +1,4 @@
-name: Quota Preserve Accepted Historical Cache Bytes
+name: Quota Representative Readonly Progress
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,110 +44,26 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
+          echo 'QUOTA_PROGRESS_CHECK|1793570643407'
           umask 077
-          test "$(git rev-parse HEAD)" = "4effa51befff54a23b33c33e3b89bf3f96e0585d"
-          pkill -f '^venv/bin/python instance/quota-representative-shadow.py$' || true
-          export IMS_SHADOW_PATH="$(cat instance/quota-target-first-shadow-path.txt)"
-          test "$(git diff 4effa51befff54a23b33c33e3b89bf3f96e0585d 09bef569aff1d41ac2b7b080dd6f0925425560e0 -- app/cache/representative_monthly_market_cache.py)" = ""
-          cat > instance/quota-legacy-cache-compatibility.py <<'PY'
-          import os,sys,json,hashlib,time
+          venv/bin/python - <<'PY'
+          import json,os
           from pathlib import Path
-          from contextlib import nullcontext
-          live=Path.cwd();sys.path.insert(0,str(live))
-          import config
-          meta=json.loads((live/'instance/week41-performance-timing-session.json').read_text())
-          sys.path.insert(0,os.environ['IMS_SHADOW_PATH'])
-          import app as module
-          module.create_database=lambda application:None
-          class ReadOnlyConfig(config.Config):
-           SQLALCHEMY_DATABASE_URI='sqlite:///file:'+meta['database']+'?mode=ro&uri=true'
-          from app.extensions import db
-          from app.models import IMSUpload,Representative
-          from app.services.persistent_representative_snapshot_service import PersistentRepresentativeSnapshotService as Snap,representative_snapshots,representative_snapshot_sets
-          from app.services.persistent_region_snapshot_service import PersistentRegionSnapshotService as Regions
-          from app.services.region_performance_service import RegionPerformanceService
-          from app.services.region_market_service import RegionMarketService
-          import sqlalchemy as sa
-          app=module.create_app(ReadOnlyConfig);app.instance_path=str(live/'instance')
-          def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),default=Snap._json_default)
-          def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
-          
-          import gzip,uuid
-          from contextvars import ContextVar
-          from concurrent.futures import ThreadPoolExecutor,as_completed
-          from app.cache import representative_monthly_market_cache as cache_module
-          from app.cache.representative_monthly_market_cache import RepresentativeMonthlyMarketCache as Monthly
-          from app.services.representative_period_workspace import _market_source_cache_key
-          from app.services.representative_query_optimizer import use_snapshot_upload_ids
-          from app.services.kpi_market_single_source import _upload_has_authority
-          original_revision=cache_module._code_revision
-          old_revision=original_revision(str(live/'app'))
-          new_revision=original_revision(str(Path(cache_module.__file__).resolve().parents[1]))
-          assert old_revision!=new_revision
-          revision=ContextVar('verified_legacy_cache_revision',default=new_revision)
-          cache_module._code_revision=lambda root:revision.get()
-          with app.app_context():
-           pin={}
-           for upload in IMSUpload.query.filter_by(status='COMPLETED').order_by(IMSUpload.year,IMSUpload.month,IMSUpload.week_number.desc(),IMSUpload.completed_at.desc(),IMSUpload.id.desc()):
-            pin.setdefault((int(upload.year),int(upload.month)),int(upload.id))
-           assert pin[(2026,10)]==58
-           authority={uid:_upload_has_authority(uid) for uid in set(pin.values()) if uid}
-           set_id=db.session.execute(sa.select(representative_snapshot_sets.c.id).where(representative_snapshot_sets.c.source_upload_id==58,representative_snapshot_sets.c.status=='ACTIVE').order_by(representative_snapshot_sets.c.id.desc()).limit(1)).scalar()
-           ids=sorted(int(row[0]) for row in db.session.execute(sa.select(representative_snapshots.c.representative_id).where(representative_snapshots.c.set_id==set_id)))
-           assert len(ids)==113
-          started=time.perf_counter()
-          def member(rid):
-           counts=dict(migrated=0,already_current=0,unmatched=0,missing=0)
-           with app.app_context(),use_snapshot_upload_ids(pin,authority_by_upload=authority):
-            try:
-             representative=db.session.get(Representative,rid)
-             for month in range(1,10):
-              path=live/'instance/representative_monthly_market'/f'2026-{month:02d}-{rid}.json.gz'
-              if not path.is_file():counts['missing']+=1;continue
-              with gzip.open(path,'rb') as source:
-               header=json.loads(source.readline(4096));payload=source.read(Monthly._MAX_FILE_BYTES+1)
-              assert len(payload)<=Monthly._MAX_FILE_BYTES
-              assert hashlib.sha256(payload).hexdigest()==header['sha256'],'Private cache payload checksum mismatch'
-              source_key=_market_source_cache_key(representative,2026,month)
-              revision.set(new_revision);new_fp,_=Monthly._inputs(representative,2026,month,source_key)
-              if header['fingerprint']==new_fp:counts['already_current']+=1;continue
-              revision.set(old_revision);old_fp,_=Monthly._inputs(representative,2026,month,source_key)
-              revision.set(new_revision)
-              if header['fingerprint']!=old_fp:counts['unmatched']+=1;continue
-              # Verified predecessor inputs differ only by code revision. The release
-              # changes period rules only from October. Preserve the accepted historical
-              # payload byte-for-byte; no business row or published snapshot is written.
-              replacement=json.dumps(dict(fingerprint=new_fp,sha256=header['sha256']),sort_keys=True,separators=(',',':')).encode()+b'\n'+payload
-              temporary=path.with_name(path.name+'.compat-'+uuid.uuid4().hex)
-              fd=os.open(str(temporary),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-              with os.fdopen(fd,'wb') as output:output.write(gzip.compress(replacement,compresslevel=1,mtime=0))
-              os.replace(temporary,path)
-              with gzip.open(path,'rb') as check:
-               after=json.loads(check.readline(4096));verified=check.read()
-              assert after['fingerprint']==new_fp and verified==payload and after['sha256']==header['sha256']
-              counts['migrated']+=1
-             return counts
-            finally:db.session.rollback()
-          results=[]
-          with ThreadPoolExecutor(max_workers=3) as pool:
-           for future in as_completed([pool.submit(member,rid) for rid in ids]):
-            results.append(future.result())
-            if len(results)%16==0 or len(results)==len(ids):print('QUOTA_LEGACY_CACHE_PROGRESS|'+json.dumps(dict(done=len(results),total=len(ids),seconds=round(time.perf_counter()-started,3))),flush=True)
-          summary=dict(result='PASS',members=len(results),months=[1,9],payload_bytes_preserved=True,
-                       **{key:sum(row[key] for row in results) for key in results[0]},seconds=round(time.perf_counter()-started,3))
-          (live/'instance/quota-legacy-cache-compatibility-summary.json').write_text(json.dumps(summary))
-          print('QUOTA_LEGACY_CACHE_COMPATIBILITY|'+json.dumps(summary),flush=True)
-          
+          root=Path('instance')
+          pid_path=root/'quota-representative-shadow.pid'
+          pid=int(pid_path.read_text()) if pid_path.exists() else 0
+          running=bool(pid and Path('/proc',str(pid)).exists())
+          lines=(root/'quota-representative-shadow.log').read_text(errors='replace').splitlines()
+          progress=[s for s in lines if s.startswith(('QUOTA_REP_PROGRESS|','QUOTA_REP_SHADOW|'))]
+          for line in progress[-3:]:print(line,flush=True)
+          summary=root/'quota-candidate-representatives-summary.json'
+          if summary.exists():
+           data=json.loads(summary.read_text())
+           print('QUOTA_REP_RESULT|'+json.dumps(data['summary']),flush=True)
+           if data['summary']['result']!='PASS':print('QUOTA_REP_ISSUES|'+json.dumps(data['failures'][:3]),flush=True)
+          print('QUOTA_REP_PROCESS|'+json.dumps(dict(running=running,pid=pid)),flush=True)
+          if not running and not summary.exists():
+           print('QUOTA_REP_UNEXPECTED_STOP|'+json.dumps(dict(last_line=lines[-1] if lines else 'no-log')),flush=True)
           PY
-          set +e
-          venv/bin/python instance/quota-legacy-cache-compatibility.py > instance/quota-legacy-cache-compatibility.log 2>&1
-          cache_rc=$?
-          set -e
-          grep '^QUOTA_' instance/quota-legacy-cache-compatibility.log || true
-          echo "QUOTA_LEGACY_CACHE_EXIT|$cache_rc"
-          if [ "$cache_rc" != "0" ]; then tail -n 6 instance/quota-legacy-cache-compatibility.log | sed -E 's/[0-9]+([.][0-9]+)?/[redacted]/g'; exit 1; fi
-          nohup nice -n 10 venv/bin/python instance/quota-representative-shadow.py > instance/quota-representative-shadow.log 2>&1 < /dev/null &
-          echo "$!" > instance/quota-representative-shadow.pid
-          echo "QUOTA_REP_SHADOW|RESUMED|members=113|readonly=true"
           REMOTE
           
