@@ -1,4 +1,4 @@
-name: Quota Representative Readonly Progress
+name: Quota Deployment Resource Audit
 on:
   push:
     branches: [codex/week41-compat-audit]
@@ -44,26 +44,19 @@ jobs:
           echo "WORKER_ACTIVE|$(sudo systemctl is-active ims-import-worker.service)"
 
 
-          echo 'QUOTA_PROGRESS_CHECK|1793570923796'
           umask 077
+          echo "QUOTA_DISK_BEFORE|$(df -B1 --output=avail . | tail -n 1)"
+          for path in instance/quota-target-first-shadow.*; do
+           [ -d "$path" ] || continue
+           du -sk "$path"
+          done
+          echo "QUOTA_CURRENT_SHADOW|$(cat instance/quota-target-first-shadow-path.txt)"
           venv/bin/python - <<'PY'
-          import json,os
           from pathlib import Path
-          root=Path('instance')
-          pid_path=root/'quota-representative-shadow.pid'
-          pid=int(pid_path.read_text()) if pid_path.exists() else 0
-          running=bool(pid and Path('/proc',str(pid)).exists())
-          lines=(root/'quota-representative-shadow.log').read_text(errors='replace').splitlines()
-          progress=[s for s in lines if s.startswith(('QUOTA_REP_PROGRESS|','QUOTA_REP_SHADOW|'))]
-          for line in progress[-3:]:print(line,flush=True)
-          summary=root/'quota-candidate-representatives-summary.json'
-          if summary.exists():
-           data=json.loads(summary.read_text())
-           print('QUOTA_REP_RESULT|'+json.dumps(data['summary']),flush=True)
-           if data['summary']['result']!='PASS':print('QUOTA_REP_ISSUES|'+json.dumps(data['failures'][:3]),flush=True)
-          print('QUOTA_REP_PROCESS|'+json.dumps(dict(running=running,pid=pid)),flush=True)
-          if not running and not summary.exists():
-           print('QUOTA_REP_UNEXPECTED_STOP|'+json.dumps(dict(last_line=lines[-1] if lines else 'no-log')),flush=True)
+          import json,os
+          p=Path('instance/quota-candidate-representatives-summary.json')
+          assert json.loads(p.read_text())['summary']['result']=='PASS'
+          print('QUOTA_FULL_SHADOW|PASS',flush=True)
           PY
           REMOTE
           
