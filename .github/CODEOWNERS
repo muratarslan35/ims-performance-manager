@@ -17,6 +17,9 @@
 /app/routes/__init__.py @muratarslan35
 /app/regions.py @muratarslan35
 /app/query/dashboard_query.py @muratarslan35
+/app/services/prime_engine.py @muratarslan35
+/app/services/quarter_entitlement_service.py @muratarslan35
+/app/services/representative_query_optimizer.py @muratarslan35
 
 /app/services/*import*.py @muratarslan35
 /app/services/*snapshot*.py @muratarslan35

@@ -83,6 +83,9 @@ Aşağıdaki dosyalarda değişiklik, kullanıcı ön onayı olmadan yapılamaz:
 - `app/routes/__init__.py`
 - `app/regions.py`
 - `app/services/production_result_service.py`
+- `app/services/prime_engine.py`
+- `app/services/quarter_entitlement_service.py`
+- `app/services/representative_query_optimizer.py`
 - `app/services/tl_box_calculation_service.py`
 - `app/services/april_global_box_period_lock.py`
 - `app/services/product_unit_price_service.py`

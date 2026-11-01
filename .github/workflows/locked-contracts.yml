@@ -102,6 +102,9 @@ jobs:
               app/services/period_service.py|\
               app/services/production_publication_status.py|\
               app/services/production_result_service.py|\
+              app/services/prime_engine.py|\
+              app/services/quarter_entitlement_service.py|\
+              app/services/representative_query_optimizer.py|\
               app/services/tl_box_calculation_service.py|\
               app/services/april_global_box_period_lock.py|\
               app/services/product_unit_price_service.py|\
@@ -181,6 +184,7 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_production_result_batch_service.py \
+            tests/test_quota_target_first_contract.py \
             tests/test_april_tl_box_read_overlay.py \
             tests/test_representative_market_read_consistency.py \
             tests/test_representative_annual_source_priority.py \
